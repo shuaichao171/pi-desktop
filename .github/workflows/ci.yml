@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.11.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.19.0'
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm build
+      - run: pnpm pack:dir
+      - name: Verify packaged Pi runtime
+        shell: pwsh
+        run: |
+          $asar = (Resolve-Path 'release/win-unpacked/resources/app.asar').Path
+          $entries = pnpm --filter @pidesktop/desktop exec asar list $asar
+          if (-not ($entries -match 'node_modules[\\/]@earendil-works[\\/]pi-coding-agent[\\/]dist[\\/]index.js')) {
+            throw 'Pi SDK is missing from app.asar'
+          }
+          if (-not ($entries -match 'node_modules[\\/]@silvia-odwyer[\\/]photon-node[\\/]photon_rs_bg.wasm')) {
+            throw 'Pi image runtime is missing from app.asar'
+          }

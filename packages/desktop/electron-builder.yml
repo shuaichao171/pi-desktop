@@ -1,0 +1,35 @@
+appId: dev.pidesktop.app
+productName: Pi Desktop
+copyright: Copyright (c) 2026 Pi Desktop contributors
+
+directories:
+  output: ../../release
+  buildResources: build
+
+files:
+  - out/**/*
+  - package.json
+  - '!out/**/*.map'
+
+asar: true
+asarUnpack:
+  - '**/*.node'
+  - '**/*.wasm'
+
+win:
+  icon: build/icon.ico
+  target:
+    - target: nsis
+      arch: [x64]
+    - target: portable
+      arch: [x64]
+
+nsis:
+  artifactName: Pi-Desktop-Setup-${version}-${arch}.${ext}
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  perMachine: false
+  createDesktopShortcut: true
+
+portable:
+  artifactName: Pi-Desktop-Portable-${version}-${arch}.${ext}

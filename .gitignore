@@ -1,0 +1,21 @@
+node_modules/
+dist/
+out/
+packages/desktop/index.js
+release/
+reference/
+.pi/
+.agents/
+.ui-*.png
+.verify-*.png
+pnpm-debug*.jsonl
+*.local
+.env
+.env.*
+!.env.example
+
+# Logs & OS artifacts
+*.log
+.DS_Store
+Thumbs.db
+desktop.ini

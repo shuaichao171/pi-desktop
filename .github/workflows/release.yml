@@ -1,0 +1,43 @@
+name: Windows release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.11.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.19.0'
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Check release tag matches application version
+        shell: pwsh
+        run: |
+          $rootVersion = (Get-Content package.json | ConvertFrom-Json).version
+          $desktopVersion = (Get-Content packages/desktop/package.json | ConvertFrom-Json).version
+          if ($rootVersion -ne $desktopVersion -or "v$rootVersion" -ne $env:GITHUB_REF_NAME) {
+            throw "Tag, root version and desktop version must match: $env:GITHUB_REF_NAME, $rootVersion, $desktopVersion"
+          }
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm dist:win
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pi-desktop-windows
+          path: release/Pi-Desktop-*.exe
+          if-no-files-found: error
+      - uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          generate_release_notes: true
+          files: release/Pi-Desktop-*.exe

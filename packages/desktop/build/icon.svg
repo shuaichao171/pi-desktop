@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Pi Desktop icon">
+  <defs>
+    <linearGradient id="bg" x1="0" x2="1" y1="0" y2="1">
+      <stop stop-color="#343081"/>
+      <stop offset="1" stop-color="#171729"/>
+    </linearGradient>
+    <linearGradient id="mark" x1="0" x2="1" y1="0" y2="1">
+      <stop stop-color="#9df8e8"/>
+      <stop offset="1" stop-color="#5ad2ed"/>
+    </linearGradient>
+  </defs>
+  <rect x="12" y="12" width="488" height="488" rx="108" fill="url(#bg)"/>
+  <rect x="13" y="13" width="486" height="486" rx="107" fill="none" stroke="#7774b0" stroke-opacity=".6" stroke-width="2"/>
+  <path d="M123 168h266v49H123zM157 205h51v180c0 24-19 43-43 43h-8V205zm166 0h51v180c0 24-19 43-43 43h-8V205z" fill="url(#mark)"/>
+  <circle cx="385" cy="378" r="30" fill="#ffb36a"/>
+</svg>

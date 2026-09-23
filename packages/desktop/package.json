@@ -1,0 +1,37 @@
+{
+  "name": "@pidesktop/desktop",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "main": "out/main/index.js",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "pack:dir": "pnpm build && electron-builder --dir --win --x64 --publish never",
+    "dist:win": "pnpm build && electron-builder --win nsis portable --x64 --publish never",
+    "typecheck": "tsc -p tsconfig.node.json && tsc -p tsconfig.web.json",
+    "clean": "rimraf out dist"
+  },
+  "dependencies": {
+    "@earendil-works/pi-coding-agent": "^0.87.1",
+    "@pidesktop/agent": "workspace:*",
+    "@pidesktop/shared": "workspace:*"
+  },
+  "devDependencies": {
+    "@pidesktop/ui": "workspace:*",
+    "@electron/asar": "4.3.0",
+    "@tailwindcss/vite": "^4.3.3",
+    "@types/node": "^26.6.2",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^5.2.0",
+    "electron": "^44.4.5",
+    "electron-builder": "26.15.3",
+    "electron-vite": "^5.0.0",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "tailwindcss": "^4.3.3",
+    "typescript": "~5.9.3",
+    "vite": "^7.3.6"
+  }
+}

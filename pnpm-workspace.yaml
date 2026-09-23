@@ -1,0 +1,24 @@
+packages:
+  - 'packages/*'
+
+# pnpm 11 build-script policy (replaces onlyBuiltDependencies).
+allowBuilds:
+  electron: true
+  esbuild: true
+  '@tailwindcss/oxide': true
+  '@google/genai': true
+  protobufjs: true
+
+minimumReleaseAgeExclude:
+  - '@earendil-works/chord@0.87.1'
+  - '@earendil-works/pi-agent-core@0.87.1'
+  - '@earendil-works/pi-ai@0.87.1'
+  - '@earendil-works/pi-coding-agent@0.87.1'
+  - '@earendil-works/pi-telemetry@0.87.1'
+  - '@earendil-works/pi-tui@0.87.1'
+  - electron@44.4.5
+
+# Keep installer transitive dependencies outside pnpm's minimum release age window.
+overrides:
+  '@electron/universal>fs-extra': 11.4.0
+  '@electron/windows-sign>fs-extra': 11.4.0

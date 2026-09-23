@@ -1,0 +1,25 @@
+{
+  "name": "@pidesktop/ui",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./styles.css": "./src/styles.css"
+  },
+  "scripts": {
+    "typecheck": "tsc -p .",
+    "clean": "rimraf dist"
+  },
+  "dependencies": {
+    "@pidesktop/shared": "workspace:*",
+    "react": "^19.3.0",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
+    "zustand": "^5.0.15"
+  },
+  "devDependencies": {
+    "@types/react": "^19.3.0",
+    "typescript": "~5.9.3"
+  }
+}
