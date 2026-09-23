@@ -4,6 +4,7 @@ packages:
 # pnpm 11 build-script policy (replaces onlyBuiltDependencies).
 allowBuilds:
   electron: true
+  electron-winstaller: true
   esbuild: true
   '@tailwindcss/oxide': true
   '@google/genai': true
