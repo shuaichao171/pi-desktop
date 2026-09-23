@@ -2,6 +2,7 @@
   "name": "@pidesktop/desktop",
   "private": true,
   "version": "0.1.0",
+  "license": "MIT",
   "description": "Desktop workbench for the Pi coding agent",
   "author": "Pi Desktop contributors",
   "homepage": "https://github.com/shuaichao171/pi-desktop",

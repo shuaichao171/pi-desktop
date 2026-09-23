@@ -12,6 +12,9 @@ importers:
 
   .:
     devDependencies:
+      '@earendil-works/pi-coding-agent':
+        specifier: ^0.87.1
+        version: 0.87.1(ws@8.21.3)
       yaml:
         specifier: 2.9.0
         version: 2.9.0

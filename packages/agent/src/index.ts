@@ -8,7 +8,8 @@
  *     defined in @pidesktop/shared,
  *   - exposes prompt / abort for the IPC layer.
  *
- * Reference: reference/pi/packages/coding-agent/examples/sdk/13-session-runtime.ts
+ * Uses the published @earendil-works/pi-coding-agent SDK runtime and
+ * SessionManager APIs; no checked-out Pi source tree is required.
  */
 
 import { randomUUID } from 'node:crypto';
@@ -902,7 +903,25 @@ export class AgentService {
 		}));
 	}
 
-	async init({ cwd }: AgentInitOptions): Promise<void> { await this.switchWorkspace(cwd); }
+	async init({ cwd, sessionPath, fresh }: AgentInitOptions): Promise<void> {
+		if (typeof cwd !== 'string' || !cwd.trim()) throw new Error('工作区路径无效');
+		if (sessionPath && fresh) throw new Error('不能同时指定已有会话和新会话');
+		if (!sessionPath && !fresh) return this.switchWorkspace(cwd);
+		await this.runTransition(async () => {
+			if (sessionPath) {
+				const sessions = await this.listSessions(cwd);
+				if (!sessions.some((session) => session.path === sessionPath)) throw new Error('会话不属于指定工作区');
+				const existing = [...this.contexts.entries()].find(([, service]) =>
+					service.cwd === cwd && service.getSnapshot().sessionPath === sessionPath);
+				if (existing) {
+					this.activate(existing[0], existing[1]);
+					return;
+				}
+			}
+			await this.openContext({ cwd, sessionPath, fresh });
+			this.fire({ type: 'sessions-changed', cwd });
+		});
+	}
 
 	async switchWorkspace(cwd: string): Promise<void> {
 		if (typeof cwd !== 'string' || !cwd.trim()) throw new Error('工作区路径无效');

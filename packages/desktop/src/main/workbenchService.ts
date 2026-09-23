@@ -1,7 +1,7 @@
 import { execFile, spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
-import { lstat, readFile, readdir, realpath, stat } from 'node:fs/promises';
+import { lstat, open, readFile, readdir, realpath, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
@@ -11,6 +11,7 @@ const execFileAsync = promisify(execFile);
 const MAX_PREVIEW_BYTES = 1024 * 1024;
 const MAX_COMMAND_OUTPUT_BYTES = 1024 * 1024;
 const MAX_ENTRIES = 400;
+const DIFF_TRUNCATED_NOTICE = '\n… 仅显示前 1 MB 的差异 / Diff preview limited to the first 1 MB.\n';
 const SAFE_GIT_ENV = { ...process.env, GIT_OPTIONAL_LOCKS: '0', GIT_LITERAL_PATHSPECS: '1' };
 
 function isWithin(root: string, candidate: string): boolean {
@@ -19,6 +20,7 @@ function isWithin(root: string, candidate: string): boolean {
 }
 
 export class WorkbenchService {
+	private commandGeneration = 0;
 	private readonly commands = new Map<string, ChildProcessWithoutNullStreams>();
 	private readonly getWorkspace: () => string;
 	private readonly emit: (event: WorkspaceCommandEvent) => void;
@@ -108,7 +110,8 @@ export class WorkbenchService {
 		for (let index = 0; index < records.length; index += 1) {
 			const record = records[index];
 			if (!record || record.length < 4) continue;
-			const status = record.slice(0, 2).trim() || record.slice(0, 2);
+			// Keep both porcelain columns: "M " (staged) and " M" (worktree) differ.
+			const status = record.slice(0, 2);
 			const path = record.slice(3).replaceAll('\\', '/');
 			entries.push({ path, status });
 			if (status.includes('R') || status.includes('C')) index += 1; // porcelain -z adds the source path.
@@ -128,20 +131,88 @@ export class WorkbenchService {
 			timeout: 8000, maxBuffer: MAX_PREVIEW_BYTES, env: SAFE_GIT_ENV,
 		});
 		if (status.stdout.startsWith('?? ')) {
-			const content = await this.readFile(safePath);
+			const { path } = await this.resolveEntry(safePath);
+			const details = await stat(path);
+			if (!details.isFile()) throw new Error('不是文件');
+			const file = await open(path, 'r');
+			const bytes = Buffer.alloc(Math.min(details.size, MAX_PREVIEW_BYTES));
+			let bytesRead = 0;
+			try {
+				while (bytesRead < bytes.length) {
+					const result = await file.read(bytes, bytesRead, bytes.length - bytesRead, bytesRead);
+					if (result.bytesRead === 0) break;
+					bytesRead += result.bytesRead;
+				}
+			}
+			finally { await file.close(); }
+			const sample = bytes.subarray(0, bytesRead);
+			if (sample.includes(0)) throw new Error('无法预览二进制文件');
+			let content: string | null = null;
+			for (let tail = 0; tail <= 3 && content === null; tail += 1) {
+				try { content = new TextDecoder('utf-8', { fatal: true }).decode(sample.subarray(0, bytesRead - tail)); }
+				catch { /* A capped preview may stop inside a multi-byte character. */ }
+			}
+			if (content === null) throw new Error('文件不是有效的 UTF-8 文本');
 			const lines = content ? content.replace(/\n$/, '').split('\n') : [];
-			return `--- /dev/null\n+++ b/${safePath}\n@@ -0,0 +1,${lines.length} @@\n${lines.map((line) => `+${line}`).join('\n')}\n`;
+			const diff = `--- /dev/null\n+++ b/${safePath}\n@@ -0,0 +1,${lines.length} @@\n${lines.map((line) => `+${line}`).join('\n')}\n`;
+			const preview = Buffer.from(diff, 'utf8');
+			return details.size > bytesRead || preview.length > MAX_PREVIEW_BYTES
+				? preview.subarray(0, MAX_PREVIEW_BYTES).toString('utf8') + DIFF_TRUNCATED_NOTICE
+				: diff;
 		}
-		const result = await execFileAsync('git', [...prefix, 'diff', '--no-ext-diff', '--no-textconv', 'HEAD', '--', safePath], {
-			timeout: 8000, maxBuffer: MAX_PREVIEW_BYTES, env: SAFE_GIT_ENV,
-		});
-		return result.stdout;
+		return this.gitDiffPreview([...prefix, 'diff', '--no-ext-diff', '--no-textconv', 'HEAD', '--', safePath]);
 	}
 
-	async startCommand(command: string): Promise<string> {
+	private gitDiffPreview(args: string[]): Promise<string> {
+		return new Promise((resolve, reject) => {
+			const child = spawn('git', args, { env: SAFE_GIT_ENV, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+			const chunks: Buffer[] = [];
+			let size = 0;
+			let stderr = '';
+			let truncated = false;
+			let timedOut = false;
+			let settled = false;
+			const timer = setTimeout(() => { timedOut = true; child.kill(); }, 8000);
+			const finish = (error?: Error, text?: string): void => {
+				if (settled) return;
+				settled = true;
+				clearTimeout(timer);
+				if (error) reject(error);
+				else resolve(text ?? '');
+			};
+			child.stdout.on('data', (value: Buffer) => {
+				if (truncated) return;
+				const remaining = MAX_PREVIEW_BYTES - size;
+				if (value.length > remaining) {
+					if (remaining > 0) chunks.push(value.subarray(0, remaining));
+					size = MAX_PREVIEW_BYTES;
+					truncated = true;
+					child.kill();
+				} else {
+					chunks.push(value);
+					size += value.length;
+				}
+			});
+			child.stderr.on('data', (value: Buffer) => { stderr = (stderr + value.toString('utf8')).slice(-4096); });
+			child.on('error', (error) => finish(error));
+			child.on('close', (code) => {
+				if (timedOut) return finish(new Error('Git 差异读取超时'));
+				if (!truncated && code !== 0) return finish(new Error(stderr.trim() || `Git diff exited with code ${code}`));
+				const output = Buffer.concat(chunks, size).toString('utf8');
+				finish(undefined, truncated ? output + DIFF_TRUNCATED_NOTICE : output);
+			});
+		});
+	}
+
+	async startCommand(command: string, approvedCwd = this.getWorkspace()): Promise<string> {
 		if (typeof command !== 'string' || !command.trim() || command.length > 4000) throw new Error('命令无效或过长');
 		if (this.commands.size >= 4) throw new Error('同时最多运行 4 条命令');
+		const generation = this.commandGeneration;
 		const cwd = await this.workspaceRoot();
+		if (this.commandGeneration !== generation || this.getWorkspace() !== approvedCwd) {
+			throw new Error('工作区已切换，请重新运行命令');
+		}
+		if (this.commands.size >= 4) throw new Error('同时最多运行 4 条命令');
 		const id = randomUUID();
 		const child = process.platform === 'win32'
 			? spawn('powershell.exe', ['-NoLogo', '-NoProfile', '-Command', command], { cwd, windowsHide: true, stdio: 'pipe' })
@@ -177,6 +248,7 @@ export class WorkbenchService {
 	}
 
 	async dispose(): Promise<void> {
+		this.commandGeneration += 1;
 		await Promise.allSettled([...this.commands.keys()].map((id) => this.stopCommand(id)));
 		if (this.safeHooksPath) {
 			const target = resolve(this.safeHooksPath);

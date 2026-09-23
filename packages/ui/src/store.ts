@@ -71,6 +71,8 @@ interface ChatState {
 
 const sessionListRequests = new Map<string, number>();
 let settingsRequestCount = 0;
+let unsubscribeAgentEvent: (() => void) | null = null;
+let bridgeGeneration = 0;
 
 function beginSettingsRequest(): void {
 	settingsRequestCount += 1;
@@ -108,15 +110,22 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
 	setBridge(bridge) {
 		if (get().bridge === bridge) return;
-		set({ bridge });
+		unsubscribeAgentEvent?.();
+		unsubscribeAgentEvent = null;
+		bridgeGeneration += 1;
+		const generation = bridgeGeneration;
+		sessionListRequests.clear();
+		set({ bridge, workspaces: [], sessionsByWorkspace: {}, sessions: [] });
 		let bootstrapping = true;
 		const buffered: AgentEventEnvelope[] = [];
-		bridge.onAgentEvent((envelope) => {
+		unsubscribeAgentEvent = bridge.onAgentEvent((envelope) => {
+			if (generation !== bridgeGeneration || get().bridge !== bridge) return;
 			if (bootstrapping) buffered.push(envelope);
 			else get().handleEvent(envelope.event);
 		});
 		void bridge.getAgentSnapshot()
 			.then((snapshot: AgentSnapshot) => {
+				if (generation !== bridgeGeneration || get().bridge !== bridge) return;
 				set({
 					status: snapshot.status,
 					statusMessage: snapshot.statusMessage,
@@ -140,13 +149,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
 				void get().refreshWorkspaces();
 			})
 			.catch((error: unknown) => {
+				if (generation !== bridgeGeneration || get().bridge !== bridge) return;
 				bootstrapping = false;
 				set({ error: errorMessage(error), status: 'error' });
 				for (const envelope of buffered) get().handleEvent(envelope.event);
 			});
 		void bridge
 			.getAppInfo()
-			.then((appInfo) => set({ appInfo }))
+			.then((appInfo) => { if (generation === bridgeGeneration && get().bridge === bridge) set({ appInfo }); })
 			.catch(() => {});
 	},
 
@@ -172,10 +182,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
 					error: null,
 				});
 				return;
-			case 'status':
+			case 'status': {
+				const previousStatus = get().status;
 				set({ status: event.status, statusMessage: event.message });
-				if (event.status === 'idle') void get().refreshSessions();
+				if (event.status === 'idle' && previousStatus !== 'idle') void get().refreshSessions();
 				return;
+			}
 			case 'ready':
 				// A fresh session context: clear the conversation view.
 				set({
@@ -273,10 +285,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
 		if (!bridge) return;
 		try {
 			const workspaces = await bridge.listWorkspaces();
+			if (get().bridge !== bridge) return;
 			const current = get().cwd;
 			set({ workspaces: current && !workspaces.includes(current) ? [current, ...workspaces] : workspaces });
 		} catch (error) {
-			set({ error: errorMessage(error) });
+			if (get().bridge === bridge) set({ error: errorMessage(error) });
 		}
 	},
 
@@ -287,13 +300,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
 		sessionListRequests.set(cwd, request);
 		try {
 			const sessions = await bridge.listSessions(cwd);
-			if (sessionListRequests.get(cwd) !== request) return;
+			if (get().bridge !== bridge || sessionListRequests.get(cwd) !== request) return;
 			set((state) => ({
 				sessionsByWorkspace: { ...state.sessionsByWorkspace, [cwd]: sessions },
 				...(state.cwd === cwd ? { sessions } : {}),
 			}));
 		} catch (error) {
-			set({ error: errorMessage(error) });
+			if (get().bridge === bridge) set({ error: errorMessage(error) });
 		}
 	},
 

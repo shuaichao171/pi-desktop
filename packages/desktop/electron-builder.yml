@@ -21,6 +21,8 @@ asarUnpack:
 extraResources:
   - from: build/update-config.json
     to: update-config.json
+  - from: ../../LICENSE
+    to: LICENSE.txt
 
 win:
   icon: build/icon.ico

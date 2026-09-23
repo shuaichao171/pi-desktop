@@ -29,7 +29,7 @@ test('Pi SDK runtime initializes, replaces a session, and publishes a current sn
   try {
     const [{ AgentService }, { SessionManager }] = await Promise.all([
       import('../packages/agent/src/index.ts'),
-      import('../packages/agent/node_modules/@earendil-works/pi-coding-agent/dist/index.js'),
+      import('@earendil-works/pi-coding-agent'),
     ]);
     service = new AgentService();
     const events = [];
@@ -75,6 +75,13 @@ test('Pi SDK runtime initializes, replaces a session, and publishes a current sn
     assert.equal(service.getSnapshot().cwd, otherWorkspace);
     await service.switchWorkspace(workspace);
     assert.equal(service.getSnapshot().sessionId, other.getSessionId(), 'switching projects resumes its live Pi runtime');
+
+    await service.init({ cwd: workspace, sessionPath: persisted.getSessionFile() });
+    assert.equal(service.getSnapshot().sessionId, persisted.getSessionId(), 'init opens the requested Pi session');
+    await service.init({ cwd: workspace, fresh: true });
+    assert.notEqual(service.getSnapshot().sessionId, persisted.getSessionId(), 'fresh init creates a new Pi session');
+    await assert.rejects(service.init({ cwd: workspace, sessionPath: join(tempRoot, 'outside.jsonl') }), /不属于指定工作区/);
+    await assert.rejects(service.init({ cwd: workspace, sessionPath: persisted.getSessionFile(), fresh: true }), /不能同时指定/);
   } finally {
     await service?.dispose();
     if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;

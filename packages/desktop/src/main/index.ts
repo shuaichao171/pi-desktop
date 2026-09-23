@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, shell } from 'electron';
+import { app, BrowserWindow, dialog, Menu, session, shell } from 'electron';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -56,7 +56,8 @@ function createWindow(onReady?: () => void, onLoadError?: (error: unknown) => vo
 		webPreferences: {
 			preload: join(here, '../preload/index.mjs'),
 			contextIsolation: true,
-			// ESM preload requires sandbox: false (Electron ≥ 28).
+			// ESM preload requires sandbox: false (Electron ≥ 28). Keep the
+			// context-isolated bridge narrow; the preload itself has Node access.
 			sandbox: false,
 			nodeIntegration: false,
 		},
@@ -71,6 +72,60 @@ function createWindow(onReady?: () => void, onLoadError?: (error: unknown) => vo
 	let loaded = false;
 	let firstPaintReady = false;
 	let revealed = false;
+	let startupFailureReported = false;
+	let recoveryDialogVisible = false;
+	let unresponsiveTimer: ReturnType<typeof setTimeout> | null = null;
+	const reportStartupFailure = (error: unknown): void => {
+		if (startupFailureReported || win.isDestroyed()) return;
+		startupFailureReported = true;
+		if (onLoadError) onLoadError(error);
+		else {
+			console.error('Pi Desktop renderer failed to load:', error);
+			dialog.showErrorBox(getAppLocale() === 'en-US' ? 'Pi Desktop startup failed' : 'Pi Desktop 启动失败', String(error));
+		}
+		win.destroy();
+	};
+	const reportRendererFailure = (reason: string): void => {
+		if (win.isDestroyed()) return;
+		console.error('Pi Desktop renderer failed:', reason);
+		if (!revealed) { reportStartupFailure(new Error(reason)); return; }
+		if (recoveryDialogVisible) return;
+		recoveryDialogVisible = true;
+		const english = getAppLocale() === 'en-US';
+		void dialog.showMessageBox(win, {
+			type: 'error',
+			title: english ? 'Pi Desktop stopped responding' : 'Pi Desktop 界面无响应',
+			message: english ? 'The window stopped working.' : '应用窗口未能正常运行。',
+			detail: english ? 'Reload the window to restore your workspace.' : '重新加载窗口可恢复工作区。',
+			buttons: english ? ['Reload window', 'Close window'] : ['重新加载窗口', '关闭窗口'],
+			defaultId: 0,
+			cancelId: 1,
+			noLink: true,
+		}).then(({ response }) => {
+			if (win.isDestroyed()) return;
+			if (response === 0) win.reload();
+			else win.close();
+		}).catch((error: unknown) => console.error('Pi Desktop renderer recovery failed:', error))
+			.finally(() => { recoveryDialogVisible = false; });
+	};
+	win.webContents.on('render-process-gone', (_event, details) => {
+		if (details.reason !== 'clean-exit') reportRendererFailure(details.reason);
+	});
+	win.webContents.on('did-fail-load', (_event, code, description, _url, isMainFrame) => {
+		if (isMainFrame && code !== -3) reportRendererFailure(description);
+	});
+	win.on('unresponsive', () => {
+		if (unresponsiveTimer) return;
+		unresponsiveTimer = setTimeout(() => {
+			unresponsiveTimer = null;
+			reportRendererFailure('The renderer remained unresponsive.');
+		}, 5_000);
+	});
+	win.on('responsive', () => {
+		if (unresponsiveTimer) clearTimeout(unresponsiveTimer);
+		unresponsiveTimer = null;
+	});
+	win.on('closed', () => { if (unresponsiveTimer) clearTimeout(unresponsiveTimer); });
 	const reveal = (): void => {
 		if (!loaded || !firstPaintReady || revealed || win.isDestroyed()) return;
 		revealed = true;
@@ -108,14 +163,7 @@ function createWindow(onReady?: () => void, onLoadError?: (error: unknown) => vo
 	void load.then(() => {
 		loaded = true;
 		reveal();
-	}).catch((error: unknown) => {
-		if (onLoadError) onLoadError(error);
-		else {
-			console.error('Pi Desktop renderer failed to load:', error);
-			dialog.showErrorBox(getAppLocale() === 'en-US' ? 'Pi Desktop startup failed' : 'Pi Desktop 启动失败', String(error));
-			win.close();
-		}
-	});
+	}).catch(reportStartupFailure);
 	return win;
 }
 
@@ -167,6 +215,14 @@ if (!hasSingleInstanceLock) {
 	});
 
 	void app.whenReady().then(() => {
+	if (process.platform === 'win32') {
+		app.setAppUserModelId('dev.pidesktop.app');
+		Menu.setApplicationMenu(null);
+	}
+	// The renderer only needs clipboard write for its explicit copy action.
+	session.defaultSession.setPermissionRequestHandler((_webContents, permission, callback) => {
+		callback(permission === 'clipboard-sanitized-write');
+	});
 	const splash = new BrowserWindow({
 		width: 420,
 		height: 300,

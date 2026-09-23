@@ -14,7 +14,7 @@ test('inactive Pi runtimes are bounded and an evicted session can be reopened', 
   try {
     const [{ AgentService }, { SessionManager }] = await Promise.all([
       import('../packages/agent/src/index.ts'),
-      import('../packages/agent/node_modules/@earendil-works/pi-coding-agent/dist/index.js'),
+      import('@earendil-works/pi-coding-agent'),
     ]);
     const paths = [];
     for (let index = 0; index < 14; index += 1) {

@@ -28,6 +28,9 @@ jobs:
           if (-not (Test-Path 'release/win-unpacked/resources/update-config.json')) {
             throw 'Update feed config is missing from packaged resources'
           }
+          if (-not (Test-Path 'release/win-unpacked/resources/LICENSE.txt')) {
+            throw 'MIT license is missing from packaged resources'
+          }
           $asar = (Resolve-Path 'release/win-unpacked/resources/app.asar').Path
           $entries = pnpm --filter @pidesktop/desktop exec asar list $asar
           if (-not ($entries -match 'out[\\/]main[\\/]agentHost\.js')) {
@@ -90,6 +93,7 @@ jobs:
           app="release/${app_dir}/Pi Desktop.app"
           test "$(lipo -archs "$app/Contents/MacOS/Pi Desktop")" = '${{ matrix.macho }}'
           test -f "$app/Contents/Resources/update-config.json"
+          test -f "$app/Contents/Resources/LICENSE.txt"
           asar="$(realpath "$app/Contents/Resources/app.asar")"
           entries="$(pnpm --filter @pidesktop/desktop exec asar list "$asar")"
           grep -F 'out/main/agentHost.js' <<< "$entries" >/dev/null
@@ -122,6 +126,7 @@ jobs:
           test -f "release/Pi-Desktop-${version}-x64.AppImage"
           test -f "release/Pi-Desktop-${version}-x64.deb"
           test -f 'release/linux-unpacked/resources/update-config.json'
+          test -f 'release/linux-unpacked/resources/LICENSE.txt'
           asar="$(realpath release/linux-unpacked/resources/app.asar)"
           entries="$(pnpm --filter @pidesktop/desktop exec asar list "$asar")"
           grep -F 'out/main/agentHost.js' <<< "$entries" >/dev/null

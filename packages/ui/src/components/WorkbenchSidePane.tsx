@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import type { WorkspaceCommandEvent, WorkspaceEntry, WorkspaceGitStatus } from '@pidesktop/shared';
 import { useChatStore } from '../store';
 import { useT } from '../i18n';
@@ -47,6 +47,11 @@ export function WorkbenchSidePane({ open, onClose }: { open: boolean; onClose():
 	const [commandError, setCommandError] = useState<string | null>(null);
 	const [, setEventRevision] = useState(0);
 	const eventsRef = useRef(new Map<string, WorkspaceCommandEvent[]>());
+	const eventLengthsRef = useRef(new Map<string, number>());
+	const ignoredCommandIdsRef = useRef(new Set<string>());
+	const eventRenderTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+	const currentCwdRef = useRef(cwd);
+	currentCwdRef.current = cwd;
 	const listingRequest = useRef(0);
 	const fileRequest = useRef(0);
 	const gitRequest = useRef(0);
@@ -58,7 +63,26 @@ export function WorkbenchSidePane({ open, onClose }: { open: boolean; onClose():
 	const commandRunning = Boolean(commandRun && !finalEvent);
 	const breadcrumb = useMemo(() => directory.split('/').filter(Boolean), [directory]);
 
-	useEffect(() => {
+	useLayoutEffect(() => {
+		if (commandRun) ignoredCommandIdsRef.current.add(commandRun.id);
+		for (const id of eventsRef.current.keys()) ignoredCommandIdsRef.current.add(id);
+		while (ignoredCommandIdsRef.current.size > 128) {
+			const oldestId = ignoredCommandIdsRef.current.values().next().value;
+			if (oldestId === undefined) break;
+			ignoredCommandIdsRef.current.delete(oldestId);
+		}
+		eventsRef.current.clear();
+		eventLengthsRef.current.clear();
+		if (eventRenderTimerRef.current) clearTimeout(eventRenderTimerRef.current);
+		eventRenderTimerRef.current = null;
+		setCommandRun(null);
+		setCommand('');
+		setCommandError(null);
+		setCommandStarting(false);
+		setCommandStopping(false);
+		setEventRevision((value) => value + 1);
+		fileRequest.current += 1;
+		diffRequest.current += 1;
 		setDirectory('');
 		setEntries([]);
 		setSelectedFile(null);
@@ -70,15 +94,43 @@ export function WorkbenchSidePane({ open, onClose }: { open: boolean; onClose():
 
 	useEffect(() => {
 		if (!bridge) return;
-		return bridge.onWorkspaceCommandEvent((event) => {
+		const unsubscribe = bridge.onWorkspaceCommandEvent((event) => {
+			if (ignoredCommandIdsRef.current.has(event.id)) return;
 			const current = eventsRef.current.get(event.id) ?? [];
-			const next = [...current, event];
-			let length = next.reduce((total, item) => total + (item.data?.length ?? 0), 0);
-			while (length > 120_000 && next.length > 1) length -= next.shift()?.data?.length ?? 0;
-			eventsRef.current.set(event.id, next);
-			if (eventsRef.current.size > 12) eventsRef.current.delete(eventsRef.current.keys().next().value!);
-			setEventRevision((value) => value + 1);
+			const lastIndex = current.length - 1;
+			const last = current[lastIndex];
+			if ((event.type === 'stdout' || event.type === 'stderr') && last?.type === event.type && (last.data?.length ?? 0) < 16_000) {
+				current[lastIndex] = { ...last, data: (last.data ?? '') + (event.data ?? '') };
+			} else current.push(event);
+			let length = (eventLengthsRef.current.get(event.id) ?? 0) + (event.data?.length ?? 0);
+			while ((length > 120_000 || current.length > 512) && current.length > 1) length -= current.shift()?.data?.length ?? 0;
+			if (length > 120_000 && current.length === 1) {
+				current[0] = { ...current[0]!, data: current[0]?.data?.slice(-120_000) };
+				length = current[0]?.data?.length ?? 0;
+			}
+			eventsRef.current.set(event.id, current);
+			eventLengthsRef.current.set(event.id, length);
+			if (eventsRef.current.size > 12) {
+				const oldestId = eventsRef.current.keys().next().value!;
+				eventsRef.current.delete(oldestId);
+				eventLengthsRef.current.delete(oldestId);
+			}
+			if (event.type === 'exit' || event.type === 'error') {
+				if (eventRenderTimerRef.current) clearTimeout(eventRenderTimerRef.current);
+				eventRenderTimerRef.current = null;
+				setEventRevision((value) => value + 1);
+			} else if (!eventRenderTimerRef.current) {
+				eventRenderTimerRef.current = setTimeout(() => {
+					eventRenderTimerRef.current = null;
+					setEventRevision((value) => value + 1);
+				}, 100);
+			}
 		});
+		return () => {
+			unsubscribe();
+			if (eventRenderTimerRef.current) clearTimeout(eventRenderTimerRef.current);
+			eventRenderTimerRef.current = null;
+		};
 	}, [bridge]);
 
 	useEffect(() => {
@@ -151,10 +203,18 @@ export function WorkbenchSidePane({ open, onClose }: { open: boolean; onClose():
 		setCommandError(null);
 		try {
 			const id = await bridge.startWorkspaceCommand(text);
+			if (!id) return;
+			if (currentCwdRef.current !== cwd) {
+				ignoredCommandIdsRef.current.add(id);
+				eventsRef.current.delete(id);
+				eventLengthsRef.current.delete(id);
+				await bridge.stopWorkspaceCommand(id);
+				return;
+			}
 			setCommandRun({ id, command: text, cwd });
 			setCommand('');
-		} catch (cause) { setCommandError(cause instanceof Error ? cause.message : String(cause)); }
-		finally { setCommandStarting(false); }
+		} catch (cause) { if (currentCwdRef.current === cwd) setCommandError(cause instanceof Error ? cause.message : String(cause)); }
+		finally { if (currentCwdRef.current === cwd) setCommandStarting(false); }
 	}
 
 	async function stopCommand() {
@@ -209,7 +269,7 @@ export function WorkbenchSidePane({ open, onClose }: { open: boolean; onClose():
 					{!gitLoading && !gitError && gitStatus && (gitStatus.isRepository ? <>
 						<div className="pd-workbench-branch"><Icon name="gitBranch" width="15" height="15" /><span>{gitStatus.branch || 'HEAD'}</span><small>{t('workbench.changes', { count: gitStatus.entries.length })}</small></div>
 						<div className="pd-workbench-changes">
-							{gitStatus.entries.map((entry) => <button key={entry.path} type="button" className={`pd-workbench-change${diffPath === entry.path ? ' is-selected' : ''}`} onClick={() => void openDiff(entry.path)} title={entry.path}><span className="pd-workbench-git-status">{entry.status}</span><span>{entry.path}</span></button>)}
+							{gitStatus.entries.map((entry) => <button key={entry.path} type="button" className={`pd-workbench-change${diffPath === entry.path ? ' is-selected' : ''}`} onClick={() => void openDiff(entry.path)} title={entry.path}><span className="pd-workbench-git-status">{entry.status.replaceAll(' ', '·')}</span><span>{entry.path}</span></button>)}
 							{gitStatus.entries.length === 0 && <div className="pd-workbench-empty">{t('workbench.clean')}</div>}
 						</div>
 						{diffPath && <section className="pd-workbench-preview" aria-label={t('workbench.diff')}>

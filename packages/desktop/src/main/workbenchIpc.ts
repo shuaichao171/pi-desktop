@@ -1,5 +1,6 @@
-import { BrowserWindow, ipcMain } from 'electron';
+import { BrowserWindow, dialog, ipcMain } from 'electron';
 import { IPC_CHANNELS } from '@pidesktop/shared';
+import { getAppLocale } from './appLocale';
 import { WorkbenchService } from './workbenchService';
 
 export function registerWorkbenchIpc(getWorkspace: () => string): WorkbenchService {
@@ -12,7 +13,28 @@ export function registerWorkbenchIpc(getWorkspace: () => string): WorkbenchServi
 	ipcMain.handle(IPC_CHANNELS.workspaceReadFile, (_event, relativePath: string) => service.readFile(relativePath));
 	ipcMain.handle(IPC_CHANNELS.workspaceGitStatus, () => service.gitStatus());
 	ipcMain.handle(IPC_CHANNELS.workspaceGitDiff, (_event, relativePath: string) => service.gitDiff(relativePath));
-	ipcMain.handle(IPC_CHANNELS.workspaceCommandStart, (_event, command: string) => service.startCommand(command));
+	ipcMain.handle(IPC_CHANNELS.workspaceCommandStart, async (event, command: string) => {
+		if (typeof command !== 'string' || !command.trim() || command.length > 4000) throw new Error('命令无效或过长');
+		const win = BrowserWindow.fromWebContents(event.sender);
+		if (!win || win.isDestroyed() || event.senderFrame !== win.webContents.mainFrame) throw new Error('无法确认命令来源');
+		const cwd = getWorkspace();
+		if (!cwd) throw new Error('请先打开工作区');
+		const english = getAppLocale() === 'en-US';
+		const result = await dialog.showMessageBox(win, {
+			type: 'warning',
+			buttons: english ? ['Cancel', 'Run command'] : ['取消', '运行命令'],
+			defaultId: 0,
+			cancelId: 0,
+			noLink: true,
+			message: english ? 'Run this command on your computer?' : '要在本机运行此命令吗？',
+			detail: `${english ? 'Workspace' : '工作区'}: ${cwd}\n\n${command}`,
+		});
+		// An empty id means the user cancelled; no process is started.
+		if (result.response !== 1) return '';
+		if (win.isDestroyed() || event.sender.isDestroyed()) return '';
+		if (getWorkspace() !== cwd) throw new Error(english ? 'Workspace changed; run the command again.' : '工作区已切换，请重新运行命令');
+		return service.startCommand(command, cwd);
+	});
 	ipcMain.handle(IPC_CHANNELS.workspaceCommandStop, (_event, id: string) => service.stopCommand(id));
 	return service;
 }

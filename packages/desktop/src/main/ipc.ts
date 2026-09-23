@@ -6,7 +6,7 @@
  */
 
 import { app, BrowserWindow, dialog, ipcMain, type IpcMainInvokeEvent } from 'electron';
-import { mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { statSync } from 'node:fs';
 import { join } from 'node:path';
 import { IPC_CHANNELS, type AgentEventEnvelope, type AppLocale, type UiAttachment, type UiExtensionDialogRequest, type UiSessionMetaPatch, type UiThinkingLevel } from '@pidesktop/shared';
 import { createIsolatedAgentService } from './agentClient';
@@ -15,6 +15,7 @@ import { updateService } from './updateService';
 export { updateService } from './updateService';
 import { registerWorkbenchIpc } from './workbenchIpc';
 import type { WorkbenchService } from './workbenchService';
+import { backupCorruptStateFile, CorruptStateFileError, readStateFile, writeStateFile } from './stateFiles';
 
 type PendingDialog = {
 	request: UiExtensionDialogRequest;
@@ -88,10 +89,21 @@ interface WorkspaceSettings { cwd?: string; workspaces?: string[] }
 let activeWorkspace = '';
 const pickedWorkspaces = new Set<string>();
 const sessionOwnerByPath = new Map<string, string>();
+const MAX_PICKED_WORKSPACES = 16;
+const MAX_CACHED_SESSION_OWNERS = 4096;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isWorkspaceSettings(value: unknown): value is WorkspaceSettings {
+	return isRecord(value)
+		&& (value.cwd === undefined || typeof value.cwd === 'string')
+		&& (value.workspaces === undefined || (Array.isArray(value.workspaces) && value.workspaces.every((cwd) => typeof cwd === 'string')));
+}
 
 function readWorkspaceSettings(): WorkspaceSettings {
-	try { return JSON.parse(readFileSync(workspaceSettingsPath(), 'utf8')) as WorkspaceSettings; }
-	catch { return {}; }
+	return readStateFile(workspaceSettingsPath(), () => ({}), isWorkspaceSettings);
 }
 
 function workspaceSettingsPath(): string {
@@ -99,15 +111,28 @@ function workspaceSettingsPath(): string {
 }
 
 export function defaultWorkspace(): string {
+	let saved: WorkspaceSettings;
 	try {
-		const saved = readWorkspaceSettings();
+		saved = readWorkspaceSettings();
+	} catch (error) {
+		if (!(error instanceof CorruptStateFileError)) {
+			dialog.showErrorBox(getAppLocale() === 'en-US' ? 'Workspace settings could not be read' : '无法读取工作区设置', String(error));
+			throw error;
+		}
+		const backup = backupCorruptStateFile(workspaceSettingsPath());
+		const english = getAppLocale() === 'en-US';
+		dialog.showErrorBox(english ? 'Workspace settings recovered' : '工作区设置已恢复',
+			english ? `The damaged settings were saved to:\n${backup}\n\nA default workspace will open. You can restore your old workspace list from the backup.`
+				: `损坏的设置已备份到：\n${backup}\n\n将打开默认工作区。你可以从备份中恢复旧工作区列表。`);
+		saved = {};
+	}
+	try {
 		if (typeof saved.cwd === 'string' && statSync(saved.cwd).isDirectory()) {
-			saveWorkspace(saved.cwd);
 			activeWorkspace = saved.cwd;
 			return saved.cwd;
 		}
 	} catch {
-		// First launch or a workspace that no longer exists.
+		// A saved workspace may have been moved or removed.
 	}
 	const cwd = join(app.getPath('home'), 'PiDesktopWorkspace');
 	saveWorkspace(cwd);
@@ -119,8 +144,7 @@ function saveWorkspace(cwd: string): void {
 	const previous = readWorkspaceSettings();
 	const workspaces = [...new Set([...(Array.isArray(previous.workspaces) ? previous.workspaces : []), previous.cwd, cwd]
 		.filter((value): value is string => typeof value === 'string' && value.length > 0))];
-	mkdirSync(app.getPath('userData'), { recursive: true });
-	writeFileSync(workspaceSettingsPath(), JSON.stringify({ cwd, workspaces }), 'utf8');
+	writeStateFile(workspaceSettingsPath(), { cwd, workspaces });
 }
 
 function listWorkspaces(): string[] {
@@ -132,13 +156,52 @@ function listWorkspaces(): string[] {
 
 type SessionMeta = Omit<UiSessionMetaPatch, 'name'>;
 function sessionMetaPath(): string { return join(app.getPath('userData'), 'sessions-meta.json'); }
+function isSessionMeta(value: unknown): value is Record<string, SessionMeta> {
+	return isRecord(value) && Object.values(value).every((entry) => isRecord(entry)
+		&& ['pinned', 'archived', 'unread'].every((key) => entry[key] === undefined || typeof entry[key] === 'boolean'));
+}
 function readSessionMeta(): Record<string, SessionMeta> {
-	try { return JSON.parse(readFileSync(sessionMetaPath(), 'utf8')) as Record<string, SessionMeta>; }
-	catch { return {}; }
+	try {
+		return readStateFile(sessionMetaPath(), () => ({}), isSessionMeta);
+	} catch (error) {
+		if (!(error instanceof CorruptStateFileError)) throw error;
+		const backup = backupCorruptStateFile(sessionMetaPath());
+		const english = getAppLocale() === 'en-US';
+		dialog.showErrorBox(english ? 'Session metadata recovered' : '会话信息已恢复',
+			english ? `The damaged session metadata was saved to:\n${backup}\n\nPinned, archived, and unread flags can be restored from the backup.`
+				: `损坏的会话信息已备份到：\n${backup}\n\n置顶、归档和未读状态可以从备份中恢复。`);
+		return {};
+	}
 }
 function saveSessionMeta(meta: Record<string, SessionMeta>): void {
-	mkdirSync(app.getPath('userData'), { recursive: true });
-	writeFileSync(sessionMetaPath(), JSON.stringify(meta), 'utf8');
+	writeStateFile(sessionMetaPath(), meta);
+}
+
+function rememberSessionOwner(path: string, cwd: string): void {
+	sessionOwnerByPath.delete(path);
+	sessionOwnerByPath.set(path, cwd);
+	if (sessionOwnerByPath.size > MAX_CACHED_SESSION_OWNERS) {
+		const oldest = sessionOwnerByPath.keys().next().value;
+		if (oldest !== undefined) sessionOwnerByPath.delete(oldest);
+	}
+}
+
+async function activateWorkspace(cwd: string, initialize: boolean): Promise<void> {
+	if (typeof cwd !== 'string' || (!listWorkspaces().includes(cwd) && !pickedWorkspaces.has(cwd))) throw new Error('未知工作区');
+	if (!statSync(cwd).isDirectory()) throw new Error('工作区目录无效');
+	await workbenchService?.dispose();
+	const previous = activeWorkspace;
+	activeWorkspace = cwd;
+	try {
+		if (initialize) await agentService.init({ cwd });
+		else await agentService.switchWorkspace(cwd);
+	} catch (error) {
+		activeWorkspace = previous;
+		throw error;
+	}
+	saveWorkspace(cwd);
+	pickedWorkspaces.delete(cwd);
+	markSessionRead((await agentService.getSnapshot()).sessionPath);
 }
 
 function markSessionRead(path: string | null): void {
@@ -165,9 +228,13 @@ export function registerIpc(): void {
 		}
 	});
 	agentService.onBackgroundActivity((_, path) => {
-		const meta = readSessionMeta();
-		meta[path] = { ...meta[path], unread: true };
-		saveSessionMeta(meta);
+		try {
+			const meta = readSessionMeta();
+			meta[path] = { ...meta[path], unread: true };
+			saveSessionMeta(meta);
+		} catch (error) {
+			console.error('Failed to save session activity metadata:', error);
+		}
 	});
 
 	ipcMain.handle(IPC_CHANNELS.appInfo, () => ({
@@ -202,49 +269,25 @@ export function registerIpc(): void {
 		});
 		if (result.canceled || result.filePaths.length === 0) return null;
 		const selected = result.filePaths[0] ?? null;
-		if (selected) pickedWorkspaces.add(selected);
+		if (selected) {
+			pickedWorkspaces.delete(selected);
+			pickedWorkspaces.add(selected);
+			if (pickedWorkspaces.size > MAX_PICKED_WORKSPACES) {
+				const oldest = pickedWorkspaces.values().next().value;
+				if (oldest !== undefined) pickedWorkspaces.delete(oldest);
+			}
+		}
 		return selected;
 	});
 	ipcMain.handle(IPC_CHANNELS.agentListWorkspaces, () => listWorkspaces());
-	ipcMain.handle(IPC_CHANNELS.workspaceSwitch, async (_event, cwd: string) => {
-		if (typeof cwd !== 'string' || (!listWorkspaces().includes(cwd) && !pickedWorkspaces.has(cwd))) throw new Error('未知工作区');
-		if (!statSync(cwd).isDirectory()) throw new Error('工作区目录无效');
-		await workbenchService?.dispose();
-		const previous = activeWorkspace;
-		activeWorkspace = cwd;
-		try {
-			await agentService.switchWorkspace(cwd);
-			saveWorkspace(cwd);
-			pickedWorkspaces.delete(cwd);
-			markSessionRead((await agentService.getSnapshot()).sessionPath);
-		} catch (error) {
-			activeWorkspace = previous;
-			throw error;
-		}
-	});
-
-	ipcMain.handle(IPC_CHANNELS.agentInit, async (_event, cwd: string) => {
-		if (typeof cwd !== 'string' || (!listWorkspaces().includes(cwd) && !pickedWorkspaces.has(cwd))) throw new Error('未知工作区');
-		if (!statSync(cwd).isDirectory()) throw new Error('工作区目录无效');
-		await workbenchService?.dispose();
-		const previous = activeWorkspace;
-		activeWorkspace = cwd;
-		try {
-			await agentService.init({ cwd });
-			saveWorkspace(cwd);
-			pickedWorkspaces.delete(cwd);
-			markSessionRead((await agentService.getSnapshot()).sessionPath);
-		} catch (error) {
-			activeWorkspace = previous;
-			throw error;
-		}
-	});
+	ipcMain.handle(IPC_CHANNELS.workspaceSwitch, (_event, cwd: string) => activateWorkspace(cwd, false));
+	ipcMain.handle(IPC_CHANNELS.agentInit, (_event, cwd: string) => activateWorkspace(cwd, true));
 	ipcMain.handle(IPC_CHANNELS.agentSnapshot, () => agentService.getSnapshot());
 	ipcMain.handle(IPC_CHANNELS.agentListSessions, async (_event, cwd?: string) => {
 		const targetCwd = cwd ?? activeWorkspace;
 		if (targetCwd && !listWorkspaces().includes(targetCwd)) throw new Error('未知工作区');
 		const sessions = await agentService.listSessions(targetCwd);
-		for (const session of sessions) sessionOwnerByPath.set(session.path, targetCwd);
+		for (const session of sessions) rememberSessionOwner(session.path, targetCwd);
 		const meta = readSessionMeta();
 		return sessions.map((session) => ({ ...session, ...meta[session.path] }));
 	});
@@ -257,10 +300,11 @@ export function registerIpc(): void {
 		let owner: string | undefined;
 		const cached = sessionOwnerByPath.get(path);
 		if (cached && (await agentService.listSessions(cached)).some((session) => session.path === path)) owner = cached;
+		else sessionOwnerByPath.delete(path);
 		if (!owner) {
 			const owners = await Promise.all(listWorkspaces().map(async (cwd) => ({ cwd, sessions: await agentService.listSessions(cwd) })));
 			owner = owners.find(({ sessions }) => sessions.some((session) => session.path === path))?.cwd;
-			if (owner) sessionOwnerByPath.set(path, owner);
+			if (owner) rememberSessionOwner(path, owner);
 		}
 		if (!owner) throw new Error('未找到会话');
 		if (patch.name !== undefined) await agentService.renameSession(path, patch.name, owner);
@@ -293,7 +337,7 @@ export function registerIpc(): void {
 	ipcMain.handle(IPC_CHANNELS.agentNewSession, () => agentService.newSession());
 	ipcMain.handle(IPC_CHANNELS.agentExtensionDialogPending, () => [...pendingDialogs.values()].map(({ request }) => request));
 	ipcMain.handle(IPC_CHANNELS.agentExtensionDialogResponse, (_event, id: string, value: string | boolean | null) => {
-		if (typeof id !== 'string' || !['string', 'boolean'].includes(typeof value) && value !== null) throw new Error('交互结果无效');
+		if (typeof id !== 'string' || (!['string', 'boolean'].includes(typeof value) && value !== null)) throw new Error('交互结果无效');
 		pendingDialogs.get(id)?.resolve(value);
 	});
 }

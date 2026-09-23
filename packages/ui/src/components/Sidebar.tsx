@@ -99,6 +99,8 @@ export function Sidebar({ open, narrow, onToggle, onNavigate, onOpenSettings }: 
 	const searchRef = useRef<HTMLInputElement>(null);
 	const renameRef = useRef<HTMLInputElement>(null);
 	const renameCancelledRef = useRef(false);
+	const listedWorkspacesRef = useRef(new Set<string>());
+	const listedBridgeRef = useRef<typeof bridge>(null);
 	const collapsed = !open && !narrow;
 	const workspacePaths = useMemo(() => cwd && !workspaces.includes(cwd) ? [cwd, ...workspaces] : workspaces, [cwd, workspaces]);
 	const workspaceKey = workspacePaths.join('\u0000');
@@ -126,14 +128,19 @@ export function Sidebar({ open, narrow, onToggle, onNavigate, onOpenSettings }: 
 	}, [cwd]);
 
 	useEffect(() => {
-		if (!bridge) return;
-		void refreshWorkspaces();
-	}, [bridge, refreshWorkspaces]);
-
-	useEffect(() => {
 		if (!bridge || !workspaceKey) return;
-		void Promise.allSettled(workspacePaths.map((path) => refreshWorkspaceSessions(path)));
-	}, [bridge, workspaceKey, refreshWorkspaceSessions]);
+		if (listedBridgeRef.current !== bridge) {
+			listedBridgeRef.current = bridge;
+			listedWorkspacesRef.current.clear();
+		}
+		for (const path of workspacePaths) {
+			// The store already loads the active workspace. Only fetch newly seen
+			// inactive projects; explicit Refresh still reloads every project.
+			if (path === cwd || Object.hasOwn(sessionsByWorkspace, path) || listedWorkspacesRef.current.has(path)) continue;
+			listedWorkspacesRef.current.add(path);
+			void refreshWorkspaceSessions(path);
+		}
+	}, [bridge, workspaceKey, cwd, refreshWorkspaceSessions]);
 
 	useEffect(() => {
 		if (!menuPath) return;

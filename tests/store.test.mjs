@@ -27,11 +27,12 @@ function deferred() {
   return { promise, resolve };
 }
 
-function createBridge({ snapshot = baseSnapshot, onPrompt, workspaces = ['C:\\workspace'], sessionsByCwd = {} } = {}) {
+function createBridge({ snapshot = baseSnapshot, onPrompt, onListSessions, workspaces = ['C:\\workspace'], sessionsByCwd = {} } = {}) {
   const listeners = new Set();
   const prompts = [];
   const settingsCalls = [];
   const workspaceSwitches = [];
+  const sessionListCalls = [];
   const models = [{ provider: 'test-provider', id: 'next-model', name: 'Next Model', reasoning: true, input: ['text'], contextWindow: 100000, maxTokens: 4096 }];
   const bridge = {
     getAppInfo: async () => ({
@@ -50,7 +51,10 @@ function createBridge({ snapshot = baseSnapshot, onPrompt, workspaces = ['C:\\wo
       for (const listener of listeners) listener({ sequence: 22, event: { type: 'status', status: 'idle' } });
     },
     getAgentSnapshot: () => Promise.resolve(snapshot),
-    listSessions: async (cwd) => sessionsByCwd[cwd ?? baseSnapshot.cwd] ?? [],
+    listSessions: async (cwd) => {
+      sessionListCalls.push(cwd);
+      return onListSessions ? onListSessions(cwd) : sessionsByCwd[cwd ?? baseSnapshot.cwd] ?? [];
+    },
     switchSession: async () => {},
     listModels: async () => models,
     setModel: async (provider, id) => {
@@ -80,6 +84,8 @@ function createBridge({ snapshot = baseSnapshot, onPrompt, workspaces = ['C:\\wo
     prompts,
     settingsCalls,
     workspaceSwitches,
+    sessionListCalls,
+    get listenerCount() { return listeners.size; },
     emit(sequence, event) {
       for (const listener of listeners) listener({ sequence, event });
     },
@@ -90,6 +96,81 @@ const settle = () => new Promise((resolve) => setImmediate(resolve));
 
 beforeEach(() => {
   useChatStore.setState(useChatStore.getInitialState(), true);
+});
+
+test('replacing the bridge unsubscribes old events and ignores its late snapshot', async () => {
+  const oldSnapshot = deferred();
+  const oldHost = createBridge({ snapshot: oldSnapshot.promise });
+  const newHost = createBridge({ snapshot: { ...baseSnapshot, cwd: 'D:\\new-workspace', sessionId: 'new-session' } });
+  useChatStore.getState().setBridge(oldHost.bridge);
+  assert.equal(oldHost.listenerCount, 1);
+  useChatStore.getState().setBridge(newHost.bridge);
+  assert.equal(oldHost.listenerCount, 0);
+  await settle();
+
+  oldHost.emit(50, { type: 'status', status: 'error', message: 'stale event' });
+  oldSnapshot.resolve({ ...baseSnapshot, status: 'error', cwd: 'C:\\old-workspace' });
+  await settle();
+
+  assert.equal(useChatStore.getState().cwd, 'D:\\new-workspace');
+  assert.equal(useChatStore.getState().status, 'idle');
+  assert.equal(useChatStore.getState().sessionId, 'new-session');
+});
+
+test('idle refresh runs on state transitions but not repeated idle events', async () => {
+  const host = createBridge();
+  useChatStore.getState().setBridge(host.bridge);
+  await settle();
+  assert.deepEqual(host.sessionListCalls, [baseSnapshot.cwd]);
+
+  host.emit(2, { type: 'status', status: 'idle' });
+  assert.equal(host.sessionListCalls.length, 1);
+  host.emit(3, { type: 'status', status: 'busy' });
+  host.emit(4, { type: 'status', status: 'idle' });
+  host.emit(5, { type: 'status', status: 'idle' });
+  await settle();
+  assert.equal(host.sessionListCalls.length, 2);
+});
+
+test('startup initialization loads existing sessions after the first idle event', async () => {
+  const savedSession = { path: 'saved.jsonl', id: 'saved', firstMessage: 'Earlier conversation', modified: new Date().toISOString(), messageCount: 1 };
+  const host = createBridge({
+    snapshot: { ...baseSnapshot, status: 'uninitialized', cwd: '', sessionId: null, sessionPath: null },
+    sessionsByCwd: { [baseSnapshot.cwd]: [savedSession] },
+  });
+  useChatStore.getState().setBridge(host.bridge);
+  await settle();
+  assert.deepEqual(host.sessionListCalls, []);
+
+  host.emit(2, { type: 'reset', cwd: baseSnapshot.cwd });
+  host.emit(3, { type: 'status', status: 'starting' });
+  host.emit(4, {
+    type: 'ready', cwd: baseSnapshot.cwd, sessionId: baseSnapshot.sessionId, sessionPath: baseSnapshot.sessionPath,
+    model: baseSnapshot.model, modelProvider: baseSnapshot.modelProvider,
+    thinkingLevel: baseSnapshot.thinkingLevel, availableThinkingLevels: baseSnapshot.availableThinkingLevels,
+    messages: [], activities: [],
+  });
+  host.emit(5, { type: 'status', status: 'idle' });
+  await settle();
+  assert.deepEqual(host.sessionListCalls, [baseSnapshot.cwd]);
+  assert.deepEqual(useChatStore.getState().sessions, [savedSession]);
+});
+
+test('late session lists from an old bridge do not replace new data', async () => {
+  const oldList = deferred();
+  const oldHost = createBridge({ onListSessions: () => oldList.promise });
+  useChatStore.getState().setBridge(oldHost.bridge);
+  await settle();
+  assert.equal(oldHost.sessionListCalls.length, 1);
+
+  const currentSession = { path: 'new.jsonl', id: 'new', firstMessage: 'new', modified: new Date().toISOString(), messageCount: 1 };
+  const newHost = createBridge({ sessionsByCwd: { [baseSnapshot.cwd]: [currentSession] } });
+  useChatStore.getState().setBridge(newHost.bridge);
+  await settle();
+  oldList.resolve([{ ...currentSession, path: 'old.jsonl', id: 'old' }]);
+  await settle();
+
+  assert.deepEqual(useChatStore.getState().sessions, [currentSession]);
 });
 
 test('snapshot and push events converge when they interleave during startup', async () => {

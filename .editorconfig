@@ -1,0 +1,28 @@
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = tab
+indent_size = 2
+
+[*.{json,yml,yaml,md,mjs,py}]
+indent_style = space
+indent_size = 2
+
+[*.py]
+indent_size = 4
+
+[packages/shared/**]
+indent_style = space
+indent_size = 2
+
+[packages/ui/src/i18n.ts]
+indent_style = space
+indent_size = 2
+
+[packages/desktop/src/main/splash.ts]
+indent_style = space
+indent_size = 2

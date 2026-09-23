@@ -3,6 +3,7 @@
   "private": true,
   "version": "0.1.0",
   "description": "Desktop workbench for the Pi coding agent (Electron + React), inspired by ZCode's architecture",
+  "license": "MIT",
   "type": "module",
   "packageManager": "pnpm@11.11.0",
   "engines": {
@@ -20,6 +21,7 @@
     "clean": "pnpm -r --if-present clean"
   },
   "devDependencies": {
+    "@earendil-works/pi-coding-agent": "^0.87.1",
     "yaml": "2.9.0"
   }
 }

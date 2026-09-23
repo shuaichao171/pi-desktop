@@ -1,7 +1,6 @@
 node_modules/
 dist/
 out/
-packages/desktop/index.js
 release/
 reference/
 .pi/
