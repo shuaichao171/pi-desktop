@@ -33,3 +33,6 @@ nsis:
 
 portable:
   artifactName: Pi-Desktop-Portable-${version}-${arch}.${ext}
+  # The one-file portable target extracts Electron before the main process runs.
+  # Show a native bitmap during extraction, before the in-app splash can appear.
+  splashImage: build/portable-splash.bmp

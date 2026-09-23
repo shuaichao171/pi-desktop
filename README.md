@@ -54,6 +54,6 @@ pnpm pack:dir  # release/win-unpacked/
 pnpm dist:win  # 安装版 + 便携版
 ```
 
-输出位于 `release/`：`Pi-Desktop-Setup-<version>-x64.exe` 和 `Pi-Desktop-Portable-<version>-x64.exe`。当前构建未签名，尚未接入应用内自动更新。Windows 图标源文件是 `packages/desktop/build/icon.svg`；修改后可运行 `python scripts/make-icon.py` 重新生成 PNG 与 ICO（需 Pillow）。
+输出位于 `release/`：`Pi-Desktop-Setup-<version>-x64.exe` 和 `Pi-Desktop-Portable-<version>-x64.exe`。Portable 是单文件自解压包，每次启动都要先解压 Electron 和应用文件；解压期间会显示原生启动图。日常使用推荐安装 Setup 版，从其快捷方式启动可跳过每次解压。当前构建未签名，尚未接入应用内自动更新。Windows 图标源文件是 `packages/desktop/build/icon.svg`；修改后可运行 `python scripts/make-icon.py` 重新生成 PNG 与 ICO，再运行 `python scripts/make-portable-splash.py` 更新便携版启动图（均需 Pillow）。
 
 提交到 `main` 或提交 PR 会触发 Windows CI。推送与应用版本一致的 `v*` 标签会生成安装版与便携版，并创建**草稿 Release**；维护者检查后再发布。详细发布、签名、自动更新及其他平台的建议见 [发布指南](docs/RELEASE.md)。
