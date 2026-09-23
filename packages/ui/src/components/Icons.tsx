@@ -18,7 +18,13 @@ type IconName =
 	| 'maximize'
 	| 'restore'
 	| 'chevronRight'
-	| 'chevronDown';
+	| 'chevronDown'
+	| 'more'
+	| 'archive'
+	| 'panelRight'
+	| 'file'
+	| 'gitBranch'
+	| 'terminal';
 
 const paths: Record<IconName, ReactNode> = {
 	panel: <><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M9 4v16" /></>,
@@ -39,6 +45,12 @@ const paths: Record<IconName, ReactNode> = {
 	restore: <><path d="M8 6V4h12v12h-2" /><rect x="4" y="8" width="12" height="12" rx="1" /></>,
 	chevronRight: <path d="m9 5 7 7-7 7" />,
 	chevronDown: <path d="m5 9 7 7 7-7" />,
+	more: <><circle cx="5" cy="12" r="1" fill="currentColor" stroke="none" /><circle cx="12" cy="12" r="1" fill="currentColor" stroke="none" /><circle cx="19" cy="12" r="1" fill="currentColor" stroke="none" /></>,
+	archive: <><rect x="3" y="4" width="18" height="4" rx="1" /><path d="M5 8v11a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8M10 12h4" /></>,
+	panelRight: <><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M15 4v16" /></>,
+	file: <><path d="M6 3h8l4 4v14H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z" /><path d="M14 3v5h5" /></>,
+	gitBranch: <><circle cx="6" cy="5" r="2" /><circle cx="6" cy="19" r="2" /><circle cx="18" cy="7" r="2" /><path d="M6 7v10M18 9a8 8 0 0 1-8 8H8" /></>,
+	terminal: <><rect x="3" y="4" width="18" height="16" rx="2" /><path d="m7 9 3 3-3 3M12 15h5" /></>,
 };
 
 export function Icon({ name, ...props }: SVGProps<SVGSVGElement> & { name: IconName }) {

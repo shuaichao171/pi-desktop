@@ -1,87 +1,59 @@
 # Pi Desktop
 
-基于 [pi coding agent](https://github.com/earendil-works/pi) SDK 的桌面工作台，采用 Electron + React，界面结构参考 ZCode。实际 Agent、工具、扩展、模型与会话文件均由 pi SDK 管理。
+基于 [Pi coding agent](https://github.com/earendil-works/pi) SDK 的 Windows 桌面工作台。界面布局参考 ZCode；Agent、模型、工具、扩展与会话文件仍由 Pi 管理。本项目独立开发，未修改 Pi 的工具执行与审批逻辑。
+
+## 功能
+
+- 流式对话、Markdown、完整的消息与工具调用时间线；可展开、复制工具输出
+- 选择模型和思考级别、管理 provider API Key、中止生成，以及忙时 follow-up / steer
+- 图片和文本附件；图片进入 Pi 的图像输入，文本文件附在提示词中
+- 多工作区项目树与会话列表；切换时保留后台 Pi 运行环境，可重命名、置顶、归档和标记未读
+- Pi 扩展的通知、选择、确认、输入与编辑交互；设置中可查看并启用／禁用扩展
+- 工作台文件树、UTF-8 文件预览、Git 状态和差异，以及按需运行单条命令并查看输出
+- 可调整宽度的侧栏、深色／浅色／跟随系统主题、中英文界面、启动画面和单实例窗口
+
+命令面板运行的是**单条 PowerShell 命令**，可停止并查看输出；它不是交互式 PTY 终端。文件预览和 Git 差异有 1 MB 限制。扩展开关会重新加载当前 Pi 会话，其他已打开的会话可能需要重新打开才能应用新配置。文本草稿按工作区和会话保存在本地；未发送的附件仅保留在当前窗口，应用重启后需要重新添加。
 
 ## 架构
 
-```
-┌─────────────────────────────────────────────────────────┐
-│ Electron 主进程 (Node, ESM)                             │
-│                                                         │
-│   @pidesktop/agent                                      │
-│   ┌───────────────────────────────────────────────┐     │
-│   │ AgentService                                   │     │
-│   │  createAgentSessionRuntime()  ← pi SDK 进程内  │     │
-│   │  session.subscribe() → AgentUiEvent 归一化     │     │
-│   │  SessionManager → 最近会话恢复 / 历史切换       │     │
-│   └──────────────────┬────────────────────────────┘     │
-│                      │ ipcMain.handle / webContents.send│
-│   @pidesktop/preload桥 (contextBridge → window.piDesktop)│
-├─────────────────────────────────────────────────────────┤
-│ 渲染进程 (Chromium)                                     │
-│   @pidesktop/ui — React 19 + Zustand + Tailwind v4      │
-│   AppShell / Sidebar / ChatView / Composer              │
-└─────────────────────────────────────────────────────────┘
+```text
+React UI ── window.piDesktop ── Electron preload ── Electron main
+                                                     ├─ 工作区 / Git / 命令服务
+                                                     └─ utilityProcess RPC ── Pi SDK / AgentService
 ```
 
-## Monorepo 布局
+Pi SDK 在独立的 Electron utility process 中运行，避免 SDK 初始化或工具运行阻塞主窗口。主进程负责原生窗口、文件夹选择、项目信任提示和受限的 IPC 桥；渲染进程不直接访问 Node 或 `ipcRenderer`。
 
-| 包 | 职责 |
+| 目录 | 职责 |
 | --- | --- |
-| `packages/shared` | IPC 契约：通道名、`AgentUiEvent`、`AgentBridge` 接口 |
-| `packages/agent` | pi SDK 服务层：会话生命周期 + 事件归一化（跑在主进程） |
-| `packages/ui` | React 聊天界面 + zustand store（不依赖 Electron API） |
-| `packages/desktop` | Electron 壳：main / preload / renderer，electron-vite 构建 |
+| `packages/agent` | Pi SDK 会话运行环境、事件与附件适配 |
+| `packages/shared` | 主进程、preload 与 UI 共用的类型和通道契约 |
+| `packages/desktop` | Electron 壳、utility process、工作台服务和打包配置 |
+| `packages/ui` | React 界面、状态管理与双语文案 |
 
-本地 `reference/pi` 与 `reference/zcode` 仅用于设计参考；`reference/` 已从 Git 和安装包中排除。
+`reference/` 仅作设计参考，已从 Git 和安装包排除。
 
 ## 开发
 
-要求：Windows 10/11、Node ≥ 22.19、pnpm 11.11.0。可用 `corepack enable` 启用与 `package.json` 指定版本一致的 pnpm。
+需要 Windows 10/11、Node.js ≥ 22.19、pnpm 11.11.0。首次安装会从 Electron 官方发布源下载运行时。
 
 ```bash
 pnpm install --frozen-lockfile
-pnpm dev          # 启动 Electron + HMR
-pnpm typecheck    # 全部包类型检查
-pnpm test         # 状态同步、发送、设置与项目信任回归测试
-pnpm build        # 产出 packages/desktop/out/
+pnpm dev
+pnpm typecheck
+pnpm test
+pnpm build
 ```
 
-模型与凭据沿用 `~/.pi` 里已有的 pi CLI 配置，也可以在应用设置页选择模型、调整思考级别和添加或删除 provider API Key。API Key 由 pi 的凭据存储管理，不会回传到渲染进程。首次默认工作区是 `~/PiDesktopWorkspace`；在左侧切换文件夹后，下次启动会继续使用该工作区，并恢复其最近的 pi 会话。无可用模型或凭据时，发送框会保留草稿并显示 pi 返回的错误。
-
-首次打开含 `.pi` 或 `.agents` 项目资源的工作区时，应用会询问是否信任。可选择不信任、仅本次信任或始终信任；不信任仍能打开文件夹，但会跳过该工作区的设置、技能和扩展。扩展可能执行本机代码，因此只信任来源明确的工作区。持久化的选择由 pi 的 `ProjectTrustStore` 管理。
-
-`.npmrc` 未启用 Electron 二进制镜像；首次安装时需从 Electron 官方发布源下载运行时。
+模型和凭据沿用 Pi CLI 的 `~/.pi` 配置。首次默认工作区是 `~/PiDesktopWorkspace`，之后会恢复上次工作区及其 Pi 会话。打开包含 `.pi` 或 `.agents` 项目资源的文件夹时，应用会询问是否信任；持久化选择由 Pi 的 `ProjectTrustStore` 管理。不信任仍可打开文件夹，但不加载该工作区的设置、技能和扩展。
 
 ## Windows 打包
 
 ```bash
-pnpm pack:dir     # 构建并生成 release/win-unpacked/，便于本地验证
-pnpm dist:win     # 生成安装版和便携版 .exe
+pnpm pack:dir  # release/win-unpacked/
+pnpm dist:win  # 安装版 + 便携版
 ```
 
-安装包与便携版都在 `release/`：`Pi-Desktop-Setup-<version>-x64.exe` 和 `Pi-Desktop-Portable-<version>-x64.exe`。该目录已加入 `.gitignore`。图标源文件位于 `packages/desktop/build/icon.svg`，Windows 打包使用同目录的 `icon.ico`。修改图标后可使用 `python scripts/make-icon.py` 重新生成 PNG 和 ICO（需 Pillow）。
+输出位于 `release/`：`Pi-Desktop-Setup-<version>-x64.exe` 和 `Pi-Desktop-Portable-<version>-x64.exe`。当前构建未签名，尚未接入应用内自动更新。Windows 图标源文件是 `packages/desktop/build/icon.svg`；修改后可运行 `python scripts/make-icon.py` 重新生成 PNG 与 ICO（需 Pillow）。
 
-打包配置只收录编译后的 `out/`、桌面应用的 `package.json` 和运行时依赖。pi SDK 的代码、资源与原生模块随应用打包；本地 `reference/`、测试截图和开发配置不会进入安装包。当前 Windows 构建未签名，也不提供应用内自动更新。
-
-## GitHub CI 与发布
-
-`.github/workflows/ci.yml` 在提交到 `main` 或创建 PR 时执行安装、类型检查、测试、构建与 Windows 解包验证。推送 `v*` 标签会触发 `.github/workflows/release.yml`，生成两个 Windows 构建，并创建包含安装包的 **草稿 Release**，供维护者检查后发布。
-
-发布前将根目录和 `packages/desktop/package.json` 的 `version` 更新为同一版本，再运行 `pnpm install --lockfile-only` 更新锁文件。提交并推送代码后创建与版本一致的标签，例如 `v0.1.0`。GitHub Actions 使用仓库自带的 `GITHUB_TOKEN` 上传草稿，无需额外密钥。
-
-## 当前支持
-
-- 端到端流式对话、Markdown 渲染，以及可展开的工具运行详情和文本输出
-- 中止运行、忙时排队 follow-up 与 steer、创建新会话
-- 按工作区列出、搜索并切换 pi 的持久化会话，启动时恢复最近会话
-- 主进程状态快照与增量事件同步，避免窗口加载期间丢失状态
-- 原生文件夹选择器与最近工作区记忆
-- 设置页中的模型选择、思考级别与 provider API Key 管理
-- 工作区 `.pi` / `.agents` 项目资源的信任确认
-
-## 后续方向
-
-1. 代码差异视图与图片消息
-2. 应用内自动更新和 Windows 代码签名
-3. 浅色主题
+提交到 `main` 或提交 PR 会触发 Windows CI。推送与应用版本一致的 `v*` 标签会生成安装版与便携版，并创建**草稿 Release**；维护者检查后再发布。详细发布、签名、自动更新及其他平台的建议见 [发布指南](docs/RELEASE.md)。

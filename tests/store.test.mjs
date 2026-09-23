@@ -27,10 +27,11 @@ function deferred() {
   return { promise, resolve };
 }
 
-function createBridge({ snapshot = baseSnapshot, onPrompt } = {}) {
+function createBridge({ snapshot = baseSnapshot, onPrompt, workspaces = ['C:\\workspace'], sessionsByCwd = {} } = {}) {
   const listeners = new Set();
   const prompts = [];
   const settingsCalls = [];
+  const workspaceSwitches = [];
   const models = [{ provider: 'test-provider', id: 'next-model', name: 'Next Model', reasoning: true, input: ['text'], contextWindow: 100000, maxTokens: 4096 }];
   const bridge = {
     getAppInfo: async () => ({
@@ -41,8 +42,15 @@ function createBridge({ snapshot = baseSnapshot, onPrompt } = {}) {
     }),
     pickWorkspace: async () => null,
     initAgent: async () => {},
+    listWorkspaces: async () => workspaces,
+    switchWorkspace: async (cwd) => {
+      workspaceSwitches.push(cwd);
+      for (const listener of listeners) listener({ sequence: 20, event: { type: 'reset', cwd } });
+      for (const listener of listeners) listener({ sequence: 21, event: { type: 'ready', model: 'test-model', modelProvider: 'test-provider', thinkingLevel: 'medium', availableThinkingLevels: ['off', 'low', 'medium', 'high'], cwd, sessionId: 'other-session', sessionPath: `${cwd}\\session.jsonl`, messages: [], activities: [] } });
+      for (const listener of listeners) listener({ sequence: 22, event: { type: 'status', status: 'idle' } });
+    },
     getAgentSnapshot: () => Promise.resolve(snapshot),
-    listSessions: async () => [],
+    listSessions: async (cwd) => sessionsByCwd[cwd ?? baseSnapshot.cwd] ?? [],
     switchSession: async () => {},
     listModels: async () => models,
     setModel: async (provider, id) => {
@@ -56,9 +64,9 @@ function createBridge({ snapshot = baseSnapshot, onPrompt } = {}) {
     listProviderAuth: async () => [{ provider: 'test-provider', configured: false }],
     setProviderApiKey: async (provider, key) => { settingsCalls.push(['api-key', provider, key]); },
     removeProviderCredential: async (provider) => { settingsCalls.push(['remove-key', provider]); },
-    async prompt(text, behavior) {
-      prompts.push([text, behavior]);
-      await onPrompt?.(text, behavior);
+    async prompt(text, behavior, attachments) {
+      prompts.push(attachments ? [text, behavior, attachments] : [text, behavior]);
+      await onPrompt?.(text, behavior, attachments);
     },
     abort: async () => {},
     newSession: async () => {},
@@ -71,6 +79,7 @@ function createBridge({ snapshot = baseSnapshot, onPrompt } = {}) {
     bridge,
     prompts,
     settingsCalls,
+    workspaceSwitches,
     emit(sequence, event) {
       for (const listener of listeners) listener({ sequence, event });
     },
@@ -193,4 +202,30 @@ test('model and credential settings use the bridge without retaining the API key
     ['remove-key', 'test-provider'],
   ]);
   assert.equal(JSON.stringify(state).includes('sample-secret'), false);
+});
+
+test('workspace session caches stay separate and attachments reach the prompt bridge', async () => {
+  const otherCwd = 'D:\\other-project';
+  const originalSession = { path: 'C:\\sessions\\one.jsonl', id: 'one', firstMessage: 'original', modified: new Date().toISOString(), messageCount: 2 };
+  const otherSession = { path: 'D:\\sessions\\two.jsonl', id: 'two', firstMessage: 'other', modified: new Date().toISOString(), messageCount: 3 };
+  const host = createBridge({
+    workspaces: [baseSnapshot.cwd, otherCwd],
+    sessionsByCwd: { [baseSnapshot.cwd]: [originalSession], [otherCwd]: [otherSession] },
+  });
+  useChatStore.getState().setBridge(host.bridge);
+  await settle();
+
+  await useChatStore.getState().refreshWorkspaceSessions(otherCwd);
+  assert.deepEqual(useChatStore.getState().sessions, [originalSession]);
+  assert.deepEqual(useChatStore.getState().sessionsByWorkspace[otherCwd], [otherSession]);
+
+  await useChatStore.getState().switchWorkspace(otherCwd);
+  assert.deepEqual(host.workspaceSwitches, [otherCwd]);
+  assert.equal(useChatStore.getState().cwd, otherCwd);
+  assert.deepEqual(useChatStore.getState().sessions, [otherSession]);
+  assert.deepEqual(useChatStore.getState().sessionsByWorkspace[baseSnapshot.cwd], [originalSession]);
+
+  const attachment = { kind: 'text', name: 'notes.md', mimeType: 'text/markdown', text: '# Notes' };
+  await useChatStore.getState().send('review this', undefined, [attachment]);
+  assert.deepEqual(host.prompts.at(-1), ['review this', undefined, [attachment]]);
 });

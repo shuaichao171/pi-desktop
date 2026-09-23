@@ -1,39 +1,32 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
-import type { UiProviderAuthStatus, UiThinkingLevel } from '@pidesktop/shared';
+import type { UiExtensionSummary, UiProviderAuthStatus, UiThinkingLevel } from '@pidesktop/shared';
 import { useChatStore } from '../store';
+import { useT, type Translate } from '../i18n';
 import { Icon } from './Icons';
 
-type SettingsPage = 'model' | 'credentials' | 'about';
-
-const THINKING_LABELS: Record<string, string> = {
-	off: '关闭',
-	minimal: '极简',
-	low: '低',
-	medium: '中',
-	high: '高',
-	xhigh: '极高',
-	max: '最高',
-};
+export type ThemePreference = 'system' | 'dark' | 'light';
+type SettingsPage = 'appearance' | 'model' | 'credentials' | 'extensions' | 'shortcuts' | 'about';
 
 function readableModelSize(value: number): string {
 	if (!Number.isFinite(value) || value <= 0) return '';
 	return value >= 1000000 ? `${(value / 1000000).toFixed(1)}M` : `${Math.round(value / 1000)}K`;
 }
 
-function authSourceLabel({ configured, source }: UiProviderAuthStatus): string {
-	if (!configured) return '无可用凭据';
+function authSourceLabel({ configured, source }: UiProviderAuthStatus, t: Translate): string {
+	if (!configured) return t('settings.authMissing');
 	switch (source) {
-		case 'stored': return 'Pi 已保存凭据';
-		case 'runtime': return '运行时凭据可用';
-		case 'environment': return '环境变量已配置';
-		case 'models_json_key': return '模型配置文件已配置';
-		case 'models_json_command': return '模型配置命令可用';
-		case 'fallback': return '其他凭据可用';
-		default: return '凭据可用';
+		case 'stored': return t('settings.authStored');
+		case 'runtime': return t('settings.authRuntime');
+		case 'environment': return t('settings.authEnvironment');
+		case 'models_json_key': return t('settings.authModelKey');
+		case 'models_json_command': return t('settings.authModelCommand');
+		case 'fallback': return t('settings.authFallback');
+		default: return t('settings.authAvailable');
 	}
 }
 
 function ProviderCredentialRow({ provider, configured, source, supportsApiKey }: UiProviderAuthStatus) {
+	const { t } = useT();
 	const [secret, setSecret] = useState('');
 	const [pending, setPending] = useState(false);
 	const [feedback, setFeedback] = useState<string | null>(null);
@@ -52,9 +45,9 @@ function ProviderCredentialRow({ provider, configured, source, supportsApiKey }:
 		setFeedback(null);
 		try {
 			await setProviderApiKey(provider, value);
-			setFeedback('Pi 本地凭据已保存');
+			setFeedback(t('settings.saved'));
 		} catch (error) {
-			setFeedback(`保存失败：${error instanceof Error ? error.message : String(error)}`);
+			setFeedback(t('settings.saveFailed', { error: error instanceof Error ? error.message : String(error) }));
 		} finally {
 			setPending(false);
 		}
@@ -66,9 +59,9 @@ function ProviderCredentialRow({ provider, configured, source, supportsApiKey }:
 		setFeedback(null);
 		try {
 			await removeProviderCredential(provider);
-			setFeedback('Pi 本地保存的凭据已移除。');
+			setFeedback(t('settings.removed'));
 		} catch (error) {
-			setFeedback(`移除失败：${error instanceof Error ? error.message : String(error)}`);
+			setFeedback(t('settings.removeFailed', { error: error instanceof Error ? error.message : String(error) }));
 		} finally {
 			setPending(false);
 		}
@@ -76,25 +69,33 @@ function ProviderCredentialRow({ provider, configured, source, supportsApiKey }:
 
 	return (
 		<div className="pd-provider-card">
-			<div className="pd-provider-card-heading"><strong>{provider}</strong><span className={`pd-provider-auth-state${configured ? ' is-configured' : ''}`}>{authSourceLabel({ provider, configured, source, supportsApiKey })}</span></div>
+			<div className="pd-provider-card-heading"><strong>{provider}</strong><span className={`pd-provider-auth-state${configured ? ' is-configured' : ''}`}>{authSourceLabel({ provider, configured, source, supportsApiKey }, t)}</span></div>
 			{supportsApiKey ? <form onSubmit={(event) => void save(event)} className="pd-provider-form">
-				<label htmlFor={`pd-api-key-${provider}`}>API Key</label>
+				<label htmlFor={`pd-api-key-${provider}`}>{t('settings.apiKey')}</label>
 				<div className="pd-provider-form-row">
-					<input id={`pd-api-key-${provider}`} type="password" value={secret} onChange={(event) => setSecret(event.target.value)} autoComplete="off" spellCheck={false} placeholder={configured ? '输入新密钥以替换' : '输入密钥'} disabled={!canChange} />
-					<button type="submit" className="pd-settings-primary" disabled={!secret.trim() || !canChange}>{pending ? '处理中…' : '保存'}</button>
+					<input id={`pd-api-key-${provider}`} type="password" value={secret} onChange={(event) => setSecret(event.target.value)} autoComplete="off" spellCheck={false} placeholder={t(configured ? 'settings.replaceKey' : 'settings.enterKey')} disabled={!canChange} />
+					<button type="submit" className="pd-settings-primary" disabled={!secret.trim() || !canChange}>{t(pending ? 'settings.processing' : 'settings.save')}</button>
 				</div>
-			</form> : <p className="pd-provider-method-note">此提供商不支持在这里输入 API Key。</p>}
-			{source === 'stored' && <button type="button" className="pd-settings-remove" onClick={() => void remove()} disabled={!canChange}>移除 Pi 本地保存的凭据</button>}
+			</form> : <p className="pd-provider-method-note">{t('settings.unsupportedKey')}</p>}
+			{source === 'stored' && <button type="button" className="pd-settings-remove" onClick={() => void remove()} disabled={!canChange}>{t('settings.removeKey')}</button>}
 			{feedback && <p className="pd-settings-feedback" role="status">{feedback}</p>}
 		</div>
 	);
 }
 
-export function SettingsPanel({ onClose }: { onClose(): void }) {
-	const [page, setPage] = useState<SettingsPage>('model');
+export function SettingsPanel({ onClose, themePreference, onThemePreferenceChange }: { onClose(): void; themePreference: ThemePreference; onThemePreferenceChange(theme: ThemePreference): void }) {
+	const { t, locale, setLocale } = useT();
+	const [page, setPage] = useState<SettingsPage>('appearance');
 	const [modelSearch, setModelSearch] = useState('');
 	const [actionError, setActionError] = useState<string | null>(null);
 	const [pending, setPending] = useState(false);
+	const [extensions, setExtensions] = useState<UiExtensionSummary[]>([]);
+	const [extensionsLoading, setExtensionsLoading] = useState(false);
+	const [extensionsLoaded, setExtensionsLoaded] = useState(false);
+	const [extensionPendingPath, setExtensionPendingPath] = useState<string | null>(null);
+	const [extensionError, setExtensionError] = useState<string | null>(null);
+	const [extensionFeedback, setExtensionFeedback] = useState<string | null>(null);
+	const extensionRequestRef = useRef(0);
 	const dialogRef = useRef<HTMLDivElement>(null);
 	const closeRef = useRef<HTMLButtonElement>(null);
 	const models = useChatStore((s) => s.models);
@@ -108,12 +109,14 @@ export function SettingsPanel({ onClose }: { onClose(): void }) {
 	const status = useChatStore((s) => s.status);
 	const cwd = useChatStore((s) => s.cwd);
 	const appInfo = useChatStore((s) => s.appInfo);
+	const bridge = useChatStore((s) => s.bridge);
 	const refreshModels = useChatStore((s) => s.refreshModels);
 	const refreshProviderAuth = useChatStore((s) => s.refreshProviderAuth);
 	const setModel = useChatStore((s) => s.setModel);
 	const setThinkingLevel = useChatStore((s) => s.setThinkingLevel);
 	const canChangeAgent = status === 'idle' && !settingsLoading;
 	const waitingForAgent = status === 'starting' || status === 'uninitialized';
+	const canReadExtensions = Boolean(bridge) && !waitingForAgent && status !== 'error';
 	const filteredModels = useMemo(() => {
 		const query = modelSearch.trim().toLocaleLowerCase();
 		return models.filter((item) => `${item.provider} ${item.id} ${item.name}`.toLocaleLowerCase().includes(query)).slice(0, 80);
@@ -142,6 +145,51 @@ export function SettingsPanel({ onClose }: { onClose(): void }) {
 		void refreshModels().catch(() => {});
 		void refreshProviderAuth().catch(() => {});
 	}, [waitingForAgent, refreshModels, refreshProviderAuth]);
+
+	useEffect(() => {
+		if (page !== 'extensions') return;
+		setExtensions([]);
+		setExtensionsLoaded(false);
+		setExtensionError(null);
+		setExtensionFeedback(null);
+		if (canReadExtensions) void refreshExtensions();
+		return () => { extensionRequestRef.current += 1; };
+	}, [page, cwd, bridge, canReadExtensions]);
+
+	async function refreshExtensions(): Promise<boolean> {
+		if (!bridge || !canReadExtensions) return false;
+		const request = ++extensionRequestRef.current;
+		setExtensionsLoading(true);
+		setExtensionError(null);
+		try {
+			const items = await bridge.listExtensions();
+			if (request !== extensionRequestRef.current) return false;
+			setExtensions(items);
+			setExtensionsLoaded(true);
+			return true;
+		} catch (error) {
+			if (request !== extensionRequestRef.current) return false;
+			setExtensionError(t('settings.extensionLoadFailed', { error: error instanceof Error ? error.message : String(error) }));
+			return false;
+		} finally {
+			if (request === extensionRequestRef.current) setExtensionsLoading(false);
+		}
+	}
+
+	async function toggleExtension(item: UiExtensionSummary) {
+		if (!bridge || !canChangeAgent || pending || extensionPendingPath || extensionsLoading) return;
+		setExtensionPendingPath(item.path);
+		setExtensionError(null);
+		setExtensionFeedback(null);
+		try {
+			await bridge.setExtensionEnabled(item.path, !item.enabled);
+			if (await refreshExtensions()) setExtensionFeedback(t(item.enabled ? 'settings.extensionDisabled' : 'settings.extensionEnabled', { name: item.name }));
+		} catch (error) {
+			setExtensionError(t('settings.extensionToggleFailed', { error: error instanceof Error ? error.message : String(error) }));
+		} finally {
+			setExtensionPendingPath(null);
+		}
+	}
 
 	function onDialogKeyDown(event: KeyboardEvent<HTMLDivElement>) {
 		if (event.key === 'Escape') { event.stopPropagation(); onClose(); return; }
@@ -173,47 +221,82 @@ export function SettingsPanel({ onClose }: { onClose(): void }) {
 	return (
 		<div className="pd-settings-overlay" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
 			<div ref={dialogRef} className="pd-settings-dialog" role="dialog" aria-modal="true" aria-labelledby="pd-settings-title" onKeyDown={onDialogKeyDown}>
-				<header className="pd-settings-header"><div><span className="pd-settings-eyebrow">PI DESKTOP</span><h1 id="pd-settings-title">设置</h1></div><button ref={closeRef} type="button" className="pd-icon-button" onClick={onClose} aria-label="关闭设置"><Icon name="close" /></button></header>
+				<header className="pd-settings-header"><div><span className="pd-settings-eyebrow">PI DESKTOP</span><h1 id="pd-settings-title">{t('settings.title')}</h1></div><button ref={closeRef} type="button" className="pd-icon-button" onClick={onClose} aria-label={t('settings.close')}><Icon name="close" /></button></header>
 				<div className="pd-settings-layout">
-					<nav className="pd-settings-nav" aria-label="设置分类">
-						<button type="button" className={page === 'model' ? 'is-active' : ''} aria-current={page === 'model' ? 'page' : undefined} onClick={() => setPage('model')}>模型与思考</button>
-						<button type="button" className={page === 'credentials' ? 'is-active' : ''} aria-current={page === 'credentials' ? 'page' : undefined} onClick={() => setPage('credentials')}>提供商凭据</button>
-						<button type="button" className={page === 'about' ? 'is-active' : ''} aria-current={page === 'about' ? 'page' : undefined} onClick={() => setPage('about')}>关于</button>
+					<nav className="pd-settings-nav" aria-label={t('settings.category')}>
+						<button type="button" className={page === 'appearance' ? 'is-active' : ''} aria-current={page === 'appearance' ? 'page' : undefined} onClick={() => setPage('appearance')}>{t('settings.appearance')}</button>
+						<button type="button" className={page === 'model' ? 'is-active' : ''} aria-current={page === 'model' ? 'page' : undefined} onClick={() => setPage('model')}>{t('settings.modelThinking')}</button>
+						<button type="button" className={page === 'credentials' ? 'is-active' : ''} aria-current={page === 'credentials' ? 'page' : undefined} onClick={() => setPage('credentials')}>{t('settings.credentials')}</button>
+						<button type="button" className={page === 'extensions' ? 'is-active' : ''} aria-current={page === 'extensions' ? 'page' : undefined} onClick={() => setPage('extensions')}>{t('settings.extensions')}</button>
+						<button type="button" className={page === 'shortcuts' ? 'is-active' : ''} aria-current={page === 'shortcuts' ? 'page' : undefined} onClick={() => setPage('shortcuts')}>{t('settings.shortcuts')}</button>
+						<button type="button" className={page === 'about' ? 'is-active' : ''} aria-current={page === 'about' ? 'page' : undefined} onClick={() => setPage('about')}>{t('settings.about')}</button>
 					</nav>
 					<div className="pd-settings-content">
 						{(actionError || settingsError) && <div className="pd-settings-error" role="alert">{actionError || settingsError}</div>}
+						{page === 'appearance' && <>
+							<div className="pd-settings-section-head"><h2>{t('settings.appearance')}</h2><p>{t('settings.appearanceDescription')}</p></div>
+							<div className="pd-appearance-options" role="group" aria-label={t('settings.themeLabel')}>
+								{(['system', 'dark', 'light'] as const).map((theme) => <button type="button" key={theme} className={`pd-appearance-choice${themePreference === theme ? ' is-selected' : ''}`} aria-pressed={themePreference === theme} onClick={() => onThemePreferenceChange(theme)}><span className={`pd-theme-swatch is-${theme}`} aria-hidden="true" /><strong>{t(theme === 'system' ? 'settings.themeSystem' : theme === 'dark' ? 'settings.themeDark' : 'settings.themeLight')}</strong></button>)}
+							</div>
+							<div className="pd-settings-divider" />
+							<div className="pd-settings-section-head"><h2>{t('settings.language')}</h2><p>{t('settings.languageDescription')}</p></div>
+							<div className="pd-language-options" role="group" aria-label={t('settings.language')}>
+								<button type="button" className={locale === 'zh-CN' ? 'is-selected' : ''} aria-pressed={locale === 'zh-CN'} onClick={() => setLocale('zh-CN')}>{t('settings.languageZh')}</button>
+								<button type="button" className={locale === 'en-US' ? 'is-selected' : ''} aria-pressed={locale === 'en-US'} onClick={() => setLocale('en-US')}>{t('settings.languageEn')}</button>
+							</div>
+						</>}
 						{page === 'model' && <>
-							<div className="pd-settings-section-head"><h2>模型</h2><p>当前会话使用 <strong>{modelProvider ? `${modelProvider}/` : ''}{model || '未选择'}</strong>。切换模型会用于后续回复。</p></div>
-							<input className="pd-settings-model-search" type="search" value={modelSearch} onChange={(event) => setModelSearch(event.target.value)} aria-label="搜索模型" placeholder="搜索模型或提供商" />
-							<div className="pd-settings-model-list" aria-label="可用模型">
+							<div className="pd-settings-section-head"><h2>{t('settings.model')}</h2><p>{t('settings.modelDescription', { model: model ? `${modelProvider ? `${modelProvider}/` : ''}${model}` : t('settings.notSelected') })}</p></div>
+							<input className="pd-settings-model-search" type="search" value={modelSearch} onChange={(event) => setModelSearch(event.target.value)} aria-label={t('composer.pickerSearchLabel')} placeholder={t('composer.pickerSearchPlaceholder')} />
+							<div className="pd-settings-model-list" aria-label={t('settings.availableModels')}>
 								{filteredModels.map((item) => {
 									const selected = item.provider === modelProvider && item.id === model;
 									return <button key={`${item.provider}/${item.id}`} type="button" className={`pd-settings-model-row${selected ? ' is-selected' : ''}`} aria-pressed={selected} disabled={!canChangeAgent || pending} onClick={() => void updateModel(item.provider, item.id)}>
 										<span className="pd-settings-model-copy"><strong>{item.name || item.id}</strong><small>{item.provider}/{item.id}</small></span>
-										<span className="pd-settings-model-meta">{item.reasoning ? '推理' : '非推理'}{item.input.includes('image') ? ' · 图片' : ''}{item.contextWindow ? ` · ${readableModelSize(item.contextWindow)} 上下文` : ''}</span>
-										{selected && <span className="pd-settings-model-selected">使用中</span>}
+									<span className="pd-settings-model-meta">{[t(item.reasoning ? 'settings.reasoning' : 'settings.noReasoning'), item.input.includes('image') ? t('settings.image') : null, item.contextWindow ? t('settings.context', { size: readableModelSize(item.contextWindow) }) : null].filter(Boolean).join(' · ')}</span>
+									{selected && <span className="pd-settings-model-selected">{t('composer.pickerCurrent')}</span>}
 									</button>;
 								})}
-								{filteredModels.length === 0 && <div className="pd-settings-empty">{settingsLoading || waitingForAgent ? '正在加载模型…' : status === 'error' ? 'Pi 连接失败，请查看聊天页的错误信息。' : modelSearch ? '没有匹配的模型。' : '尚无可用模型。请检查提供商凭据。'}</div>}
+								{filteredModels.length === 0 && <div className="pd-settings-empty">{t(settingsLoading || waitingForAgent ? 'settings.modelLoading' : status === 'error' ? 'settings.agentError' : modelSearch ? 'settings.modelNoMatch' : 'settings.modelEmpty')}</div>}
 							</div>
-							{models.length > 80 && <p className="pd-settings-hint">仅显示前 80 个结果，可输入名称进一步筛选。</p>}
+							{models.length > 80 && <p className="pd-settings-hint">{t('settings.modelLimit')}</p>}
 							<div className="pd-settings-divider" />
-							<div className="pd-settings-section-head"><h2>思考级别</h2><p>选择 Pi 在回答前使用的推理强度。</p></div>
-							<div className="pd-thinking-options" role="group" aria-label="思考级别">
-								{availableThinkingLevels.map((level) => <button key={level} type="button" className={thinkingLevel === level ? 'is-selected' : ''} aria-pressed={thinkingLevel === level} disabled={!canChangeAgent || pending} onClick={() => void updateThinking(level)}>{THINKING_LABELS[level] ?? level}</button>)}
-								{availableThinkingLevels.length === 0 && <span className="pd-settings-hint">当前模型没有可选的思考级别。</span>}
+							<div className="pd-settings-section-head"><h2>{t('settings.thinking')}</h2><p>{t('settings.thinkingDescription')}</p></div>
+							<div className="pd-thinking-options" role="group" aria-label={t('settings.thinking')}>
+								{availableThinkingLevels.map((level) => <button key={level} type="button" className={thinkingLevel === level ? 'is-selected' : ''} aria-pressed={thinkingLevel === level} disabled={!canChangeAgent || pending} onClick={() => void updateThinking(level)}>{t(`composer.thinking.${level}`)}</button>)}
+								{availableThinkingLevels.length === 0 && <span className="pd-settings-hint">{t('settings.thinkingEmpty')}</span>}
 							</div>
-							{status !== 'idle' && <p className="pd-settings-hint">Pi 完成当前任务后即可更改模型和思考级别。</p>}
+							{status !== 'idle' && <p className="pd-settings-hint">{t('settings.modelBusy')}</p>}
 						</>}
 						{page === 'credentials' && <>
-							<div className="pd-settings-section-head"><h2>提供商凭据</h2><p>状态可能来自 Pi 本地凭据、环境变量或模型配置文件。这里只能移除 Pi 本地保存的凭据；输入框不会保存或回显密钥。</p></div>
+							<div className="pd-settings-section-head"><h2>{t('settings.credentials')}</h2><p>{t('settings.credentialDescription')}</p></div>
 							<div className="pd-provider-list">{sortedProviderAuth.map((item) => <ProviderCredentialRow key={item.provider} {...item} />)}</div>
-							{providerAuth.length === 0 && <div className="pd-settings-empty">{settingsLoading || waitingForAgent ? '正在检查提供商…' : status === 'error' ? 'Pi 连接失败，请查看聊天页的错误信息。' : '暂未发现可配置的提供商。'}</div>}
-							{status !== 'idle' && <p className="pd-settings-hint">Pi 完成当前任务后即可修改凭据。</p>}
+							{providerAuth.length === 0 && <div className="pd-settings-empty">{t(settingsLoading || waitingForAgent ? 'settings.providerLoading' : status === 'error' ? 'settings.agentError' : 'settings.providerEmpty')}</div>}
+							{status !== 'idle' && <p className="pd-settings-hint">{t('settings.providerBusy')}</p>}
+						</>}
+						{page === 'extensions' && <>
+							<div className="pd-settings-section-head pd-extension-section-head">
+								<div><h2>{t('settings.extensions')}</h2><p>{t('settings.extensionDescription')}</p></div>
+								<button type="button" className="pd-extension-refresh" onClick={() => void refreshExtensions()} disabled={!canReadExtensions || extensionsLoading || Boolean(extensionPendingPath)}>{t(extensionsLoading ? 'settings.extensionLoading' : 'settings.extensionRefresh')}</button>
+							</div>
+							{extensionError && <div className="pd-settings-error" role="alert">{extensionError}</div>}
+							{extensionFeedback && <p className="pd-settings-feedback" role="status">{extensionFeedback}</p>}
+							<div className="pd-extension-list" aria-label={t('settings.extensions')}>
+								{extensions.map((item) => <div className="pd-extension-card" key={item.path}>
+									<div className="pd-extension-copy"><strong>{item.name}</strong><span>{t(item.scope === 'project' ? 'settings.extensionProject' : 'settings.extensionUser')} · {t(item.origin === 'package' ? 'settings.extensionPackage' : 'settings.extensionTopLevel')}</span><small title={item.path}>{item.source || item.path}</small></div>
+									<button type="button" className={`pd-extension-toggle${item.enabled ? ' is-enabled' : ''}`} role="switch" aria-checked={item.enabled} aria-label={t('settings.extensionToggle', { name: item.name })} disabled={!canChangeAgent || pending || extensionsLoading || Boolean(extensionPendingPath)} onClick={() => void toggleExtension(item)}><span aria-hidden="true" />{t(item.enabled ? 'settings.extensionOn' : 'settings.extensionOff')}</button>
+								</div>)}
+								{extensions.length === 0 && !extensionError && <div className="pd-settings-empty">{t(!canReadExtensions ? waitingForAgent ? 'settings.extensionWaiting' : 'settings.agentError' : extensionsLoading || !extensionsLoaded ? 'settings.extensionLoading' : 'settings.extensionEmpty')}</div>}
+							</div>
+							{status === 'busy' && <p className="pd-settings-hint">{t('settings.extensionBusy')}</p>}
+						</>}
+						{page === 'shortcuts' && <>
+							<div className="pd-settings-section-head"><h2>{t('settings.shortcuts')}</h2><p>{t('settings.shortcutsDescription')}</p></div>
+							<dl className="pd-shortcut-list"><div><dt>{t('settings.shortcutSidebar')}</dt><dd><kbd>Ctrl</kbd> + <kbd>B</kbd></dd></div><div><dt>{t('settings.shortcutSend')}</dt><dd><kbd>Enter</kbd></dd></div><div><dt>{t('settings.shortcutNewline')}</dt><dd><kbd>Shift</kbd> + <kbd>Enter</kbd></dd></div><div><dt>{t('settings.shortcutClose')}</dt><dd><kbd>Esc</kbd></dd></div></dl>
 						</>}
 						{page === 'about' && <>
-							<div className="pd-settings-section-head"><h2>关于 Pi Desktop</h2><p>基于 Pi SDK 的本地桌面工作台。</p></div>
-							<dl className="pd-about-list"><div><dt>应用版本</dt><dd>{appInfo?.appVersion ?? '未知'}</dd></div><div><dt>Electron</dt><dd>{appInfo?.electronVersion ?? '—'}</dd></div><div><dt>Node.js</dt><dd>{appInfo?.nodeVersion ?? '—'}</dd></div><div><dt>平台</dt><dd>{appInfo?.platform ?? '—'}</dd></div><div><dt>当前工作区</dt><dd title={cwd}>{cwd || '尚未选择'}</dd></div></dl>
+							<div className="pd-settings-section-head"><h2>{t('settings.aboutTitle')}</h2><p>{t('settings.aboutDescription')}</p></div>
+							<dl className="pd-about-list"><div><dt>{t('settings.appVersion')}</dt><dd>{appInfo?.appVersion ?? t('settings.unknown')}</dd></div><div><dt>Electron</dt><dd>{appInfo?.electronVersion ?? '—'}</dd></div><div><dt>Node.js</dt><dd>{appInfo?.nodeVersion ?? '—'}</dd></div><div><dt>{t('settings.platform')}</dt><dd>{appInfo?.platform ?? '—'}</dd></div><div><dt>{t('settings.currentWorkspace')}</dt><dd title={cwd}>{cwd || t('settings.noWorkspace')}</dd></div></dl>
 						</>}
 					</div>
 				</div>

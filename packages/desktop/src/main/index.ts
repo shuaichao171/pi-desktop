@@ -3,6 +3,7 @@ import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { IPC_CHANNELS } from '@pidesktop/shared';
+import { getAppLocale } from './appLocale';
 import { createSplashErrorHtml, createSplashHtml } from './splash';
 
 const here = fileURLToPath(new URL('.', import.meta.url));
@@ -16,23 +17,24 @@ function splashUrl(html: string): string {
 
 function showStartupError(splash: BrowserWindow, error: unknown): void {
 	const message = error instanceof Error ? error.message : String(error);
+	const english = getAppLocale() === 'en-US';
 	console.error('Pi Desktop failed to start:', error);
 	if (splash.isDestroyed()) {
-		dialog.showErrorBox('Pi Desktop 启动失败', message);
+		dialog.showErrorBox(english ? 'Pi Desktop startup failed' : 'Pi Desktop 启动失败', message);
 		app.quit();
 		return;
 	}
 	if (!splash.isVisible()) splash.show();
-	void splash.loadURL(splashUrl(createSplashErrorHtml(message)))
+	void splash.loadURL(splashUrl(createSplashErrorHtml(message, getAppLocale())))
 		.catch(() => {})
 		.finally(() => {
 			if (splash.isDestroyed()) return;
 			void dialog.showMessageBox(splash, {
 				type: 'error',
-				title: 'Pi Desktop 启动失败',
-				message: '工作台未能启动',
+				title: english ? 'Pi Desktop startup failed' : 'Pi Desktop 启动失败',
+				message: english ? 'The workspace could not start' : '工作台未能启动',
 				detail: message,
-				buttons: ['关闭'],
+				buttons: [english ? 'Close' : '关闭'],
 			}).finally(() => app.quit());
 		});
 }
@@ -109,7 +111,7 @@ function createWindow(onReady?: () => void, onLoadError?: (error: unknown) => vo
 		if (onLoadError) onLoadError(error);
 		else {
 			console.error('Pi Desktop renderer failed to load:', error);
-			dialog.showErrorBox('Pi Desktop 启动失败', String(error));
+			dialog.showErrorBox(getAppLocale() === 'en-US' ? 'Pi Desktop startup failed' : 'Pi Desktop 启动失败', String(error));
 			win.close();
 		}
 	});
@@ -144,7 +146,20 @@ async function bootstrap(splash: BrowserWindow): Promise<void> {
 	}
 }
 
-app.whenReady().then(() => {
+const hasSingleInstanceLock = app.requestSingleInstanceLock();
+if (!hasSingleInstanceLock) {
+	app.quit();
+} else {
+	app.on('second-instance', () => {
+		const windows = BrowserWindow.getAllWindows();
+		const target = windows.find((window) => window.isVisible()) ?? windows.find((window) => window.isMinimized());
+		if (!target || target.isDestroyed()) return;
+		if (target.isMinimized()) target.restore();
+		target.show();
+		target.focus();
+	});
+
+	void app.whenReady().then(() => {
 	const splash = new BrowserWindow({
 		width: 420,
 		height: 300,
@@ -155,7 +170,7 @@ app.whenReady().then(() => {
 		center: true,
 		show: false,
 		backgroundColor: '#111216',
-		title: 'Pi Desktop 正在启动',
+		title: getAppLocale() === 'en-US' ? 'Pi Desktop is starting' : 'Pi Desktop 正在启动',
 		webPreferences: {
 			contextIsolation: true,
 			sandbox: true,
@@ -179,7 +194,7 @@ app.whenReady().then(() => {
 		}, 100);
 	};
 	splash.once('ready-to-show', showAndStart);
-	void splash.loadURL(splashUrl(createSplashHtml()))
+	void splash.loadURL(splashUrl(createSplashHtml(getAppLocale())))
 		.then(() => {
 			// A fallback for environments that never emit ready-to-show.
 			setTimeout(showAndStart, 800);
@@ -193,7 +208,8 @@ app.whenReady().then(() => {
 	app.on('activate', () => {
 		if (BrowserWindow.getAllWindows().length === 0 && ipc) createWindow();
 	});
-});
+	});
+}
 
 app.on('window-all-closed', () => {
 	if (process.platform !== 'darwin') app.quit();
@@ -206,8 +222,8 @@ app.on('before-quit', (event) => {
 	event.preventDefault();
 	if (disposing) return;
 	disposing = true;
-	void ipc.agentService.dispose()
-		.catch((error: unknown) => console.error('Pi agent shutdown failed:', error))
+	void ipc.disposeServices()
+		.catch((error: unknown) => console.error('Pi Desktop shutdown failed:', error))
 		.finally(() => {
 			readyToQuit = true;
 			app.quit();

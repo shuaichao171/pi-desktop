@@ -2,6 +2,8 @@
  * A standalone page that Electron can display before the renderer bundle is ready.
  * Keep this free of external files, scripts, and runtime dependencies.
  */
+import type { AppLocale } from '@pidesktop/shared';
+
 const logo = `<svg class="logo" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" aria-hidden="true" focusable="false">
   <defs>
     <linearGradient id="logo-bg" x1="0" x2="1" y1="0" y2="1">
@@ -29,23 +31,24 @@ function escapeHtml(value: string): string {
   });
 }
 
-function renderSplash(error?: string): string {
+function renderSplash(locale: AppLocale, error?: string): string {
   const failed = error !== undefined;
+  const english = locale === 'en-US';
   const status = failed
-    ? `<div class="error" role="alert"><strong>启动失败</strong><span>${escapeHtml(error || '请关闭后重新打开应用。')}</span></div>`
+    ? `<div class="error" role="alert"><strong>${english ? 'Startup failed' : '启动失败'}</strong><span>${escapeHtml(error || (english ? 'Close and reopen the app.' : '请关闭后重新打开应用。'))}</span></div>`
     : `<div class="loading" role="status" aria-live="polite">
-        <span>正在准备工作台…</span>
-        <div class="progress" role="progressbar" aria-label="工作台加载中"><span></span></div>
+        <span>${english ? 'Preparing your workspace…' : '正在准备工作台…'}</span>
+        <div class="progress" role="progressbar" aria-label="${english ? 'Loading workspace' : '工作台加载中'}"><span></span></div>
       </div>`;
 
   return `<!doctype html>
-<html lang="zh-CN">
+<html lang="${locale}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data:">
   <meta name="color-scheme" content="dark">
-  <title>${failed ? '启动失败' : '正在启动'} · Pi Desktop</title>
+  <title>${failed ? (english ? 'Startup failed' : '启动失败') : (english ? 'Starting' : '正在启动')} · Pi Desktop</title>
   <style>
     :root { color-scheme: dark; font-family: 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif; }
     * { box-sizing: border-box; }
@@ -70,6 +73,15 @@ function renderSplash(error?: string): string {
     .error strong { font-size: 13px; font-weight: 600; }
     .error span { max-height: 54px; overflow: auto; color: #c8a4a9; }
     @keyframes loading { from { transform: translateX(-100%); } to { transform: translateX(265%); } }
+    @media (prefers-color-scheme: light) {
+      :root { color-scheme: light; }
+      body { color: #252838; background: radial-gradient(ellipse at 50% 10%, #e9e8fa 0, #f5f5fa 48%, #ebedf3 100%); }
+      .subtitle, .loading { color: #656b7e; }
+      .progress { background: #d8dce8; }
+      .progress span { background: #7773c8; }
+      .error { color: #ae454f; }
+      .error span { color: #8a545b; }
+    }
     @media (prefers-reduced-motion: reduce) { .progress span { animation: none; transform: translateX(80%); } }
   </style>
 </head>
@@ -77,17 +89,17 @@ function renderSplash(error?: string): string {
   <main>
     ${logo}
     <h1>Pi Desktop</h1>
-    <p class="subtitle">你的本地 AI 编程工作台</p>
+    <p class="subtitle">${english ? 'Your local AI coding workspace' : '你的本地 AI 编程工作台'}</p>
     ${status}
   </main>
 </body>
 </html>`;
 }
 
-export function createSplashHtml(): string {
-  return renderSplash();
+export function createSplashHtml(locale: AppLocale = 'zh-CN'): string {
+  return renderSplash(locale);
 }
 
-export function createSplashErrorHtml(message: string): string {
-  return renderSplash(message);
+export function createSplashErrorHtml(message: string, locale: AppLocale = 'zh-CN'): string {
+  return renderSplash(locale, message);
 }

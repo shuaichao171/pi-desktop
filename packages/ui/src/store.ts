@@ -7,6 +7,7 @@
  */
 
 import { create } from 'zustand';
+import { translate } from './i18n.ts';
 import type {
 	AgentBridge,
 	AgentEventEnvelope,
@@ -14,10 +15,12 @@ import type {
 	AgentStatus,
 	AgentUiEvent,
 	AppInfo,
+	UiAttachment,
 	UiMessage,
 	UiModelSummary,
 	UiProviderAuthStatus,
 	UiSessionSummary,
+	UiSessionMetaPatch,
 	UiThinkingLevel,
 	UiToolActivity,
 } from '@pidesktop/shared';
@@ -35,6 +38,8 @@ interface ChatState {
 	settingsLoading: boolean;
 	settingsError: string | null;
 	cwd: string;
+	workspaces: string[];
+	sessionsByWorkspace: Record<string, UiSessionSummary[]>;
 	sessionId: string | null;
 	sessionPath: string | null;
 	sessions: UiSessionSummary[];
@@ -47,6 +52,10 @@ interface ChatState {
 	setBridge(bridge: AgentBridge): void;
 	handleEvent(event: AgentUiEvent): void;
 	refreshSessions(): Promise<void>;
+	refreshWorkspaces(): Promise<void>;
+	refreshWorkspaceSessions(cwd: string): Promise<void>;
+	switchWorkspace(cwd: string): Promise<void>;
+	updateSessionMeta(path: string, patch: UiSessionMetaPatch): Promise<void>;
 	refreshModels(): Promise<void>;
 	setModel(provider: string, id: string): Promise<void>;
 	setThinkingLevel(level: UiThinkingLevel): Promise<void>;
@@ -54,13 +63,13 @@ interface ChatState {
 	setProviderApiKey(provider: string, key: string): Promise<void>;
 	removeProviderCredential(provider: string): Promise<void>;
 	switchSession(path: string): Promise<void>;
-	send(text: string, behavior?: 'steer' | 'followUp'): Promise<void>;
+	send(text: string, behavior?: 'steer' | 'followUp', attachments?: UiAttachment[]): Promise<void>;
 	abort(): Promise<void>;
 	newSession(): Promise<void>;
 	pickWorkspace(): Promise<void>;
 }
 
-let sessionListRequest = 0;
+const sessionListRequests = new Map<string, number>();
 let settingsRequestCount = 0;
 
 function beginSettingsRequest(): void {
@@ -86,6 +95,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
 	settingsLoading: false,
 	settingsError: null,
 	cwd: '',
+	workspaces: [],
+	sessionsByWorkspace: {},
 	sessionId: null,
 	sessionPath: null,
 	sessions: [],
@@ -126,6 +137,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 					if (envelope.sequence > snapshot.sequence) get().handleEvent(envelope.event);
 				}
 				void get().refreshSessions();
+				void get().refreshWorkspaces();
 			})
 			.catch((error: unknown) => {
 				bootstrapping = false;
@@ -153,7 +165,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 					cwd: event.cwd,
 					sessionId: null,
 					sessionPath: null,
-					sessions: [],
+					sessions: get().sessionsByWorkspace[event.cwd] ?? [],
 					messages: [],
 					activities: [],
 					queuedCount: 0,
@@ -172,6 +184,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 					thinkingLevel: event.thinkingLevel,
 					availableThinkingLevels: event.availableThinkingLevels,
 					cwd: event.cwd,
+					sessions: get().sessionsByWorkspace[event.cwd] ?? [],
 					sessionId: event.sessionId,
 					sessionPath: event.sessionPath,
 					messages: event.messages,
@@ -193,12 +206,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
 				return;
 			case 'user-message':
 				set((s) => ({
-					messages: [...s.messages, { id: event.id, role: 'user', text: event.text, status: 'done' }],
+					messages: [...s.messages, { id: event.id, order: event.order, role: 'user', text: event.text, attachments: event.attachments, status: 'done' }],
 				}));
 				return;
 			case 'assistant-start':
 				set((s) => ({
-					messages: [...s.messages, { id: event.id, role: 'assistant', text: '', status: 'streaming' }],
+					messages: [...s.messages, { id: event.id, order: event.order, role: 'assistant', text: '', status: 'streaming' }],
 					error: null,
 				}));
 				return;
@@ -234,12 +247,15 @@ export const useChatStore = create<ChatState>((set, get) => ({
 					} else {
 						activities.push(incoming);
 					}
-					return { activities: activities.slice(-50) };
+					return { activities };
 				});
 				return;
 			}
 			case 'queue':
 				set({ queuedCount: event.count });
+				return;
+			case 'sessions-changed':
+				void get().refreshWorkspaceSessions(event.cwd);
 				return;
 			case 'error':
 				set({ error: event.message });
@@ -248,14 +264,61 @@ export const useChatStore = create<ChatState>((set, get) => ({
 	},
 
 	async refreshSessions() {
-		const { bridge, cwd } = get();
-		if (!bridge || !cwd) return;
-		const request = ++sessionListRequest;
+		const cwd = get().cwd;
+		if (cwd) await get().refreshWorkspaceSessions(cwd);
+	},
+
+	async refreshWorkspaces() {
+		const bridge = get().bridge;
+		if (!bridge) return;
 		try {
-			const sessions = await bridge.listSessions();
-			if (get().cwd === cwd && request === sessionListRequest) set({ sessions });
+			const workspaces = await bridge.listWorkspaces();
+			const current = get().cwd;
+			set({ workspaces: current && !workspaces.includes(current) ? [current, ...workspaces] : workspaces });
 		} catch (error) {
 			set({ error: errorMessage(error) });
+		}
+	},
+
+	async refreshWorkspaceSessions(cwd) {
+		const bridge = get().bridge;
+		if (!bridge || !cwd) return;
+		const request = (sessionListRequests.get(cwd) ?? 0) + 1;
+		sessionListRequests.set(cwd, request);
+		try {
+			const sessions = await bridge.listSessions(cwd);
+			if (sessionListRequests.get(cwd) !== request) return;
+			set((state) => ({
+				sessionsByWorkspace: { ...state.sessionsByWorkspace, [cwd]: sessions },
+				...(state.cwd === cwd ? { sessions } : {}),
+			}));
+		} catch (error) {
+			set({ error: errorMessage(error) });
+		}
+	},
+
+	async switchWorkspace(cwd) {
+		const bridge = get().bridge;
+		if (!bridge || !cwd || cwd === get().cwd) return;
+		try {
+			await bridge.switchWorkspace(cwd);
+			await Promise.all([get().refreshWorkspaces(), get().refreshWorkspaceSessions(cwd)]);
+		} catch (error) {
+			set({ error: errorMessage(error) });
+			throw error;
+		}
+	},
+
+	async updateSessionMeta(path, patch) {
+		const bridge = get().bridge;
+		if (!bridge) return;
+		try {
+			await bridge.updateSessionMeta(path, patch);
+			const workspace = Object.entries(get().sessionsByWorkspace).find(([, sessions]) => sessions.some((session) => session.path === path))?.[0] ?? get().cwd;
+			if (workspace) await get().refreshWorkspaceSessions(workspace);
+		} catch (error) {
+			set({ error: errorMessage(error) });
+			throw error;
 		}
 	},
 
@@ -357,18 +420,18 @@ export const useChatStore = create<ChatState>((set, get) => ({
 		}
 	},
 
-	async send(text, behavior) {
+	async send(text, behavior, attachments) {
 		const { bridge, status } = get();
 		const trimmed = text.trim();
-		if (!bridge || !trimmed) return;
+		if (!bridge || (!trimmed && !attachments?.length)) return;
 		if (status !== 'idle' && status !== 'busy') {
-			const error = new Error('Agent 尚未就绪');
+			const error = new Error(translate('store.agentNotReady'));
 			set({ error: error.message });
 			throw error;
 		}
 		set({ error: null });
 		try {
-			await bridge.prompt(trimmed, behavior ?? (status === 'busy' ? 'followUp' : undefined));
+			await bridge.prompt(trimmed, behavior ?? (status === 'busy' ? 'followUp' : undefined), attachments);
 		} catch (error) {
 			set({ error: errorMessage(error) });
 			throw error;
@@ -398,7 +461,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
 		if (!bridge) return;
 		try {
 			const cwd = await bridge.pickWorkspace();
-			if (cwd) await bridge.initAgent(cwd);
+			if (cwd) {
+				await bridge.switchWorkspace(cwd);
+				await Promise.all([get().refreshWorkspaces(), get().refreshWorkspaceSessions(cwd)]);
+			}
 		} catch (error) {
 			set({ error: errorMessage(error) });
 			throw error;

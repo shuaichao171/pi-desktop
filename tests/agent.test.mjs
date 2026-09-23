@@ -54,7 +54,7 @@ test('Pi SDK runtime initializes, replaces a session, and publishes a current sn
     const persisted = SessionManager.create(workspace);
     persistConversation(persisted, 'Restore me', 'Restored reply');
 
-    await service.init({ cwd: workspace });
+    await service.switchSession(persisted.getSessionFile());
     const restored = service.getSnapshot();
     assert.equal(restored.sessionId, persisted.getSessionId());
     assert.deepEqual(restored.messages.map(({ text }) => text), ['Restore me', 'Restored reply']);
@@ -68,6 +68,13 @@ test('Pi SDK runtime initializes, replaces a session, and publishes a current sn
     assert.deepEqual(switched.messages.map(({ text }) => text), ['Another session', 'Another reply']);
     assert.equal((await service.listSessions()).length, 2);
     await assert.rejects(service.switchSession(join(tempRoot, 'outside.jsonl')), /不属于当前工作区/);
+
+    const otherWorkspace = join(tempRoot, 'other-workspace');
+    mkdirSync(otherWorkspace);
+    await service.switchWorkspace(otherWorkspace);
+    assert.equal(service.getSnapshot().cwd, otherWorkspace);
+    await service.switchWorkspace(workspace);
+    assert.equal(service.getSnapshot().sessionId, other.getSessionId(), 'switching projects resumes its live Pi runtime');
   } finally {
     await service?.dispose();
     if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;

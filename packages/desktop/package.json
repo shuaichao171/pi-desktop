@@ -2,6 +2,8 @@
   "name": "@pidesktop/desktop",
   "private": true,
   "version": "0.1.0",
+  "description": "Desktop workbench for the Pi coding agent",
+  "author": "Pi Desktop contributors",
   "type": "module",
   "main": "out/main/index.js",
   "scripts": {

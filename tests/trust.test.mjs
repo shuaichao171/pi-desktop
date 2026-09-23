@@ -30,12 +30,19 @@ test('project extensions load only after Pi project trust is granted', async () 
     await service.init({ cwd: workspace });
     assert.equal(prompts, 2);
     assert.equal(existsSync(marker), true, 'trusted project extension should load');
+    const extension = (await service.listExtensions()).find((item) => item.path.endsWith('marker.ts'));
+    assert.ok(extension?.enabled, 'trusted Pi extension should be listed as enabled');
+    await service.setExtensionEnabled(extension.path, false);
+    assert.equal((await service.listExtensions()).find((item) => item.path === extension.path)?.enabled, false);
+    rmSync(marker);
+    await service.setExtensionEnabled(extension.path, true);
+    assert.equal((await service.listExtensions()).find((item) => item.path === extension.path)?.enabled, true);
+    assert.equal(existsSync(marker), true, 're-enabled extension should load through Pi reload');
     await service.dispose();
 
     service = new AgentService(async () => { throw new Error('remembered trust should skip the prompt'); });
     await service.init({ cwd: workspace });
-    assert.equal(service.runtime.services.settingsManager.isProjectTrusted(), true,
-      'remembered trust should survive a new service');
+    assert.equal(service.getSnapshot().status, 'idle', 'remembered trust should survive a new service');
   } finally {
     await service?.dispose();
     for (const [name, value] of previous) {

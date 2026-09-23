@@ -1,17 +1,14 @@
-import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
-import type { UiToolActivity } from '@pidesktop/shared';
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import type { UiMessage, UiToolActivity } from '@pidesktop/shared';
+import { useT } from '../i18n';
 import { useChatStore } from '../store';
 import { Composer } from './Composer';
+import { ExtensionDialogHost } from './ExtensionDialogHost';
 import { Icon } from './Icons';
 import { MessageItem } from './MessageItem';
 
-const TOOL_STATUS_LABEL: Record<UiToolActivity['status'], string> = {
-	running: '运行中',
-	done: '已完成',
-	error: '失败',
-};
-
 function ToolActivityItem({ activity }: { activity: UiToolActivity }) {
+	const { t, locale } = useT();
 	const detailId = useId();
 	const [expanded, setExpanded] = useState(activity.status === 'error');
 	const [showAll, setShowAll] = useState(false);
@@ -29,9 +26,9 @@ function ToolActivityItem({ activity }: { activity: UiToolActivity }) {
 	async function copyDetail() {
 		try {
 			await navigator.clipboard.writeText(visibleDetail);
-			setCopyStatus('已复制');
+			setCopyStatus(t('chat.tool.copied'));
 		} catch {
-			setCopyStatus('复制失败');
+			setCopyStatus(t('chat.tool.copyFailed'));
 		}
 	}
 
@@ -43,7 +40,7 @@ function ToolActivityItem({ activity }: { activity: UiToolActivity }) {
 					<span className="pd-tool-item-name">{activity.tool}</span>
 					<span className="pd-tool-item-title" title={activity.title}>{activity.title}</span>
 				</span>
-				<span className={`pd-tool-status is-${activity.status}`}>{TOOL_STATUS_LABEL[activity.status]}</span>
+				<span className={`pd-tool-status is-${activity.status}`}>{t(`chat.tool.${activity.status}`)}</span>
 				<Icon name="chevronDown" className={`pd-chevron${expanded ? ' is-open' : ''}`} width="16" height="16" />
 			</button>
 			{expanded && (
@@ -51,42 +48,42 @@ function ToolActivityItem({ activity }: { activity: UiToolActivity }) {
 					{detail ? (
 						<>
 							<div className="pd-tool-output-heading">
-								<span>{activity.status === 'error' ? '错误输出' : activity.status === 'running' ? '实时输出' : '工具结果'}</span>
+								<span>{t(activity.status === 'error' ? 'chat.tool.errorOutput' : activity.status === 'running' ? 'chat.tool.liveOutput' : 'chat.tool.result')}</span>
 								<div className="pd-tool-output-actions">
-									<button type="button" onClick={() => setWrapLines((value) => !value)} aria-label={`${activity.tool} 输出自动换行`} aria-pressed={wrapLines}>{wrapLines ? '取消换行' : '自动换行'}</button>
-									<button type="button" onClick={() => void copyDetail()} aria-label={`复制 ${activity.tool} 当前显示的输出`}>复制</button>
+									<button type="button" onClick={() => setWrapLines((value) => !value)} aria-label={t('chat.tool.wrapLabel', { tool: activity.tool })} aria-pressed={wrapLines}>{t(wrapLines ? 'chat.tool.unwrap' : 'chat.tool.wrap')}</button>
+									<button type="button" onClick={() => void copyDetail()} aria-label={t('chat.tool.copyLabel', { tool: activity.tool })}>{t('chat.tool.copy')}</button>
 								</div>
 							</div>
 							<pre className={`pd-tool-output${wrapLines ? ' is-wrapped' : ''}`}>{visibleDetail}</pre>
-							{isLong && <button type="button" className="pd-tool-show-all" onClick={() => setShowAll((value) => !value)}>{showAll ? '收起长输出' : `展开更多输出（已保留 ${detail.length.toLocaleString('zh-CN')} 字符）`}</button>}
-							{activity.detailTruncated && <p className="pd-tool-truncated">输出已截断为前 48000 字符。</p>}
+							{isLong && <button type="button" className="pd-tool-show-all" onClick={() => setShowAll((value) => !value)}>{showAll ? t('chat.tool.collapseOutput') : t('chat.tool.expandOutput', { count: detail.length.toLocaleString(locale) })}</button>}
+							{activity.detailTruncated && <p className="pd-tool-truncated">{t('chat.tool.truncated')}</p>}
 							{copyStatus && <span className="pd-tool-copy-status" role="status">{copyStatus}</span>}
 						</>
-					) : <p className="pd-tool-no-output">{activity.status === 'running' ? '正在等待工具输出…' : '该工具没有文本输出。'}</p>}
+					) : <p className="pd-tool-no-output">{t(activity.status === 'running' ? 'chat.tool.waiting' : 'chat.tool.noOutput')}</p>}
 				</div>
 			)}
 		</div>
 	);
 }
 
-function ToolActivityPanel() {
-	const activities = useChatStore((s) => s.activities);
-	const [expanded, setExpanded] = useState(false);
+function ToolActivityPanel({ activities }: { activities: UiToolActivity[] }) {
+	const { t } = useT();
+	const [expanded, setExpanded] = useState(() => activities.some((activity) => activity.status === 'running' || activity.status === 'error'));
 	const runningCount = activities.filter((activity) => activity.status === 'running').length;
 	const failedCount = activities.filter((activity) => activity.status === 'error').length;
 
 	useEffect(() => {
-		if (runningCount > 0) setExpanded(true);
-	}, [runningCount]);
+		if (runningCount > 0 || failedCount > 0) setExpanded(true);
+	}, [runningCount, failedCount]);
 
 	if (activities.length === 0) return null;
 
 	return (
-		<section className="pd-tool-panel" aria-label="工具活动">
+		<section className="pd-tool-panel" aria-label={t('chat.tool.activity')}>
 			<button type="button" className="pd-tool-summary" onClick={() => setExpanded((value) => !value)} aria-expanded={expanded}>
 				<Icon name="spark" width="16" height="16" />
-				<span>工具活动</span>
-				<span className="pd-tool-summary-count">{activities.length} 条{runningCount > 0 ? ` · ${runningCount} 运行中` : failedCount > 0 ? ` · ${failedCount} 失败` : ''}</span>
+				<span>{t('chat.tool.activity')}</span>
+				<span className="pd-tool-summary-count">{t('chat.tool.count', { count: activities.length })}{runningCount > 0 ? ` · ${t('chat.tool.runningCount', { count: runningCount })}` : failedCount > 0 ? ` · ${t('chat.tool.failedCount', { count: failedCount })}` : ''}</span>
 				<Icon name="chevronDown" className={`pd-chevron pd-tool-chevron${expanded ? ' is-open' : ''}`} width="16" height="16" />
 			</button>
 			{expanded && (
@@ -98,30 +95,55 @@ function ToolActivityPanel() {
 	);
 }
 
+type TimelineEntry =
+	| { kind: 'message'; id: string; order: number; message: UiMessage }
+	| { kind: 'tools'; id: string; order: number; activities: UiToolActivity[] };
+
+function buildTimeline(messages: UiMessage[], activities: UiToolActivity[]): TimelineEntry[] {
+	const ordered = [
+		...messages.map((message) => ({ kind: 'message' as const, order: message.order, message })),
+		...activities.map((activity) => ({ kind: 'tool' as const, order: activity.order, activity })),
+	].sort((a, b) => a.order - b.order);
+	const timeline: TimelineEntry[] = [];
+	for (const item of ordered) {
+		if (item.kind === 'message') {
+			timeline.push({ kind: 'message', id: item.message.id, order: item.order, message: item.message });
+			continue;
+		}
+		const previous = timeline.at(-1);
+		if (previous?.kind === 'tools') previous.activities.push(item.activity);
+		else timeline.push({ kind: 'tools', id: item.activity.id, order: item.order, activities: [item.activity] });
+	}
+	return timeline;
+}
+
 function EmptyState() {
+	const { t } = useT();
 	return (
 		<div className="pd-empty-state">
 			<div className="pd-empty-mark" aria-hidden="true">π</div>
-			<h1>从这里开始</h1>
-			<p>描述你想完成的工作。Pi 可以阅读代码、修改文件并运行命令。</p>
-			<div className="pd-empty-hints"><span>Enter 发送</span><span>Shift + Enter 换行</span></div>
+			<h1>{t('chat.empty.title')}</h1>
+			<p>{t('chat.empty.description')}</p>
+			<div className="pd-empty-hints"><span>{t('chat.empty.sendHint')}</span><span>{t('chat.empty.newlineHint')}</span></div>
 		</div>
 	);
 }
 
 export function ChatView({ onToggleSidebar }: { onToggleSidebar(): void }) {
+	const { t } = useT();
 	const messages = useChatStore((s) => s.messages);
 	const activities = useChatStore((s) => s.activities);
 	const sessions = useChatStore((s) => s.sessions);
 	const sessionPath = useChatStore((s) => s.sessionPath);
 	const cwd = useChatStore((s) => s.cwd);
 	const error = useChatStore((s) => s.error);
+	const timeline = useMemo(() => buildTimeline(messages, activities), [messages, activities]);
 	const scrollRef = useRef<HTMLDivElement>(null);
 	const followsBottomRef = useRef(true);
 	const [showBackToBottom, setShowBackToBottom] = useState(false);
 	const activeSession = sessions.find((session) => session.path === sessionPath);
 	const firstUserText = messages.find((message) => message.role === 'user')?.text;
-	const title = activeSession?.name?.trim() || activeSession?.firstMessage?.trim().split(/\r?\n/)[0] || firstUserText?.trim().split(/\r?\n/)[0] || '新会话';
+	const title = activeSession?.name?.trim() || activeSession?.firstMessage?.trim().split(/\r?\n/)[0] || firstUserText?.trim().split(/\r?\n/)[0] || t('chat.newSession');
 	useLayoutEffect(() => {
 		if (followsBottomRef.current && scrollRef.current) {
 			scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
@@ -153,25 +175,27 @@ export function ChatView({ onToggleSidebar }: { onToggleSidebar(): void }) {
 	return (
 		<main className="pd-main">
 			<header className="pd-chat-header">
-				<button type="button" className="pd-icon-button pd-header-sidebar-toggle" onClick={onToggleSidebar} aria-label="切换侧栏" title="切换侧栏"><Icon name="panel" /></button>
-				<div className="pd-chat-heading"><span className="pd-chat-workspace-icon" title={cwd || '工作区'}><Icon name="folder" width="16" height="16" /></span><h1 title={title}>{title}</h1></div>
+				<button type="button" className="pd-icon-button pd-header-sidebar-toggle" onClick={onToggleSidebar} aria-label={t('chat.toggleSidebar')} title={t('chat.toggleSidebar')}><Icon name="panel" /></button>
+				<div className="pd-chat-heading"><span className="pd-chat-workspace-icon" title={cwd || t('chat.workspace')}><Icon name="folder" width="16" height="16" /></span><h1 title={title}>{title}</h1></div>
 			</header>
 
 			<div className="pd-chat-content">
 				<div ref={scrollRef} className="pd-transcript" onScroll={handleScroll}>
-					{messages.length === 0 ? <EmptyState /> : (
+					{timeline.length === 0 ? <EmptyState /> : (
 						<div className="pd-message-list">
-							{messages.map((message) => <MessageItem key={message.id} message={message} />)}
+							{timeline.map((entry) => entry.kind === 'message'
+								? <MessageItem key={`message-${entry.id}`} message={entry.message} />
+								: <div className="pd-timeline-tool-group" key={`tools-${entry.id}`}><div className="pd-message-column"><ToolActivityPanel activities={entry.activities} /></div></div>)}
 						</div>
 					)}
-					{(activities.length > 0 || error) && <div className="pd-transcript-end">
-						<ToolActivityPanel />
-						{error && <div className="pd-error-banner" role="alert"><strong>Pi 遇到错误</strong><span>{error}</span></div>}
+					{error && <div className="pd-transcript-end">
+						<div className="pd-error-banner" role="alert"><strong>{t('chat.error')}</strong><span>{error}</span></div>
 					</div>}
 				</div>
-				{showBackToBottom && <button type="button" className="pd-back-to-bottom" onClick={scrollToBottom}>回到底部 ↓</button>}
+				{showBackToBottom && <button type="button" className="pd-back-to-bottom" onClick={scrollToBottom}>{t('chat.backToBottom')}</button>}
 			</div>
 			<Composer />
+			<ExtensionDialogHost />
 		</main>
 	);
 }

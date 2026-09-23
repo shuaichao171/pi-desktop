@@ -27,6 +27,9 @@ jobs:
         run: |
           $asar = (Resolve-Path 'release/win-unpacked/resources/app.asar').Path
           $entries = pnpm --filter @pidesktop/desktop exec asar list $asar
+          if (-not ($entries -match 'out[\\/]main[\\/]agentHost\.js')) {
+            throw 'Isolated Pi agent host is missing from app.asar'
+          }
           if (-not ($entries -match 'node_modules[\\/]@earendil-works[\\/]pi-coding-agent[\\/]dist[\\/]index.js')) {
             throw 'Pi SDK is missing from app.asar'
           }
