@@ -21,7 +21,7 @@
     "clean": "pnpm -r --if-present clean"
   },
   "devDependencies": {
-    "@earendil-works/pi-coding-agent": "^0.87.1",
+    "@earendil-works/pi-coding-agent": "0.87.1",
     "yaml": "2.9.0"
   }
 }

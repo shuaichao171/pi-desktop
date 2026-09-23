@@ -36,6 +36,8 @@ Electron ESM preload 的兼容性要求关闭窗口 sandbox；窗口仍启用 `c
 
 `reference/` 仅作设计参考，已从 Git 和安装包排除。
 
+Pi SDK 通过 npm 精确版本和锁文件管理；上游版本的检查、升级 PR 与验证流程见[与 Pi 上游同步](docs/PI_SYNC.md)。
+
 ## 开发
 
 需要 Node.js ≥ 22.19、pnpm 11.11.0，以及对应平台的构建环境。Windows 目标支持 Windows 10/11。首次安装会从 Electron 官方发布源下载运行时。

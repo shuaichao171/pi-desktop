@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 
 jobs:
   verify:
@@ -18,6 +19,7 @@ jobs:
           node-version: '22.19.0'
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - run: node scripts/sync-pi.mjs --verify
       - run: pnpm typecheck
       - run: pnpm test
       - run: pnpm build
@@ -51,7 +53,8 @@ jobs:
             throw 'Pi Chord Windows esbuild binary is not unpacked for execution'
           }
           $esbuildVersion = & $esbuildBinary.FullName --version
-          if ($LASTEXITCODE -ne 0 -or $esbuildVersion -ne '0.28.2') { throw 'Packaged Pi Chord esbuild binary cannot run' }
+          $expectedEsbuildVersion = (Get-Content packages/desktop/package.json | ConvertFrom-Json).optionalDependencies.'@esbuild/win32-x64'
+          if ($LASTEXITCODE -ne 0 -or $esbuildVersion -ne $expectedEsbuildVersion) { throw 'Packaged Pi Chord esbuild binary cannot run' }
 
   package-macos:
     strategy:
@@ -103,7 +106,8 @@ jobs:
           esbuild_binary="$(find "$app/Contents/Resources/app.asar.unpacked" -path "*/@esbuild/darwin-${arch}/bin/esbuild" -type f -print -quit)"
           test -n "$esbuild_binary"
           test "$(lipo -archs "$esbuild_binary")" = '${{ matrix.macho }}'
-          test "$("$esbuild_binary" --version)" = '0.28.2'
+          esbuild_version="$(node -p "require('./packages/desktop/package.json').optionalDependencies['@esbuild/darwin-${arch}']")"
+          test "$("$esbuild_binary" --version)" = "$esbuild_version"
 
   package-linux:
     runs-on: ubuntu-24.04
@@ -135,4 +139,5 @@ jobs:
           grep -F '@esbuild/linux-x64/bin/esbuild' <<< "$entries" >/dev/null
           esbuild_binary="$(find release/linux-unpacked/resources/app.asar.unpacked -path '*/@esbuild/linux-x64/bin/esbuild' -type f -print -quit)"
           test -n "$esbuild_binary"
-          test "$("$esbuild_binary" --version)" = '0.28.2'
+          esbuild_version="$(node -p "require('./packages/desktop/package.json').optionalDependencies['@esbuild/linux-x64']")"
+          test "$("$esbuild_binary" --version)" = "$esbuild_version"

@@ -1,0 +1,112 @@
+name: Sync Pi SDK
+
+on:
+  schedule:
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Published stable Pi SDK version; leave blank for npm latest'
+        required: false
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: write
+
+concurrency:
+  group: pi-sdk-sync
+  cancel-in-progress: false
+
+jobs:
+  propose:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.11.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.19.0'
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Check published Pi SDK
+        id: pi
+        env:
+          REQUESTED_VERSION: ${{ inputs.version || '' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -n "$REQUESTED_VERSION" ]]; then
+            node scripts/sync-pi.mjs --update "$REQUESTED_VERSION"
+          else
+            node scripts/sync-pi.mjs --update-latest
+          fi
+      - name: Regenerate pnpm lockfile
+        if: steps.pi.outputs.changed == 'true'
+        run: pnpm install --no-frozen-lockfile --ignore-scripts --registry=https://registry.npmjs.org/ --reporter=append-only
+      - name: Commit update to the automation branch
+        id: branch
+        if: steps.pi.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NEW_VERSION: ${{ steps.pi.outputs.new_version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --check
+          git switch -C automation/pi-sdk-update
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          gh auth setup-git
+          git add package.json packages/agent/package.json packages/desktop/package.json pnpm-workspace.yaml pnpm-lock.yaml
+          git commit -m "chore: sync Pi SDK to ${NEW_VERSION}"
+          if git show-ref --verify --quiet refs/remotes/origin/automation/pi-sdk-update &&
+             [[ "$(git rev-parse 'HEAD^{tree}')" == "$(git rev-parse 'origin/automation/pi-sdk-update^{tree}')" ]]; then
+            echo 'changed=false' >> "$GITHUB_OUTPUT"
+            echo 'Automation branch already contains this update.'
+          else
+            git push --force-with-lease origin HEAD:refs/heads/automation/pi-sdk-update
+            echo 'changed=true' >> "$GITHUB_OUTPUT"
+          fi
+      - name: Open or refresh upgrade PR
+        id: pr
+        if: steps.pi.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OLD_VERSION: ${{ steps.pi.outputs.old_version }}
+          NEW_VERSION: ${{ steps.pi.outputs.new_version }}
+          BRANCH_CHANGED: ${{ steps.branch.outputs.changed }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          body="$RUNNER_TEMP/pi-sdk-update.md"
+          cat > "$body" <<EOF
+          Update the embedded Pi SDK from ${OLD_VERSION} to ${NEW_VERSION}.
+
+          - [Pi release notes](https://github.com/earendil-works/pi/releases/tag/v${NEW_VERSION})
+          - [Upstream changes](https://github.com/earendil-works/pi/compare/v${OLD_VERSION}...v${NEW_VERSION})
+
+          The published npm package is the integration source. The local reference/pi checkout is not part of the build.
+
+          Review project trust, session files, extensions, model authentication, background runs, and Pi tool behavior. If Pi Chord changes esbuild or the package layout, update desktop optional dependencies and packaging checks. Merge only after the full Windows, macOS, and Linux CI matrix passes.
+          EOF
+          title="chore: sync Pi SDK to ${NEW_VERSION}"
+          existing="$(gh pr list --base main --head automation/pi-sdk-update --state open --json number --jq '.[0].number')"
+          if [[ -z "$existing" ]]; then
+            gh pr create --base main --head automation/pi-sdk-update --title "$title" --body-file "$body"
+            echo 'dispatch=true' >> "$GITHUB_OUTPUT"
+          else
+            gh pr edit "$existing" --title "$title" --body-file "$body"
+            echo "dispatch=${BRANCH_CHANGED}" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Run full compatibility CI on the bot branch
+        if: steps.pr.outputs.dispatch == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run ci.yml --ref automation/pi-sdk-update
