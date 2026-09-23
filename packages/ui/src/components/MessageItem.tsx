@@ -1,4 +1,5 @@
 import type { UiAttachment, UiMessage } from '@pidesktop/shared';
+import { memo } from 'react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { useT } from '../i18n';
@@ -12,7 +13,7 @@ function AttachmentPreview({ attachment }: { attachment: UiAttachment }) {
 	return <details className="pd-message-attachment pd-message-text-file"><summary>{attachment.name} <span>{t('message.textFile')}</span></summary><pre className="pd-message-text-preview">{attachment.text.slice(0, previewLength)}{attachment.text.length > previewLength ? `\n${t('message.previewTruncated')}` : ''}</pre></details>;
 }
 
-export function MessageItem({ message }: { message: UiMessage }) {
+export const MessageItem = memo(function MessageItem({ message }: { message: UiMessage }) {
 	const { t } = useT();
 	if (message.role === 'user') {
 		return (
@@ -34,4 +35,4 @@ export function MessageItem({ message }: { message: UiMessage }) {
 			</div>
 		</div>
 	);
-}
+});

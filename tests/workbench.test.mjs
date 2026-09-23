@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, realpathSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, realpathSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve, sep } from 'node:path';
 import { test } from 'node:test';
@@ -103,7 +103,7 @@ test('workbench runs an explicit command in the selected workspace and streams i
   }
 });
 
-test('workspace disposal cancels a command awaiting path resolution', async () => {
+test('workspace reset cancels a command awaiting path resolution and permits later commands', async () => {
   const tempRoot = mkdtempSync(join(tmpdir(), 'pi-desktop-command-race-'));
   const workspace = join(tempRoot, 'workspace');
   mkdirSync(workspace);
@@ -112,9 +112,39 @@ test('workspace disposal cancels a command awaiting path resolution', async () =
   try {
     const pending = service.startCommand(process.platform === 'win32' ? 'Write-Output stale' : 'printf stale', workspace);
     const rejected = assert.rejects(pending, /工作区已切换/);
-    await service.dispose();
+    await service.reset();
     await rejected;
     assert.equal(service.commands.size, 0);
+    const fresh = await service.startCommand(process.platform === 'win32' ? 'Start-Sleep -Seconds 1' : 'sleep 1');
+    await service.stopCommand(fresh);
+  } finally {
+    await service.dispose();
+    const resolvedTemp = resolve(tempRoot);
+    if (!resolvedTemp.startsWith(realpathSync(tmpdir()) + sep)) throw new Error('Unsafe temporary path');
+    rmSync(resolvedTemp, { recursive: true, force: true });
+  }
+});
+
+test('Unix command stop terminates descendants in the shell process group', { skip: process.platform === 'win32' }, async () => {
+  const tempRoot = mkdtempSync(join(tmpdir(), 'pi-desktop-command-tree-'));
+  const workspace = join(tempRoot, 'workspace');
+  mkdirSync(workspace);
+  const { WorkbenchService } = await import('../packages/desktop/src/main/workbenchService.ts');
+  const service = new WorkbenchService(() => workspace, () => {});
+  const ready = join(workspace, 'ready.txt');
+  const survived = join(workspace, 'survived.txt');
+  try {
+    const nodeBinary = "'" + process.execPath.replaceAll("'", "'\\''") + "'";
+    const command = `${nodeBinary} -e "require('fs').writeFileSync('ready.txt','1'); setTimeout(() => require('fs').writeFileSync('survived.txt','1'), 1200)" & wait`;
+    const id = await service.startCommand(command);
+    const deadline = Date.now() + 5000;
+    while (!existsSync(ready) && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    assert.equal(existsSync(ready), true, 'child process did not start');
+    await service.stopCommand(id);
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    assert.equal(existsSync(survived), false, 'a descendant survived after stopping the command');
   } finally {
     await service.dispose();
     const resolvedTemp = resolve(tempRoot);

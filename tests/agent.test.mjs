@@ -43,6 +43,9 @@ test('Pi SDK runtime initializes, replaces a session, and publishes a current sn
     assert.ok(first.sessionPath);
     assert.deepEqual(first.messages, []);
     assert.deepEqual(await service.listSessions(), []);
+    await assert.rejects(service.prompt('', undefined, [{ kind: 'image', name: 'empty.png', mimeType: 'image/png', data: '' }]),
+      /图片附件格式无效/);
+    assert.equal(service.getSnapshot().status, 'idle', 'invalid image must be rejected before Pi starts a run');
 
     await service.newSession();
     const second = service.getSnapshot();
@@ -53,11 +56,23 @@ test('Pi SDK runtime initializes, replaces a session, and publishes a current sn
 
     const persisted = SessionManager.create(workspace);
     persistConversation(persisted, 'Restore me', 'Restored reply');
+    persisted.appendMessage({
+      role: 'assistant',
+      content: [{ type: 'toolCall', id: 'interrupted-tool', name: 'bash', arguments: { command: 'sleep 10' } }],
+      api: 'anthropic-messages',
+      provider: 'anthropic',
+      model: 'claude-sonnet-4',
+      usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+      stopReason: 'toolUse',
+      timestamp: Date.now(),
+    });
 
     await service.switchSession(persisted.getSessionFile());
     const restored = service.getSnapshot();
     assert.equal(restored.sessionId, persisted.getSessionId());
     assert.deepEqual(restored.messages.map(({ text }) => text), ['Restore me', 'Restored reply']);
+    assert.equal(restored.activities.find(({ id }) => id === 'interrupted-tool')?.status, 'interrupted',
+      'a historical tool call with no result should not be reported as a failure');
     assert.equal((await service.listSessions()).length, 1);
 
     const other = SessionManager.create(workspace);

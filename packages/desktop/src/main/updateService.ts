@@ -2,6 +2,7 @@ import { app, BrowserWindow } from 'electron';
 import { readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { IPC_CHANNELS, type UiUpdateState, type UiUpdateUnavailableReason } from '@pidesktop/shared';
+import { getAppLocale } from './appLocale';
 import { parseUpdateFeedUrl } from './updateFeed';
 
 type Updater = typeof import('electron-updater').autoUpdater;
@@ -138,14 +139,21 @@ class UpdateService {
 		if (this.state.phase !== 'ready' || this.installing) throw new Error('No downloaded update is ready to install.');
 		if (!this.beforeInstall) throw new Error('Update installation is unavailable.');
 		this.installing = true;
+		let servicesClosed = false;
 		try {
 			const updater = await this.getUpdater();
-			this.stop();
 			await this.beforeInstall();
+			servicesClosed = true;
+			this.stop();
 			updater.quitAndInstall(false, true);
 		} catch (error) {
 			this.installing = false;
-			this.publish({ phase: 'error', error: (error instanceof Error ? error.message : String(error)).slice(0, 300) });
+			this.start();
+			const message = error instanceof Error ? error.message : String(error);
+			const restartHint = servicesClosed
+				? getAppLocale() === 'en-US' ? ' Restart the app before retrying.' : ' 请重启应用后重试。'
+				: '';
+			this.publish({ phase: 'error', error: `${message}${restartHint}`.slice(0, 300) });
 			throw error;
 		}
 	}

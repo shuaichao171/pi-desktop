@@ -27,11 +27,13 @@ function deferred() {
   return { promise, resolve };
 }
 
-function createBridge({ snapshot = baseSnapshot, onPrompt, onListSessions, workspaces = ['C:\\workspace'], sessionsByCwd = {} } = {}) {
+function createBridge({ snapshot = baseSnapshot, onSnapshot, onInitAgent, onPrompt, onListSessions, workspaces = ['C:\\workspace'], sessionsByCwd = {} } = {}) {
   const listeners = new Set();
   const prompts = [];
   const settingsCalls = [];
   const workspaceSwitches = [];
+  const initCalls = [];
+  let snapshotCalls = 0;
   const sessionListCalls = [];
   const models = [{ provider: 'test-provider', id: 'next-model', name: 'Next Model', reasoning: true, input: ['text'], contextWindow: 100000, maxTokens: 4096 }];
   const bridge = {
@@ -42,7 +44,7 @@ function createBridge({ snapshot = baseSnapshot, onPrompt, onListSessions, works
       platform: process.platform,
     }),
     pickWorkspace: async () => null,
-    initAgent: async () => {},
+    initAgent: async (cwd) => { initCalls.push(cwd); await onInitAgent?.(cwd); },
     listWorkspaces: async () => workspaces,
     switchWorkspace: async (cwd) => {
       workspaceSwitches.push(cwd);
@@ -50,7 +52,7 @@ function createBridge({ snapshot = baseSnapshot, onPrompt, onListSessions, works
       for (const listener of listeners) listener({ sequence: 21, event: { type: 'ready', model: 'test-model', modelProvider: 'test-provider', thinkingLevel: 'medium', availableThinkingLevels: ['off', 'low', 'medium', 'high'], cwd, sessionId: 'other-session', sessionPath: `${cwd}\\session.jsonl`, messages: [], activities: [] } });
       for (const listener of listeners) listener({ sequence: 22, event: { type: 'status', status: 'idle' } });
     },
-    getAgentSnapshot: () => Promise.resolve(snapshot),
+    getAgentSnapshot: () => { snapshotCalls += 1; return onSnapshot ? onSnapshot() : Promise.resolve(snapshot); },
     listSessions: async (cwd) => {
       sessionListCalls.push(cwd);
       return onListSessions ? onListSessions(cwd) : sessionsByCwd[cwd ?? baseSnapshot.cwd] ?? [];
@@ -84,7 +86,9 @@ function createBridge({ snapshot = baseSnapshot, onPrompt, onListSessions, works
     prompts,
     settingsCalls,
     workspaceSwitches,
+    initCalls,
     sessionListCalls,
+    get snapshotCalls() { return snapshotCalls; },
     get listenerCount() { return listeners.size; },
     emit(sequence, event) {
       for (const listener of listeners) listener({ sequence, event });
@@ -207,6 +211,61 @@ test('snapshot and push events converge when they interleave during startup', as
   host.emit(15, { type: 'status', status: 'idle' });
   assert.equal(useChatStore.getState().status, 'idle');
   assert.equal(useChatStore.getState().messages[1].status, 'done');
+});
+
+test('bootstrap resynchronizes after its bounded event buffer overflows', async () => {
+  const firstSnapshot = deferred();
+  const freshMessage = { id: 'fresh-user', order: 1, role: 'user', text: 'current state', status: 'done' };
+  let calls = 0;
+  const host = createBridge({
+    onSnapshot: () => ++calls === 1
+      ? firstSnapshot.promise
+      : Promise.resolve({ ...baseSnapshot, sequence: 400, messages: [freshMessage] }),
+  });
+  useChatStore.getState().setBridge(host.bridge);
+  for (let sequence = 2; sequence <= 300; sequence += 1) {
+    host.emit(sequence, { type: 'status', status: 'busy' });
+  }
+  firstSnapshot.resolve(baseSnapshot);
+  await settle();
+  await settle();
+
+  assert.equal(host.snapshotCalls, 2);
+  assert.deepEqual(useChatStore.getState().messages, [freshMessage]);
+  assert.equal(useChatStore.getState().status, 'idle');
+});
+
+test('streaming deltas keep timeline structure stable while new rows advance it', async () => {
+  const host = createBridge();
+  useChatStore.getState().setBridge(host.bridge);
+  await settle();
+  host.emit(2, { type: 'assistant-start', id: 'assistant-2', order: 1 });
+  const startedRevision = useChatStore.getState().timelineRevision;
+  host.emit(3, { type: 'assistant-delta', id: 'assistant-2', delta: 'one' });
+  host.emit(4, { type: 'assistant-delta', id: 'assistant-2', delta: ' two' });
+  assert.equal(useChatStore.getState().timelineRevision, startedRevision);
+  host.emit(5, { type: 'tool', activity: { id: 'tool-1', order: 2, tool: 'read', title: 'file', status: 'running' } });
+  assert.equal(useChatStore.getState().timelineRevision, startedRevision + 1);
+  host.emit(6, { type: 'tool', activity: { id: 'tool-1', order: 2, tool: 'read', title: 'file', status: 'done' } });
+  assert.equal(useChatStore.getState().timelineRevision, startedRevision + 1);
+});
+
+test('agent retry uses the current workspace and returns to idle on ready events', async () => {
+  let host;
+  host = createBridge({
+    snapshot: { ...baseSnapshot, status: 'error', error: 'startup failed' },
+    onInitAgent: async (cwd) => {
+      host.emit(2, { type: 'reset', cwd });
+      host.emit(3, { type: 'ready', model: 'test-model', modelProvider: 'test-provider', thinkingLevel: 'medium', availableThinkingLevels: ['off', 'low', 'medium', 'high'], cwd, sessionId: 'recovered', sessionPath: 'recovered.jsonl', messages: [], activities: [] });
+      host.emit(4, { type: 'status', status: 'idle' });
+    },
+  });
+  useChatStore.getState().setBridge(host.bridge);
+  await settle();
+  await useChatStore.getState().retryAgent();
+  assert.deepEqual(host.initCalls, [baseSnapshot.cwd]);
+  assert.equal(useChatStore.getState().status, 'idle');
+  assert.equal(useChatStore.getState().sessionId, 'recovered');
 });
 
 test('busy send queues a Pi follow-up, while explicit steer and idle prompt keep their semantics', async () => {

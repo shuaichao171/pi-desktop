@@ -1,17 +1,12 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ChangeEvent, type ClipboardEvent, type DragEvent, type KeyboardEvent } from 'react';
 import type { UiAttachment, UiThinkingLevel } from '@pidesktop/shared';
+import { inspectAttachmentFile, MAX_ATTACHMENTS } from '../attachmentPolicy';
 import { useT, type Translate } from '../i18n';
 import { useChatStore } from '../store';
 import { Icon } from './Icons';
 
 type BusyBehavior = 'steer' | 'followUp';
 type Draft = { text: string; attachments: UiAttachment[] };
-
-const MAX_ATTACHMENTS = 8;
-const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
-const MAX_TEXT_BYTES = 192 * 1024;
-const TEXT_FILE_PATTERN = /\.(txt|md|mdx|json|jsonl|ya?ml|toml|xml|csv|tsv|js|jsx|ts|tsx|css|scss|html?|py|rs|go|java|kt|c|cc|cpp|h|hpp|sh|ps1|sql|log|ini|cfg|env|gitignore)$/i;
-const IMAGE_MIME_BY_EXTENSION: Record<string, string> = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp' };
 
 function draftStorageKey(cwd: string, sessionPath: string | null): string {
 	return `pi-desktop:draft:${encodeURIComponent(cwd)}:${encodeURIComponent(sessionPath ?? 'new')}`;
@@ -31,22 +26,20 @@ function writeDraft(key: string, value: string): boolean {
 }
 
 async function readFileAttachment(file: File, t: Translate): Promise<UiAttachment> {
-	const extension = file.name.split('.').at(-1)?.toLocaleLowerCase() ?? '';
-	const imageMimeType = file.type.startsWith('image/') ? file.type : IMAGE_MIME_BY_EXTENSION[extension];
-	if (imageMimeType) {
-		if (!['image/png', 'image/jpeg', 'image/webp'].includes(imageMimeType)) throw new Error(t('composer.imageTypes', { name: file.name }));
-		if (file.size > MAX_IMAGE_BYTES) throw new Error(t('composer.imageSize', { name: file.name }));
+	const policy = inspectAttachmentFile(file);
+	if ('errorKey' in policy) throw new Error(t(policy.errorKey, { name: file.name }));
+	if (policy.kind === 'image') {
 		const dataUrl = await new Promise<string>((resolve, reject) => {
 			const reader = new FileReader();
 			reader.onload = () => typeof reader.result === 'string' ? resolve(reader.result) : reject(new Error(t('composer.imageReadError')));
 			reader.onerror = () => reject(reader.error ?? new Error(t('composer.imageReadError')));
 			reader.readAsDataURL(file);
 		});
-		return { kind: 'image', name: file.name.slice(0, 200), mimeType: imageMimeType, data: dataUrl.slice(dataUrl.indexOf(',') + 1) };
+		const data = dataUrl.slice(dataUrl.indexOf(',') + 1);
+		if (!data) throw new Error(t('composer.imageEmpty', { name: file.name }));
+		return { kind: 'image', name: file.name.slice(0, 200), mimeType: policy.mimeType, data };
 	}
-	if (!file.type.startsWith('text/') && !TEXT_FILE_PATTERN.test(file.name)) throw new Error(t('composer.fileTypes', { name: file.name }));
-	if (file.size > MAX_TEXT_BYTES) throw new Error(t('composer.textSize', { name: file.name }));
-	return { kind: 'text', name: file.name.slice(0, 200), mimeType: file.type || 'text/plain', text: await file.text() };
+	return { kind: 'text', name: file.name.slice(0, 200), mimeType: policy.mimeType, text: await file.text() };
 }
 
 function attachmentLabel(attachment: UiAttachment, t: Translate): string {
@@ -67,6 +60,7 @@ export function Composer() {
 	const sessionPath = useChatStore((s) => s.sessionPath);
 	const send = useChatStore((s) => s.send);
 	const abort = useChatStore((s) => s.abort);
+	const retryAgent = useChatStore((s) => s.retryAgent);
 	const refreshModels = useChatStore((s) => s.refreshModels);
 	const setModel = useChatStore((s) => s.setModel);
 	const setThinkingLevel = useChatStore((s) => s.setThinkingLevel);
@@ -74,6 +68,7 @@ export function Composer() {
 	const [text, setText] = useState(() => readDraft(draftKey));
 	const [attachments, setAttachments] = useState<UiAttachment[]>([]);
 	const [sending, setSending] = useState(false);
+	const [retrying, setRetrying] = useState(false);
 	const [attaching, setAttaching] = useState(false);
 	const [submissionError, setSubmissionError] = useState<string | null>(null);
 	const [draftWarning, setDraftWarning] = useState(false);
@@ -232,6 +227,15 @@ export function Composer() {
 		finally { setPickerPending(false); }
 	}
 
+	async function retryConnection() {
+		if (retrying) return;
+		setRetrying(true);
+		setSubmissionError(null);
+		try { await retryAgent(); }
+		catch (error) { setSubmissionError(error instanceof Error ? error.message : String(error)); }
+		finally { setRetrying(false); }
+	}
+
 	return (
 		<div className="pd-composer-dock">
 			<div className="pd-composer-wrap">
@@ -254,7 +258,7 @@ export function Composer() {
 						<span className="pd-composer-attachment-name" title={attachment.name}>{attachment.name}<small>{attachmentLabel(attachment, t)}</small></span>
 						<button type="button" onClick={() => changeAttachments(attachmentsRef.current.filter((_, itemIndex) => itemIndex !== index))} aria-label={t('composer.removeAttachment', { name: attachment.name })}><Icon name="close" width="14" height="14" /></button>
 					</div>)}</div>}
-					<textarea ref={textareaRef} value={text} rows={2} placeholder={t(unavailable ? 'composer.connecting' : busy ? 'composer.busyPlaceholder' : 'composer.placeholder')} aria-label={t('composer.messageLabel')} disabled={unavailable} onChange={(event) => changeText(event.target.value)} onKeyDown={onKeyDown} onPaste={onPaste} />
+					<textarea ref={textareaRef} value={text} rows={2} placeholder={t(status === 'error' ? 'composer.connectionErrorPlaceholder' : unavailable ? 'composer.connecting' : busy ? 'composer.busyPlaceholder' : 'composer.placeholder')} aria-label={t('composer.messageLabel')} disabled={unavailable} onChange={(event) => changeText(event.target.value)} onKeyDown={onKeyDown} onPaste={onPaste} />
 					<div className="pd-composer-toolbar">
 						<div className="pd-composer-meta">
 							<input ref={fileInputRef} type="file" multiple className="pd-composer-file-input" tabIndex={-1} aria-hidden="true" onChange={onFileChange} />
@@ -264,7 +268,9 @@ export function Composer() {
 						</div>
 						<div className="pd-composer-actions">
 							{busy && <><button type="button" className="pd-composer-action" onClick={() => void abort().catch((error: unknown) => setSubmissionError(error instanceof Error ? error.message : String(error)))} title={t('composer.stopTitle')} aria-label={t('composer.stopTitle')}><Icon name="square" width="16" height="16" /><span>{t('composer.stop')}</span></button><button type="button" className="pd-composer-action pd-steer-action" onClick={() => void submit('steer')} disabled={!canSubmit} title={t('composer.steerTitle')}>{t('composer.steer')}</button></>}
-							<button type="button" className="pd-send-button" onClick={() => void submit(busy ? 'followUp' : undefined)} disabled={!canSubmit} title={t(busy ? 'composer.queueSendTitle' : 'composer.sendTitle')}><span>{t(sending ? 'composer.sending' : busy ? 'composer.queueSend' : 'composer.send')}</span><Icon name="arrowUp" width="16" height="16" /></button>
+							{status === 'error' || retrying
+								? <button type="button" className="pd-send-button pd-composer-retry" onClick={() => void retryConnection()} disabled={retrying} title={t('composer.retryConnection')}><Icon name="refresh" width="15" height="15" /><span>{t(retrying ? 'composer.retryingConnection' : 'composer.retryConnection')}</span></button>
+								: <button type="button" className="pd-send-button" onClick={() => void submit(busy ? 'followUp' : undefined)} disabled={!canSubmit} title={t(busy ? 'composer.queueSendTitle' : 'composer.sendTitle')}><span>{t(sending ? 'composer.sending' : busy ? 'composer.queueSend' : 'composer.send')}</span><Icon name="arrowUp" width="16" height="16" /></button>}
 						</div>
 					</div>
 				</div>

@@ -13,7 +13,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import { basename, extname, join, relative } from 'node:path';
+import { basename, extname, isAbsolute, join, relative, sep } from 'node:path';
 
 import {
 	type AgentSessionEvent,
@@ -314,10 +314,13 @@ class SingleAgentService {
 		const settings = services.settingsManager;
 		const project = item.metadata.scope === 'project';
 		const baseDir = item.metadata.baseDir ?? (project ? join(this.cwd, '.pi') : services.agentDir);
-		const pattern = relative(baseDir, item.path);
-		if (!pattern || pattern.startsWith('..')) throw new Error('扩展路径无效');
+		const relativePath = relative(baseDir, item.path);
+		if (!relativePath || isAbsolute(relativePath) || relativePath === '..' || relativePath.startsWith(`..${sep}`)) {
+			throw new Error('扩展路径无效');
+		}
+		const pattern = relativePath.split(sep).join('/');
 		const applyPattern = (current: string[]): string[] => [
-			...current.filter((entry) => entry.replace(/^[!+-]/, '') !== pattern),
+			...current.filter((entry) => entry.replace(/^[!+-]+/, '').replaceAll('\\', '/') !== pattern),
 			`${enabled ? '+' : '-'}${pattern}`,
 		];
 		let rollback: () => void;
@@ -418,7 +421,7 @@ class SingleAgentService {
 		this.activePromptCalls += 1;
 		await new Promise<void>((resolve, reject) => {
 			let acknowledged = false;
-		void session.prompt(promptText, {
+			void session.prompt(promptText, {
 				streamingBehavior: behavior,
 				images,
 				preflightResult: (accepted) => {
@@ -1180,7 +1183,7 @@ function withTextAttachments(text: string, attachments: UiAttachment[]): string 
 function imageAttachments(attachments: UiAttachment[]): { type: 'image'; data: string; mimeType: string }[] {
 	return attachments.filter((item): item is Extract<UiAttachment, { kind: 'image' }> => item.kind === 'image').map((image) => {
 		if (!/^image\/(png|jpeg|gif|webp)$/.test(image.mimeType) ||
-			typeof image.data !== 'string' || image.data.length > 14_000_000 ||
+			typeof image.data !== 'string' || image.data.length === 0 || image.data.length > 14_000_000 ||
 			!/^[-A-Za-z0-9+/]*={0,2}$/.test(image.data)) {
 			throw new Error('图片附件格式无效或过大');
 		}
@@ -1244,7 +1247,7 @@ function historyTimeline(entries: SessionEntry[]): { messages: UiMessage[]; acti
 	return {
 		messages,
 		activities: [...activities.values()].map((activity) =>
-			activity.status === 'running' ? { ...activity, status: 'error' } : activity),
+			activity.status === 'running' ? { ...activity, status: 'interrupted' } : activity),
 		nextOrder,
 	};
 }

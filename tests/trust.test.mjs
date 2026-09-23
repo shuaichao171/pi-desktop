@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, mkdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve, sep } from 'node:path';
 import { test } from 'node:test';
@@ -26,6 +26,13 @@ test('project extensions load only after Pi project trust is granted', async () 
     assert.equal(existsSync(marker), false, 'project extension must not run before trust');
     await service.dispose();
 
+    const settingsPath = join(workspace, '.pi', 'settings.json');
+    writeFileSync(settingsPath, JSON.stringify({ extensions: [
+      '!+extensions/marker.ts',
+      '+extensions\\marker.ts',
+      '+extensions/marker.ts',
+    ] }));
+
     service = new AgentService(async () => { prompts += 1; return { trusted: true, remember: true }; });
     await service.init({ cwd: workspace });
     assert.equal(prompts, 2);
@@ -34,6 +41,8 @@ test('project extensions load only after Pi project trust is granted', async () 
     assert.ok(extension?.enabled, 'trusted Pi extension should be listed as enabled');
     await service.setExtensionEnabled(extension.path, false);
     assert.equal((await service.listExtensions()).find((item) => item.path === extension.path)?.enabled, false);
+    assert.deepEqual(JSON.parse(readFileSync(settingsPath, 'utf8')).extensions, ['-extensions/marker.ts'],
+      'toggling removes duplicate override forms and writes Pi portable path separators');
     rmSync(marker);
     await service.setExtensionEnabled(extension.path, true);
     assert.equal((await service.listExtensions()).find((item) => item.path === extension.path)?.enabled, true);

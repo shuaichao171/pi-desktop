@@ -1,7 +1,8 @@
-import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import type { UiMessage, UiToolActivity } from '@pidesktop/shared';
+import { memo, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
+import type { UiToolActivity } from '@pidesktop/shared';
 import { useT } from '../i18n';
 import { useChatStore } from '../store';
+import { buildTimelineLayout, type TimelineEntry } from '../timeline';
 import { Composer } from './Composer';
 import { ExtensionDialogHost } from './ExtensionDialogHost';
 import { Icon } from './Icons';
@@ -10,7 +11,7 @@ import { MessageItem } from './MessageItem';
 function ToolActivityItem({ activity }: { activity: UiToolActivity }) {
 	const { t, locale } = useT();
 	const detailId = useId();
-	const [expanded, setExpanded] = useState(activity.status === 'error');
+	const [expanded, setExpanded] = useState(activity.status === 'error' || activity.status === 'interrupted');
 	const [showAll, setShowAll] = useState(false);
 	const [wrapLines, setWrapLines] = useState(true);
 	const [copyStatus, setCopyStatus] = useState('');
@@ -20,7 +21,7 @@ function ToolActivityItem({ activity }: { activity: UiToolActivity }) {
 	const visibleDetail = showAll ? detail : detail.slice(0, previewLength);
 
 	useEffect(() => {
-		if (activity.status === 'error') setExpanded(true);
+		if (activity.status === 'error' || activity.status === 'interrupted') setExpanded(true);
 	}, [activity.status]);
 
 	async function copyDetail() {
@@ -48,7 +49,7 @@ function ToolActivityItem({ activity }: { activity: UiToolActivity }) {
 					{detail ? (
 						<>
 							<div className="pd-tool-output-heading">
-								<span>{t(activity.status === 'error' ? 'chat.tool.errorOutput' : activity.status === 'running' ? 'chat.tool.liveOutput' : 'chat.tool.result')}</span>
+								<span>{t(activity.status === 'error' ? 'chat.tool.errorOutput' : activity.status === 'interrupted' ? 'chat.tool.interruptedOutput' : activity.status === 'running' ? 'chat.tool.liveOutput' : 'chat.tool.result')}</span>
 								<div className="pd-tool-output-actions">
 									<button type="button" onClick={() => setWrapLines((value) => !value)} aria-label={t('chat.tool.wrapLabel', { tool: activity.tool })} aria-pressed={wrapLines}>{t(wrapLines ? 'chat.tool.unwrap' : 'chat.tool.wrap')}</button>
 									<button type="button" onClick={() => void copyDetail()} aria-label={t('chat.tool.copyLabel', { tool: activity.tool })}>{t('chat.tool.copy')}</button>
@@ -66,15 +67,23 @@ function ToolActivityItem({ activity }: { activity: UiToolActivity }) {
 	);
 }
 
-function ToolActivityPanel({ activities }: { activities: UiToolActivity[] }) {
+const ToolActivityPanel = memo(function ToolActivityPanel({ sourceActivities, indices }: { sourceActivities: UiToolActivity[]; indices: number[] }) {
 	const { t } = useT();
-	const [expanded, setExpanded] = useState(() => activities.some((activity) => activity.status === 'running' || activity.status === 'error'));
+	const activities = indices.map((index) => sourceActivities[index]).filter((activity): activity is UiToolActivity => Boolean(activity));
+	const [expanded, setExpanded] = useState(() => activities.some((activity) => activity.status === 'running' || activity.status === 'error' || activity.status === 'interrupted'));
 	const runningCount = activities.filter((activity) => activity.status === 'running').length;
 	const failedCount = activities.filter((activity) => activity.status === 'error').length;
+	const interruptedCount = activities.filter((activity) => activity.status === 'interrupted').length;
+	const summary = [
+		t('chat.tool.count', { count: activities.length }),
+		runningCount > 0 ? t('chat.tool.runningCount', { count: runningCount }) : null,
+		failedCount > 0 ? t('chat.tool.failedCount', { count: failedCount }) : null,
+		interruptedCount > 0 ? t('chat.tool.interruptedCount', { count: interruptedCount }) : null,
+	].filter(Boolean).join(' · ');
 
 	useEffect(() => {
-		if (runningCount > 0 || failedCount > 0) setExpanded(true);
-	}, [runningCount, failedCount]);
+		if (runningCount > 0 || failedCount > 0 || interruptedCount > 0) setExpanded(true);
+	}, [runningCount, failedCount, interruptedCount]);
 
 	if (activities.length === 0) return null;
 
@@ -83,7 +92,7 @@ function ToolActivityPanel({ activities }: { activities: UiToolActivity[] }) {
 			<button type="button" className="pd-tool-summary" onClick={() => setExpanded((value) => !value)} aria-expanded={expanded}>
 				<Icon name="spark" width="16" height="16" />
 				<span>{t('chat.tool.activity')}</span>
-				<span className="pd-tool-summary-count">{t('chat.tool.count', { count: activities.length })}{runningCount > 0 ? ` · ${t('chat.tool.runningCount', { count: runningCount })}` : failedCount > 0 ? ` · ${t('chat.tool.failedCount', { count: failedCount })}` : ''}</span>
+				<span className="pd-tool-summary-count">{summary}</span>
 				<Icon name="chevronDown" className={`pd-chevron pd-tool-chevron${expanded ? ' is-open' : ''}`} width="16" height="16" />
 			</button>
 			{expanded && (
@@ -93,29 +102,7 @@ function ToolActivityPanel({ activities }: { activities: UiToolActivity[] }) {
 			)}
 		</section>
 	);
-}
-
-type TimelineEntry =
-	| { kind: 'message'; id: string; order: number; message: UiMessage }
-	| { kind: 'tools'; id: string; order: number; activities: UiToolActivity[] };
-
-function buildTimeline(messages: UiMessage[], activities: UiToolActivity[]): TimelineEntry[] {
-	const ordered = [
-		...messages.map((message) => ({ kind: 'message' as const, order: message.order, message })),
-		...activities.map((activity) => ({ kind: 'tool' as const, order: activity.order, activity })),
-	].sort((a, b) => a.order - b.order);
-	const timeline: TimelineEntry[] = [];
-	for (const item of ordered) {
-		if (item.kind === 'message') {
-			timeline.push({ kind: 'message', id: item.message.id, order: item.order, message: item.message });
-			continue;
-		}
-		const previous = timeline.at(-1);
-		if (previous?.kind === 'tools') previous.activities.push(item.activity);
-		else timeline.push({ kind: 'tools', id: item.activity.id, order: item.order, activities: [item.activity] });
-	}
-	return timeline;
-}
+});
 
 function EmptyState() {
 	const { t } = useT();
@@ -137,7 +124,12 @@ export function ChatView({ onToggleSidebar }: { onToggleSidebar(): void }) {
 	const sessionPath = useChatStore((s) => s.sessionPath);
 	const cwd = useChatStore((s) => s.cwd);
 	const error = useChatStore((s) => s.error);
-	const timeline = useMemo(() => buildTimeline(messages, activities), [messages, activities]);
+	const timelineRevision = useChatStore((s) => s.timelineRevision);
+	const timelineRef = useRef<{ revision: number; entries: TimelineEntry[] } | null>(null);
+	if (timelineRef.current?.revision !== timelineRevision) {
+		timelineRef.current = { revision: timelineRevision, entries: buildTimelineLayout(messages, activities) };
+	}
+	const timeline = timelineRef.current.entries;
 	const scrollRef = useRef<HTMLDivElement>(null);
 	const followsBottomRef = useRef(true);
 	const [showBackToBottom, setShowBackToBottom] = useState(false);
@@ -184,8 +176,8 @@ export function ChatView({ onToggleSidebar }: { onToggleSidebar(): void }) {
 					{timeline.length === 0 ? <EmptyState /> : (
 						<div className="pd-message-list">
 							{timeline.map((entry) => entry.kind === 'message'
-								? <MessageItem key={`message-${entry.id}`} message={entry.message} />
-								: <div className="pd-timeline-tool-group" key={`tools-${entry.id}`}><div className="pd-message-column"><ToolActivityPanel activities={entry.activities} /></div></div>)}
+								? <MessageItem key={`message-${entry.id}`} message={messages[entry.index]!} />
+								: <div className="pd-timeline-tool-group" key={`tools-${entry.id}`}><div className="pd-message-column"><ToolActivityPanel sourceActivities={activities} indices={entry.indices} /></div></div>)}
 						</div>
 					)}
 					{error && <div className="pd-transcript-end">

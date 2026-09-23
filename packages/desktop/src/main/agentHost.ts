@@ -3,6 +3,7 @@
  * main process. Only plain data crosses this internal RPC boundary.
  */
 import { AgentService } from '@pidesktop/agent';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import type { ProjectTrustDecision } from '@pidesktop/agent';
 import type { UiExtensionDialogRequest } from '@pidesktop/shared';
 import { AGENT_HOST_METHODS, type AgentHostToMain, type MainToAgentHost } from './agentHostProtocol';
@@ -11,6 +12,7 @@ const parent = process.parentPort;
 if (!parent) throw new Error('Pi agent host requires an Electron parent port');
 
 let nextUiRequestId = 0;
+const callContext = new AsyncLocalStorage<number>();
 const pendingUi = new Map<number, {
 	resolve(value: unknown): void;
 	reject(error: Error): void;
@@ -43,7 +45,7 @@ function askMain<T>(
 			},
 		});
 		signal?.addEventListener('abort', abort, { once: true });
-		post({ kind: 'ui-request', id, request });
+		post({ kind: 'ui-request', id, callId: callContext.getStore(), request });
 	});
 }
 
@@ -67,7 +69,7 @@ parent.on('message', (event) => {
 		return;
 	}
 	if (message.kind !== 'call') return;
-	void (async () => {
+	void callContext.run(message.id, async () => {
 		try {
 			if (!allowedMethods.has(message.method)) throw new Error(`Unknown Pi agent method: ${message.method}`);
 			const method = (agent as unknown as Record<string, (...args: unknown[]) => unknown>)[message.method];
@@ -77,7 +79,7 @@ parent.on('message', (event) => {
 		} catch (error) {
 			post({ kind: 'error', id: message.id, message: error instanceof Error ? error.message : String(error) });
 		}
-	})();
+	});
 });
 
 post({ kind: 'ready' });

@@ -22,7 +22,7 @@ const developmentCsp = {
  *
  *   main    → out/main/index.js     (lightweight Electron window + IPC host)
  *   agent   → out/main/agentHost.js (Pi SDK in an Electron utility process)
- *   preload → out/preload/index.js  (bundles @pidesktop/shared source)
+ *   preload → out/preload/index.mjs (bundles @pidesktop/shared source)
  *   renderer→ out/renderer          (React app via Vite, bundles everything)
  */
 export default defineConfig({

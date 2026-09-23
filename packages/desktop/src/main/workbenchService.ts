@@ -216,7 +216,7 @@ export class WorkbenchService {
 		const id = randomUUID();
 		const child = process.platform === 'win32'
 			? spawn('powershell.exe', ['-NoLogo', '-NoProfile', '-Command', command], { cwd, windowsHide: true, stdio: 'pipe' })
-			: spawn('/bin/sh', ['-c', command], { cwd, stdio: 'pipe' });
+			: spawn('/bin/sh', ['-c', command], { cwd, detached: true, stdio: 'pipe' });
 		this.commands.set(id, child);
 		let bytes = 0;
 		const forward = (type: 'stdout' | 'stderr', value: string): void => {
@@ -244,10 +244,14 @@ export class WorkbenchService {
 		if (process.platform === 'win32' && child.pid) {
 			try { await execFileAsync('taskkill', ['/PID', String(child.pid), '/T', '/F'], { timeout: 5000 }); }
 			catch { child.kill(); }
+		} else if (process.platform !== 'win32' && child.pid) {
+			// A detached Unix shell owns its process group, including spawned commands.
+			try { process.kill(-child.pid, 'SIGTERM'); }
+			catch { child.kill('SIGTERM'); }
 		} else child.kill('SIGTERM');
 	}
 
-	async dispose(): Promise<void> {
+	async reset(): Promise<void> {
 		this.commandGeneration += 1;
 		await Promise.allSettled([...this.commands.keys()].map((id) => this.stopCommand(id)));
 		if (this.safeHooksPath) {
@@ -258,5 +262,9 @@ export class WorkbenchService {
 			}
 			this.safeHooksPath = null;
 		}
+	}
+
+	async dispose(): Promise<void> {
+		await this.reset();
 	}
 }

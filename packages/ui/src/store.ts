@@ -45,11 +45,13 @@ interface ChatState {
 	sessions: UiSessionSummary[];
 	messages: UiMessage[];
 	activities: UiToolActivity[];
+	timelineRevision: number;
 	queuedCount: number;
 	error: string | null;
 	appInfo: AppInfo | null;
 
 	setBridge(bridge: AgentBridge): void;
+	retryAgent(): Promise<void>;
 	handleEvent(event: AgentUiEvent): void;
 	refreshSessions(): Promise<void>;
 	refreshWorkspaces(): Promise<void>;
@@ -73,6 +75,23 @@ const sessionListRequests = new Map<string, number>();
 let settingsRequestCount = 0;
 let unsubscribeAgentEvent: (() => void) | null = null;
 let bridgeGeneration = 0;
+const MAX_BOOTSTRAP_EVENTS = 256;
+const MAX_BOOTSTRAP_RESYNCS = 3;
+const SNAPSHOT_TIMEOUT_MS = 15_000;
+
+async function snapshotWithTimeout(bridge: AgentBridge): Promise<AgentSnapshot> {
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	try {
+		return await Promise.race([
+			bridge.getAgentSnapshot(),
+			new Promise<never>((_resolve, reject) => {
+				timer = setTimeout(() => reject(new Error(translate('store.snapshotTimeout'))), SNAPSHOT_TIMEOUT_MS);
+			}),
+		]);
+	} finally {
+		if (timer) clearTimeout(timer);
+	}
+}
 
 function beginSettingsRequest(): void {
 	settingsRequestCount += 1;
@@ -104,6 +123,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 	sessions: [],
 	messages: [],
 	activities: [],
+	timelineRevision: 0,
 	queuedCount: 0,
 	error: null,
 	appInfo: null,
@@ -117,15 +137,36 @@ export const useChatStore = create<ChatState>((set, get) => ({
 		sessionListRequests.clear();
 		set({ bridge, workspaces: [], sessionsByWorkspace: {}, sessions: [] });
 		let bootstrapping = true;
+		let needsRecovery = false;
+		let overflowed = false;
 		const buffered: AgentEventEnvelope[] = [];
 		unsubscribeAgentEvent = bridge.onAgentEvent((envelope) => {
 			if (generation !== bridgeGeneration || get().bridge !== bridge) return;
-			if (bootstrapping) buffered.push(envelope);
-			else get().handleEvent(envelope.event);
+			if (bootstrapping) {
+				if (buffered.length >= MAX_BOOTSTRAP_EVENTS) {
+					buffered.shift();
+					overflowed = true;
+				}
+				buffered.push(envelope);
+				return;
+			}
+			if (needsRecovery) {
+				if (envelope.event.type !== 'reset' && envelope.event.type !== 'ready') return;
+				needsRecovery = false;
+			}
+			get().handleEvent(envelope.event);
 		});
-		void bridge.getAgentSnapshot()
-			.then((snapshot: AgentSnapshot) => {
+		void (async () => {
+			for (let attempt = 0; attempt < MAX_BOOTSTRAP_RESYNCS; attempt += 1) {
+				const snapshot = await snapshotWithTimeout(bridge);
 				if (generation !== bridgeGeneration || get().bridge !== bridge) return;
+				if (overflowed) {
+					// The first snapshot may predate dropped events. Start a fresh snapshot
+					// with an empty, bounded buffer so no delta is silently lost.
+					buffered.length = 0;
+					overflowed = false;
+					continue;
+				}
 				set({
 					status: snapshot.status,
 					statusMessage: snapshot.statusMessage,
@@ -138,6 +179,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 					sessionPath: snapshot.sessionPath,
 					messages: snapshot.messages,
 					activities: snapshot.activities,
+					timelineRevision: get().timelineRevision + 1,
 					queuedCount: snapshot.queuedCount,
 					error: snapshot.error,
 				});
@@ -145,19 +187,48 @@ export const useChatStore = create<ChatState>((set, get) => ({
 				for (const envelope of buffered) {
 					if (envelope.sequence > snapshot.sequence) get().handleEvent(envelope.event);
 				}
+				buffered.length = 0;
 				void get().refreshSessions();
 				void get().refreshWorkspaces();
-			})
-			.catch((error: unknown) => {
+				return;
+			}
+			throw new Error(translate('store.bootstrapOverflow'));
+		})().catch((error: unknown) => {
 				if (generation !== bridgeGeneration || get().bridge !== bridge) return;
 				bootstrapping = false;
+				const latestReady = buffered.findLastIndex((envelope) => envelope.event.type === 'ready');
+				if (!overflowed && latestReady >= 0) {
+					for (const envelope of buffered.slice(latestReady)) get().handleEvent(envelope.event);
+					buffered.length = 0;
+					if (get().status === 'idle' || get().status === 'busy') {
+						void get().refreshSessions();
+						void get().refreshWorkspaces();
+						return;
+					}
+				}
+				buffered.length = 0;
+				needsRecovery = true;
 				set({ error: errorMessage(error), status: 'error' });
-				for (const envelope of buffered) get().handleEvent(envelope.event);
+				void get().refreshWorkspaces();
 			});
 		void bridge
 			.getAppInfo()
 			.then((appInfo) => { if (generation === bridgeGeneration && get().bridge === bridge) set({ appInfo }); })
 			.catch(() => {});
+	},
+
+	async retryAgent() {
+		const bridge = get().bridge;
+		if (!bridge || get().status !== 'error') return;
+		const cwd = get().cwd || get().workspaces[0] || (await bridge.listWorkspaces())[0];
+		if (!cwd) throw new Error(translate('store.noWorkspaceToRetry'));
+		set({ status: 'starting', error: null, statusMessage: undefined });
+		try {
+			await bridge.initAgent(cwd);
+		} catch (error) {
+			set({ status: 'error', error: errorMessage(error) });
+			throw error;
+		}
 	},
 
 	handleEvent(event) {
@@ -178,6 +249,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 					sessions: get().sessionsByWorkspace[event.cwd] ?? [],
 					messages: [],
 					activities: [],
+					timelineRevision: get().timelineRevision + 1,
 					queuedCount: 0,
 					error: null,
 				});
@@ -201,6 +273,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 					sessionPath: event.sessionPath,
 					messages: event.messages,
 					activities: event.activities,
+					timelineRevision: get().timelineRevision + 1,
 					queuedCount: 0,
 					error: null,
 				});
@@ -219,11 +292,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
 			case 'user-message':
 				set((s) => ({
 					messages: [...s.messages, { id: event.id, order: event.order, role: 'user', text: event.text, attachments: event.attachments, status: 'done' }],
+					timelineRevision: s.timelineRevision + 1,
 				}));
 				return;
 			case 'assistant-start':
 				set((s) => ({
 					messages: [...s.messages, { id: event.id, order: event.order, role: 'assistant', text: '', status: 'streaming' }],
+					timelineRevision: s.timelineRevision + 1,
 					error: null,
 				}));
 				return;
@@ -259,7 +334,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 					} else {
 						activities.push(incoming);
 					}
-					return { activities };
+					return { activities, ...(index < 0 ? { timelineRevision: s.timelineRevision + 1 } : {}) };
 				});
 				return;
 			}

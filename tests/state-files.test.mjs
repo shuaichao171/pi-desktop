@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync, mkdirSyn
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { backupCorruptStateFile, CorruptStateFileError, readStateFile, writeStateFile } from '../packages/desktop/src/main/stateFiles.ts';
+import { backupCorruptStateFile, backupCorruptStateFileAsync, CorruptStateFileError, readStateFile, readStateFileAsync, writeStateFile, writeStateFileAsync } from '../packages/desktop/src/main/stateFiles.ts';
 
 const isSettings = (value) => typeof value === 'object' && value !== null && !Array.isArray(value)
   && typeof value.cwd === 'string';
@@ -43,6 +43,28 @@ test('state writes replace a complete file and clean up failed temporary writes'
     mkdirSync(destinationDirectory);
     assert.throws(() => writeStateFile(destinationDirectory, { cwd: 'third' }));
     assert.deepEqual(readdirSync(dir).sort(), ['cannot-replace', 'workspace.json']);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('async state I/O preserves corrupt data and atomically replaces complete values', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'pi-state-'));
+  try {
+    const path = join(dir, 'sessions-meta.json');
+    assert.deepEqual(await readStateFileAsync(path, () => ({}), isSettings), {});
+    writeFileSync(path, '{"cwd":', 'utf8');
+    await assert.rejects(readStateFileAsync(path, () => ({}), isSettings), CorruptStateFileError);
+    const backup = await backupCorruptStateFileAsync(path);
+    assert.equal(readFileSync(backup, 'utf8'), '{"cwd":');
+    await writeStateFileAsync(path, { cwd: 'first' });
+    await writeStateFileAsync(path, { cwd: 'second' });
+    assert.deepEqual(await readStateFileAsync(path, () => ({}), isSettings), { cwd: 'second' });
+
+    const destinationDirectory = join(dir, 'cannot-replace');
+    mkdirSync(destinationDirectory);
+    await assert.rejects(writeStateFileAsync(destinationDirectory, { cwd: 'third' }));
+    assert.deepEqual(readdirSync(dir).sort(), ['cannot-replace', 'sessions-meta.json', backup.split(/[\\/]/).at(-1)].sort());
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

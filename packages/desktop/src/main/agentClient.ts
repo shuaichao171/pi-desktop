@@ -11,6 +11,7 @@ export interface AgentHostUiHandlers {
 }
 
 interface PendingCall {
+	method: AgentHostMethod;
 	resolve(value: unknown): void;
 	reject(error: Error): void;
 	timer: ReturnType<typeof setTimeout> | null;
@@ -33,10 +34,11 @@ export class AgentHostClient {
 	private startTimer: ReturnType<typeof setTimeout> | null = null;
 	private nextCallId = 0;
 	private readonly pending = new Map<number, PendingCall>();
-	private readonly activeDialogs = new Map<number, AbortController>();
+	private readonly activeDialogs = new Map<number, { controller: AbortController; callId?: number }>();
 	private readonly listeners = new Set<(event: AgentEventEnvelope) => void>();
 	private readonly backgroundActivityListeners = new Set<(cwd: string, path: string) => void>();
 	private lastSequence = 0;
+	private sequenceOffset = 0;
 	private currentCwd = '';
 	private closing = false;
 	private lastAutomaticRestart = 0;
@@ -72,6 +74,8 @@ export class AgentHostClient {
 		if (this.ready) return this.ready;
 		const host = utilityProcess.fork(join(app.getAppPath(), 'out', 'main', 'agentHost.js'), [], { serviceName: 'Pi Agent' });
 		this.host = host;
+		// The utility process starts its event counter at zero after every crash.
+		this.sequenceOffset = this.lastSequence;
 		this.ready = new Promise<void>((resolve, reject) => {
 			this.readyResolve = resolve;
 			this.readyReject = reject;
@@ -95,7 +99,7 @@ export class AgentHostClient {
 				pending.reject(error);
 			}
 			this.pending.clear();
-			for (const controller of this.activeDialogs.values()) controller.abort();
+			for (const dialog of this.activeDialogs.values()) dialog.controller.abort();
 			this.activeDialogs.clear();
 			if (!this.closing) {
 				this.emit({ sequence: ++this.lastSequence, event: { type: 'status', status: 'error', message: error.message } });
@@ -129,12 +133,19 @@ export class AgentHostClient {
 				if (!pending) return;
 				this.pending.delete(message.id);
 				if (pending.timer) clearTimeout(pending.timer);
-				if (message.kind === 'reply') pending.resolve(message.value);
+				if (message.kind === 'reply') {
+					if (pending.method === 'getSnapshot') {
+						const snapshot = message.value as AgentSnapshot;
+						const sequence = this.sequenceOffset + snapshot.sequence;
+						this.lastSequence = Math.max(this.lastSequence, sequence);
+						pending.resolve({ ...snapshot, sequence });
+					} else pending.resolve(message.value);
+				}
 				else pending.reject(new Error(message.message));
 				return;
 			}
 			case 'event':
-				this.emit(message.envelope);
+				this.emit({ ...message.envelope, sequence: this.sequenceOffset + message.envelope.sequence });
 				return;
 			case 'background-activity':
 				for (const listener of this.backgroundActivityListeners) listener(message.cwd, message.path);
@@ -143,7 +154,7 @@ export class AgentHostClient {
 				void this.handleUiRequest(host, message);
 				return;
 			case 'ui-cancel':
-				this.activeDialogs.get(message.id)?.abort();
+				this.activeDialogs.get(message.id)?.controller.abort();
 				this.activeDialogs.delete(message.id);
 				return;
 		}
@@ -151,7 +162,8 @@ export class AgentHostClient {
 
 	private async handleUiRequest(host: UtilityProcess, message: Extract<AgentHostToMain, { kind: 'ui-request' }>): Promise<void> {
 		const controller = new AbortController();
-		this.activeDialogs.set(message.id, controller);
+		const activeDialog = { controller, callId: message.callId };
+		this.activeDialogs.set(message.id, activeDialog);
 		try {
 			const value = message.request.kind === 'project-trust'
 				? await this.ui.requestProjectTrust(message.request.cwd)
@@ -166,7 +178,7 @@ export class AgentHostClient {
 				host.postMessage(reply);
 			}
 		} finally {
-			this.activeDialogs.delete(message.id);
+			if (this.activeDialogs.get(message.id) === activeDialog) this.activeDialogs.delete(message.id);
 		}
 	}
 
@@ -176,14 +188,14 @@ export class AgentHostClient {
 		if (!host) throw new Error('Pi agent process is unavailable');
 		const id = ++this.nextCallId;
 		return new Promise<unknown>((resolve, reject) => {
-			const pending: PendingCall = { resolve, reject, timer: null };
+			const pending: PendingCall = { method, resolve, reject, timer: null };
 			this.pending.set(id, pending);
 			const timeout = this.callTimeout(method);
 			const expire = (): void => {
 				if (this.pending.get(id) !== pending) return;
-				// Pi extensions and project trust may be waiting for the user. Keep the
-				// request alive while one of their dialogs is open.
-				if (this.activeDialogs.size > 0) {
+				// Keep only the call that opened a project trust or extension dialog
+				// alive while it waits for the user's answer.
+				if ([...this.activeDialogs.values()].some((dialog) => dialog.callId === id)) {
 					pending.timer = setTimeout(expire, Math.min(timeout, 60_000));
 					return;
 				}

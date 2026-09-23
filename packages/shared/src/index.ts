@@ -134,7 +134,7 @@ export interface UiToolActivity {
   tool: string;
   /** Short human-readable description of the call. */
   title: string;
-  status: 'running' | 'done' | 'error';
+  status: 'running' | 'done' | 'error' | 'interrupted';
   detail?: string;
   /** True when a very large tool result was capped before crossing IPC. */
   detailTruncated?: boolean;

@@ -102,6 +102,7 @@ button:focus-visible, textarea:focus-visible, input:focus-visible { outline: 2px
 .pd-tool-state.is-done { background: var(--pd-success); }
 .pd-tool-state.is-running { background: var(--pd-warning); box-shadow: 0 0 0 3px #e8c18a16; }
 .pd-tool-state.is-error { background: var(--pd-danger); }
+.pd-tool-state.is-interrupted { background: var(--pd-warning); }
 
 .pd-main { display: flex; flex: 1; flex-direction: column; min-width: 0; min-height: 0; background: var(--pd-bg); }
 .pd-chat-header { display: flex; flex: 0 0 48px; align-items: center; gap: 10px; min-width: 0; padding: 0 18px; border-bottom: 1px solid var(--pd-border-soft); background: var(--pd-header); }
@@ -163,6 +164,7 @@ button:focus-visible, textarea:focus-visible, input:focus-visible { outline: 2px
 .pd-composer-action:hover:not(:disabled) { background: var(--pd-surface-hover); color: var(--pd-text); }
 .pd-send-button { display: flex; align-items: center; justify-content: center; gap: 5px; min-height: 30px; padding: 0 10px; border: 0; border-radius: 8px; background: var(--pd-brand); color: var(--pd-brand-ink); font-size: 12px; font-weight: 600; white-space: nowrap; }
 .pd-send-button:hover:not(:disabled) { background: var(--pd-brand-hover); }
+.pd-composer-retry { padding-inline: 12px; }
 .pd-composer-error { margin-bottom: 8px; padding: 8px 10px; border: 1px solid #d5848457; border-radius: 8px; color: var(--pd-danger); font-size: 12px; overflow-wrap: anywhere; }
 
 .pd-markdown { color: var(--pd-text); font-size: 13px; line-height: 1.7; overflow-wrap: anywhere; }
@@ -247,6 +249,7 @@ button:focus-visible, textarea:focus-visible, input:focus-visible { outline: 2px
 .pd-tool-status { flex: 0 0 auto; color: var(--pd-text-weak); font-size: 11px; }
 .pd-tool-status.is-running { color: var(--pd-warning); }
 .pd-tool-status.is-error { color: var(--pd-danger); }
+.pd-tool-status.is-interrupted { color: var(--pd-warning); }
 .pd-tool-item-detail { padding: 0 12px 12px 27px; }
 .pd-tool-output-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 5px; color: var(--pd-text-weak); font-size: 11px; }
 .pd-tool-output-actions { display: flex; gap: 3px; }

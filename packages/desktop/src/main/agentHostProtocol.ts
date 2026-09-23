@@ -36,4 +36,4 @@ export type AgentHostToMain =
 	| { kind: 'event'; envelope: AgentEventEnvelope }
 	| { kind: 'background-activity'; cwd: string; path: string }
 	| { kind: 'ui-cancel'; id: number }
-	| { kind: 'ui-request'; id: number; request: { kind: 'project-trust'; cwd: string } | { kind: 'extension'; dialog: UiExtensionDialogRequest } };
+	| { kind: 'ui-request'; id: number; callId?: number; request: { kind: 'project-trust'; cwd: string } | { kind: 'extension'; dialog: UiExtensionDialogRequest } };
