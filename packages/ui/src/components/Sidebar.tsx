@@ -10,7 +10,7 @@ interface SidebarProps {
 	narrow: boolean;
 	onToggle(): void;
 	onNavigate(): void;
-	onOpenSettings(): void;
+	onOpenSettings(page?: 'updates'): void;
 }
 
 type SessionGroup = 'today' | 'yesterday' | 'week' | 'older';
@@ -85,6 +85,7 @@ export function Sidebar({ open, narrow, onToggle, onNavigate, onOpenSettings }: 
 	const switchSession = useChatStore((s) => s.switchSession);
 	const updateSessionMeta = useChatStore((s) => s.updateSessionMeta);
 	const [actionError, setActionError] = useState<string | null>(null);
+	const [updateReady, setUpdateReady] = useState(false);
 	const [search, setSearch] = useState('');
 	const [searchOpen, setSearchOpen] = useState(false);
 	const [expandedWorkspaces, setExpandedWorkspaces] = useState<Record<string, boolean>>({});
@@ -106,6 +107,14 @@ export function Sidebar({ open, narrow, onToggle, onNavigate, onOpenSettings }: 
 	useEffect(() => {
 		if (searchOpen && open) searchRef.current?.focus();
 	}, [searchOpen, open]);
+
+	useEffect(() => {
+		if (!bridge) return;
+		let active = true;
+		const unsubscribe = bridge.onUpdateStateChanged((state) => { if (active) setUpdateReady(state.phase === 'ready'); });
+		void bridge.getUpdateState().then((state) => { if (active) setUpdateReady(state.phase === 'ready'); }).catch(() => {});
+		return () => { active = false; unsubscribe(); };
+	}, [bridge]);
 
 	useEffect(() => {
 		if (renamePath) renameRef.current?.focus();
@@ -250,7 +259,7 @@ export function Sidebar({ open, narrow, onToggle, onNavigate, onOpenSettings }: 
 		</div>
 		<div className="pd-sidebar-footer">
 			{actionError && <div className="pd-sidebar-error pd-sidebar-detail" role="alert">{actionError}</div>}
-			<button type="button" className="pd-settings-entry" onClick={onOpenSettings} title={t('sidebar.settings')}><Icon name="settings" width="17" height="17" /><span className="pd-sidebar-detail">{t('sidebar.settings')}</span><Icon name="chevronRight" className="pd-sidebar-detail" width="15" height="15" /></button>
+			<button type="button" className="pd-settings-entry" onClick={() => onOpenSettings(updateReady ? 'updates' : undefined)} title={updateReady ? t('settings.updateReadyNotice') : t('sidebar.settings')}><Icon name="settings" width="17" height="17" /><span className="pd-sidebar-detail">{t('sidebar.settings')}</span>{updateReady && <span className="pd-update-ready-badge" aria-label={t('settings.updateReadyNotice')} />}<Icon name="chevronRight" className="pd-sidebar-detail" width="15" height="15" /></button>
 		</div>
 	</aside>;
 }

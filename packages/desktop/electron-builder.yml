@@ -15,14 +15,45 @@ asar: true
 asarUnpack:
   - '**/*.node'
   - '**/*.wasm'
+  - '**/@esbuild/**'
+  - '**/esbuild/bin/**'
+
+extraResources:
+  - from: build/update-config.json
+    to: update-config.json
 
 win:
   icon: build/icon.ico
+  verifyUpdateCodeSignature: true
   target:
     - target: nsis
       arch: [x64]
     - target: portable
       arch: [x64]
+
+mac:
+  icon: build/icon.png
+  hardenedRuntime: true
+  notarize: true
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.inherit.plist
+  target:
+    - target: dmg
+      arch: [x64, arm64]
+    - target: zip
+      arch: [x64, arm64]
+  artifactName: Pi-Desktop-${version}-${arch}.${ext}
+
+linux:
+  icon: build/icon.png
+  category: Development
+  maintainer: Pi Desktop contributors <shuaichao171@users.noreply.github.com>
+  target:
+    - target: AppImage
+      arch: [x64]
+    - target: deb
+      arch: [x64]
+  artifactName: Pi-Desktop-${version}-${arch}.${ext}
 
 nsis:
   artifactName: Pi-Desktop-Setup-${version}-${arch}.${ext}

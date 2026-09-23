@@ -11,6 +11,8 @@ import { join } from 'node:path';
 import { IPC_CHANNELS, type AgentEventEnvelope, type AppLocale, type UiAttachment, type UiExtensionDialogRequest, type UiSessionMetaPatch, type UiThinkingLevel } from '@pidesktop/shared';
 import { createIsolatedAgentService } from './agentClient';
 import { getAppLocale, setAppLocale } from './appLocale';
+import { updateService } from './updateService';
+export { updateService } from './updateService';
 import { registerWorkbenchIpc } from './workbenchIpc';
 import type { WorkbenchService } from './workbenchService';
 
@@ -175,6 +177,9 @@ export function registerIpc(): void {
 		platform: process.platform,
 	}));
 	ipcMain.handle(IPC_CHANNELS.appSetLocale, (_event, locale: AppLocale) => setAppLocale(locale));
+	ipcMain.handle(IPC_CHANNELS.updateState, () => updateService.getState());
+	ipcMain.handle(IPC_CHANNELS.updateCheck, () => updateService.check());
+	ipcMain.handle(IPC_CHANNELS.updateInstall, () => updateService.install());
 	ipcMain.handle(IPC_CHANNELS.windowChromeState, (event) => ({
 		isMaximized: invokingWindow(event).isMaximized(),
 	}));

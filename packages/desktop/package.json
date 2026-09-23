@@ -11,13 +11,22 @@
     "build": "electron-vite build",
     "pack:dir": "pnpm build && electron-builder --dir --win --x64 --publish never",
     "dist:win": "pnpm build && electron-builder --win nsis portable --x64 --publish never",
+    "dist:mac": "node ../../scripts/dist-mac-native.mjs",
+    "dist:linux": "pnpm build && electron-builder --linux AppImage deb --x64 --publish never",
     "typecheck": "tsc -p tsconfig.node.json && tsc -p tsconfig.web.json",
     "clean": "rimraf out dist"
   },
   "dependencies": {
     "@earendil-works/pi-coding-agent": "^0.87.1",
     "@pidesktop/agent": "workspace:*",
-    "@pidesktop/shared": "workspace:*"
+    "@pidesktop/shared": "workspace:*",
+    "electron-updater": "6.8.9"
+  },
+  "optionalDependencies": {
+    "@esbuild/darwin-arm64": "0.28.2",
+    "@esbuild/darwin-x64": "0.28.2",
+    "@esbuild/linux-x64": "0.28.2",
+    "@esbuild/win32-x64": "0.28.2"
   },
   "devDependencies": {
     "@pidesktop/ui": "workspace:*",

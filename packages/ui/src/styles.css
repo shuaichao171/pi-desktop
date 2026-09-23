@@ -226,6 +226,7 @@ button:focus-visible, textarea:focus-visible, input:focus-visible { outline: 2px
 .pd-session-group-label { display: flex; align-items: center; height: 28px; padding: 0 8px; color: var(--pd-text-weak); font-size: 10px; font-weight: 500; letter-spacing: .02em; }
 .pd-settings-entry { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 36px; padding: 0 10px; border: 0; border-radius: 8px; background: transparent; color: var(--pd-text-subtle); font-size: 12px; text-align: left; }
 .pd-settings-entry span { flex: 1; }
+.pd-settings-entry .pd-update-ready-badge { flex: 0 0 auto; width: 7px; height: 7px; border-radius: 50%; background: var(--pd-brand); box-shadow: 0 0 0 3px var(--pd-brand-soft, transparent); }
 .pd-settings-entry:hover { background: var(--pd-surface-hover); color: var(--pd-text); }
 .pd-spinning { animation: pd-spin 1.2s linear infinite; }
 @keyframes pd-spin { to { transform: rotate(360deg); } }
@@ -330,6 +331,13 @@ button:focus-visible, textarea:focus-visible, input:focus-visible { outline: 2px
 .pd-extension-toggle.is-enabled > span::after { background: var(--pd-brand-ink); transform: translateX(11px); }
 .pd-extension-toggle:disabled, .pd-extension-refresh:disabled { cursor: not-allowed; opacity: .5; }
 .pd-about-list { margin: 0; border: 1px solid var(--pd-border); border-radius: 8px; }
+.pd-update-card { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; padding: 16px; border: 1px solid var(--pd-border); border-radius: 8px; background: var(--pd-surface); }
+.pd-update-card strong { color: var(--pd-text); font-size: 13px; line-height: 1.45; }
+.pd-update-card > span { color: var(--pd-text-weak); font-size: 11px; }
+.pd-update-card progress { width: 100%; height: 7px; accent-color: var(--pd-brand); }
+.pd-update-card .pd-settings-error { width: 100%; margin: 0; }
+.pd-update-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 5px; }
+.pd-update-actions button { min-height: 32px; }
 .pd-about-list div { display: flex; gap: 15px; min-height: 42px; padding: 10px 12px; }
 .pd-about-list div + div { border-top: 1px solid var(--pd-border-soft); }
 .pd-about-list dt { flex: 0 0 85px; color: var(--pd-text-weak); font-size: 12px; }

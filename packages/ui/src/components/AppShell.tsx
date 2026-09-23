@@ -33,6 +33,7 @@ export function AppShell() {
 	const [sidebarWidth, setSidebarWidth] = useState(readSidebarWidth);
 	const [themePreference, setThemePreference] = useState<ThemePreference>(readThemePreference);
 	const [settingsOpen, setSettingsOpen] = useState(false);
+	const [settingsInitialPage, setSettingsInitialPage] = useState<'appearance' | 'updates'>('appearance');
 	const [workbenchOpen, setWorkbenchOpen] = useState(readWorkbenchOpen);
 	const resizeStart = useRef<{ x: number; width: number } | null>(null);
 	const platform = useChatStore((state) => state.appInfo?.platform);
@@ -115,7 +116,7 @@ export function AppShell() {
 				narrow={narrow}
 				onToggle={() => setSidebarOpen((open) => !open)}
 				onNavigate={() => { if (narrow) setSidebarOpen(false); }}
-				onOpenSettings={() => { if (narrow) setSidebarOpen(false); setSettingsOpen(true); }}
+				onOpenSettings={(page) => { if (narrow) setSidebarOpen(false); setSettingsInitialPage(page ?? 'appearance'); setSettingsOpen(true); }}
 			/>
 			{!narrow && sidebarOpen && <div className="pd-sidebar-resize" role="separator" aria-label={t('app.resizeSidebar')} aria-orientation="vertical" aria-valuemin={MIN_SIDEBAR_WIDTH} aria-valuemax={MAX_SIDEBAR_WIDTH} aria-valuenow={sidebarWidth} tabIndex={0} onPointerDown={startResize} onPointerMove={moveResize} onPointerUp={stopResize} onPointerCancel={stopResize} onKeyDown={(event) => {
 				if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
@@ -126,7 +127,7 @@ export function AppShell() {
 			{workbenchOpen && <button type="button" className="pd-workbench-scrim" aria-label={t('app.closeWorkbench')} onClick={() => setWorkbenchOpen(false)} />}
 			<WorkbenchSidePane open={workbenchOpen} onClose={() => setWorkbenchOpen(false)} />
 			<button type="button" className="pd-workbench-toggle pd-icon-button" aria-label={t(workbenchOpen ? 'app.closeWorkbench' : 'app.openWorkbench')} aria-pressed={workbenchOpen} title={t('app.workbench')} onClick={() => setWorkbenchOpen((value) => !value)}><Icon name="panelRight" width="17" height="17" /></button>
-			{settingsOpen && <SettingsPanel onClose={() => setSettingsOpen(false)} themePreference={themePreference} onThemePreferenceChange={setThemePreference} />}
+			{settingsOpen && <SettingsPanel initialPage={settingsInitialPage} onClose={() => setSettingsOpen(false)} themePreference={themePreference} onThemePreferenceChange={setThemePreference} />}
 			{isWindows && <WindowControls />}
 		</div>
 	);

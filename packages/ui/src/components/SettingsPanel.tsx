@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
-import type { UiExtensionSummary, UiProviderAuthStatus, UiThinkingLevel } from '@pidesktop/shared';
+import type { UiExtensionSummary, UiProviderAuthStatus, UiThinkingLevel, UiUpdateState } from '@pidesktop/shared';
 import { useChatStore } from '../store';
 import { useT, type Translate } from '../i18n';
 import { Icon } from './Icons';
 
 export type ThemePreference = 'system' | 'dark' | 'light';
-type SettingsPage = 'appearance' | 'model' | 'credentials' | 'extensions' | 'shortcuts' | 'about';
+type SettingsPage = 'appearance' | 'model' | 'credentials' | 'extensions' | 'shortcuts' | 'updates' | 'about';
 
 function readableModelSize(value: number): string {
 	if (!Number.isFinite(value) || value <= 0) return '';
@@ -83,9 +83,9 @@ function ProviderCredentialRow({ provider, configured, source, supportsApiKey }:
 	);
 }
 
-export function SettingsPanel({ onClose, themePreference, onThemePreferenceChange }: { onClose(): void; themePreference: ThemePreference; onThemePreferenceChange(theme: ThemePreference): void }) {
+export function SettingsPanel({ initialPage = 'appearance', onClose, themePreference, onThemePreferenceChange }: { initialPage?: 'appearance' | 'updates'; onClose(): void; themePreference: ThemePreference; onThemePreferenceChange(theme: ThemePreference): void }) {
 	const { t, locale, setLocale } = useT();
-	const [page, setPage] = useState<SettingsPage>('appearance');
+	const [page, setPage] = useState<SettingsPage>(initialPage);
 	const [modelSearch, setModelSearch] = useState('');
 	const [actionError, setActionError] = useState<string | null>(null);
 	const [pending, setPending] = useState(false);
@@ -95,6 +95,9 @@ export function SettingsPanel({ onClose, themePreference, onThemePreferenceChang
 	const [extensionPendingPath, setExtensionPendingPath] = useState<string | null>(null);
 	const [extensionError, setExtensionError] = useState<string | null>(null);
 	const [extensionFeedback, setExtensionFeedback] = useState<string | null>(null);
+	const [updateState, setUpdateState] = useState<UiUpdateState | null>(null);
+	const [updatePending, setUpdatePending] = useState(false);
+	const [updateActionError, setUpdateActionError] = useState<string | null>(null);
 	const extensionRequestRef = useRef(0);
 	const dialogRef = useRef<HTMLDivElement>(null);
 	const closeRef = useRef<HTMLButtonElement>(null);
@@ -122,6 +125,16 @@ export function SettingsPanel({ onClose, themePreference, onThemePreferenceChang
 		return models.filter((item) => `${item.provider} ${item.id} ${item.name}`.toLocaleLowerCase().includes(query)).slice(0, 80);
 	}, [models, modelSearch]);
 	const sortedProviderAuth = useMemo(() => [...providerAuth].sort((a, b) => Number(b.configured) - Number(a.configured) || a.provider.localeCompare(b.provider)), [providerAuth]);
+
+	useEffect(() => {
+		if (!bridge) return;
+		let active = true;
+		const unsubscribe = bridge.onUpdateStateChanged((next) => { if (active) setUpdateState(next); });
+		void bridge.getUpdateState().then((next) => { if (active) setUpdateState(next); }).catch((error: unknown) => {
+			if (active) setUpdateActionError(error instanceof Error ? error.message : String(error));
+		});
+		return () => { active = false; unsubscribe(); };
+	}, [bridge]);
 
 	useEffect(() => {
 		const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -218,6 +231,32 @@ export function SettingsPanel({ onClose, themePreference, onThemePreferenceChang
 		finally { setPending(false); }
 	}
 
+	async function checkForUpdates() {
+		if (!bridge || updatePending) return;
+		setUpdatePending(true);
+		setUpdateActionError(null);
+		try { setUpdateState(await bridge.checkForUpdates()); }
+		catch (error) { setUpdateActionError(error instanceof Error ? error.message : String(error)); }
+		finally { setUpdatePending(false); }
+	}
+
+	async function installUpdate() {
+		if (!bridge || updatePending || updateState?.phase !== 'ready') return;
+		setUpdatePending(true);
+		setUpdateActionError(null);
+		try { await bridge.installUpdate(); }
+		catch (error) { setUpdateActionError(error instanceof Error ? error.message : String(error)); setUpdatePending(false); }
+	}
+
+	const updateStatus = updateState?.phase === 'unavailable'
+		? t(`settings.updateUnavailable.${updateState.unavailableReason ?? 'unsupported'}`)
+		: updateState?.phase === 'checking' ? t('settings.updateChecking')
+		: updateState?.phase === 'downloading' ? t('settings.updateDownloading', { percent: Math.round(updateState.progressPercent ?? 0) })
+		: updateState?.phase === 'ready' ? t('settings.updateReady', { version: updateState.availableVersion ?? '' })
+		: updateState?.phase === 'up-to-date' ? t('settings.updateCurrent')
+		: updateState?.phase === 'error' ? t('settings.updateFailed')
+		: t('settings.updateIdle');
+
 	return (
 		<div className="pd-settings-overlay" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
 			<div ref={dialogRef} className="pd-settings-dialog" role="dialog" aria-modal="true" aria-labelledby="pd-settings-title" onKeyDown={onDialogKeyDown}>
@@ -229,6 +268,7 @@ export function SettingsPanel({ onClose, themePreference, onThemePreferenceChang
 						<button type="button" className={page === 'credentials' ? 'is-active' : ''} aria-current={page === 'credentials' ? 'page' : undefined} onClick={() => setPage('credentials')}>{t('settings.credentials')}</button>
 						<button type="button" className={page === 'extensions' ? 'is-active' : ''} aria-current={page === 'extensions' ? 'page' : undefined} onClick={() => setPage('extensions')}>{t('settings.extensions')}</button>
 						<button type="button" className={page === 'shortcuts' ? 'is-active' : ''} aria-current={page === 'shortcuts' ? 'page' : undefined} onClick={() => setPage('shortcuts')}>{t('settings.shortcuts')}</button>
+						<button type="button" className={page === 'updates' ? 'is-active' : ''} aria-current={page === 'updates' ? 'page' : undefined} onClick={() => setPage('updates')}>{t('settings.updates')}</button>
 						<button type="button" className={page === 'about' ? 'is-active' : ''} aria-current={page === 'about' ? 'page' : undefined} onClick={() => setPage('about')}>{t('settings.about')}</button>
 					</nav>
 					<div className="pd-settings-content">
@@ -293,6 +333,20 @@ export function SettingsPanel({ onClose, themePreference, onThemePreferenceChang
 						{page === 'shortcuts' && <>
 							<div className="pd-settings-section-head"><h2>{t('settings.shortcuts')}</h2><p>{t('settings.shortcutsDescription')}</p></div>
 							<dl className="pd-shortcut-list"><div><dt>{t('settings.shortcutSidebar')}</dt><dd><kbd>Ctrl</kbd> + <kbd>B</kbd></dd></div><div><dt>{t('settings.shortcutSend')}</dt><dd><kbd>Enter</kbd></dd></div><div><dt>{t('settings.shortcutNewline')}</dt><dd><kbd>Shift</kbd> + <kbd>Enter</kbd></dd></div><div><dt>{t('settings.shortcutClose')}</dt><dd><kbd>Esc</kbd></dd></div></dl>
+						</>}
+						{page === 'updates' && <>
+							<div className="pd-settings-section-head"><h2>{t('settings.updates')}</h2><p>{t('settings.updateDescription')}</p></div>
+							<div className="pd-update-card" aria-live="polite">
+								<strong>{updateStatus}</strong>
+								<span>{t('settings.updateInstalled', { version: updateState?.currentVersion ?? appInfo?.appVersion ?? '—' })}</span>
+								{updateState?.phase === 'downloading' && <progress max={100} value={updateState.progressPercent ?? 0} aria-label={t('settings.updateProgress')} />}
+								{updateState?.error && <p className="pd-settings-error" role="alert">{updateState.error}</p>}
+								{updateActionError && <p className="pd-settings-error" role="alert">{updateActionError}</p>}
+								<div className="pd-update-actions">
+									<button type="button" className="pd-extension-refresh" onClick={() => void checkForUpdates()} disabled={!bridge || updatePending || !updateState || !['idle', 'up-to-date', 'error'].includes(updateState.phase)}>{t('settings.updateCheck')}</button>
+									{updateState?.phase === 'ready' && <button type="button" className="pd-extension-refresh" onClick={() => void installUpdate()} disabled={updatePending}>{t('settings.updateInstall')}</button>}
+								</div>
+							</div>
 						</>}
 						{page === 'about' && <>
 							<div className="pd-settings-section-head"><h2>{t('settings.aboutTitle')}</h2><p>{t('settings.aboutDescription')}</p></div>

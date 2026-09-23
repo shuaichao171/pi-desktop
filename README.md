@@ -1,6 +1,6 @@
 # Pi Desktop
 
-基于 [Pi coding agent](https://github.com/earendil-works/pi) SDK 的 Windows 桌面工作台。界面布局参考 ZCode；Agent、模型、工具、扩展与会话文件仍由 Pi 管理。本项目独立开发，未修改 Pi 的工具执行与审批逻辑。
+基于 [Pi coding agent](https://github.com/earendil-works/pi) SDK 的桌面工作台，提供 Windows、macOS 和 Linux 构建。界面布局参考 ZCode；Agent、模型、工具、扩展与会话文件仍由 Pi 管理。本项目独立开发，未修改 Pi 的工具执行与审批逻辑。
 
 ## 功能
 
@@ -11,6 +11,7 @@
 - Pi 扩展的通知、选择、确认、输入与编辑交互；设置中可查看并启用／禁用扩展
 - 工作台文件树、UTF-8 文件预览、Git 状态和差异，以及按需运行单条命令并查看输出
 - 可调整宽度的侧栏、深色／浅色／跟随系统主题、中英文界面、启动画面和单实例窗口
+- 设置页中的更新状态、检查与安装入口；发布包通过可配置的公开 HTTPS 更新源获取更新
 
 命令面板运行的是**单条 PowerShell 命令**，可停止并查看输出；它不是交互式 PTY 终端。文件预览和 Git 差异有 1 MB 限制。扩展开关会重新加载当前 Pi 会话，其他已打开的会话可能需要重新打开才能应用新配置。文本草稿按工作区和会话保存在本地；未发送的附件仅保留在当前窗口，应用重启后需要重新添加。
 
@@ -35,7 +36,7 @@ Pi SDK 在独立的 Electron utility process 中运行，避免 SDK 初始化或
 
 ## 开发
 
-需要 Windows 10/11、Node.js ≥ 22.19、pnpm 11.11.0。首次安装会从 Electron 官方发布源下载运行时。
+需要 Node.js ≥ 22.19、pnpm 11.11.0，以及对应平台的构建环境。Windows 目标支持 Windows 10/11。首次安装会从 Electron 官方发布源下载运行时。
 
 ```bash
 pnpm install --frozen-lockfile
@@ -47,13 +48,15 @@ pnpm build
 
 模型和凭据沿用 Pi CLI 的 `~/.pi` 配置。首次默认工作区是 `~/PiDesktopWorkspace`，之后会恢复上次工作区及其 Pi 会话。打开包含 `.pi` 或 `.agents` 项目资源的文件夹时，应用会询问是否信任；持久化选择由 Pi 的 `ProjectTrustStore` 管理。不信任仍可打开文件夹，但不加载该工作区的设置、技能和扩展。
 
-## Windows 打包
+## 打包与发布
 
 ```bash
 pnpm pack:dir  # release/win-unpacked/
 pnpm dist:win  # 安装版 + 便携版
+pnpm dist:mac  # macOS：当前机器架构的 DMG + ZIP；CI 分别构建 x64 / arm64
+pnpm dist:linux # Linux：AppImage + DEB，x64（在 Linux 上运行）
 ```
 
-输出位于 `release/`：`Pi-Desktop-Setup-<version>-x64.exe` 和 `Pi-Desktop-Portable-<version>-x64.exe`。Portable 是单文件自解压包，每次启动都要先解压 Electron 和应用文件；解压期间会显示原生启动图。日常使用推荐安装 Setup 版，从其快捷方式启动可跳过每次解压。当前构建未签名，尚未接入应用内自动更新。Windows 图标源文件是 `packages/desktop/build/icon.svg`；修改后可运行 `python scripts/make-icon.py` 重新生成 PNG 与 ICO，再运行 `python scripts/make-portable-splash.py` 更新便携版启动图（均需 Pillow）。
+输出位于 `release/`。Windows 的 Portable 是单文件自解压包，每次启动都要先解压 Electron 和应用文件；解压期间会显示原生启动图。日常使用推荐安装 Setup 版，从其快捷方式启动可跳过每次解压。未配置公开 HTTPS 更新源的构建不会检查更新；Portable 需要手动替换。Windows 图标源文件是 `packages/desktop/build/icon.svg`；修改后可运行 `python scripts/make-icon.py` 重新生成 PNG 与 ICO，再运行 `python scripts/make-portable-splash.py` 更新便携版启动图（均需 Pillow）。
 
-提交到 `main` 或提交 PR 会触发 Windows CI。推送与应用版本一致的 `v*` 标签会生成安装版与便携版，并创建**草稿 Release**；维护者检查后再发布。详细发布、签名、自动更新及其他平台的建议见 [发布指南](docs/RELEASE.md)。
+提交到 `main` 或提交 PR 会触发多平台 CI。推送与应用版本一致的 `v*` 标签会检查签名凭据和更新源，生成各平台产物，并创建**草稿 Release**；维护者检查后再发布。缺少 Windows 签名证书、Apple Developer 凭据或公开更新源时，标签发布的前置检查会阻止不完整的正式发行。具体配置、文件同步和升级验证见 [发布指南](docs/RELEASE.md)。

@@ -8,6 +8,7 @@ import { createSplashErrorHtml, createSplashHtml } from './splash';
 
 const here = fileURLToPath(new URL('.', import.meta.url));
 let ipc: typeof import('./ipc') | null = null;
+let updateService: typeof import('./updateService').updateService | null = null;
 let mainRevealed = false;
 let startupCancelled = false;
 
@@ -124,10 +125,16 @@ async function bootstrap(splash: BrowserWindow): Promise<void> {
 		const module = await import('./ipc');
 		if (startupCancelled || splash.isDestroyed()) return;
 		ipc = module;
+		updateService = module.updateService;
 		module.registerIpc();
 		createWindow(() => {
 			mainRevealed = true;
 			if (!splash.isDestroyed()) splash.close();
+			module.updateService.setBeforeInstall(async () => {
+				if (ipc) await ipc.disposeServices().catch((error: unknown) => console.error('Pi Desktop shutdown before update failed:', error));
+				readyToQuit = true;
+			});
+			module.updateService.start();
 			// Let the visible main window reach the screen before initializing the agent.
 			setTimeout(() => {
 				try {
@@ -218,6 +225,7 @@ app.on('window-all-closed', () => {
 let readyToQuit = false;
 let disposing = false;
 app.on('before-quit', (event) => {
+	updateService?.stop();
 	if (readyToQuit || !ipc) return;
 	event.preventDefault();
 	if (disposing) return;

@@ -1,4 +1,4 @@
-name: Windows release
+name: Signed desktop release
 
 on:
   push:
@@ -7,9 +7,61 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: desktop-release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
+  prerequisites:
+    runs-on: ubuntu-24.04
+    env:
+      PI_DESKTOP_UPDATE_URL: ${{ vars.PI_DESKTOP_UPDATE_URL }}
+      WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
+      WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
+      MAC_CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
+      MAC_CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.19.0'
+      - name: Require signing, notarization and public update feed
+        shell: bash
+        run: |
+          set -euo pipefail
+          missing=0
+          for name in PI_DESKTOP_UPDATE_URL WIN_CSC_LINK WIN_CSC_KEY_PASSWORD MAC_CSC_LINK MAC_CSC_KEY_PASSWORD APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID; do
+            if [[ -z "${!name:-}" ]]; then
+              echo "::error::Missing repository variable or secret: ${name}"
+              missing=1
+            fi
+          done
+          if [[ "$missing" -ne 0 ]]; then exit 1; fi
+          node <<'NODE'
+          const fs = require('node:fs');
+          const { isIP } = require('node:net');
+          const rootVersion = JSON.parse(fs.readFileSync('package.json', 'utf8')).version;
+          const desktopVersion = JSON.parse(fs.readFileSync('packages/desktop/package.json', 'utf8')).version;
+          if (rootVersion !== desktopVersion || `v${rootVersion}` !== process.env.GITHUB_REF_NAME) {
+            throw new Error(`Tag and package versions differ: ${process.env.GITHUB_REF_NAME}, ${rootVersion}, ${desktopVersion}`);
+          }
+          const url = new URL(process.env.PI_DESKTOP_UPDATE_URL);
+          if (url.protocol !== 'https:' || !url.hostname || url.username || url.password || url.search || url.hash || !url.pathname.endsWith('/')) {
+            throw new Error('PI_DESKTOP_UPDATE_URL must be a public HTTPS directory URL ending in /, without credentials, query or fragment');
+          }
+          if (url.hostname.toLowerCase() === 'localhost' || isIP(url.hostname.replace(/^\[|\]$/g, '')) !== 0) {
+            throw new Error('PI_DESKTOP_UPDATE_URL must not point to localhost or an IP literal');
+          }
+          NODE
+
   build-windows:
+    needs: prerequisites
     runs-on: windows-latest
+    env:
+      PI_DESKTOP_UPDATE_URL: ${{ vars.PI_DESKTOP_UPDATE_URL }}
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -30,22 +82,229 @@ jobs:
           }
       - run: pnpm typecheck
       - run: pnpm test
-      - run: pnpm dist:win
-      - name: Verify isolated Pi host is packaged
+      - run: pnpm build
+      - name: Embed public update feed
         shell: pwsh
         run: |
+          @{ url = $env:PI_DESKTOP_UPDATE_URL } | ConvertTo-Json -Compress | Set-Content -Path 'packages/desktop/build/update-config.json' -Encoding utf8
+      - name: Build signed Windows packages and update metadata
+        shell: pwsh
+        env:
+          WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
+          WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
+        run: |
+          pnpm --filter @pidesktop/desktop exec electron-builder --win nsis portable --x64 --publish never --config.publish.provider=generic "--config.publish.url=$env:PI_DESKTOP_UPDATE_URL"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Verify signatures, update metadata and Pi runtime
+        shell: pwsh
+        run: |
+          $version = (Get-Content package.json | ConvertFrom-Json).version
+          foreach ($kind in @('Setup', 'Portable')) {
+            $path = "release/Pi-Desktop-$kind-$version-x64.exe"
+            if (-not (Test-Path $path)) { throw "Missing $path" }
+            $signature = Get-AuthenticodeSignature -FilePath $path
+            if ($signature.Status -ne 'Valid') { throw "Invalid Authenticode signature for $path`: $($signature.Status)" }
+            if ($kind -eq 'Setup') {
+              $publisher = $signature.SignerCertificate.GetNameInfo([System.Security.Cryptography.X509Certificates.X509NameType]::SimpleName, $false)
+            }
+          }
+          $update = Get-Content 'release/latest.yml' -Raw
+          if (-not $update.Contains("Pi-Desktop-Setup-$version-x64.exe") -or $update.Contains('Pi-Desktop-Portable-')) {
+            throw 'latest.yml must refer to the signed NSIS installer, not the portable executable'
+          }
+          if (-not (Test-Path 'release/win-unpacked/resources/update-config.json')) { throw 'Update feed config is missing from package' }
+          $appUpdate = Get-Content 'release/win-unpacked/resources/app-update.yml' -Raw
+          if (-not $publisher -or $appUpdate -notmatch '(?m)^publisherName:\s*(\r?\n\s*-\s*\S+|\S+)' -or -not $appUpdate.Contains($publisher)) {
+            throw 'app-update.yml must include the installer certificate publisherName for updater signature verification'
+          }
           $asar = (Resolve-Path 'release/win-unpacked/resources/app.asar').Path
           $entries = pnpm --filter @pidesktop/desktop exec asar list $asar
           if (-not ($entries -match 'out[\\/]main[\\/]agentHost\.js')) {
             throw 'Isolated Pi agent host is missing from app.asar'
           }
+          if (-not ($entries -match 'node_modules[\\/]@earendil-works[\\/]pi-coding-agent[\\/]dist[\\/]index.js')) {
+            throw 'Pi SDK is missing from app.asar'
+          }
+          if (-not ($entries -match 'node_modules[\\/]@silvia-odwyer[\\/]photon-node[\\/]photon_rs_bg.wasm')) {
+            throw 'Pi image runtime is missing from app.asar'
+          }
+          if (-not ($entries -match '@esbuild[\\/]win32-x64[\\/]esbuild.exe')) { throw 'Pi Chord Windows esbuild binary is missing' }
+          $esbuildBinary = Get-ChildItem 'release/win-unpacked/resources/app.asar.unpacked' -Recurse -File -Filter esbuild.exe |
+            Where-Object { $_.FullName -match '@esbuild[\\/]win32-x64[\\/]esbuild.exe$' } | Select-Object -First 1
+          if (-not $esbuildBinary) {
+            throw 'Pi Chord Windows esbuild binary is not unpacked for execution'
+          }
+          $esbuildVersion = & $esbuildBinary.FullName --version
+          if ($LASTEXITCODE -ne 0 -or $esbuildVersion -ne '0.28.2') { throw 'Packaged Pi Chord esbuild binary cannot run' }
       - uses: actions/upload-artifact@v4
         with:
           name: pi-desktop-windows
-          path: release/Pi-Desktop-*.exe
+          path: |
+            release/Pi-Desktop-*.exe
+            release/Pi-Desktop-*.exe.blockmap
+            release/latest.yml
           if-no-files-found: error
+
+  build-macos:
+    needs: prerequisites
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15-intel
+            arch: x64
+            macho: x86_64
+          - runner: macos-15
+            arch: arm64
+            macho: arm64
+    runs-on: ${{ matrix.runner }}
+    env:
+      PI_DESKTOP_UPDATE_URL: ${{ vars.PI_DESKTOP_UPDATE_URL }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.11.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.19.0'
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - name: Embed public update feed
+        run: |
+          node -e "require('node:fs').writeFileSync('packages/desktop/build/update-config.json', JSON.stringify({url: process.env.PI_DESKTOP_UPDATE_URL}) + '\n')"
+      - name: Build signed and notarized native macOS package
+        env:
+          CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: pnpm --filter @pidesktop/desktop exec electron-builder --mac dmg zip --${{ matrix.arch }} --publish never --config.publish.provider=generic "--config.publish.url=$PI_DESKTOP_UPDATE_URL"
+      - name: Verify signed app, native esbuild and update payload
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(node -p "require('./package.json').version")"
+          arch='${{ matrix.arch }}'
+          test -f 'release/latest-mac.yml'
+          test -f "release/Pi-Desktop-${version}-${arch}.dmg"
+          test -f "release/Pi-Desktop-${version}-${arch}.zip"
+          grep -F "Pi-Desktop-${version}-${arch}.zip" release/latest-mac.yml >/dev/null
+          app_dir='mac'
+          if [[ "$arch" == arm64 ]]; then app_dir='mac-arm64'; fi
+          app="release/${app_dir}/Pi Desktop.app"
+          test "$(lipo -archs "$app/Contents/MacOS/Pi Desktop")" = '${{ matrix.macho }}'
+          codesign --verify --deep --strict --verbose=2 "$app"
+          spctl --assess --type execute --verbose "$app"
+          xcrun stapler validate "$app"
+          test -f "$app/Contents/Resources/update-config.json"
+          asar="$(realpath "$app/Contents/Resources/app.asar")"
+          entries="$(pnpm --filter @pidesktop/desktop exec asar list "$asar")"
+          grep -F 'out/main/agentHost.js' <<< "$entries" >/dev/null
+          grep -F 'node_modules/@earendil-works/pi-coding-agent/dist/index.js' <<< "$entries" >/dev/null
+          grep -F 'node_modules/@silvia-odwyer/photon-node/photon_rs_bg.wasm' <<< "$entries" >/dev/null
+          grep -F "@esbuild/darwin-${arch}/bin/esbuild" <<< "$entries" >/dev/null
+          esbuild_binary="$(find "$app/Contents/Resources/app.asar.unpacked" -path "*/@esbuild/darwin-${arch}/bin/esbuild" -type f -print -quit)"
+          test -n "$esbuild_binary"
+          test "$(lipo -archs "$esbuild_binary")" = '${{ matrix.macho }}'
+          test "$("$esbuild_binary" --version)" = '0.28.2'
+          mv release/latest-mac.yml "release/latest-mac-${arch}.yml"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pi-desktop-macos-${{ matrix.arch }}
+          path: |
+            release/Pi-Desktop-*.dmg
+            release/Pi-Desktop-*.zip
+            release/latest-mac-${{ matrix.arch }}.yml
+          if-no-files-found: error
+
+  build-linux:
+    needs: prerequisites
+    runs-on: ubuntu-24.04
+    env:
+      PI_DESKTOP_UPDATE_URL: ${{ vars.PI_DESKTOP_UPDATE_URL }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.11.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.19.0'
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - name: Embed public update feed
+        run: |
+          node -e "require('node:fs').writeFileSync('packages/desktop/build/update-config.json', JSON.stringify({url: process.env.PI_DESKTOP_UPDATE_URL}) + '\n')"
+      - name: Build Linux packages and update metadata
+        run: pnpm --filter @pidesktop/desktop exec electron-builder --linux AppImage deb --x64 --publish never --config.publish.provider=generic "--config.publish.url=$PI_DESKTOP_UPDATE_URL"
+      - name: Verify update metadata and Pi runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(node -p "require('./package.json').version")"
+          test -f "release/Pi-Desktop-${version}-x64.AppImage"
+          test -f "release/Pi-Desktop-${version}-x64.deb"
+          grep -F "Pi-Desktop-${version}-x64.AppImage" release/latest-linux.yml >/dev/null
+          test -f 'release/linux-unpacked/resources/update-config.json'
+          asar="$(realpath release/linux-unpacked/resources/app.asar)"
+          entries="$(pnpm --filter @pidesktop/desktop exec asar list "$asar")"
+          grep -F 'out/main/agentHost.js' <<< "$entries" >/dev/null
+          grep -F 'node_modules/@earendil-works/pi-coding-agent/dist/index.js' <<< "$entries" >/dev/null
+          grep -F 'node_modules/@silvia-odwyer/photon-node/photon_rs_bg.wasm' <<< "$entries" >/dev/null
+          grep -F '@esbuild/linux-x64/bin/esbuild' <<< "$entries" >/dev/null
+          esbuild_binary="$(find release/linux-unpacked/resources/app.asar.unpacked -path '*/@esbuild/linux-x64/bin/esbuild' -type f -print -quit)"
+          test -n "$esbuild_binary"
+          test "$("$esbuild_binary" --version)" = '0.28.2'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pi-desktop-linux
+          path: |
+            release/Pi-Desktop-*.AppImage
+            release/Pi-Desktop-*.deb
+            release/latest-linux.yml
+          if-no-files-found: error
+
+  draft-release:
+    needs: [build-windows, build-macos, build-linux]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.11.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.19.0'
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile --filter .
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: pi-desktop-*
+          path: release
+          merge-multiple: true
+      - name: Merge signed macOS architecture update metadata
+        run: node .github/scripts/merge-mac-updates.mjs release
+      - name: Verify complete release before drafting
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f release/latest.yml
+          test -f release/latest-mac.yml
+          test -f release/latest-linux.yml
+          version="${GITHUB_REF_NAME#v}"
+          grep -F "Pi-Desktop-${version}-x64.zip" release/latest-mac.yml >/dev/null
+          grep -F "Pi-Desktop-${version}-arm64.zip" release/latest-mac.yml >/dev/null
+          test "$(find release -maxdepth 1 -name 'Pi-Desktop-*.exe' | wc -l)" -eq 2
+          test "$(find release -maxdepth 1 -name 'Pi-Desktop-*.dmg' | wc -l)" -eq 2
+          test "$(find release -maxdepth 1 -name 'Pi-Desktop-*.zip' | wc -l)" -eq 2
+          test "$(find release -maxdepth 1 -name 'Pi-Desktop-*.AppImage' | wc -l)" -eq 1
+          test "$(find release -maxdepth 1 -name 'Pi-Desktop-*.deb' | wc -l)" -eq 1
       - uses: softprops/action-gh-release@v2
         with:
           draft: true
           generate_release_notes: true
-          files: release/Pi-Desktop-*.exe
+          files: release/*

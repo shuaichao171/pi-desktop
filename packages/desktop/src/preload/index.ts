@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import { IPC_CHANNELS, type AgentBridge, type AgentEventEnvelope, type UiExtensionDialogRequest, type WindowChromeState, type WorkspaceCommandEvent } from '@pidesktop/shared';
+import { IPC_CHANNELS, type AgentBridge, type AgentEventEnvelope, type UiExtensionDialogRequest, type UiUpdateState, type WindowChromeState, type WorkspaceCommandEvent } from '@pidesktop/shared';
 
 /**
  * Exposes a typed, minimal bridge as `window.piDesktop`. The renderer never
@@ -40,9 +40,19 @@ const onWorkspaceCommandEvent: AgentBridge['onWorkspaceCommandEvent'] = (listene
 	return () => ipcRenderer.removeListener(IPC_CHANNELS.workspaceCommandEvent, wrapped);
 };
 
+const onUpdateStateChanged: AgentBridge['onUpdateStateChanged'] = (listener) => {
+	const wrapped = (_e: Electron.IpcRendererEvent, state: UiUpdateState): void => listener(state);
+	ipcRenderer.on(IPC_CHANNELS.updateStateChanged, wrapped);
+	return () => ipcRenderer.removeListener(IPC_CHANNELS.updateStateChanged, wrapped);
+};
+
 const bridge: AgentBridge = {
 	getAppInfo: () => ipcRenderer.invoke(IPC_CHANNELS.appInfo),
 	setAppLocale: (locale) => ipcRenderer.invoke(IPC_CHANNELS.appSetLocale, locale),
+	getUpdateState: () => ipcRenderer.invoke(IPC_CHANNELS.updateState),
+	checkForUpdates: () => ipcRenderer.invoke(IPC_CHANNELS.updateCheck),
+	installUpdate: () => ipcRenderer.invoke(IPC_CHANNELS.updateInstall),
+	onUpdateStateChanged,
 	getWindowChromeState: () => ipcRenderer.invoke(IPC_CHANNELS.windowChromeState),
 	onWindowChromeStateChanged,
 	minimizeWindow: () => ipcRenderer.invoke(IPC_CHANNELS.windowMinimize),

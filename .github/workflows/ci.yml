@@ -25,6 +25,9 @@ jobs:
       - name: Verify packaged Pi runtime
         shell: pwsh
         run: |
+          if (-not (Test-Path 'release/win-unpacked/resources/update-config.json')) {
+            throw 'Update feed config is missing from packaged resources'
+          }
           $asar = (Resolve-Path 'release/win-unpacked/resources/app.asar').Path
           $entries = pnpm --filter @pidesktop/desktop exec asar list $asar
           if (-not ($entries -match 'out[\\/]main[\\/]agentHost\.js')) {
@@ -36,3 +39,95 @@ jobs:
           if (-not ($entries -match 'node_modules[\\/]@silvia-odwyer[\\/]photon-node[\\/]photon_rs_bg.wasm')) {
             throw 'Pi image runtime is missing from app.asar'
           }
+          if (-not ($entries -match '@esbuild[\\/]win32-x64[\\/]esbuild.exe')) {
+            throw 'Pi Chord Windows esbuild binary is missing from app.asar'
+          }
+          $esbuildBinary = Get-ChildItem 'release/win-unpacked/resources/app.asar.unpacked' -Recurse -File -Filter esbuild.exe |
+            Where-Object { $_.FullName -match '@esbuild[\\/]win32-x64[\\/]esbuild.exe$' } | Select-Object -First 1
+          if (-not $esbuildBinary) {
+            throw 'Pi Chord Windows esbuild binary is not unpacked for execution'
+          }
+          $esbuildVersion = & $esbuildBinary.FullName --version
+          if ($LASTEXITCODE -ne 0 -or $esbuildVersion -ne '0.28.2') { throw 'Packaged Pi Chord esbuild binary cannot run' }
+
+  package-macos:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15-intel
+            arch: x64
+            macho: x86_64
+          - runner: macos-15
+            arch: arm64
+            macho: arm64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.11.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.19.0'
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - name: Package unsigned macOS test builds
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        run: pnpm --filter @pidesktop/desktop exec electron-builder --mac dmg zip --${{ matrix.arch }} --publish never --config.mac.notarize=false --config.mac.hardenedRuntime=false
+      - name: Verify architecture, Pi runtime and esbuild binary
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(node -p "require('./package.json').version")"
+          arch='${{ matrix.arch }}'
+          test -f "release/Pi-Desktop-${version}-${arch}.dmg"
+          test -f "release/Pi-Desktop-${version}-${arch}.zip"
+          app_dir='mac'
+          if [[ "$arch" == arm64 ]]; then app_dir='mac-arm64'; fi
+          app="release/${app_dir}/Pi Desktop.app"
+          test "$(lipo -archs "$app/Contents/MacOS/Pi Desktop")" = '${{ matrix.macho }}'
+          test -f "$app/Contents/Resources/update-config.json"
+          asar="$(realpath "$app/Contents/Resources/app.asar")"
+          entries="$(pnpm --filter @pidesktop/desktop exec asar list "$asar")"
+          grep -F 'out/main/agentHost.js' <<< "$entries" >/dev/null
+          grep -F 'node_modules/@earendil-works/pi-coding-agent/dist/index.js' <<< "$entries" >/dev/null
+          grep -F 'node_modules/@silvia-odwyer/photon-node/photon_rs_bg.wasm' <<< "$entries" >/dev/null
+          grep -F "@esbuild/darwin-${arch}/bin/esbuild" <<< "$entries" >/dev/null
+          esbuild_binary="$(find "$app/Contents/Resources/app.asar.unpacked" -path "*/@esbuild/darwin-${arch}/bin/esbuild" -type f -print -quit)"
+          test -n "$esbuild_binary"
+          test "$(lipo -archs "$esbuild_binary")" = '${{ matrix.macho }}'
+          test "$("$esbuild_binary" --version)" = '0.28.2'
+
+  package-linux:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.11.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.19.0'
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm dist:linux
+      - name: Verify packaged Pi runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(node -p "require('./package.json').version")"
+          test -f "release/Pi-Desktop-${version}-x64.AppImage"
+          test -f "release/Pi-Desktop-${version}-x64.deb"
+          test -f 'release/linux-unpacked/resources/update-config.json'
+          asar="$(realpath release/linux-unpacked/resources/app.asar)"
+          entries="$(pnpm --filter @pidesktop/desktop exec asar list "$asar")"
+          grep -F 'out/main/agentHost.js' <<< "$entries" >/dev/null
+          grep -F 'node_modules/@earendil-works/pi-coding-agent/dist/index.js' <<< "$entries" >/dev/null
+          grep -F 'node_modules/@silvia-odwyer/photon-node/photon_rs_bg.wasm' <<< "$entries" >/dev/null
+          grep -F '@esbuild/linux-x64/bin/esbuild' <<< "$entries" >/dev/null
+          esbuild_binary="$(find release/linux-unpacked/resources/app.asar.unpacked -path '*/@esbuild/linux-x64/bin/esbuild' -type f -print -quit)"
+          test -n "$esbuild_binary"
+          test "$("$esbuild_binary" --version)" = '0.28.2'

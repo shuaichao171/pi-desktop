@@ -13,8 +13,13 @@
     "build": "pnpm --filter @pidesktop/desktop build",
     "pack:dir": "pnpm --filter @pidesktop/desktop pack:dir",
     "dist:win": "pnpm --filter @pidesktop/desktop dist:win",
+    "dist:mac": "pnpm --filter @pidesktop/desktop dist:mac",
+    "dist:linux": "pnpm --filter @pidesktop/desktop dist:linux",
     "test": "node --test tests/*.test.mjs",
     "typecheck": "pnpm -r --if-present typecheck",
     "clean": "pnpm -r --if-present clean"
+  },
+  "devDependencies": {
+    "yaml": "2.9.0"
   }
 }

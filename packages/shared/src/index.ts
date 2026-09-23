@@ -13,6 +13,10 @@
 export const IPC_CHANNELS = {
   appInfo: 'app:info',
   appSetLocale: 'app:set-locale',
+  updateState: 'update:state',
+  updateStateChanged: 'update:state-changed',
+  updateCheck: 'update:check',
+  updateInstall: 'update:install',
   agentInit: 'agent:init',
   agentPrompt: 'agent:prompt',
   agentAbort: 'agent:abort',
@@ -234,6 +238,18 @@ export interface AppInfo {
   platform: string;
 }
 
+export type UiUpdatePhase = 'unavailable' | 'idle' | 'checking' | 'downloading' | 'ready' | 'up-to-date' | 'error';
+export type UiUpdateUnavailableReason = 'development' | 'portable' | 'unsupported' | 'unconfigured' | 'invalid-feed';
+
+export interface UiUpdateState {
+  phase: UiUpdatePhase;
+  unavailableReason?: UiUpdateUnavailableReason;
+  currentVersion: string;
+  availableVersion?: string;
+  progressPercent?: number;
+  error?: string;
+}
+
 export type AppLocale = 'zh-CN' | 'en-US';
 
 export interface WindowChromeState {
@@ -252,6 +268,10 @@ export interface WindowChromeState {
 export interface AgentBridge {
   getAppInfo(): Promise<AppInfo>;
   setAppLocale(locale: AppLocale): Promise<void>;
+  getUpdateState(): Promise<UiUpdateState>;
+  checkForUpdates(): Promise<UiUpdateState>;
+  installUpdate(): Promise<void>;
+  onUpdateStateChanged(listener: (state: UiUpdateState) => void): () => void;
   getWindowChromeState(): Promise<WindowChromeState>;
   onWindowChromeStateChanged(listener: (state: WindowChromeState) => void): () => void;
   minimizeWindow(): Promise<void>;
