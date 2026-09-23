@@ -37,6 +37,7 @@ export function AppShell() {
 
 	return (
 		<div className={`pd-app-shell flex${isWindows ? ' is-frameless' : ''}${settingsOpen ? ' is-settings-open' : ''}`}>
+			{isWindows && <div className="pd-window-drag-strip" aria-hidden="true"><span className="pd-window-drag-mark">π</span><span>Pi Desktop</span></div>}
 			{narrow && sidebarOpen && (
 				<button
 					type="button"
