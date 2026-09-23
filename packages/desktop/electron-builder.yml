@@ -46,6 +46,7 @@ mac:
 
 linux:
   icon: build/icon.png
+  executableName: pi-desktop
   category: Development
   maintainer: Pi Desktop contributors <shuaichao171@users.noreply.github.com>
   target:
@@ -53,7 +54,11 @@ linux:
       arch: [x64]
     - target: deb
       arch: [x64]
-  artifactName: Pi-Desktop-${version}-${arch}.${ext}
+  # Linux targets expand ${arch} as x86_64 or amd64, not x64.
+  artifactName: Pi-Desktop-${version}-x64.${ext}
+
+deb:
+  packageName: pi-desktop
 
 nsis:
   artifactName: Pi-Desktop-Setup-${version}-${arch}.${ext}
