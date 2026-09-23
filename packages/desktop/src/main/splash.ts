@@ -4,7 +4,7 @@
  */
 import type { AppLocale } from '@pidesktop/shared';
 
-const logo = `<svg class="logo" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" aria-hidden="true" focusable="false">
+const logo = `<svg class="backdrop-logo" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" aria-hidden="true" focusable="false">
   <defs>
     <linearGradient id="logo-bg" x1="0" x2="1" y1="0" y2="1">
       <stop stop-color="#343081"/><stop offset="1" stop-color="#171729"/>
@@ -54,19 +54,19 @@ function renderSplash(locale: AppLocale, error?: string): string {
     * { box-sizing: border-box; }
     html, body { width: 100%; height: 100%; margin: 0; }
     body {
-      display: grid;
-      place-items: center;
+      position: relative;
       overflow: hidden;
       color: #ececef;
       background: radial-gradient(ellipse at 50% 10%, #25253c 0, #171820 44%, #111216 78%);
       -webkit-app-region: drag;
       user-select: none;
     }
-    main { width: min(100%, 380px); padding: 24px 32px 28px; text-align: center; }
-    .logo { display: block; width: 68px; height: 68px; margin: 0 auto 18px; filter: drop-shadow(0 12px 22px #0006); }
-    h1 { margin: 0; font-size: 23px; font-weight: 650; letter-spacing: .01em; line-height: 1.3; }
-    .subtitle { margin: 8px 0 0; color: #a8a9b1; font-size: 12px; line-height: 1.5; }
-    .loading, .error { margin-top: 26px; color: #a8a9b1; font-size: 12px; line-height: 1.5; }
+    .backdrop-logo { position: absolute; top: 36%; left: 50%; width: 390px; height: 390px; transform: translate(-50%, -50%); opacity: .86; filter: drop-shadow(0 20px 45px #0007); }
+    body::after { content: ''; position: absolute; inset: 0; border: 1px solid #494866; border-radius: 22px; background: linear-gradient(180deg, #1112161a 0%, #1112163d 39%, #111216bd 59%, #111216 100%); pointer-events: none; }
+    main { position: relative; z-index: 1; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; width: 100%; height: 100%; padding: 0 32px 28px; text-align: center; }
+    h1 { margin: 0; font-size: 23px; font-weight: 650; letter-spacing: .01em; line-height: 1.3; text-shadow: 0 2px 18px #000b; }
+    .subtitle { margin: 8px 0 0; color: #c4c6d2; font-size: 12px; line-height: 1.5; text-shadow: 0 2px 12px #000b; }
+    .loading, .error { margin-top: 21px; color: #c4c6d2; font-size: 12px; line-height: 1.5; }
     .progress { width: 178px; height: 3px; margin: 13px auto 0; overflow: hidden; border-radius: 3px; background: #454753; }
     .progress span { display: block; width: 38%; height: 100%; border-radius: inherit; background: #aebaff; animation: loading 1.6s ease-in-out infinite alternate; }
     .error { display: grid; gap: 6px; width: min(100%, 280px); margin-right: auto; margin-left: auto; color: #f2a6a6; overflow-wrap: anywhere; }
@@ -75,7 +75,10 @@ function renderSplash(locale: AppLocale, error?: string): string {
     @keyframes loading { from { transform: translateX(-100%); } to { transform: translateX(265%); } }
     @media (prefers-color-scheme: light) {
       :root { color-scheme: light; }
-      body { color: #252838; background: radial-gradient(ellipse at 50% 10%, #e9e8fa 0, #f5f5fa 48%, #ebedf3 100%); }
+      body { color: #252838; background: #f5f5fa; }
+      .backdrop-logo { opacity: .28; filter: none; }
+      body::after { border-color: #c7c8db; background: linear-gradient(180deg, #f5f5fa14 0%, #f5f5fa99 48%, #f5f5faed 70%, #f5f5fa 100%); }
+      h1, .subtitle { text-shadow: none; }
       .subtitle, .loading { color: #656b7e; }
       .progress { background: #d8dce8; }
       .progress span { background: #7773c8; }
@@ -86,8 +89,8 @@ function renderSplash(locale: AppLocale, error?: string): string {
   </style>
 </head>
 <body>
+  ${logo}
   <main>
-    ${logo}
     <h1>Pi Desktop</h1>
     <p class="subtitle">${english ? 'Your local AI coding workspace' : '你的本地 AI 编程工作台'}</p>
     ${status}
