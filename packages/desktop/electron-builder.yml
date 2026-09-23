@@ -47,6 +47,7 @@ mac:
 linux:
   icon: build/icon.png
   executableName: pi-desktop
+  syncDesktopName: true
   category: Development
   maintainer: Pi Desktop contributors <shuaichao171@users.noreply.github.com>
   target:

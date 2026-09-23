@@ -4,6 +4,8 @@
   "version": "0.1.0",
   "description": "Desktop workbench for the Pi coding agent",
   "author": "Pi Desktop contributors",
+  "homepage": "https://github.com/shuaichao171/pi-desktop",
+  "desktopName": "pi-desktop.desktop",
   "type": "module",
   "main": "out/main/index.js",
   "scripts": {
