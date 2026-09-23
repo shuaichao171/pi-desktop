@@ -56,6 +56,8 @@ pnpm build
 
 ## 打包与发布
 
+Windows 上可双击根目录的 `build.cmd` 一键安装依赖、校验 Pi SDK 版本、运行类型检查与测试，然后生成安装版和便携版 EXE。需要 Node.js ≥ 22.19 和 pnpm 11.11.0；首次构建会下载 Electron。脚本结束后会显示产物路径，并停留在窗口中供查看结果。命令行自动化运行时可设置 `PI_DESKTOP_NO_PAUSE=1` 跳过等待按键。
+
 ```bash
 pnpm pack:dir  # release/win-unpacked/
 pnpm dist:win  # 安装版 + 便携版
