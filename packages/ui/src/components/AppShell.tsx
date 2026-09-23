@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react';
 import { ChatView } from './ChatView';
 import { SettingsPanel } from './SettingsPanel';
 import { Sidebar } from './Sidebar';
+import { WindowControls } from './WindowControls';
+import { useChatStore } from '../store';
 
 const NARROW_WINDOW_QUERY = '(max-width: 880px)';
 
@@ -11,6 +13,8 @@ export function AppShell() {
 	);
 	const [narrow, setNarrow] = useState(() => window.matchMedia(NARROW_WINDOW_QUERY).matches);
 	const [settingsOpen, setSettingsOpen] = useState(false);
+	const platform = useChatStore((state) => state.appInfo?.platform);
+	const isWindows = (platform ?? (navigator.userAgent.includes('Windows') ? 'win32' : '')) === 'win32';
 
 	useEffect(() => {
 		const media = window.matchMedia(NARROW_WINDOW_QUERY);
@@ -32,7 +36,7 @@ export function AppShell() {
 	}, [narrow, sidebarOpen, settingsOpen]);
 
 	return (
-		<div className="pd-app-shell flex">
+		<div className={`pd-app-shell flex${isWindows ? ' is-frameless' : ''}${settingsOpen ? ' is-settings-open' : ''}`}>
 			{narrow && sidebarOpen && (
 				<button
 					type="button"
@@ -55,6 +59,7 @@ export function AppShell() {
 			/>
 			<ChatView onToggleSidebar={() => setSidebarOpen((open) => !open)} onOpenSettings={() => setSettingsOpen(true)} />
 			{settingsOpen && <SettingsPanel onClose={() => setSettingsOpen(false)} />}
+			{isWindows && <WindowControls />}
 		</div>
 	);
 }

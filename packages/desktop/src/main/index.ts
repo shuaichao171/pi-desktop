@@ -2,6 +2,7 @@ import { app, BrowserWindow, shell } from 'electron';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { IPC_CHANNELS } from '@pidesktop/shared';
 import { agentService, defaultWorkspace, registerIpc } from './ipc';
 
 const here = fileURLToPath(new URL('.', import.meta.url));
@@ -14,6 +15,10 @@ function createWindow(): void {
 		minHeight: 520,
 		backgroundColor: '#111216',
 		title: 'Pi Desktop',
+		// Match ZCode's Windows chrome: the renderer draws the title bar and controls.
+		// Keep the native title bar on macOS and Linux.
+		frame: process.platform !== 'win32',
+		autoHideMenuBar: process.platform === 'win32',
 		show: false,
 		webPreferences: {
 			preload: join(here, '../preload/index.mjs'),
@@ -23,6 +28,13 @@ function createWindow(): void {
 			nodeIntegration: false,
 		},
 	});
+
+	const publishChromeState = (): void => {
+		if (win.webContents.isDestroyed()) return;
+		win.webContents.send(IPC_CHANNELS.windowChromeStateChanged, { isMaximized: win.isMaximized() });
+	};
+	win.on('maximize', publishChromeState);
+	win.on('unmaximize', publishChromeState);
 
 	win.on('ready-to-show', () => win.show());
 	const openExternalLink = (url: string): void => {

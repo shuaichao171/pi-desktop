@@ -26,6 +26,11 @@ export const IPC_CHANNELS = {
   agentSetProviderApiKey: 'agent:set-provider-api-key',
   agentRemoveProviderCredential: 'agent:remove-provider-credential',
   workspacePick: 'workspace:pick',
+  windowChromeState: 'window:chrome-state',
+  windowChromeStateChanged: 'window:chrome-state-changed',
+  windowMinimize: 'window:minimize',
+  windowToggleMaximize: 'window:toggle-maximize',
+  windowClose: 'window:close',
   /** Push channel: main → renderer event stream. */
   agentEvent: 'agent:event',
 } as const;
@@ -144,6 +149,10 @@ export interface AppInfo {
   platform: string;
 }
 
+export interface WindowChromeState {
+  isMaximized: boolean;
+}
+
 /* ------------------------------------------------------------------ */
 /* Renderer → host bridge (implemented in preload)                     */
 /* ------------------------------------------------------------------ */
@@ -155,6 +164,11 @@ export interface AppInfo {
  */
 export interface AgentBridge {
   getAppInfo(): Promise<AppInfo>;
+  getWindowChromeState(): Promise<WindowChromeState>;
+  onWindowChromeStateChanged(listener: (state: WindowChromeState) => void): () => void;
+  minimizeWindow(): Promise<void>;
+  toggleMaximizeWindow(): Promise<void>;
+  closeWindow(): Promise<void>;
   /** Opens a native directory picker. Returns null when cancelled. */
   pickWorkspace(): Promise<string | null>;
   /** (Re-)creates the agent session bound to a working directory. */

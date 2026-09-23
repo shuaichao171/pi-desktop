@@ -5,7 +5,7 @@
  * is a typed invoke against the contract in @pidesktop/shared.
  */
 
-import { app, BrowserWindow, dialog, ipcMain } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, type IpcMainInvokeEvent } from 'electron';
 import { mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { AgentService } from '@pidesktop/agent';
@@ -44,6 +44,12 @@ function saveWorkspace(cwd: string): void {
 	writeFileSync(workspaceSettingsPath(), JSON.stringify({ cwd }), 'utf8');
 }
 
+function invokingWindow(event: IpcMainInvokeEvent): BrowserWindow {
+	const win = BrowserWindow.fromWebContents(event.sender);
+	if (!win || win.isDestroyed()) throw new Error('The requesting window is no longer available.');
+	return win;
+}
+
 export function registerIpc(): void {
 	// Agent events → all renderer windows.
 	agentService.onEvent((event: AgentEventEnvelope) => {
@@ -58,6 +64,20 @@ export function registerIpc(): void {
 		electronVersion: process.versions.electron ?? 'unknown',
 		platform: process.platform,
 	}));
+	ipcMain.handle(IPC_CHANNELS.windowChromeState, (event) => ({
+		isMaximized: invokingWindow(event).isMaximized(),
+	}));
+	ipcMain.handle(IPC_CHANNELS.windowMinimize, (event) => {
+		invokingWindow(event).minimize();
+	});
+	ipcMain.handle(IPC_CHANNELS.windowToggleMaximize, (event) => {
+		const win = invokingWindow(event);
+		if (win.isMaximized()) win.unmaximize();
+		else win.maximize();
+	});
+	ipcMain.handle(IPC_CHANNELS.windowClose, (event) => {
+		invokingWindow(event).close();
+	});
 
 	ipcMain.handle(IPC_CHANNELS.workspacePick, async () => {
 		const result = await dialog.showOpenDialog({

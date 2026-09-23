@@ -78,6 +78,7 @@ button:focus-visible, textarea:focus-visible, input:focus-visible { outline: 2px
 .pd-sidebar-error { margin-bottom: 6px; padding: 8px; border: 1px solid #d5848457; border-radius: 7px; color: var(--pd-danger); font-size: 11px; overflow-wrap: anywhere; }
 .pd-status-dot, .pd-tool-state { display: inline-block; flex: 0 0 auto; width: 7px; height: 7px; border-radius: 50%; background: var(--pd-text-weak); }
 .pd-status-dot.is-idle, .pd-tool-state.is-done { background: var(--pd-success); }
+.pd-status-dot.is-needs-model { background: var(--pd-warning); }
 .pd-status-dot.is-busy, .pd-status-dot.is-starting, .pd-tool-state.is-running { background: var(--pd-warning); box-shadow: 0 0 0 3px #e8c18a16; }
 .pd-status-dot.is-error, .pd-tool-state.is-error { background: var(--pd-danger); }
 
@@ -319,4 +320,39 @@ button:focus-visible, textarea:focus-visible, input:focus-visible { outline: 2px
 @media (prefers-reduced-motion: reduce) {
   .pd-spinning { animation: none; }
   .pd-chevron { transition: none; }
+}
+
+/* Windows: the existing sidebar and chat header become one draggable title area. */
+.pd-app-shell.is-frameless { border: 4px solid #0c0d11; border-radius: 10px; }
+.is-frameless .pd-sidebar-brand,
+.is-frameless .pd-chat-header { height: 48px; min-height: 48px; -webkit-app-region: drag; user-select: none; }
+.is-frameless .pd-chat-header { padding-right: 116px; }
+.is-frameless .pd-sidebar-brand button,
+.is-frameless .pd-chat-header button,
+.is-frameless .pd-chat-heading strong,
+.is-frameless .pd-chat-heading span,
+.is-frameless .pd-header-status { -webkit-app-region: no-drag; }
+.is-frameless .pd-sidebar.is-collapsed .pd-sidebar-brand { flex-direction: row; justify-content: center; gap: 0; padding: 0; }
+.is-frameless .pd-sidebar.is-collapsed .pd-brand-mark { display: none; }
+.is-frameless.is-settings-open .pd-sidebar-brand button,
+.is-frameless.is-settings-open .pd-chat-header button { pointer-events: none; }
+.is-frameless .pd-settings-overlay { top: 52px; }
+.is-frameless .pd-settings-dialog { max-height: min(740px, calc(100vh - 100px)); }
+
+.pd-window-controls { position: fixed; top: 14px; right: 14px; z-index: 60; display: flex; align-items: center; gap: 2px; -webkit-app-region: no-drag; }
+.pd-window-control { display: grid; flex: 0 0 auto; place-items: center; width: 28px; height: 28px; padding: 0; border: 0; border-radius: 8px; background: transparent; color: var(--pd-text-subtle); -webkit-app-region: no-drag; }
+.pd-window-control:hover { background: var(--pd-surface-hover); color: var(--pd-text); }
+.pd-window-control.is-close:hover { background: #b73c4b; color: #fff; }
+.pd-window-control-error { position: absolute; top: 33px; right: 0; width: max-content; max-width: 240px; padding: 5px 8px; border: 1px solid #d5848457; border-radius: 6px; background: var(--pd-surface); color: var(--pd-danger); font-size: 11px; }
+
+@media (max-width: 880px) {
+  .is-frameless .pd-chat-header { padding-right: 110px; }
+}
+
+@media (max-width: 650px) {
+  .is-frameless .pd-settings-dialog { max-height: calc(100vh - 72px); }
+}
+
+@media (max-width: 450px) {
+  .is-frameless .pd-settings-dialog { max-height: none; }
 }

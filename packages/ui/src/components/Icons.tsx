@@ -14,6 +14,9 @@ type IconName =
 	| 'close'
 	| 'sort'
 	| 'settings'
+	| 'minimize'
+	| 'maximize'
+	| 'restore'
 	| 'chevronRight'
 	| 'chevronDown';
 
@@ -31,6 +34,9 @@ const paths: Record<IconName, ReactNode> = {
 	close: <><path d="M5 5 19 19M19 5 5 19" /></>,
 	sort: <><path d="M4 7h16M7 12h10M10 17h4" /></>,
 	settings: <><path d="M10 2h4l.6 2.4 1.7.7 2.1-1.3 2.8 2.8-1.3 2.1.7 1.7L23 11v2l-2.4.6-.7 1.7 1.3 2.1-2.8 2.8-2.1-1.3-1.7.7L14 22h-4l-.6-2.4-1.7-.7-2.1 1.3-2.8-2.8 1.3-2.1-.7-1.7L1 13v-2l2.4-.6.7-1.7-1.3-2.1 2.8-2.8 2.1 1.3 1.7-.7L10 2Z" /><circle cx="12" cy="12" r="3" /></>,
+	minimize: <path d="M5 12h14" />,
+	maximize: <rect x="5" y="5" width="14" height="14" rx="1" />,
+	restore: <><path d="M8 6V4h12v12h-2" /><rect x="4" y="8" width="12" height="12" rx="1" /></>,
 	chevronRight: <path d="m9 5 7 7-7 7" />,
 	chevronDown: <path d="m5 9 7 7 7-7" />,
 };

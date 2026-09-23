@@ -127,6 +127,7 @@ export function ChatView({ onToggleSidebar, onOpenSettings }: { onToggleSidebar(
 	const sessions = useChatStore((s) => s.sessions);
 	const sessionPath = useChatStore((s) => s.sessionPath);
 	const status = useChatStore((s) => s.status);
+	const model = useChatStore((s) => s.model);
 	const statusMessage = useChatStore((s) => s.statusMessage);
 	const queuedCount = useChatStore((s) => s.queuedCount);
 	const cwd = useChatStore((s) => s.cwd);
@@ -138,6 +139,8 @@ export function ChatView({ onToggleSidebar, onOpenSettings }: { onToggleSidebar(
 	const firstUserText = messages.find((message) => message.role === 'user')?.text;
 	const title = activeSession?.name?.trim() || activeSession?.firstMessage?.trim().split(/\r?\n/)[0] || firstUserText?.trim().split(/\r?\n/)[0] || '新会话';
 	const statusDetail = statusMessage?.replace(/^auto retry (\d+)\/(\d+)$/, '自动重试 $1/$2');
+	const retryDetail = statusDetail?.startsWith('自动重试') ? statusDetail : undefined;
+	const needsModel = status === 'idle' && (!model || model === 'unknown');
 
 	useLayoutEffect(() => {
 		if (followsBottomRef.current && scrollRef.current) {
@@ -172,7 +175,7 @@ export function ChatView({ onToggleSidebar, onOpenSettings }: { onToggleSidebar(
 			<header className="pd-chat-header">
 				<button type="button" className="pd-icon-button pd-header-sidebar-toggle" onClick={onToggleSidebar} aria-label="切换侧栏" title="切换侧栏"><Icon name="panel" /></button>
 				<div className="pd-chat-heading"><strong title={title}>{title}</strong><span title={cwd}>{cwd ? workspaceName(cwd) : '正在准备工作区'}</span></div>
-				<div className={`pd-header-status is-${status}`} title={statusDetail}><span className={`pd-status-dot is-${status}`} /><span>{STATUS_LABEL[status] ?? status}</span>{queuedCount > 0 ? <small>· {queuedCount} 条排队</small> : statusDetail && <small>· {statusDetail}</small>}</div>
+				<div className={`pd-header-status is-${needsModel ? 'needs-model' : status}`} title={statusDetail}><span className={`pd-status-dot is-${needsModel ? 'needs-model' : status}`} /><span>{needsModel ? '待配置模型' : STATUS_LABEL[status] ?? status}</span>{queuedCount > 0 ? <small>· {queuedCount} 条排队</small> : retryDetail && <small>· {retryDetail}</small>}</div>
 				<button type="button" className="pd-icon-button pd-header-settings" onClick={onOpenSettings} aria-label="打开设置" title="设置"><Icon name="settings" width="17" height="17" /></button>
 			</header>
 

@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import { IPC_CHANNELS, type AgentBridge, type AgentEventEnvelope } from '@pidesktop/shared';
+import { IPC_CHANNELS, type AgentBridge, type AgentEventEnvelope, type WindowChromeState } from '@pidesktop/shared';
 
 /**
  * Exposes a typed, minimal bridge as `window.piDesktop`. The renderer never
@@ -14,8 +14,21 @@ const onAgentEvent: AgentBridge['onAgentEvent'] = (listener) => {
 	};
 };
 
+const onWindowChromeStateChanged: AgentBridge['onWindowChromeStateChanged'] = (listener) => {
+	const wrapped = (_e: Electron.IpcRendererEvent, state: WindowChromeState): void => listener(state);
+	ipcRenderer.on(IPC_CHANNELS.windowChromeStateChanged, wrapped);
+	return () => {
+		ipcRenderer.removeListener(IPC_CHANNELS.windowChromeStateChanged, wrapped);
+	};
+};
+
 const bridge: AgentBridge = {
 	getAppInfo: () => ipcRenderer.invoke(IPC_CHANNELS.appInfo),
+	getWindowChromeState: () => ipcRenderer.invoke(IPC_CHANNELS.windowChromeState),
+	onWindowChromeStateChanged,
+	minimizeWindow: () => ipcRenderer.invoke(IPC_CHANNELS.windowMinimize),
+	toggleMaximizeWindow: () => ipcRenderer.invoke(IPC_CHANNELS.windowToggleMaximize),
+	closeWindow: () => ipcRenderer.invoke(IPC_CHANNELS.windowClose),
 	pickWorkspace: () => ipcRenderer.invoke(IPC_CHANNELS.workspacePick),
 	initAgent: (cwd) => ipcRenderer.invoke(IPC_CHANNELS.agentInit, cwd),
 	getAgentSnapshot: () => ipcRenderer.invoke(IPC_CHANNELS.agentSnapshot),
