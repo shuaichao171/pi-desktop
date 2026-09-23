@@ -124,8 +124,16 @@ export function SettingsPanel({ onClose }: { onClose(): void }) {
 		const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
 		closeRef.current?.focus();
 		return () => {
-			if (previous?.isConnected && !previous.closest('[inert]')) previous.focus();
-			else document.querySelector<HTMLButtonElement>('.pd-header-settings')?.focus();
+			const canReceiveFocus = (element: HTMLElement | null): element is HTMLElement =>
+				Boolean(element?.isConnected && !element.closest('[inert]') && element.getClientRects().length > 0);
+			if (canReceiveFocus(previous)) {
+				previous.focus();
+				return;
+			}
+			const settingsEntry = document.querySelector<HTMLButtonElement>('.pd-settings-entry');
+			const sidebarToggle = document.querySelector<HTMLButtonElement>('.pd-header-sidebar-toggle');
+			if (canReceiveFocus(settingsEntry)) settingsEntry.focus();
+			else if (canReceiveFocus(sidebarToggle)) sidebarToggle.focus();
 		};
 	}, []);
 

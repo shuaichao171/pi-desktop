@@ -38,7 +38,7 @@ button:focus-visible, textarea:focus-visible, input:focus-visible { outline: 2px
 .pd-sidebar.is-collapsed { flex-basis: 56px; }
 .pd-sidebar.is-collapsed .pd-sidebar-detail { display: none; }
 .pd-sidebar-scrim { display: none; }
-.pd-sidebar-toolbar { display: flex; flex: 0 0 42px; align-items: center; gap: 8px; padding: 0 10px 0 18px; }
+.pd-sidebar-toolbar { display: flex; flex: 0 0 48px; align-items: center; gap: 8px; padding: 0 10px 0 18px; }
 .pd-brand-label { flex: 1; min-width: 0; }
 .pd-brand-label strong { color: var(--pd-text-weak); font-size: 11px; font-weight: 600; letter-spacing: .04em; }
 .pd-icon-button { display: grid; flex: 0 0 auto; place-items: center; width: 28px; height: 28px; padding: 0; border: 0; border-radius: 7px; background: transparent; color: var(--pd-text-weak); }
@@ -75,21 +75,17 @@ button:focus-visible, textarea:focus-visible, input:focus-visible { outline: 2px
 .pd-session-empty { padding: 12px 10px; color: var(--pd-text-weak); font-size: 12px; line-height: 1.5; }
 .pd-sidebar-footer { display: flex; flex-direction: column; gap: 4px; padding: 8px; border-top: 1px solid var(--pd-border-soft); }
 .pd-sidebar-error { margin-bottom: 6px; padding: 8px; border: 1px solid #d5848457; border-radius: 7px; color: var(--pd-danger); font-size: 11px; overflow-wrap: anywhere; }
-.pd-status-dot, .pd-tool-state { display: inline-block; flex: 0 0 auto; width: 7px; height: 7px; border-radius: 50%; background: var(--pd-text-weak); }
-.pd-status-dot.is-idle, .pd-tool-state.is-done { background: var(--pd-success); }
-.pd-status-dot.is-needs-model { background: var(--pd-warning); }
-.pd-status-dot.is-busy, .pd-status-dot.is-starting, .pd-tool-state.is-running { background: var(--pd-warning); box-shadow: 0 0 0 3px #e8c18a16; }
-.pd-status-dot.is-error, .pd-tool-state.is-error { background: var(--pd-danger); }
+.pd-tool-state { display: inline-block; flex: 0 0 auto; width: 7px; height: 7px; border-radius: 50%; background: var(--pd-text-weak); }
+.pd-tool-state.is-done { background: var(--pd-success); }
+.pd-tool-state.is-running { background: var(--pd-warning); box-shadow: 0 0 0 3px #e8c18a16; }
+.pd-tool-state.is-error { background: var(--pd-danger); }
 
 .pd-main { display: flex; flex: 1; flex-direction: column; min-width: 0; min-height: 0; background: var(--pd-bg); }
-.pd-chat-header { display: flex; flex: 0 0 auto; align-items: center; gap: 12px; min-width: 0; height: 62px; padding: 0 22px; border-bottom: 1px solid var(--pd-border-soft); background: var(--pd-header); }
+.pd-chat-header { display: flex; flex: 0 0 48px; align-items: center; gap: 10px; min-width: 0; padding: 0 18px; border-bottom: 1px solid var(--pd-border-soft); background: var(--pd-header); }
 .pd-header-sidebar-toggle { display: none; }
-.pd-header-settings { flex: 0 0 auto; }
-.pd-chat-heading { display: flex; flex: 1; flex-direction: column; gap: 2px; min-width: 0; }
-.pd-chat-heading strong { overflow: hidden; font-size: 13px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
-.pd-chat-heading span { overflow: hidden; color: var(--pd-text-weak); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
-.pd-header-status { display: flex; flex: 0 1 auto; align-items: center; gap: 7px; min-width: 0; color: var(--pd-text-subtle); font-size: 12px; white-space: nowrap; }
-.pd-header-status small { overflow: hidden; max-width: 220px; color: var(--pd-text-weak); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.pd-chat-heading { display: flex; flex: 0 1 auto; align-items: center; gap: 8px; min-width: 0; max-width: min(360px, 50%); }
+.pd-chat-workspace-icon { display: grid; flex: 0 0 16px; place-items: center; color: var(--pd-text-weak); }
+.pd-chat-heading h1 { min-width: 0; margin: 0; overflow: hidden; font-size: 13px; font-weight: 600; line-height: 1.3; text-overflow: ellipsis; white-space: nowrap; }
 .pd-chat-content { position: relative; display: flex; flex: 1; min-height: 0; }
 .pd-transcript { flex: 1; min-width: 0; overflow-x: hidden; overflow-y: auto; scrollbar-gutter: stable; }
 .pd-message-list { display: flex; flex-direction: column; gap: 18px; padding: 28px 22px 8px; }
@@ -165,7 +161,6 @@ button:focus-visible, textarea:focus-visible, input:focus-visible { outline: 2px
 
 @media (max-width: 1100px) {
   .pd-keyboard-hint { display: none; }
-  .pd-header-status small { max-width: 120px; }
 }
 
 @media (max-width: 880px) {
@@ -177,8 +172,6 @@ button:focus-visible, textarea:focus-visible, input:focus-visible { outline: 2px
 }
 
 @media (max-width: 600px) {
-  .pd-header-status small { display: none; }
-  .pd-chat-header { height: 55px; }
   .pd-message-list { gap: 16px; padding: 22px 14px 8px; }
   .pd-transcript-end { padding: 8px 14px 24px; }
   .pd-composer-dock { padding: 8px 10px 12px; }
@@ -320,12 +313,16 @@ button:focus-visible, textarea:focus-visible, input:focus-visible { outline: 2px
   .pd-chevron { transition: none; }
 }
 
-/* Windows: a full-width 48px strip remains draggable even when the sidebar is open. */
-.pd-app-shell.is-frameless { position: relative; padding-top: 48px; border: 4px solid #0c0d11; border-radius: 10px; }
-.pd-window-drag-strip { position: absolute; top: 0; right: 0; left: 0; z-index: 50; display: flex; align-items: center; gap: 9px; height: 48px; padding: 0 14px; border-bottom: 1px solid var(--pd-border-soft); background: #17181c; color: var(--pd-text-subtle); font-size: 12px; font-weight: 600; letter-spacing: .02em; -webkit-app-region: drag; user-select: none; }
-.pd-window-drag-mark { color: var(--pd-brand); font: 20px Georgia, serif; }
-.is-frameless .pd-chat-header { height: 52px; padding-right: 22px; }
-.is-frameless .pd-chat-header button { -webkit-app-region: no-drag; }
+/* Windows: title and window controls share a single 48px draggable header. */
+.pd-app-shell.is-frameless { position: relative; border: 4px solid #0c0d11; border-radius: 10px; }
+.is-frameless .pd-sidebar-toolbar,
+.is-frameless .pd-chat-header { -webkit-app-region: drag; user-select: none; }
+.is-frameless .pd-chat-header { padding-right: 116px; }
+.is-frameless .pd-sidebar-toolbar button,
+.is-frameless .pd-chat-header button,
+.is-frameless .pd-chat-heading { -webkit-app-region: no-drag; }
+.is-frameless.is-settings-open .pd-sidebar-toolbar button,
+.is-frameless.is-settings-open .pd-chat-header button { pointer-events: none; }
 .is-frameless .pd-settings-overlay { top: 52px; }
 .is-frameless .pd-settings-dialog { max-height: min(740px, calc(100vh - 100px)); }
 
@@ -334,11 +331,6 @@ button:focus-visible, textarea:focus-visible, input:focus-visible { outline: 2px
 .pd-window-control:hover { background: var(--pd-surface-hover); color: var(--pd-text); }
 .pd-window-control.is-close:hover { background: #b73c4b; color: #fff; }
 .pd-window-control-error { position: absolute; top: 33px; right: 0; width: max-content; max-width: 240px; padding: 5px 8px; border: 1px solid #d5848457; border-radius: 6px; background: var(--pd-surface); color: var(--pd-danger); font-size: 11px; }
-
-@media (max-width: 880px) {
-  .is-frameless .pd-sidebar { top: 48px; bottom: 0; height: auto; }
-  .is-frameless .pd-sidebar-scrim { top: 48px; }
-}
 
 @media (max-width: 650px) {
   .is-frameless .pd-settings-dialog { max-height: calc(100vh - 72px); }

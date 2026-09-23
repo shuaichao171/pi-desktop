@@ -5,18 +5,6 @@ import { Composer } from './Composer';
 import { Icon } from './Icons';
 import { MessageItem } from './MessageItem';
 
-const STATUS_LABEL: Record<string, string> = {
-	uninitialized: '连接中',
-	starting: '启动中',
-	idle: '就绪',
-	busy: '工作中',
-	error: '出错',
-};
-
-function workspaceName(cwd: string): string {
-	return cwd.split(/[\\/]/).filter(Boolean).at(-1) ?? '工作区';
-}
-
 const TOOL_STATUS_LABEL: Record<UiToolActivity['status'], string> = {
 	running: '运行中',
 	done: '已完成',
@@ -121,15 +109,11 @@ function EmptyState() {
 	);
 }
 
-export function ChatView({ onToggleSidebar, onOpenSettings }: { onToggleSidebar(): void; onOpenSettings(): void }) {
+export function ChatView({ onToggleSidebar }: { onToggleSidebar(): void }) {
 	const messages = useChatStore((s) => s.messages);
 	const activities = useChatStore((s) => s.activities);
 	const sessions = useChatStore((s) => s.sessions);
 	const sessionPath = useChatStore((s) => s.sessionPath);
-	const status = useChatStore((s) => s.status);
-	const model = useChatStore((s) => s.model);
-	const statusMessage = useChatStore((s) => s.statusMessage);
-	const queuedCount = useChatStore((s) => s.queuedCount);
 	const cwd = useChatStore((s) => s.cwd);
 	const error = useChatStore((s) => s.error);
 	const scrollRef = useRef<HTMLDivElement>(null);
@@ -138,10 +122,6 @@ export function ChatView({ onToggleSidebar, onOpenSettings }: { onToggleSidebar(
 	const activeSession = sessions.find((session) => session.path === sessionPath);
 	const firstUserText = messages.find((message) => message.role === 'user')?.text;
 	const title = activeSession?.name?.trim() || activeSession?.firstMessage?.trim().split(/\r?\n/)[0] || firstUserText?.trim().split(/\r?\n/)[0] || '新会话';
-	const statusDetail = statusMessage?.replace(/^auto retry (\d+)\/(\d+)$/, '自动重试 $1/$2');
-	const retryDetail = statusDetail?.startsWith('自动重试') ? statusDetail : undefined;
-	const needsModel = status === 'idle' && (!model || model === 'unknown');
-
 	useLayoutEffect(() => {
 		if (followsBottomRef.current && scrollRef.current) {
 			scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
@@ -174,9 +154,7 @@ export function ChatView({ onToggleSidebar, onOpenSettings }: { onToggleSidebar(
 		<main className="pd-main">
 			<header className="pd-chat-header">
 				<button type="button" className="pd-icon-button pd-header-sidebar-toggle" onClick={onToggleSidebar} aria-label="切换侧栏" title="切换侧栏"><Icon name="panel" /></button>
-				<div className="pd-chat-heading"><strong title={title}>{title}</strong><span title={cwd}>{cwd ? workspaceName(cwd) : '正在准备工作区'}</span></div>
-				<div className={`pd-header-status is-${needsModel ? 'needs-model' : status}`} title={statusDetail}><span className={`pd-status-dot is-${needsModel ? 'needs-model' : status}`} /><span>{needsModel ? '待配置模型' : STATUS_LABEL[status] ?? status}</span>{queuedCount > 0 ? <small>· {queuedCount} 条排队</small> : retryDetail && <small>· {retryDetail}</small>}</div>
-				<button type="button" className="pd-icon-button pd-header-settings" onClick={onOpenSettings} aria-label="打开设置" title="设置"><Icon name="settings" width="17" height="17" /></button>
+				<div className="pd-chat-heading"><span className="pd-chat-workspace-icon" title={cwd || '工作区'}><Icon name="folder" width="16" height="16" /></span><h1 title={title}>{title}</h1></div>
 			</header>
 
 			<div className="pd-chat-content">
