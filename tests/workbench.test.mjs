@@ -2,8 +2,17 @@ import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdtempSync, mkdirSync, realpathSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve, sep } from 'node:path';
+import { isAbsolute, join, relative, sep } from 'node:path';
 import { test } from 'node:test';
+
+function removeSafeTemp(tempRoot) {
+  const base = realpathSync(tmpdir());
+  const target = realpathSync(tempRoot);
+  const rel = relative(base, target);
+  if (!rel || rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)
+    || !rel.startsWith('pi-desktop-')) throw new Error('Unsafe temporary path');
+  rmSync(target, { recursive: true, force: true });
+}
 
 test('workbench file access stays within the workspace and Git diff includes deleted files', async () => {
   const tempRoot = mkdtempSync(join(tmpdir(), 'pi-desktop-workbench-'));
@@ -42,9 +51,7 @@ test('workbench file access stays within the workspace and Git diff includes del
     await assert.rejects(service.gitDiff('../outside.txt'), /不属于当前工作区/);
   } finally {
     await service.dispose();
-    const resolvedTemp = resolve(tempRoot);
-    if (!resolvedTemp.startsWith(realpathSync(tmpdir()) + sep)) throw new Error('Unsafe temporary path');
-    rmSync(resolvedTemp, { recursive: true, force: true });
+    removeSafeTemp(tempRoot);
   }
 });
 
@@ -70,9 +77,7 @@ test('large Git diffs return a bounded preview with a truncation notice', async 
     assert.ok(Buffer.byteLength(untrackedPreview) <= 1024 * 1024 + 200);
   } finally {
     await service.dispose();
-    const resolvedTemp = resolve(tempRoot);
-    if (!resolvedTemp.startsWith(realpathSync(tmpdir()) + sep)) throw new Error('Unsafe temporary path');
-    rmSync(resolvedTemp, { recursive: true, force: true });
+    removeSafeTemp(tempRoot);
   }
 });
 
@@ -97,9 +102,7 @@ test('workbench runs an explicit command in the selected workspace and streams i
   } finally {
     clearTimeout(timeout);
     await service.dispose();
-    const resolvedTemp = resolve(tempRoot);
-    if (!resolvedTemp.startsWith(realpathSync(tmpdir()) + sep)) throw new Error('Unsafe temporary path');
-    rmSync(resolvedTemp, { recursive: true, force: true });
+    removeSafeTemp(tempRoot);
   }
 });
 
@@ -119,9 +122,7 @@ test('workspace reset cancels a command awaiting path resolution and permits lat
     await service.stopCommand(fresh);
   } finally {
     await service.dispose();
-    const resolvedTemp = resolve(tempRoot);
-    if (!resolvedTemp.startsWith(realpathSync(tmpdir()) + sep)) throw new Error('Unsafe temporary path');
-    rmSync(resolvedTemp, { recursive: true, force: true });
+    removeSafeTemp(tempRoot);
   }
 });
 
@@ -147,9 +148,7 @@ test('Unix command stop terminates descendants in the shell process group', { sk
     assert.equal(existsSync(survived), false, 'a descendant survived after stopping the command');
   } finally {
     await service.dispose();
-    const resolvedTemp = resolve(tempRoot);
-    if (!resolvedTemp.startsWith(realpathSync(tmpdir()) + sep)) throw new Error('Unsafe temporary path');
-    rmSync(resolvedTemp, { recursive: true, force: true });
+    removeSafeTemp(tempRoot);
   }
 });
 
@@ -167,8 +166,6 @@ test('simultaneous command starts respect the four-process limit', async () => {
     assert.equal(service.commands.size, 4);
   } finally {
     await service.dispose();
-    const resolvedTemp = resolve(tempRoot);
-    if (!resolvedTemp.startsWith(realpathSync(tmpdir()) + sep)) throw new Error('Unsafe temporary path');
-    rmSync(resolvedTemp, { recursive: true, force: true });
+    removeSafeTemp(tempRoot);
   }
 });
