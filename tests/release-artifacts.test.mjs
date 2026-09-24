@@ -38,8 +38,7 @@ async function fixture(t, { macos = false } = {}) {
   await manifest('latest.yml', [await artifact(setup)]);
   await artifact(portable);
   await artifact(`${setup}.blockmap`);
-  await manifest('latest-linux.yml', [await artifact(appImage)]);
-  await artifact(deb);
+  await manifest('latest-linux.yml', [await artifact(appImage), await artifact(deb)]);
   if (macos) {
     const files = [];
     for (const arch of ['x64', 'arm64']) {
@@ -121,10 +120,42 @@ test('all platform metadata versions and every listed/fallback SHA-512 are check
   await assert.rejects(f.verify(), /SHA-512 mismatch.*arm64\.dmg/);
 });
 
-test('Linux metadata cannot redirect updates to a DEB and NSIS cannot add web packages', async (t) => {
+test('Linux metadata accepts the combined AppImage and DEB build in either completion order', async (t) => {
   const f = await fixture(t);
-  await f.editManifest('latest-linux.yml', (info) => { info.files[0].url = deb; });
-  await assert.rejects(f.verify(), /Unexpected update artifact.*\.deb/);
+  for (const first of [appImage, deb]) {
+    await f.editManifest('latest-linux.yml', (info) => {
+      info.files.sort((a, b) => Number(b.url === first) - Number(a.url === first));
+      info.path = info.files[0].url;
+      info.sha512 = info.files[0].sha512;
+    });
+    const files = (await f.verify()).map((path) => basename(path));
+    assert.ok(files.includes(appImage));
+    assert.ok(files.includes(deb));
+  }
+});
+
+test('Linux metadata requires both update formats, validates DEB bytes and rejects unbuilt formats', async (t) => {
+  const f = await fixture(t);
+  const original = await readFile(join(f.dir, 'latest-linux.yml'));
+  for (const missing of [appImage, deb]) {
+    await writeFile(join(f.dir, 'latest-linux.yml'), original);
+    await f.editManifest('latest-linux.yml', (info) => {
+      info.files = info.files.filter((file) => file.url !== missing);
+      info.path = info.files[0].url;
+      info.sha512 = info.files[0].sha512;
+    });
+    await assert.rejects(f.verify(), /Required update artifact missing from latest-linux\.yml/);
+  }
+  await writeFile(join(f.dir, 'latest-linux.yml'), original);
+  await f.editManifest('latest-linux.yml', (info) => { info.files[1].url = `Pi-Desktop-${version}-x64.rpm`; });
+  await assert.rejects(f.verify(), /Unexpected update artifact.*\.rpm/);
+  await writeFile(join(f.dir, 'latest-linux.yml'), original);
+  await writeFile(join(f.dir, deb), 'tampered DEB artifact bytes');
+  await assert.rejects(f.verify(), /SHA-512 mismatch.*\.deb/);
+});
+
+test('NSIS metadata cannot add web installer packages', async (t) => {
+  const f = await fixture(t);
   await f.editManifest('latest.yml', (info) => { info.packages = { x64: { path: 'https://example.com/package.7z' } }; });
   await assert.rejects(f.verify(), /Unexpected web installer packages/);
 });

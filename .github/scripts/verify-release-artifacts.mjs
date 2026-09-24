@@ -86,7 +86,8 @@ export async function verifyReleaseArtifacts(directory, { version, macos = false
   }
 
   await verifyManifest('latest.yml', [setup], [setup]);
-  await verifyManifest('latest-linux.yml', [appImage], [appImage]);
+  // electron-builder merges AppImage and DEB update entries into this manifest.
+  await verifyManifest('latest-linux.yml', [appImage, deb], [appImage, deb]);
   if (macos) await verifyManifest('latest-mac.yml', macFiles, macFiles.filter((name) => name.endsWith('.zip')));
   return [...required, ...optional.filter((name) => artifacts.has(name))].map((name) => artifacts.get(name).path);
 }
