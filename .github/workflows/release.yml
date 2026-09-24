@@ -1,21 +1,40 @@
-name: Signed desktop release
+name: Desktop release
 
 on:
   push:
     tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing stable version tag, for example v0.1.1
+        required: true
+        type: string
+      publish:
+        description: Publish the completed release and make it available to app updates
+        default: false
+        type: boolean
 
 permissions:
-  contents: write
+  contents: read
+
+env:
+  PI_DESKTOP_UPDATE_URL: ${{ vars.PI_DESKTOP_UPDATE_URL || 'https://github.com/shuaichao171/pi-desktop/releases/latest/download/' }}
 
 concurrency:
-  group: desktop-release-${{ github.ref }}
+  group: desktop-release-${{ inputs.tag || github.ref_name }}
   cancel-in-progress: false
 
 jobs:
   prerequisites:
     runs-on: ubuntu-24.04
+    outputs:
+      tag: ${{ steps.plan.outputs.tag }}
+      version: ${{ steps.plan.outputs.version }}
+      sha: ${{ steps.plan.outputs.sha }}
+      windows_signed: ${{ steps.plan.outputs.windows_signed }}
+      macos: ${{ steps.plan.outputs.macos }}
     env:
-      PI_DESKTOP_UPDATE_URL: ${{ vars.PI_DESKTOP_UPDATE_URL }}
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
       WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
       WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
       MAC_CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
@@ -24,46 +43,30 @@ jobs:
       APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
       APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
     steps:
-      - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '22.19.0'
-      - name: Require signing, notarization and public update feed
+      - name: Validate requested tag before checkout
         shell: bash
         run: |
-          set -euo pipefail
-          missing=0
-          for name in PI_DESKTOP_UPDATE_URL WIN_CSC_LINK WIN_CSC_KEY_PASSWORD MAC_CSC_LINK MAC_CSC_KEY_PASSWORD APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID; do
-            if [[ -z "${!name:-}" ]]; then
-              echo "::error::Missing repository variable or secret: ${name}"
-              missing=1
-            fi
-          done
-          if [[ "$missing" -ne 0 ]]; then exit 1; fi
           node <<'NODE'
-          const fs = require('node:fs');
-          const { isIP } = require('node:net');
-          const rootVersion = JSON.parse(fs.readFileSync('package.json', 'utf8')).version;
-          const desktopVersion = JSON.parse(fs.readFileSync('packages/desktop/package.json', 'utf8')).version;
-          if (rootVersion !== desktopVersion || `v${rootVersion}` !== process.env.GITHUB_REF_NAME) {
-            throw new Error(`Tag and package versions differ: ${process.env.GITHUB_REF_NAME}, ${rootVersion}, ${desktopVersion}`);
-          }
-          const url = new URL(process.env.PI_DESKTOP_UPDATE_URL);
-          if (url.protocol !== 'https:' || !url.hostname || url.username || url.password || url.search || url.hash || !url.pathname.endsWith('/')) {
-            throw new Error('PI_DESKTOP_UPDATE_URL must be a public HTTPS directory URL ending in /, without credentials, query or fragment');
-          }
-          if (url.hostname.toLowerCase() === 'localhost' || isIP(url.hostname.replace(/^\[|\]$/g, '')) !== 0) {
-            throw new Error('PI_DESKTOP_UPDATE_URL must not point to localhost or an IP literal');
-          }
+          const tag = process.env.RELEASE_TAG;
+          if (!tag || tag !== tag.trim() || !/^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(tag)) throw new Error('A stable vX.Y.Z tag is required');
           NODE
+      - uses: actions/checkout@v4
+        with:
+          ref: refs/tags/${{ inputs.tag || github.ref_name }}
+      - name: Validate versions, update feed and optional signing
+        id: plan
+        run: node .github/scripts/release-plan.mjs
 
   build-windows:
     needs: prerequisites
     runs-on: windows-latest
-    env:
-      PI_DESKTOP_UPDATE_URL: ${{ vars.PI_DESKTOP_UPDATE_URL }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prerequisites.outputs.sha }}
       - uses: pnpm/action-setup@v4
         with:
           version: 11.11.0
@@ -73,49 +76,39 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: node scripts/sync-pi.mjs --verify
-      - name: Check release tag matches application version
-        shell: pwsh
-        run: |
-          $rootVersion = (Get-Content package.json | ConvertFrom-Json).version
-          $desktopVersion = (Get-Content packages/desktop/package.json | ConvertFrom-Json).version
-          if ($rootVersion -ne $desktopVersion -or "v$rootVersion" -ne $env:GITHUB_REF_NAME) {
-            throw "Tag, root version and desktop version must match: $env:GITHUB_REF_NAME, $rootVersion, $desktopVersion"
-          }
       - run: pnpm typecheck
       - run: pnpm test
-      - run: pnpm build
-      - name: Embed public update feed
-        shell: pwsh
-        run: |
-          @{ url = $env:PI_DESKTOP_UPDATE_URL } | ConvertTo-Json -Compress | Set-Content -Path 'packages/desktop/build/update-config.json' -Encoding utf8
-      - name: Build signed Windows packages and update metadata
+      - name: Build Windows packages and update metadata
         shell: pwsh
         env:
           WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
           WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
         run: |
-          pnpm --filter @pidesktop/desktop exec electron-builder --win nsis portable --x64 --publish never --config.publish.provider=generic "--config.publish.url=$env:PI_DESKTOP_UPDATE_URL"
+          pnpm dist:win
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      - name: Verify signatures, update metadata and Pi runtime
+      - name: Verify configured signing, update metadata and Pi runtime
         shell: pwsh
         run: |
           $version = (Get-Content package.json | ConvertFrom-Json).version
+          $signed = '${{ needs.prerequisites.outputs.windows_signed }}' -eq 'true'
           foreach ($kind in @('Setup', 'Portable')) {
             $path = "release/Pi-Desktop-$kind-$version-x64.exe"
             if (-not (Test-Path $path)) { throw "Missing $path" }
-            $signature = Get-AuthenticodeSignature -FilePath $path
-            if ($signature.Status -ne 'Valid') { throw "Invalid Authenticode signature for $path`: $($signature.Status)" }
-            if ($kind -eq 'Setup') {
-              $publisher = $signature.SignerCertificate.GetNameInfo([System.Security.Cryptography.X509Certificates.X509NameType]::SimpleName, $false)
+            if ($signed) {
+              $signature = Get-AuthenticodeSignature -FilePath $path
+              if ($signature.Status -ne 'Valid') { throw "Invalid Authenticode signature for $path`: $($signature.Status)" }
+              if ($kind -eq 'Setup') {
+                $publisher = $signature.SignerCertificate.GetNameInfo([System.Security.Cryptography.X509Certificates.X509NameType]::SimpleName, $false)
+              }
             }
           }
           $update = Get-Content 'release/latest.yml' -Raw
           if (-not $update.Contains("Pi-Desktop-Setup-$version-x64.exe") -or $update.Contains('Pi-Desktop-Portable-')) {
-            throw 'latest.yml must refer to the signed NSIS installer, not the portable executable'
+            throw 'latest.yml must refer to the NSIS installer, not the portable executable'
           }
           if (-not (Test-Path 'release/win-unpacked/resources/update-config.json')) { throw 'Update feed config is missing from package' }
           $appUpdate = Get-Content 'release/win-unpacked/resources/app-update.yml' -Raw
-          if (-not $publisher -or $appUpdate -notmatch '(?m)^publisherName:\s*(\r?\n\s*-\s*\S+|\S+)' -or -not $appUpdate.Contains($publisher)) {
+          if ($signed -and (-not $publisher -or $appUpdate -notmatch '(?m)^publisherName:\s*(\r?\n\s*-\s*\S+|\S+)' -or -not $appUpdate.Contains($publisher))) {
             throw 'app-update.yml must include the installer certificate publisherName for updater signature verification'
           }
           $asar = (Resolve-Path 'release/win-unpacked/resources/app.asar').Path
@@ -142,13 +135,16 @@ jobs:
         with:
           name: pi-desktop-windows
           path: |
-            release/Pi-Desktop-*.exe
-            release/Pi-Desktop-*.exe.blockmap
+            release/Pi-Desktop-Setup-${{ needs.prerequisites.outputs.version }}-x64.exe
+            release/Pi-Desktop-Portable-${{ needs.prerequisites.outputs.version }}-x64.exe
+            release/Pi-Desktop-Setup-${{ needs.prerequisites.outputs.version }}-x64.exe.blockmap
+            release/Pi-Desktop-Portable-${{ needs.prerequisites.outputs.version }}-x64.exe.blockmap
             release/latest.yml
           if-no-files-found: error
 
   build-macos:
     needs: prerequisites
+    if: needs.prerequisites.outputs.macos == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -160,10 +156,10 @@ jobs:
             arch: arm64
             macho: arm64
     runs-on: ${{ matrix.runner }}
-    env:
-      PI_DESKTOP_UPDATE_URL: ${{ vars.PI_DESKTOP_UPDATE_URL }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prerequisites.outputs.sha }}
       - uses: pnpm/action-setup@v4
         with:
           version: 11.11.0
@@ -175,8 +171,7 @@ jobs:
       - run: node scripts/sync-pi.mjs --verify
       - run: pnpm build
       - name: Embed public update feed
-        run: |
-          node -e "require('node:fs').writeFileSync('packages/desktop/build/update-config.json', JSON.stringify({url: process.env.PI_DESKTOP_UPDATE_URL}) + '\n')"
+        run: node scripts/prepare-update-config.mjs
       - name: Build signed and notarized native macOS package
         env:
           CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
@@ -219,18 +214,19 @@ jobs:
         with:
           name: pi-desktop-macos-${{ matrix.arch }}
           path: |
-            release/Pi-Desktop-*.dmg
-            release/Pi-Desktop-*.zip
+            release/Pi-Desktop-${{ needs.prerequisites.outputs.version }}-${{ matrix.arch }}.dmg
+            release/Pi-Desktop-${{ needs.prerequisites.outputs.version }}-${{ matrix.arch }}.zip
+            release/Pi-Desktop-${{ needs.prerequisites.outputs.version }}-${{ matrix.arch }}.zip.blockmap
             release/latest-mac-${{ matrix.arch }}.yml
           if-no-files-found: error
 
   build-linux:
     needs: prerequisites
     runs-on: ubuntu-24.04
-    env:
-      PI_DESKTOP_UPDATE_URL: ${{ vars.PI_DESKTOP_UPDATE_URL }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prerequisites.outputs.sha }}
       - uses: pnpm/action-setup@v4
         with:
           version: 11.11.0
@@ -240,12 +236,8 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: node scripts/sync-pi.mjs --verify
-      - run: pnpm build
-      - name: Embed public update feed
-        run: |
-          node -e "require('node:fs').writeFileSync('packages/desktop/build/update-config.json', JSON.stringify({url: process.env.PI_DESKTOP_UPDATE_URL}) + '\n')"
       - name: Build Linux packages and update metadata
-        run: pnpm --filter @pidesktop/desktop exec electron-builder --linux AppImage deb --x64 --publish never --config.publish.provider=generic "--config.publish.url=$PI_DESKTOP_UPDATE_URL"
+        run: pnpm dist:linux
       - name: Verify update metadata and Pi runtime
         shell: bash
         run: |
@@ -269,16 +261,30 @@ jobs:
         with:
           name: pi-desktop-linux
           path: |
-            release/Pi-Desktop-*.AppImage
-            release/Pi-Desktop-*.deb
+            release/Pi-Desktop-${{ needs.prerequisites.outputs.version }}-x64.AppImage
+            release/Pi-Desktop-${{ needs.prerequisites.outputs.version }}-x64.AppImage.blockmap
+            release/Pi-Desktop-${{ needs.prerequisites.outputs.version }}-x64.deb
             release/latest-linux.yml
           if-no-files-found: error
 
-  draft-release:
-    needs: [build-windows, build-macos, build-linux]
+  release:
+    needs: [prerequisites, build-windows, build-macos, build-linux]
+    if: >-
+      ${{ !cancelled() && needs.prerequisites.result == 'success' &&
+      needs.build-windows.result == 'success' && needs.build-linux.result == 'success' &&
+      (needs.build-macos.result == 'success' ||
+      (needs.prerequisites.outputs.macos == 'false' && needs.build-macos.result == 'skipped')) }}
     runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    env:
+      RELEASE_TAG: ${{ needs.prerequisites.outputs.tag }}
+      RELEASE_VERSION: ${{ needs.prerequisites.outputs.version }}
+      RELEASE_MACOS: ${{ needs.prerequisites.outputs.macos }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prerequisites.outputs.sha }}
       - uses: pnpm/action-setup@v4
         with:
           version: 11.11.0
@@ -293,24 +299,52 @@ jobs:
           path: release
           merge-multiple: true
       - name: Merge signed macOS architecture update metadata
+        if: needs.prerequisites.outputs.macos == 'true'
         run: node .github/scripts/merge-mac-updates.mjs release
-      - name: Verify complete release before drafting
+      - name: Verify artifact set and update hashes
+        id: artifacts
         shell: bash
         run: |
           set -euo pipefail
-          test -f release/latest.yml
-          test -f release/latest-mac.yml
-          test -f release/latest-linux.yml
-          version="${GITHUB_REF_NAME#v}"
-          grep -F "Pi-Desktop-${version}-x64.zip" release/latest-mac.yml >/dev/null
-          grep -F "Pi-Desktop-${version}-arm64.zip" release/latest-mac.yml >/dev/null
-          test "$(find release -maxdepth 1 -name 'Pi-Desktop-*.exe' | wc -l)" -eq 2
-          test "$(find release -maxdepth 1 -name 'Pi-Desktop-*.dmg' | wc -l)" -eq 2
-          test "$(find release -maxdepth 1 -name 'Pi-Desktop-*.zip' | wc -l)" -eq 2
-          test "$(find release -maxdepth 1 -name 'Pi-Desktop-*.AppImage' | wc -l)" -eq 1
-          test "$(find release -maxdepth 1 -name 'Pi-Desktop-*.deb' | wc -l)" -eq 1
+          args=(release --version "$RELEASE_VERSION")
+          if [[ "$RELEASE_MACOS" == true ]]; then args+=(--macos); fi
+          node .github/scripts/verify-release-artifacts.mjs "${args[@]}"
+      - name: Refuse to replace an already published version
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const releases = await github.paginate(github.rest.repos.listReleases, { ...context.repo, per_page: 100 });
+            const existing = releases.find(release => release.tag_name === process.env.RELEASE_TAG);
+            if (existing && !existing.draft) throw new Error('This version is already public. Bump the version and create a new stable tag.');
+      # Keep assets private until every upload is complete. Publishing an empty
+      # release first could make /releases/latest/download/ point at missing files.
       - uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ needs.prerequisites.outputs.tag }}
+          target_commitish: ${{ needs.prerequisites.outputs.sha }}
           draft: true
+          prerelease: false
           generate_release_notes: true
-          files: release/*
+          fail_on_unmatched_files: true
+          files: ${{ steps.artifacts.outputs.files }}
+      - name: Verify draft contains exactly this release batch
+        uses: actions/github-script@v7
+        env:
+          RELEASE_FILES: ${{ steps.artifacts.outputs.files }}
+        with:
+          script: |
+            const fs = require('node:fs');
+            const path = require('node:path');
+            const expected = new Map(process.env.RELEASE_FILES.trim().split('\n').map(file => [path.basename(file), fs.statSync(file).size]));
+            const releases = await github.paginate(github.rest.repos.listReleases, { ...context.repo, per_page: 100 });
+            const release = releases.find(release => release.tag_name === process.env.RELEASE_TAG);
+            if (!release?.draft) throw new Error('Release is missing or became public before asset verification completed.');
+            const assets = await github.paginate(github.rest.repos.listReleaseAssets, { ...context.repo, release_id: release.id, per_page: 100 });
+            if (assets.length !== expected.size || assets.some(asset => expected.get(asset.name) !== asset.size || asset.state !== 'uploaded')) {
+              throw new Error('Draft assets differ from the verified build. Remove stale or unexpected assets from this draft and rerun.');
+            }
+      - name: Publish completed release
+        if: github.event_name == 'workflow_dispatch' && inputs.publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false --prerelease=false --latest

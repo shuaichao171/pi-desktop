@@ -1,0 +1,10 @@
+/* Keep a multiline writing area above the toolbar, including empty drafts. */
+.pd-composer-shell[data-composer-layout] {
+  position: relative;
+  border-radius: var(--pd-radius-xl, 16px);
+  transition: border-color var(--pd-motion-fast, 150ms), box-shadow var(--pd-motion-fast, 150ms);
+}
+.pd-composer-shell[data-composer-layout] textarea { min-height: 76px; padding: 13px 16px 9px; }
+.pd-composer-shell[data-composer-layout] .pd-composer-attachments { padding: 10px 10px 0; }
+.pd-composer-shell[data-composer-layout] .pd-composer-attachment { border-radius: calc(var(--pd-radius-xl, 16px) - 8px); background: var(--pd-surface-muted, var(--pd-sidebar)); border-color: var(--pd-border-soft); }
+@media (prefers-reduced-motion: reduce) { .pd-composer-shell[data-composer-layout] { transition: none; } }

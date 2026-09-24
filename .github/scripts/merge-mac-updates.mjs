@@ -4,7 +4,7 @@ import { basename, join } from 'node:path';
 import YAML from 'yaml';
 
 const releaseDir = process.argv[2] ?? 'release';
-const expectedVersion = process.env.GITHUB_REF_NAME?.replace(/^v/, '');
+const expectedVersion = (process.env.RELEASE_TAG ?? process.env.GITHUB_REF_NAME)?.replace(/^v/, '');
 const architectures = ['x64', 'arm64'];
 
 function load(arch) {

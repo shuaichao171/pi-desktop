@@ -11,12 +11,15 @@ let ipc: typeof import('./ipc') | null = null;
 let updateService: typeof import('./updateService').updateService | null = null;
 let mainRevealed = false;
 let startupCancelled = false;
+const pendingWindowReveals = new WeakMap<BrowserWindow, () => void>();
+const rendererWindows = new Set<BrowserWindow>();
 
 function splashUrl(html: string): string {
 	return `data:text/html;charset=utf-8,${encodeURIComponent(html)}`;
 }
 
 function showStartupError(splash: BrowserWindow, error: unknown): void {
+	startupCancelled = true;
 	const message = error instanceof Error ? error.message : String(error);
 	const english = getAppLocale() === 'en-US';
 	console.error('Pi Desktop failed to start:', error);
@@ -26,6 +29,8 @@ function showStartupError(splash: BrowserWindow, error: unknown): void {
 		return;
 	}
 	if (!splash.isVisible()) splash.show();
+	splash.setSize(420, 300);
+	splash.center();
 	void splash.loadURL(splashUrl(createSplashErrorHtml(message, getAppLocale())))
 		.catch(() => {})
 		.finally(() => {
@@ -55,6 +60,8 @@ function createWindow(onReady?: () => void, onLoadError?: (error: unknown) => vo
 		show: false,
 		webPreferences: {
 			preload: join(here, '../preload/index.mjs'),
+			// Allow the restored conversation to paint while the logo is visible.
+			backgroundThrottling: false,
 			contextIsolation: true,
 			// ESM preload requires sandbox: false (Electron ≥ 28). Keep the
 			// context-isolated bridge narrow; the preload itself has Node access.
@@ -62,6 +69,7 @@ function createWindow(onReady?: () => void, onLoadError?: (error: unknown) => vo
 			nodeIntegration: false,
 		},
 	});
+	rendererWindows.add(win);
 	const publishChromeState = (): void => {
 		if (win.webContents.isDestroyed()) return;
 		win.webContents.send(IPC_CHANNELS.windowChromeStateChanged, { isMaximized: win.isMaximized() });
@@ -71,6 +79,7 @@ function createWindow(onReady?: () => void, onLoadError?: (error: unknown) => vo
 
 	let loaded = false;
 	let firstPaintReady = false;
+	let rendererReady = false;
 	let revealed = false;
 	let startupFailureReported = false;
 	let recoveryDialogVisible = false;
@@ -125,13 +134,23 @@ function createWindow(onReady?: () => void, onLoadError?: (error: unknown) => vo
 		if (unresponsiveTimer) clearTimeout(unresponsiveTimer);
 		unresponsiveTimer = null;
 	});
-	win.on('closed', () => { if (unresponsiveTimer) clearTimeout(unresponsiveTimer); });
+	win.on('closed', () => {
+		if (unresponsiveTimer) clearTimeout(unresponsiveTimer);
+		pendingWindowReveals.delete(win);
+		rendererWindows.delete(win);
+	});
 	const reveal = (): void => {
-		if (!loaded || !firstPaintReady || revealed || win.isDestroyed()) return;
+		if (!loaded || !firstPaintReady || !rendererReady || revealed || startupCancelled || win.isDestroyed()) return;
 		revealed = true;
+		pendingWindowReveals.delete(win);
 		win.show();
+		win.webContents.setBackgroundThrottling(true);
 		onReady?.();
 	};
+	pendingWindowReveals.set(win, () => {
+		rendererReady = true;
+		reveal();
+	});
 	win.once('ready-to-show', () => {
 		firstPaintReady = true;
 		reveal();
@@ -169,33 +188,37 @@ function createWindow(onReady?: () => void, onLoadError?: (error: unknown) => vo
 
 async function bootstrap(splash: BrowserWindow): Promise<void> {
 	try {
-		// Loading Pi's SDK is the slow part. Import it after the splash has painted.
+		// Import the host bridge after the splash has painted.
 		const module = await import('./ipc');
 		if (startupCancelled || splash.isDestroyed()) return;
 		ipc = module;
 		updateService = module.updateService;
-		module.registerIpc();
-		createWindow(() => {
+		module.registerIpc({
+			onRendererReady: (win) => pendingWindowReveals.get(win)?.(),
+			getDialogWindow: () => {
+				const focused = BrowserWindow.getFocusedWindow();
+				return focused && rendererWindows.has(focused) ? focused : [...rendererWindows][0];
+			},
+		});
+		const workspace = module.defaultWorkspace();
+		mkdirSync(workspace, { recursive: true });
+		const mainWindow = createWindow(() => {
 			mainRevealed = true;
 			if (!splash.isDestroyed()) splash.close();
 			module.updateService.setBeforeInstall(async () => {
-				if (ipc) await ipc.disposeServices().catch((error: unknown) => console.error('Pi Desktop shutdown before update failed:', error));
+				if (ipc) await ipc.disposeServices();
 				readyToQuit = true;
 			});
 			module.updateService.start();
-			// Let the visible main window reach the screen before initializing the agent.
-			setTimeout(() => {
-				try {
-					const workspace = module.defaultWorkspace();
-					mkdirSync(workspace, { recursive: true });
-					void module.agentService.init({ cwd: workspace }).catch((error: unknown) => {
-						console.error('Pi agent failed to initialize:', error);
-					});
-				} catch (error) {
-					console.error('Pi workspace failed to initialize:', error);
-				}
-			}, 120);
 		}, (error) => showStartupError(splash, error));
+		// Load the UI and Pi history concurrently, keeping the logo until React
+		// acknowledges a committed conversation (or a required extension dialog).
+		void module.agentService.init({ cwd: workspace }).catch((error: unknown) => {
+			console.error('Pi agent failed to initialize:', error);
+			if (startupCancelled || mainRevealed) return;
+			mainWindow.destroy();
+			showStartupError(splash, error);
+		});
 	} catch (error) {
 		if (!startupCancelled) showStartupError(splash, error);
 	}
@@ -224,16 +247,18 @@ if (!hasSingleInstanceLock) {
 		callback(permission === 'clipboard-sanitized-write');
 	});
 	const splash = new BrowserWindow({
-		width: 420,
-		height: 300,
+		width: 224,
+		height: 224,
 		resizable: false,
 		maximizable: false,
 		minimizable: false,
 		frame: false,
 		center: true,
 		show: false,
-		backgroundColor: '#111216',
-		title: getAppLocale() === 'en-US' ? 'Pi Desktop is starting' : 'Pi Desktop 正在启动',
+		transparent: true,
+		hasShadow: false,
+		backgroundColor: '#00000000',
+		title: 'Pi Desktop',
 		webPreferences: {
 			contextIsolation: true,
 			sandbox: true,

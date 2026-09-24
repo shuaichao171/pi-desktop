@@ -4,19 +4,21 @@
  */
 import type { AppLocale } from '@pidesktop/shared';
 
-const logo = `<svg class="backdrop-logo" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" aria-hidden="true" focusable="false">
+// Draw at the splash's logical size. Straight edges use a four-pixel grid so
+// the mark stays sharp at common 100%, 125%, 150%, and 200% display scales.
+const logo = `<svg class="splash-logo" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 224 224" shape-rendering="geometricPrecision" aria-hidden="true" focusable="false">
   <defs>
     <linearGradient id="logo-bg" x1="0" x2="1" y1="0" y2="1">
       <stop stop-color="#343081"/><stop offset="1" stop-color="#171729"/>
     </linearGradient>
     <linearGradient id="logo-mark" x1="0" x2="1" y1="0" y2="1">
-      <stop stop-color="#9df8e8"/><stop offset="1" stop-color="#5ad2ed"/>
+      <stop stop-color="#a4fff0"/><stop offset="1" stop-color="#60ddf4"/>
     </linearGradient>
   </defs>
-  <rect x="12" y="12" width="488" height="488" rx="108" fill="url(#logo-bg)"/>
-  <rect x="13" y="13" width="486" height="486" rx="107" fill="none" stroke="#7774b0" stroke-opacity=".6" stroke-width="2"/>
-  <path d="M123 168h266v49H123zM157 205h51v180c0 24-19 43-43 43h-8V205zm166 0h51v180c0 24-19 43-43 43h-8V205z" fill="url(#logo-mark)"/>
-  <circle cx="385" cy="378" r="30" fill="#ffb36a"/>
+  <rect x="4" y="4" width="216" height="216" rx="48" fill="url(#logo-bg)"/>
+  <rect x="4.5" y="4.5" width="215" height="215" rx="47.5" fill="none" stroke="#7774b0" stroke-width="1"/>
+  <path d="M52 72h120v24H52zM68 92h24v76c0 12-8 20-20 20h-4V92zm72 0h24v76c0 12-8 20-20 20h-4V92z" fill="url(#logo-mark)"/>
+  <circle cx="168" cy="164" r="12" fill="#ffb36a"/>
 </svg>`;
 
 function escapeHtml(value: string): string {
@@ -36,10 +38,7 @@ function renderSplash(locale: AppLocale, error?: string): string {
   const english = locale === 'en-US';
   const status = failed
     ? `<div class="error" role="alert"><strong>${english ? 'Startup failed' : '启动失败'}</strong><span>${escapeHtml(error || (english ? 'Close and reopen the app.' : '请关闭后重新打开应用。'))}</span></div>`
-    : `<div class="loading" role="status" aria-live="polite">
-        <span>${english ? 'Preparing your workspace…' : '正在准备工作台…'}</span>
-        <div class="progress" role="progressbar" aria-label="${english ? 'Loading workspace' : '工作台加载中'}"><span></span></div>
-      </div>`;
+    : '';
 
   return `<!doctype html>
 <html lang="${locale}">
@@ -53,46 +52,20 @@ function renderSplash(locale: AppLocale, error?: string): string {
     :root { color-scheme: dark; font-family: 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif; }
     * { box-sizing: border-box; }
     html, body { width: 100%; height: 100%; margin: 0; }
-    body {
-      position: relative;
-      overflow: hidden;
-      color: #ececef;
-      background: radial-gradient(ellipse at 50% 10%, #25253c 0, #171820 44%, #111216 78%);
-      -webkit-app-region: drag;
-      user-select: none;
-    }
-    .backdrop-logo { position: absolute; top: 36%; left: 50%; width: 390px; height: 390px; transform: translate(-50%, -50%); opacity: .86; filter: drop-shadow(0 20px 45px #0007); }
-    body::after { content: ''; position: absolute; inset: 0; border: 1px solid #494866; border-radius: 22px; background: linear-gradient(180deg, #1112161a 0%, #1112163d 39%, #111216bd 59%, #111216 100%); pointer-events: none; }
-    main { position: relative; z-index: 1; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; width: 100%; height: 100%; padding: 0 32px 28px; text-align: center; }
-    h1 { margin: 0; font-size: 23px; font-weight: 650; letter-spacing: .01em; line-height: 1.3; text-shadow: 0 2px 18px #000b; }
-    .subtitle { margin: 8px 0 0; color: #c4c6d2; font-size: 12px; line-height: 1.5; text-shadow: 0 2px 12px #000b; }
-    .loading, .error { margin-top: 21px; color: #c4c6d2; font-size: 12px; line-height: 1.5; }
-    .progress { width: 178px; height: 3px; margin: 13px auto 0; overflow: hidden; border-radius: 3px; background: #454753; }
-    .progress span { display: block; width: 38%; height: 100%; border-radius: inherit; background: #aebaff; animation: loading 1.6s ease-in-out infinite alternate; }
-    .error { display: grid; gap: 6px; width: min(100%, 280px); margin-right: auto; margin-left: auto; color: #f2a6a6; overflow-wrap: anywhere; }
+    body { overflow: hidden; background: transparent; -webkit-app-region: drag; user-select: none; }
+    main { display: flex; flex-direction: column; align-items: center; justify-content: center; width: 100%; height: 100%; text-align: center; }
+    .splash-logo { display: block; flex: none; width: 100%; height: 100%; }
+    .failed { background: #111216; border: 1px solid #494866; border-radius: 22px; color: #ececef; }
+    .failed main { gap: 20px; padding: 24px; }
+    .failed .splash-logo { width: 80px; height: 80px; }
+    .error { display: grid; gap: 6px; width: min(100%, 340px); color: #f2a6a6; font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
     .error strong { font-size: 13px; font-weight: 600; }
-    .error span { max-height: 54px; overflow: auto; color: #c8a4a9; }
-    @keyframes loading { from { transform: translateX(-100%); } to { transform: translateX(265%); } }
-    @media (prefers-color-scheme: light) {
-      :root { color-scheme: light; }
-      body { color: #252838; background: #f5f5fa; }
-      .backdrop-logo { opacity: .28; filter: none; }
-      body::after { border-color: #c7c8db; background: linear-gradient(180deg, #f5f5fa14 0%, #f5f5fa99 48%, #f5f5faed 70%, #f5f5fa 100%); }
-      h1, .subtitle { text-shadow: none; }
-      .subtitle, .loading { color: #656b7e; }
-      .progress { background: #d8dce8; }
-      .progress span { background: #7773c8; }
-      .error { color: #ae454f; }
-      .error span { color: #8a545b; }
-    }
-    @media (prefers-reduced-motion: reduce) { .progress span { animation: none; transform: translateX(80%); } }
+    .error span { max-height: 90px; overflow: auto; color: #c8a4a9; -webkit-app-region: no-drag; user-select: text; }
   </style>
 </head>
-<body>
-  ${logo}
-  <main>
-    <h1>Pi Desktop</h1>
-    <p class="subtitle">${english ? 'Your local AI coding workspace' : '你的本地 AI 编程工作台'}</p>
+<body${failed ? ' class="failed"' : ''}>
+  <main aria-label="${english ? 'Pi Desktop is starting' : 'Pi Desktop 正在启动'}">
+    ${logo}
     ${status}
   </main>
 </body>

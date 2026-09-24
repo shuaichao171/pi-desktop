@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import { IPC_CHANNELS, type AgentBridge, type AgentEventEnvelope, type UiExtensionDialogRequest, type UiUpdateState, type WindowChromeState, type WorkspaceCommandEvent } from '@pidesktop/shared';
+import { IPC_CHANNELS, type AgentBridge, type AgentEventEnvelope, type UiAutomationSnapshot, type UiExtensionDialogRequest, type UiUpdateState, type WindowChromeState, type WorkspaceCommandEvent } from '@pidesktop/shared';
 import { unwrapIpcError } from './ipcErrors';
 
 /**
@@ -56,6 +56,23 @@ const onUpdateStateChanged: AgentBridge['onUpdateStateChanged'] = (listener) => 
 };
 
 const bridge: AgentBridge = {
+	getPluginCatalog: (cwd) => invoke(IPC_CHANNELS.pluginCatalog, cwd),
+	mutatePlugin: (input) => invoke(IPC_CHANNELS.pluginMutate, input),
+	previewPluginResource: (request) => invoke(IPC_CHANNELS.pluginPreview, request),
+	pickPluginDirectory: () => invoke(IPC_CHANNELS.pluginPickDirectory),
+	discoverPlugins: (query) => invoke(IPC_CHANNELS.pluginDiscover, query),
+	getAutomationSnapshot: () => invoke(IPC_CHANNELS.automationSnapshot),
+	saveAutomation: (input) => invoke(IPC_CHANNELS.automationSave, input),
+	setAutomationEnabled: (id, enabled) => invoke(IPC_CHANNELS.automationSetEnabled, id, enabled),
+	deleteAutomation: (id) => invoke(IPC_CHANNELS.automationDelete, id),
+	runAutomation: (id) => invoke(IPC_CHANNELS.automationRun, id),
+	cancelAutomationRun: (runId) => invoke(IPC_CHANNELS.automationCancelRun, runId),
+	onAutomationChanged: (listener) => {
+		const wrapped = (_event: Electron.IpcRendererEvent, snapshot: UiAutomationSnapshot) => listener(snapshot);
+		ipcRenderer.on(IPC_CHANNELS.automationChanged, wrapped);
+		return () => ipcRenderer.removeListener(IPC_CHANNELS.automationChanged, wrapped);
+	},
+	notifyRendererReady: () => invoke(IPC_CHANNELS.rendererReady),
 	getAppInfo: () => invoke(IPC_CHANNELS.appInfo),
 	setAppLocale: (locale) => invoke(IPC_CHANNELS.appSetLocale, locale),
 	getUpdateState: () => invoke(IPC_CHANNELS.updateState),
@@ -69,7 +86,9 @@ const bridge: AgentBridge = {
 	closeWindow: () => invoke(IPC_CHANNELS.windowClose),
 	pickWorkspace: () => invoke(IPC_CHANNELS.workspacePick),
 	listWorkspaceEntries: (relativePath) => invoke(IPC_CHANNELS.workspaceListEntries, relativePath),
+	searchWorkspaceFiles: (query, options) => invoke(IPC_CHANNELS.workspaceSearchFiles, query, options),
 	readWorkspaceFile: (relativePath) => invoke(IPC_CHANNELS.workspaceReadFile, relativePath),
+	readContext: (request) => invoke(IPC_CHANNELS.contextRead, request),
 	getWorkspaceGitStatus: () => invoke(IPC_CHANNELS.workspaceGitStatus),
 	getWorkspaceGitDiff: (relativePath) => invoke(IPC_CHANNELS.workspaceGitDiff, relativePath),
 	startWorkspaceCommand: (command) => invoke(IPC_CHANNELS.workspaceCommandStart, command),
@@ -80,9 +99,17 @@ const bridge: AgentBridge = {
 	switchWorkspace: (cwd) => invoke(IPC_CHANNELS.workspaceSwitch, cwd),
 	getAgentSnapshot: () => invoke(IPC_CHANNELS.agentSnapshot),
 	listSessions: (cwd) => invoke(IPC_CHANNELS.agentListSessions, cwd),
+	searchSessions: (query) => invoke(IPC_CHANNELS.agentSearchSessions, query),
 	switchSession: (path) => invoke(IPC_CHANNELS.agentSwitchSession, path),
 	updateSessionMeta: (path, patch) => invoke(IPC_CHANNELS.agentUpdateSessionMeta, path, patch),
+	listSessionGroups: () => invoke(IPC_CHANNELS.agentListSessionGroups),
+	updateSessionGroups: (change) => invoke(IPC_CHANNELS.agentUpdateSessionGroups, change),
 	listModels: () => invoke(IPC_CHANNELS.agentListModels),
+	listModelProviders: () => invoke(IPC_CHANNELS.agentListModelProviders),
+	saveCustomProvider: (request) => invoke(IPC_CHANNELS.agentSaveCustomProvider, request),
+	removeCustomProvider: (provider) => invoke(IPC_CHANNELS.agentRemoveCustomProvider, provider),
+	listSlashCommands: () => invoke(IPC_CHANNELS.agentListSlashCommands),
+	executeSlashCommand: (request) => invoke(IPC_CHANNELS.agentExecuteSlashCommand, request),
 	setModel: (provider, id) => invoke(IPC_CHANNELS.agentSetModel, provider, id),
 	setThinkingLevel: (level) => invoke(IPC_CHANNELS.agentSetThinkingLevel, level),
 	listProviderAuth: () => invoke(IPC_CHANNELS.agentListProviderAuth),

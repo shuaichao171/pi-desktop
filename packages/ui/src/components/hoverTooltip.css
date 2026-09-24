@@ -1,0 +1,34 @@
+.pd-hover-tooltip {
+  --pd-tooltip-bg: var(--pd-surface-raised);
+  --pd-tooltip-border: var(--pd-border-strong);
+  --pd-tooltip-text: var(--pd-text);
+  --pd-tooltip-subtle: var(--pd-text-subtle);
+  --pd-tooltip-tag-bg: var(--pd-surface-hover);
+  --pd-tooltip-tag-text: var(--pd-text-subtle);
+  position: fixed;
+  pointer-events: auto;
+  user-select: text;
+  cursor: text;
+  z-index: 20;
+  width: max-content;
+  max-width: min(28rem, calc(100vw - 16px));
+  max-height: calc(100vh - 16px);
+  overflow: hidden;
+  padding: 6px 9px;
+  border: 1px solid var(--pd-tooltip-border);
+  border-radius: var(--pd-radius-md);
+  background: var(--pd-tooltip-bg);
+  color: var(--pd-tooltip-text);
+  box-shadow: var(--pd-shadow-low);
+  font-family: 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif;
+  font-size: 12px;
+  line-height: 1.4;
+  text-align: left;
+  -webkit-app-region: no-drag;
+}
+
+.pd-hover-tooltip.has-description { max-width: min(288px, calc(100vw - 16px)); padding: 9px 11px; }
+.pd-hover-tooltip-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.pd-hover-tooltip-title { min-width: 0; font-weight: 500; white-space: pre-line; overflow-wrap: anywhere; }
+.pd-hover-tooltip-description { margin-top: 6px; color: var(--pd-tooltip-subtle); line-height: 1.55; overflow-wrap: anywhere; }
+.pd-hover-tooltip-shortcut { display: inline-flex; flex: 0 0 auto; align-items: center; min-height: 17px; padding: 0 5px; border-radius: 4px; background: var(--pd-tooltip-tag-bg); color: var(--pd-tooltip-tag-text); font-family: ui-monospace, Consolas, monospace; font-size: 10px; font-weight: 500; white-space: nowrap; }

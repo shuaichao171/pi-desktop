@@ -7,9 +7,15 @@ type IconName =
 	| 'refresh'
 	| 'message'
 	| 'arrowUp'
+	| 'arrowDown'
+	| 'arrowLeft'
+	| 'arrowRight'
 	| 'square'
 	| 'spark'
+	| 'brain'
 	| 'clock'
+	| 'automation'
+	| 'plugins'
 	| 'search'
 	| 'close'
 	| 'sort'
@@ -24,18 +30,36 @@ type IconName =
 	| 'panelRight'
 	| 'file'
 	| 'gitBranch'
-	| 'terminal';
+	| 'terminal'
+	| 'hash'
+	| 'filter'
+	| 'expandAll'
+	| 'collapseAll'
+	| 'check'
+	| 'pin';
 
 const paths: Record<IconName, ReactNode> = {
+	hash: <path d="m10 3-4 18M18 3l-4 18M4 9h17M3 15h17" />,
+	filter: <path d="M4 6h16M7 12h10M10 18h4" />,
+	expandAll: <><path d="M8 3H3v5M3 3l6 6M16 21h5v-5M21 21l-6-6" /></>,
+	collapseAll: <><path d="M3 9h6V3M9 9 3 3M21 15h-6v6M15 15l6 6" /></>,
+	check: <path d="m5 12 4 4L19 6" />,
+	pin: <><path d="m15 3 6 6-3 1-4 4v3l-2 2-7-7 2-2h3l4-4 1-3ZM8 16l-5 5" /></>,
 	panel: <><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M9 4v16" /></>,
 	folder: <path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z" />,
 	plus: <><path d="M12 5v14" /><path d="M5 12h14" /></>,
 	refresh: <><path d="M20 7v5h-5" /><path d="M4 17v-5h5" /><path d="M5.9 9a7 7 0 0 1 12.1-2L20 12M4 12l2 5a7 7 0 0 0 12.1-2" /></>,
 	message: <path d="M20 11.5a7.5 7.5 0 0 1-7.5 7.5H6l-3 2v-9.5A7.5 7.5 0 0 1 10.5 4h2A7.5 7.5 0 0 1 20 11.5Z" />,
 	arrowUp: <><path d="M12 19V5" /><path d="m6 11 6-6 6 6" /></>,
+	arrowDown: <><path d="M12 5v14" /><path d="m6 13 6 6 6-6" /></>,
+	arrowLeft: <><path d="M19 12H5" /><path d="m11 6-6 6 6 6" /></>,
+	arrowRight: <><path d="M5 12h14" /><path d="m13 6 6 6-6 6" /></>,
 	square: <rect x="6" y="6" width="12" height="12" rx="1.5" fill="currentColor" stroke="none" />,
 	spark: <><path d="m12 3 1.9 6.1L20 11l-6.1 1.9L12 19l-1.9-6.1L4 11l6.1-1.9Z" /><path d="m19 17 .5 1.5L21 19l-1.5.5L19 21l-.5-1.5L17 19l1.5-.5Z" /></>,
+	brain: <><path d="M12 18V5a3 3 0 0 0-5.8-1A4 4 0 0 0 3 10a4 4 0 0 0 .5 7A4 4 0 0 0 12 18ZM12 5a3 3 0 0 1 5.8-1A4 4 0 0 1 21 10a4 4 0 0 1-.5 7A4 4 0 0 1 12 18" /><path d="M8 8a3 3 0 0 1-2 3M16 8a3 3 0 0 0 2 3M8 16a3 3 0 0 0-2-2M16 16a3 3 0 0 1 2-2" /></>,
 	clock: <><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></>,
+	automation: <path d="m13 2-10 12h8l-1 8 11-12h-8l1-8Z" />,
+	plugins: <path d="M9 5V3a2 2 0 0 1 4 0v2h6a1 1 0 0 1 1 1v4h-2a2 2 0 0 0 0 4h2v5a1 1 0 0 1-1 1h-5v-2a2 2 0 0 0-4 0v2H5a1 1 0 0 1-1-1v-5H3a2 2 0 0 1 0-4h1V6a1 1 0 0 1 1-1Z" />,
 	search: <><circle cx="11" cy="11" r="6.5" /><path d="m16 16 4 4" /></>,
 	close: <><path d="M5 5 19 19M19 5 5 19" /></>,
 	sort: <><path d="M4 7h16M7 12h10M10 17h4" /></>,

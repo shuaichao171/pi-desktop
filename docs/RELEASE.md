@@ -1,42 +1,87 @@
-# 发布与自动更新
+# 发布与软件内更新
 
-## 发布前需要准备的外部资源
+源码和安装包均发布在公开仓库 [shuaichao171/pi-desktop](https://github.com/shuaichao171/pi-desktop)。软件默认使用该仓库最新正式 Release 的下载目录：
 
-源代码仓库是私有的，不能把读取仓库的 GitHub token 放进客户端。应用从单独配置的公开 HTTPS 地址读取更新；这个地址下的安装包和 `latest*.yml` 必须无需登录即可下载。没有配置地址时，应用会显示更新源未配置，也不会发起更新请求。
+```text
+https://github.com/shuaichao171/pi-desktop/releases/latest/download/
+```
 
-在 GitHub 仓库 **Settings → Secrets and variables → Actions** 中配置：
+不需要额外服务器、下载仓库或客户端 GitHub token。同仓库发布使用 GitHub Actions 自带的 `GITHUB_TOKEN`，发布任务具有 `contents: write` 权限。草稿和预发布版本不进入默认更新通道。
 
-| 类型 | 名称 | 用途 |
-| --- | --- | --- |
-| Variable | `PI_DESKTOP_UPDATE_URL` | 公开 HTTPS 更新目录的完整 URL，必须以 `/` 结尾 |
-| Secret | `WIN_CSC_LINK` | Windows 代码签名证书 `.pfx` 的 base64 内容 |
-| Secret | `WIN_CSC_KEY_PASSWORD` | `.pfx` 密码 |
-| Secret | `MAC_CSC_LINK` | Developer ID Application 证书 `.p12` 的 base64 内容 |
-| Secret | `MAC_CSC_KEY_PASSWORD` | `.p12` 密码 |
-| Secret | `APPLE_ID` | Apple Developer 账号 |
-| Secret | `APPLE_APP_SPECIFIC_PASSWORD` | Apple 专用密码 |
-| Secret | `APPLE_TEAM_ID` | Apple 团队 ID |
+## 当前支持
 
-Windows 证书需要向代码签名证书颁发机构获取；macOS 分发和公证需要 Apple Developer Program。证书、密码和 token 只放在 Secrets 中，不提交到仓库。[Windows 签名](https://www.electron.build/v26/docs/features/code-signing/code-signing-win/)、[macOS 签名与公证](https://www.electron.build/docs/github-actions/)有导出和配置说明。
+- Windows Setup：检查版本、自动下载、显示进度，用户点击后退出并安装、重新启动。启动 15 秒后首次检查，此后每 6 小时检查，也可在“设置 → 软件更新”手动检查。
+- Windows Portable：仍需下载新版并手动替换，不使用 Setup 的自动安装流程。
+- Linux AppImage：支持软件内更新；DEB 由系统包管理器更新。
+- macOS：只有配置完整签名与公证凭据后，发布流程才构建正式 DMG／ZIP；未配置时跳过，Windows／Linux 继续发布。
 
-在签名凭据和公开更新源尚未准备好的环境中，`main`/PR 仍可运行无签名的构建验证；**版本标签发布会因缺少必要配置而停止**，防止误发未签名或无法更新的正式产物。
+仓库还没有正式 Release 或缺少当前平台的更新清单时，软件会显示可重试的提示，不把 404 当成“已经最新”。GitHub 下载使用兼容其重定向与对象存储的 Range 配置。
 
-## 构建与发布
+## 第一次启用
 
-Windows 输出安装版 Setup 和每次启动会自解压的 Portable；macOS 输出 x64 与 arm64 的 DMG/ZIP；Linux 输出 x64 的 AppImage/DEB。自动更新使用 Windows Setup、macOS 已签名包和 Linux AppImage；Portable 需要手动更换文件。CI 会在对应平台检查打包后的 Pi runtime，版本标签发布流程还会验证签名和公证结果。
+此前 `0.1.0` 安装包没有嵌入更新地址，无法自行发现新的更新源。请先手动安装一次带更新源的 `0.1.1` Setup；此后的更高正式版本才能从软件内更新。单独给服务器上传新包不会改变已安装旧程序内的空配置。
 
-1. 同时修改根目录及 `packages/desktop/package.json` 的 `version`，例如 `0.2.0`。
-2. 运行 `pnpm install --lockfile-only`、`pnpm typecheck`、`pnpm test`，提交并推送 `main`，等待 CI 全部通过。
-3. 确认上表的变量与 Secrets 已配置，并确认公开更新目录可用。
-4. 创建并推送匹配的标签：`git tag v0.2.0`、`git push origin v0.2.0`。
-5. 检查草稿 GitHub Release 的各平台文件、签名、公证和 `latest*.yml`。草稿 Release 属于私有仓库，只是发布暂存区，**不是**客户端可访问的更新源。
-6. 将同一批安装包、ZIP、AppImage 和 `latest*.yml` 等更新文件上传到 `PI_DESKTOP_UPDATE_URL` 指向的公开目录。先上传二进制文件，最后上传元数据，避免客户端先看到新版本却下载不到对应文件。
-7. 从未登录状态验证 `latest.yml`、`latest-mac.yml`、`latest-linux.yml` 及其引用的文件可通过 HTTPS 下载，再决定是否发布 GitHub 草稿 Release。
+本地执行 `build.cmd` 或 `pnpm dist:win` 即可生成带默认更新源的 Windows 安装包和更新文件。无需手动填写环境变量。输出目录包括：
 
-`electron-builder` 的 generic provider 不会替你上传到自有服务器；若希望上传过程完全自动化，需确定具体托管服务后给发布工作流增加该服务的上传步骤。[自动更新说明](https://www.electron.build/v26/docs/features/auto-update/)、[generic 发布说明](https://www.electron.build/v26/docs/publish/)列出元数据与托管要求。
+```text
+release/
+  Pi-Desktop-Setup-0.1.1-x64.exe
+  Pi-Desktop-Setup-0.1.1-x64.exe.blockmap
+  Pi-Desktop-Portable-0.1.1-x64.exe
+  latest.yml
+```
 
-## 更新验证
+`latest.yml` 引用 Setup，不引用 Portable。资源目录同时包含客户端读取的 `update-config.json` 和 electron-updater 使用的 `app-update.yml`；后者包含下载缓存配置，不能遗漏。
 
-用已经安装的旧版测试完整升级路径：检查更新、下载、校验、退出安装、重新启动并确认版本号。Windows 要在 Setup 安装版上测试；macOS 要在签名和公证后的包上测试；Linux AppImage 要保留 `APPIMAGE` 环境并在目标发行版测试。还需验证更新源断网、404、校验失败和用户取消时的界面状态。不要在客户端升级期间删除元数据所引用的安装包。
+## 日常发布步骤
 
-已打包应用的本地调试可以通过 `PI_DESKTOP_UPDATE_URL` 环境变量覆盖打包配置，但发布包必须把真实的公开 HTTPS 地址写入资源文件。不可在客户端内保存私有仓库令牌。
+1. 同时修改根目录 `package.json` 与 `packages/desktop/package.json` 的版本，例如下一版 `0.1.2`。正式通道使用稳定的 `X.Y.Z`，并始终增加版本号。
+2. 运行 `pnpm typecheck`、`pnpm test`、`pnpm build`，提交完整源代码并推送 `main`，检查 CI。
+3. 创建并推送匹配的标签：
+   ```bash
+   git tag v0.1.2
+   git push origin v0.1.2
+   ```
+4. `Desktop release` 工作流构建 Windows 和 Linux，并在具备完整凭据时构建 macOS。所有平台固定到标签对应的同一提交；元数据中的版本、文件名、大小和 SHA-512 均需通过校验。
+5. 工作流把完整产物上传到本仓库的**草稿 Release**。确认检查完成后，在 GitHub Releases 发布该草稿，并将它设为 Latest。发布后，软件默认地址即可读到新版本，不需要再向其他服务器上传。
+
+也可在 Actions → Desktop release → Run workflow 中选择已有的稳定版本标签。`publish` 默认关闭；开启时，工作流在完整构建和上传后自动发布并设为 Latest。已经公开的同名 Release 不允许覆盖；需要修复时提升版本。草稿可以重新构建。
+
+只有经过校验的安装包、blockmap 和 `latest*.yml` 会上传，不包含日志、调试配置或整个 `release/` 目录。
+
+## 签名配置
+
+Windows 没有签名凭据也可先构建和验证更新；系统可能显示“未知发布者”或信誉提示。有证书后，配置以下 Actions Secrets，工作流会要求签名有效并确认更新配置中的发布者匹配：
+
+| Secret | 内容 |
+| --- | --- |
+| `WIN_CSC_LINK` | electron-builder 支持的 Windows 证书来源，如 `.pfx` 的 base64 |
+| `WIN_CSC_KEY_PASSWORD` | 证书密码 |
+
+这两个值必须同时配置。项目保留 `verifyUpdateCodeSignature: true`；无证书的包没有发布者签名信息，有签名的包继续进行发布者验证。选择硬件或云签名服务时，需按服务提供方接口调整签名步骤。
+
+macOS 正式发布需完整配置以下 Secrets：
+
+| Secret | 内容 |
+| --- | --- |
+| `MAC_CSC_LINK` | Developer ID Application `.p12` 证书来源 |
+| `MAC_CSC_KEY_PASSWORD` | 证书密码 |
+| `APPLE_ID` | Apple Developer 账号 |
+| `APPLE_APP_SPECIFIC_PASSWORD` | Apple 专用密码 |
+| `APPLE_TEAM_ID` | Apple 团队 ID |
+
+未配置或仅部分配置时跳过 macOS，并在工作流中说明原因。有完整配置时，签名和公证失败会阻止该次发布。
+
+## 自定义更新服务器
+
+可选环境变量／Actions Variable `PI_DESKTOP_UPDATE_URL` 可以覆盖默认地址。必须为公开 HTTPS 目录地址，以 `/` 结尾，不含用户名、密码、查询参数或 fragment。
+
+`scripts/prepare-update-config.mjs` 生成忽略目录中的 `packages/desktop/out/update-config.json`，不会把临时覆盖写回受版本控制的默认配置。Windows、Linux 和 macOS 打包脚本将同一地址传给 electron-builder，避免客户端与元数据不一致。
+
+使用自定义服务器时，GitHub 工作流仍把构建产物放到本仓库 Release；需要自行把文件同步到该服务器。先上传二进制，最后上传 `latest*.yml`。不配置该变量即可直接使用本仓库。
+
+## 验证边界
+
+发布前检查版本一致、更新地址、安装包内容、元数据文件及哈希。完整安装验证使用两个版本的 Setup：旧版检查 → 下载 → 校验 → 用户点击安装 → 重启确认版本；同时保留已有会话与配置。
+
+自动下载验证可以使用隔离的 Electron 测试进程和缓存，不调用安装器，也不修改正在使用的软件。它证明检查、下载和校验链路，不能代替实际退出安装测试。macOS／Linux 打包和运行验证仍以各自 CI／目标系统为准。

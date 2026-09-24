@@ -39,7 +39,25 @@ test('project extensions load only after Pi project trust is granted', async () 
     assert.equal(existsSync(marker), true, 'trusted project extension should load');
     const extension = (await service.listExtensions()).find((item) => item.path.endsWith('marker.ts'));
     assert.ok(extension?.enabled, 'trusted Pi extension should be listed as enabled');
-    await service.setExtensionEnabled(extension.path, false);
+    const context = service.active;
+    const resolveExtensions = context.resolveExtensions.bind(context);
+    const originalPrompt = context.runtime.session.prompt;
+    context.runtime.session.prompt = async () => { throw new Error('configuration lock was bypassed'); };
+    let resumeResolution;
+    context.resolveExtensions = async () => {
+      await new Promise((resolve) => { resumeResolution = resolve; });
+      return resolveExtensions();
+    };
+    const toggling = service.setExtensionEnabled(extension.path, false);
+    try {
+      await assert.rejects(service.prompt('must not start during extension resolution'), /设置正在更新/);
+      await assert.rejects(service.setExtensionEnabled(extension.path, false), /当前会话仍在运行/);
+    } finally {
+      resumeResolution();
+      await toggling;
+      context.resolveExtensions = resolveExtensions;
+      context.runtime.session.prompt = originalPrompt;
+    }
     assert.equal((await service.listExtensions()).find((item) => item.path === extension.path)?.enabled, false);
     assert.deepEqual(JSON.parse(readFileSync(settingsPath, 'utf8')).extensions, ['-extensions/marker.ts'],
       'toggling removes duplicate override forms and writes Pi portable path separators');

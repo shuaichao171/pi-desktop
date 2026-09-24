@@ -25,13 +25,13 @@ function makeManifest(dir, arch, alteredHash = false) {
   }));
 }
 
-test('macOS release metadata merges both native builds and verifies artifact hashes', () => {
+test('macOS release metadata merges both native builds for a manually selected tag and verifies hashes', () => {
   const dir = mkdtempSync(join(tmpdir(), 'pi-desktop-mac-update-test-'));
   try {
     makeManifest(dir, 'x64');
     makeManifest(dir, 'arm64');
     const result = spawnSync(process.execPath, [script, dir], {
-      env: { ...process.env, GITHUB_REF_NAME: 'v0.1.0' },
+      env: { ...process.env, GITHUB_REF_NAME: 'main', RELEASE_TAG: 'v0.1.0' },
       encoding: 'utf8',
     });
     assert.equal(result.status, 0, result.stderr);

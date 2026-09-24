@@ -3,6 +3,9 @@
  * main process. Only plain data crosses this internal RPC boundary.
  */
 import { AgentService } from '@pidesktop/agent';
+import { getAgentDir } from '@earendil-works/pi-coding-agent';
+import { join } from 'node:path';
+import { readSessionContext, searchSessions, searchWorkspaceFiles } from './searchService';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import type { ProjectTrustDecision } from '@pidesktop/agent';
 import type { UiExtensionDialogRequest } from '@pidesktop/shared';
@@ -72,9 +75,13 @@ parent.on('message', (event) => {
 	void callContext.run(message.id, async () => {
 		try {
 			if (!allowedMethods.has(message.method)) throw new Error(`Unknown Pi agent method: ${message.method}`);
-			const method = (agent as unknown as Record<string, (...args: unknown[]) => unknown>)[message.method];
+			const method = message.method === 'searchSessions'
+				? (workspaces: string[], query: string) => searchSessions(join(getAgentDir(), 'sessions'), workspaces, query)
+				: message.method === 'searchWorkspaceFiles' ? searchWorkspaceFiles
+				: message.method === 'readSessionContext' ? (cwd: string, path: string) => readSessionContext(join(getAgentDir(), 'sessions'), cwd, path)
+				: (agent as unknown as Record<string, (...args: unknown[]) => unknown>)[message.method];
 			if (typeof method !== 'function') throw new Error(`Pi agent method unavailable: ${message.method}`);
-			const value = await method.apply(agent, message.args);
+			const value = await (method as (...args: unknown[]) => unknown).apply(agent, message.args);
 			post({ kind: 'reply', id: message.id, value });
 		} catch (error) {
 			post({ kind: 'error', id: message.id, message: error instanceof Error ? error.message : String(error) });

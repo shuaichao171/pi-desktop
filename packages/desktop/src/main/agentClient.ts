@@ -1,8 +1,9 @@
 import { app, utilityProcess, type UtilityProcess } from 'electron';
 import { join } from 'node:path';
 import type { ProjectTrustDecision } from '@pidesktop/agent';
-import type { AgentEventEnvelope, AgentSnapshot, UiExtensionDialogRequest, UiSessionSummary } from '@pidesktop/shared';
+import type { AgentEventEnvelope, AgentSnapshot, UiAttachment, UiExtensionDialogRequest, UiSessionSummary, UiSessionSearchResult, UiSlashCommand, UiSlashCommandRequest, WorkspaceEntry } from '@pidesktop/shared';
 import type { AgentHostMethod, AgentHostToMain, MainToAgentHost } from './agentHostProtocol';
+import type { UiPluginCatalog, UiPluginMutation, UiPluginResourceKind, UiPluginResourcePreview, UiPluginScope } from '@pidesktop/shared';
 
 export interface AgentHostUiHandlers {
 	requestProjectTrust(cwd: string): Promise<ProjectTrustDecision>;
@@ -18,9 +19,12 @@ interface PendingCall {
 }
 
 function defaultCallTimeout(method: AgentHostMethod): number {
+	// Package managers own subprocesses without a public cancellation API. Keep
+	// their mutation reserved until it actually settles; app shutdown remains bounded.
+	if (method === 'mutatePlugin') return 0;
 	if (method === 'abort') return 30_000;
 	if (method === 'dispose') return 10_000;
-	if (['init', 'switchWorkspace', 'switchSession', 'newSession', 'setExtensionEnabled', 'prompt'].includes(method)) return 300_000;
+	if (['init', 'switchWorkspace', 'switchSession', 'newSession', 'setExtensionEnabled', 'prompt', 'executeSlashCommand'].includes(method)) return 300_000;
 	return 120_000;
 }
 
@@ -28,6 +32,7 @@ export class AgentHostClient {
 	private readonly ui: AgentHostUiHandlers;
 	private readonly callTimeout: (method: AgentHostMethod) => number;
 	private host: UtilityProcess | null = null;
+	private hostExit: Promise<void> | null = null;
 	private ready: Promise<void> | null = null;
 	private readyResolve: (() => void) | null = null;
 	private readyReject: ((error: Error) => void) | null = null;
@@ -41,6 +46,7 @@ export class AgentHostClient {
 	private sequenceOffset = 0;
 	private currentCwd = '';
 	private closing = false;
+	private shutdown: Promise<void> | null = null;
 	private lastAutomaticRestart = 0;
 
 	constructor(
@@ -74,6 +80,8 @@ export class AgentHostClient {
 		if (this.ready) return this.ready;
 		const host = utilityProcess.fork(join(app.getAppPath(), 'out', 'main', 'agentHost.js'), [], { serviceName: 'Pi Agent' });
 		this.host = host;
+		let resolveExit!: () => void;
+		this.hostExit = new Promise<void>((resolve) => { resolveExit = resolve; });
 		// The utility process starts its event counter at zero after every crash.
 		this.sequenceOffset = this.lastSequence;
 		this.ready = new Promise<void>((resolve, reject) => {
@@ -85,10 +93,12 @@ export class AgentHostClient {
 			console.error(`Pi agent host error (${type}) at ${location}: ${report}`);
 		});
 		host.on('exit', (code) => {
+			resolveExit();
 			if (this.host !== host) return;
 			if (this.startTimer) clearTimeout(this.startTimer);
 			this.startTimer = null;
 			this.host = null;
+			this.hostExit = null;
 			this.ready = null;
 			const error = new Error(`Pi agent process exited (code ${code})`);
 			this.readyReject?.(error);
@@ -183,9 +193,13 @@ export class AgentHostClient {
 	}
 
 	async call(method: AgentHostMethod, ...args: unknown[]): Promise<unknown> {
-		await this.start();
+		const ready = this.start();
 		const host = this.host;
-		if (!host) throw new Error('Pi agent process is unavailable');
+		await ready;
+		if (this.closing && method !== 'dispose') throw new Error('Pi agent is shutting down');
+		// A ready host can exit before this await resumes. Never replay that call
+		// against a replacement host, whose active session may be different.
+		if (!host || this.host !== host) throw new Error('Pi agent process is unavailable');
 		const id = ++this.nextCallId;
 		return new Promise<unknown>((resolve, reject) => {
 			const pending: PendingCall = { method, resolve, reject, timer: null };
@@ -216,24 +230,52 @@ export class AgentHostClient {
 		});
 	}
 
-	async dispose(): Promise<void> {
+	dispose(): Promise<void> {
+		if (this.shutdown) return this.shutdown;
 		const host = this.host;
 		if (!host) {
 			this.closing = true;
-			return;
+			return this.shutdown = Promise.resolve();
 		}
+		// Start the shutdown RPC before closing the call gate, without yielding.
+		// A host exit from this point on is intentional and must not restart Pi.
+		const reply = this.call('dispose');
+		this.closing = true;
+		return this.shutdown = this.finishShutdown(host, reply, this.hostExit!);
+	}
+
+	private async finishShutdown(host: UtilityProcess, reply: Promise<unknown>, exited: Promise<void>): Promise<void> {
 		let timer: ReturnType<typeof setTimeout> | undefined;
 		try {
 			await Promise.race([
-				this.call('dispose'),
+				reply,
 				new Promise<never>((_, reject) => {
 					timer = setTimeout(() => reject(new Error('Pi agent shutdown timed out')), 10_000);
 				}),
 			]);
 		} finally {
 			if (timer) clearTimeout(timer);
-			this.closing = true;
-			host.kill();
+			// kill() only acknowledges a termination request. Keep the caller's
+			// session ownership until the actual process exit has been observed.
+			let killError: unknown;
+			if (this.host === host) {
+				try { if (host.kill() === false) killError = new Error('Pi agent process could not be terminated'); }
+				catch (error) { killError = error; }
+			}
+			let exitTimer: ReturnType<typeof setTimeout> | undefined;
+			try {
+				await Promise.race([
+					exited,
+					new Promise<never>((_, reject) => {
+						exitTimer = setTimeout(() => reject(Object.assign(
+							new Error('Pi agent process did not exit after shutdown', { cause: killError }),
+							{ workerStillRunning: true },
+						)), 5_000);
+					}),
+				]);
+			} finally {
+				if (exitTimer) clearTimeout(exitTimer);
+			}
 		}
 	}
 }
@@ -249,9 +291,19 @@ export function createIsolatedAgentService(ui: AgentHostUiHandlers) {
 		switchWorkspace: (...args: unknown[]) => client.call('switchWorkspace', ...args),
 		getSnapshot: (...args: unknown[]): Promise<AgentSnapshot> => client.call('getSnapshot', ...args) as Promise<AgentSnapshot>,
 		listSessions: (...args: unknown[]): Promise<UiSessionSummary[]> => client.call('listSessions', ...args) as Promise<UiSessionSummary[]>,
+		searchSessions: (workspaces: string[], query: string): Promise<{ sessions: UiSessionSearchResult[]; truncated: boolean }> =>
+			client.call('searchSessions', workspaces, query) as Promise<{ sessions: UiSessionSearchResult[]; truncated: boolean }>,
+		searchWorkspaceFiles: (cwd: string, query: string, options?: { includeDirectories?: boolean }): Promise<{ files: WorkspaceEntry[]; truncated: boolean }> =>
+			client.call('searchWorkspaceFiles', cwd, query, options) as Promise<{ files: WorkspaceEntry[]; truncated: boolean }>,
+		readSessionContext: (cwd: string, path: string): Promise<UiAttachment> => client.call('readSessionContext', cwd, path) as Promise<UiAttachment>,
+		listSlashCommands: (): Promise<UiSlashCommand[]> => client.call('listSlashCommands') as Promise<UiSlashCommand[]>,
+		executeSlashCommand: (request: UiSlashCommandRequest): Promise<void> => client.call('executeSlashCommand', request) as Promise<void>,
 		switchSession: (...args: unknown[]) => client.call('switchSession', ...args),
 		renameSession: (...args: unknown[]) => client.call('renameSession', ...args),
 		listModels: (...args: unknown[]) => client.call('listModels', ...args),
+		listModelProviders: (...args: unknown[]) => client.call('listModelProviders', ...args),
+		saveCustomProvider: (...args: unknown[]) => client.call('saveCustomProvider', ...args),
+		removeCustomProvider: (...args: unknown[]) => client.call('removeCustomProvider', ...args),
 		setModel: (...args: unknown[]) => client.call('setModel', ...args),
 		setThinkingLevel: (...args: unknown[]) => client.call('setThinkingLevel', ...args),
 		listProviderAuth: (...args: unknown[]) => client.call('listProviderAuth', ...args),
@@ -259,6 +311,9 @@ export function createIsolatedAgentService(ui: AgentHostUiHandlers) {
 		removeProviderCredential: (...args: unknown[]) => client.call('removeProviderCredential', ...args),
 		listExtensions: (...args: unknown[]) => client.call('listExtensions', ...args),
 		setExtensionEnabled: (...args: unknown[]) => client.call('setExtensionEnabled', ...args),
+		getPluginCatalog: (cwd: string): Promise<UiPluginCatalog> => client.call('getPluginCatalog', cwd) as Promise<UiPluginCatalog>,
+		mutatePlugin: (input: UiPluginMutation): Promise<UiPluginCatalog> => client.call('mutatePlugin', input) as Promise<UiPluginCatalog>,
+		previewPluginResource: (request: { cwd: string; path: string; kind: UiPluginResourceKind; scope: UiPluginScope }): Promise<UiPluginResourcePreview> => client.call('previewPluginResource', request) as Promise<UiPluginResourcePreview>,
 		prompt: (...args: unknown[]) => client.call('prompt', ...args),
 		abort: (...args: unknown[]) => client.call('abort', ...args),
 		newSession: (...args: unknown[]) => client.call('newSession', ...args),

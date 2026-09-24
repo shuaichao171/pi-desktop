@@ -1,138 +1,60 @@
-import { memo, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
-import type { UiToolActivity } from '@pidesktop/shared';
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { useT } from '../i18n';
 import { useChatStore } from '../store';
 import { buildTimelineLayout, type TimelineEntry } from '../timeline';
 import { Composer } from './Composer';
-import { ExtensionDialogHost } from './ExtensionDialogHost';
+import { ChatTitle } from './ChatTitle';
 import { Icon } from './Icons';
+import { HoverTooltip } from './HoverTooltip';
 import { MessageItem } from './MessageItem';
+import { ToolActivityPanel } from './ToolActivity';
+import { ActivityLabel } from './ActivityDisclosure';
 
-function ToolActivityItem({ activity }: { activity: UiToolActivity }) {
-	const { t, locale } = useT();
-	const detailId = useId();
-	const [expanded, setExpanded] = useState(activity.status === 'error' || activity.status === 'interrupted');
-	const [showAll, setShowAll] = useState(false);
-	const [wrapLines, setWrapLines] = useState(true);
-	const [copyStatus, setCopyStatus] = useState('');
-	const detail = activity.detail ?? '';
-	const previewLength = 12000;
-	const isLong = detail.length > previewLength;
-	const visibleDetail = showAll ? detail : detail.slice(0, previewLength);
-
-	useEffect(() => {
-		if (activity.status === 'error' || activity.status === 'interrupted') setExpanded(true);
-	}, [activity.status]);
-
-	async function copyDetail() {
-		try {
-			await navigator.clipboard.writeText(visibleDetail);
-			setCopyStatus(t('chat.tool.copied'));
-		} catch {
-			setCopyStatus(t('chat.tool.copyFailed'));
-		}
-	}
-
-	return (
-		<div className={`pd-tool-item is-${activity.status}`}>
-			<button type="button" className="pd-tool-item-head" onClick={() => setExpanded((value) => !value)} aria-expanded={expanded} aria-controls={detailId}>
-				<span className={`pd-tool-state is-${activity.status}`} aria-hidden="true" />
-				<span className="pd-tool-item-copy">
-					<span className="pd-tool-item-name">{activity.tool}</span>
-					<span className="pd-tool-item-title" title={activity.title}>{activity.title}</span>
-				</span>
-				<span className={`pd-tool-status is-${activity.status}`}>{t(`chat.tool.${activity.status}`)}</span>
-				<Icon name="chevronDown" className={`pd-chevron${expanded ? ' is-open' : ''}`} width="16" height="16" />
-			</button>
-			{expanded && (
-				<div className="pd-tool-item-detail" id={detailId}>
-					{detail ? (
-						<>
-							<div className="pd-tool-output-heading">
-								<span>{t(activity.status === 'error' ? 'chat.tool.errorOutput' : activity.status === 'interrupted' ? 'chat.tool.interruptedOutput' : activity.status === 'running' ? 'chat.tool.liveOutput' : 'chat.tool.result')}</span>
-								<div className="pd-tool-output-actions">
-									<button type="button" onClick={() => setWrapLines((value) => !value)} aria-label={t('chat.tool.wrapLabel', { tool: activity.tool })} aria-pressed={wrapLines}>{t(wrapLines ? 'chat.tool.unwrap' : 'chat.tool.wrap')}</button>
-									<button type="button" onClick={() => void copyDetail()} aria-label={t('chat.tool.copyLabel', { tool: activity.tool })}>{t('chat.tool.copy')}</button>
-								</div>
-							</div>
-							<pre className={`pd-tool-output${wrapLines ? ' is-wrapped' : ''}`}>{visibleDetail}</pre>
-							{isLong && <button type="button" className="pd-tool-show-all" onClick={() => setShowAll((value) => !value)}>{showAll ? t('chat.tool.collapseOutput') : t('chat.tool.expandOutput', { count: detail.length.toLocaleString(locale) })}</button>}
-							{activity.detailTruncated && <p className="pd-tool-truncated">{t('chat.tool.truncated')}</p>}
-							{copyStatus && <span className="pd-tool-copy-status" role="status">{copyStatus}</span>}
-						</>
-					) : <p className="pd-tool-no-output">{t(activity.status === 'running' ? 'chat.tool.waiting' : 'chat.tool.noOutput')}</p>}
-				</div>
-			)}
-		</div>
-	);
-}
-
-const ToolActivityPanel = memo(function ToolActivityPanel({ sourceActivities, indices }: { sourceActivities: UiToolActivity[]; indices: number[] }) {
-	const { t } = useT();
-	const activities = indices.map((index) => sourceActivities[index]).filter((activity): activity is UiToolActivity => Boolean(activity));
-	const [expanded, setExpanded] = useState(() => activities.some((activity) => activity.status === 'running' || activity.status === 'error' || activity.status === 'interrupted'));
-	const runningCount = activities.filter((activity) => activity.status === 'running').length;
-	const failedCount = activities.filter((activity) => activity.status === 'error').length;
-	const interruptedCount = activities.filter((activity) => activity.status === 'interrupted').length;
-	const summary = [
-		t('chat.tool.count', { count: activities.length }),
-		runningCount > 0 ? t('chat.tool.runningCount', { count: runningCount }) : null,
-		failedCount > 0 ? t('chat.tool.failedCount', { count: failedCount }) : null,
-		interruptedCount > 0 ? t('chat.tool.interruptedCount', { count: interruptedCount }) : null,
-	].filter(Boolean).join(' · ');
-
-	useEffect(() => {
-		if (runningCount > 0 || failedCount > 0 || interruptedCount > 0) setExpanded(true);
-	}, [runningCount, failedCount, interruptedCount]);
-
-	if (activities.length === 0) return null;
-
-	return (
-		<section className="pd-tool-panel" aria-label={t('chat.tool.activity')}>
-			<button type="button" className="pd-tool-summary" onClick={() => setExpanded((value) => !value)} aria-expanded={expanded}>
-				<Icon name="spark" width="16" height="16" />
-				<span>{t('chat.tool.activity')}</span>
-				<span className="pd-tool-summary-count">{summary}</span>
-				<Icon name="chevronDown" className={`pd-chevron pd-tool-chevron${expanded ? ' is-open' : ''}`} width="16" height="16" />
-			</button>
-			{expanded && (
-				<div className="pd-tool-list">
-					{activities.map((activity) => <ToolActivityItem key={activity.id} activity={activity} />)}
-				</div>
-			)}
-		</section>
-	);
-});
+const BOTTOM_THRESHOLD = 24;
+const SCROLL_TO_BOTTOM_DURATION = 260;
 
 function EmptyState() {
 	const { t } = useT();
 	return (
 		<div className="pd-empty-state">
-			<div className="pd-empty-mark" aria-hidden="true">π</div>
+			<svg className="pd-empty-mark" viewBox="0 0 224 224" aria-hidden="true" focusable="false">
+				<path d="M52 72h120v24H52zM68 92h24v76c0 12-8 20-20 20h-4V92zm72 0h24v76c0 12-8 20-20 20h-4V92z" />
+				<circle cx="168" cy="164" r="12" />
+			</svg>
 			<h1>{t('chat.empty.title')}</h1>
-			<p>{t('chat.empty.description')}</p>
-			<div className="pd-empty-hints"><span>{t('chat.empty.sendHint')}</span><span>{t('chat.empty.newlineHint')}</span></div>
 		</div>
 	);
 }
 
-export function ChatView({ onToggleSidebar }: { onToggleSidebar(): void }) {
+export interface SearchMessageTarget { sessionPath: string; messageId: string; snippet?: string; requestId: number }
+
+export function ChatView({ onToggleSidebar, searchTarget, historyControls, navigationError }: { onToggleSidebar(): void; searchTarget?: SearchMessageTarget | null; historyControls?: ReactNode; navigationError?: string | null }) {
 	const { t } = useT();
 	const messages = useChatStore((s) => s.messages);
 	const activities = useChatStore((s) => s.activities);
 	const sessions = useChatStore((s) => s.sessions);
 	const sessionPath = useChatStore((s) => s.sessionPath);
+	const sessionId = useChatStore((s) => s.sessionId);
 	const cwd = useChatStore((s) => s.cwd);
-	const error = useChatStore((s) => s.error);
+	const agentError = useChatStore((s) => s.error);
+	const agentStatus = useChatStore((s) => s.status);
+	const error = navigationError ?? agentError;
 	const timelineRevision = useChatStore((s) => s.timelineRevision);
 	const timelineRef = useRef<{ revision: number; entries: TimelineEntry[] } | null>(null);
 	if (timelineRef.current?.revision !== timelineRevision) {
 		timelineRef.current = { revision: timelineRevision, entries: buildTimelineLayout(messages, activities) };
 	}
 	const timeline = timelineRef.current.entries;
+	const isEmpty = timeline.length === 0 && !error;
+	const awaitingResponse = agentStatus === 'busy' && !error && !messages.some((message) => message.status === 'streaming') && !activities.some((activity) => activity.status === 'running');
+	const bodyRef = useRef<HTMLDivElement>(null);
 	const scrollRef = useRef<HTMLDivElement>(null);
+	const messageListRef = useRef<HTMLDivElement>(null);
 	const followsBottomRef = useRef(true);
+	const scrollAnimationRef = useRef<number | null>(null);
 	const [showBackToBottom, setShowBackToBottom] = useState(false);
+	const handledSearchRequest = useRef<number | null>(null);
+	const [highlightedMessage, setHighlightedMessage] = useState<SearchMessageTarget | null>(null);
 	const activeSession = sessions.find((session) => session.path === sessionPath);
 	const firstUserText = messages.find((message) => message.role === 'user')?.text;
 	const title = activeSession?.name?.trim() || activeSession?.firstMessage?.trim().split(/\r?\n/)[0] || firstUserText?.trim().split(/\r?\n/)[0] || t('chat.newSession');
@@ -140,54 +62,136 @@ export function ChatView({ onToggleSidebar }: { onToggleSidebar(): void }) {
 		if (followsBottomRef.current && scrollRef.current) {
 			scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
 		}
-	}, [messages, activities, error]);
+	}, [messages, activities, error, awaitingResponse]);
 
 	useLayoutEffect(() => {
+		const list = messageListRef.current;
+		if (!list) return;
+		// Disclosure transitions keep changing layout after the data update.
+		const observer = new ResizeObserver(() => {
+			const node = scrollRef.current;
+			if (!node) return;
+			if (followsBottomRef.current) node.scrollTop = node.scrollHeight;
+			setShowBackToBottom(node.scrollHeight - node.scrollTop - node.clientHeight > BOTTOM_THRESHOLD);
+		});
+		observer.observe(list);
+		if (scrollRef.current) observer.observe(scrollRef.current);
+		return () => observer.disconnect();
+	}, [isEmpty]);
+
+	useLayoutEffect(() => {
+		cancelScrollAnimation();
 		followsBottomRef.current = true;
 		setShowBackToBottom(false);
 		if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-	}, [sessionPath]);
+	}, [sessionId, sessionPath]);
+
+	useEffect(() => () => cancelScrollAnimation(), []);
+
+	useLayoutEffect(() => {
+		// Empty drafts can scroll as a whole; clear that offset when the dock moves.
+		if (bodyRef.current) bodyRef.current.scrollTop = 0;
+	}, [isEmpty, sessionId]);
+
+	useLayoutEffect(() => {
+		if (!searchTarget || searchTarget.sessionPath !== sessionPath || handledSearchRequest.current === searchTarget.requestId) return;
+		const transcript = scrollRef.current;
+		// Live messages have transient IDs until history is reloaded. Locate the
+		// same visible text when a persisted search hit points at such a message.
+		const normalize = (text: string) => text.replace(/\s+/g, ' ').trim().toLocaleLowerCase();
+		const snippet = normalize((searchTarget.snippet ?? '').replace(/^(?:…|\.{3})|(?:…|\.{3})$/g, ''));
+		const targetId = messages.some((message) => message.id === searchTarget.messageId)
+			? searchTarget.messageId
+			: snippet ? messages.find((message) => normalize(message.text).includes(snippet))?.id : undefined;
+		const message = targetId ? transcript?.querySelector<HTMLElement>(`[data-message-id="${CSS.escape(targetId)}"]`) : null;
+		if (!transcript || !message) return;
+		cancelScrollAnimation();
+		handledSearchRequest.current = searchTarget.requestId;
+		followsBottomRef.current = false;
+		setHighlightedMessage({ ...searchTarget, messageId: targetId! });
+		message.scrollIntoView({ block: 'center', behavior: 'auto' });
+		setShowBackToBottom(transcript.scrollHeight - transcript.scrollTop - transcript.clientHeight > BOTTOM_THRESHOLD);
+	}, [searchTarget, sessionPath, messages]);
+
+	useEffect(() => {
+		if (!highlightedMessage) return;
+		const timer = window.setTimeout(() => setHighlightedMessage(null), 3000);
+		return () => window.clearTimeout(timer);
+	}, [highlightedMessage]);
 
 	function handleScroll() {
 		const node = scrollRef.current;
 		if (!node) return;
-		const nearBottom = node.scrollHeight - node.scrollTop - node.clientHeight < 72;
-		followsBottomRef.current = nearBottom;
+		const nearBottom = node.scrollHeight - node.scrollTop - node.clientHeight <= BOTTOM_THRESHOLD;
+		if (scrollAnimationRef.current === null) followsBottomRef.current = nearBottom;
 		setShowBackToBottom(!nearBottom);
+	}
+
+	function cancelScrollAnimation() {
+		if (scrollAnimationRef.current === null) return;
+		cancelAnimationFrame(scrollAnimationRef.current);
+		scrollAnimationRef.current = null;
 	}
 
 	function scrollToBottom() {
 		const node = scrollRef.current;
 		if (!node) return;
-		followsBottomRef.current = true;
-		setShowBackToBottom(false);
-		node.scrollTo({ top: node.scrollHeight, behavior: 'smooth' });
+		cancelScrollAnimation();
+		const start = node.scrollTop;
+		const finish = () => {
+			scrollAnimationRef.current = null;
+			followsBottomRef.current = true;
+			node.scrollTop = node.scrollHeight;
+			setShowBackToBottom(false);
+		};
+		if (window.matchMedia('(prefers-reduced-motion: reduce)').matches || node.scrollHeight - node.clientHeight - start <= BOTTOM_THRESHOLD) {
+			finish();
+			return;
+		}
+		// Keep stream/layout updates from jumping ahead of the scroll animation.
+		followsBottomRef.current = false;
+		const started = performance.now();
+		const tick = (now: number) => {
+			const progress = Math.min(1, (now - started) / SCROLL_TO_BOTTOM_DURATION);
+			if (progress >= 1) { finish(); return; }
+			const target = Math.max(0, node.scrollHeight - node.clientHeight);
+			node.scrollTop = start + (target - start) * (1 - (1 - progress) ** 3);
+			scrollAnimationRef.current = requestAnimationFrame(tick);
+		};
+		scrollAnimationRef.current = requestAnimationFrame(tick);
 	}
 
 	return (
-		<main className="pd-main">
+		<main className={`pd-main${isEmpty ? ' is-empty' : ''}`}>
 			<header className="pd-chat-header">
-				<button type="button" className="pd-icon-button pd-header-sidebar-toggle" onClick={onToggleSidebar} aria-label={t('chat.toggleSidebar')} title={t('chat.toggleSidebar')}><Icon name="panel" /></button>
-				<div className="pd-chat-heading"><span className="pd-chat-workspace-icon" title={cwd || t('chat.workspace')}><Icon name="folder" width="16" height="16" /></span><h1 title={title}>{title}</h1></div>
+				{historyControls}
+				<HoverTooltip title={t('chat.toggleSidebar')}><button type="button" className="pd-icon-button pd-header-sidebar-toggle" onClick={onToggleSidebar} aria-label={t('chat.toggleSidebar')}><Icon name="panel" /></button></HoverTooltip>
+				<div className="pd-chat-heading"><span className="pd-chat-workspace-icon" title={cwd || t('chat.workspace')}><Icon name="folder" width="16" height="16" /></span><ChatTitle key={`${cwd}\0${sessionId}`} title={title} sessionPath={sessionPath} /></div>
 			</header>
 
-			<div className="pd-chat-content">
-				<div ref={scrollRef} className="pd-transcript" onScroll={handleScroll}>
-					{timeline.length === 0 ? <EmptyState /> : (
-						<div className="pd-message-list">
-							{timeline.map((entry) => entry.kind === 'message'
-								? <MessageItem key={`message-${entry.id}`} message={messages[entry.index]!} />
-								: <div className="pd-timeline-tool-group" key={`tools-${entry.id}`}><div className="pd-message-column"><ToolActivityPanel sourceActivities={activities} indices={entry.indices} /></div></div>)}
-						</div>
-					)}
-					{error && <div className="pd-transcript-end">
-						<div className="pd-error-banner" role="alert"><strong>{t('chat.error')}</strong><span>{error}</span></div>
-					</div>}
+			<div ref={bodyRef} className={`pd-conversation-body${isEmpty ? ' is-empty' : ''}`}>
+				<div className="pd-chat-content">
+					<div ref={scrollRef} className="pd-transcript" onScroll={handleScroll} onWheel={cancelScrollAnimation} onTouchStart={cancelScrollAnimation} onPointerDown={cancelScrollAnimation} onKeyDown={(event) => {
+						if (['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' '].includes(event.key)) cancelScrollAnimation();
+					}}>
+						{isEmpty ? <EmptyState /> : (
+							<div ref={messageListRef} className="pd-message-list">
+								{timeline.map((entry) => entry.kind === 'message'
+									? <MessageItem key={`message-${entry.id}`} message={messages[entry.index]!} highlighted={highlightedMessage?.sessionPath === sessionPath && highlightedMessage.messageId === entry.id} />
+									: <div className="pd-timeline-tool-group" key={`tools-${entry.id}`}><div className="pd-message-column"><ToolActivityPanel sourceActivities={activities} indices={entry.indices} /></div></div>)}
+							</div>
+						)}
+						{awaitingResponse && <div className="pd-transcript-end"><div className="pd-message-column"><div className="pd-response-pending" role="status"><ActivityLabel active>{t('message.preparing')}</ActivityLabel></div></div></div>}
+						{error && <div className="pd-transcript-end">
+							<div className="pd-error-banner" role="alert"><strong>{t(navigationError ? 'navigation.error' : 'chat.error')}</strong><span>{error}</span></div>
+						</div>}
+					</div>
+					<button type="button" className={`pd-back-to-bottom${showBackToBottom ? ' is-visible' : ''}`} aria-label={t('chat.backToBottom')} aria-hidden={!showBackToBottom} tabIndex={showBackToBottom ? 0 : -1} onClick={showBackToBottom ? scrollToBottom : undefined}>
+						{agentStatus === 'busy' ? <span className="pd-back-to-bottom-dots" aria-hidden="true"><span /><span /><span /></span> : <Icon name="arrowDown" width="20" height="20" />}
+					</button>
 				</div>
-				{showBackToBottom && <button type="button" className="pd-back-to-bottom" onClick={scrollToBottom}>{t('chat.backToBottom')}</button>}
+				<Composer />
 			</div>
-			<Composer />
-			<ExtensionDialogHost />
 		</main>
 	);
 }

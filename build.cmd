@@ -79,5 +79,4 @@ echo.
 echo [ERROR] Build failed. See the message above.
 
 :finish
-if not defined CI if not defined PI_DESKTOP_NO_PAUSE pause
 exit /b %BUILD_EXIT%

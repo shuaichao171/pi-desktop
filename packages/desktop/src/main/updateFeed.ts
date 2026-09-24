@@ -10,3 +10,13 @@ export function parseUpdateFeedUrl(value: unknown): string | null {
 		return null;
 	}
 }
+
+/** GitHub release assets redirect to object storage without multipart range support. */
+export function isGitHubReleaseFeedUrl(value: string): boolean {
+	try {
+		const url = new URL(value);
+		return url.protocol === 'https:' && url.hostname === 'github.com' && !url.port
+			&& !url.username && !url.password && !url.search && !url.hash
+			&& /^\/[^/]+\/[^/]+\/releases\/(?:latest\/download|download\/[^/]+)\/$/.test(url.pathname);
+	} catch { return false; }
+}

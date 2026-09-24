@@ -9,7 +9,7 @@ import { app, BrowserWindow, dialog, ipcMain, type IpcMainInvokeEvent } from 'el
 import { statSync } from 'node:fs';
 import { stat } from 'node:fs/promises';
 import { basename, dirname, join, resolve } from 'node:path';
-import { IPC_CHANNELS, type AgentEventEnvelope, type AppLocale, type UiAttachment, type UiExtensionDialogRequest, type UiSessionMetaPatch, type UiThinkingLevel } from '@pidesktop/shared';
+import { IPC_CHANNELS, type AgentEventEnvelope, type AppLocale, type UiAttachment, type UiExtensionDialogRequest, type UiSessionMetaPatch, type UiSidebarGroupChange, type UiSlashCommandRequest, type UiThinkingLevel } from '@pidesktop/shared';
 import { createIsolatedAgentService } from './agentClient';
 import { getAppLocale, setAppLocale } from './appLocale';
 import { updateService } from './updateService';
@@ -17,6 +17,12 @@ export { updateService } from './updateService';
 import { registerWorkbenchIpc } from './workbenchIpc';
 import type { WorkbenchService } from './workbenchService';
 import { backupCorruptStateFile, backupCorruptStateFileAsync, CorruptStateFileError, readStateFile, readStateFileAsync, writeStateFile, writeStateFileAsync } from './stateFiles';
+import { SessionGroupService } from './sessionGroups';
+import { readWorkspaceContext, validateContextRequest } from './contextService';
+import { createAutomationService } from './automationService';
+import { createAutomationExecutor } from './automationExecutor';
+import { createPluginDiscovery } from './pluginDiscovery';
+import type { UiPluginMutation, UiPluginResourceKind, UiPluginScope } from '@pidesktop/shared';
 
 type PendingDialog = {
 	request: UiExtensionDialogRequest;
@@ -26,19 +32,70 @@ type PendingDialog = {
 };
 
 const pendingDialogs = new Map<string, PendingDialog>();
+type StartupNotifications = {
+	requests: UiExtensionDialogRequest[];
+	rendererReady: boolean;
+	flush(): void;
+	cleanup(): void;
+};
+const startupNotifications = new Map<BrowserWindow, StartupNotifications>();
+const notificationReadyWindows = new WeakSet<BrowserWindow>();
+const MAX_STARTUP_NOTIFICATIONS = 100;
+let getDialogWindow: () => BrowserWindow | undefined = () => undefined;
 let workbenchService: WorkbenchService | null = null;
 let disposingServices = false;
+let serviceShutdown: Promise<void> | null = null;
 let activeSessionPath: string | null = null;
 const pendingUnreadPaths = new Set<string>();
 let workspaceActivationQueue: Promise<void> = Promise.resolve();
 let automaticRecoveryTimer: ReturnType<typeof setTimeout> | null = null;
-let automaticRecoveryPromise: Promise<void> | null = null;
+let sessionSearchRequest = 0;
+let sessionGroupService: SessionGroupService | null = null;
+let automationService: ReturnType<typeof createAutomationService> | null = null;
+let pluginMutationActive = false;
+const discoverPlugins = createPluginDiscovery();
+const automationExecutor = createAutomationExecutor({ withSessionSetup: (action) => queueWorkspaceActivation(action) });
+
+function notificationsFor(owner: BrowserWindow): StartupNotifications {
+	const existing = startupNotifications.get(owner);
+	if (existing) return existing;
+	const queue: StartupNotifications = {
+		requests: [],
+		rendererReady: false,
+		flush: () => {
+			if (owner.isDestroyed() || owner.webContents.isDestroyed()) { queue.cleanup(); return; }
+			if (!queue.rendererReady || !owner.isVisible()) return;
+			notificationReadyWindows.add(owner);
+			queue.cleanup();
+			for (const request of queue.requests) owner.webContents.send(IPC_CHANNELS.agentExtensionDialog, request);
+		},
+		cleanup: () => {
+			startupNotifications.delete(owner);
+			owner.removeListener('show', queue.flush);
+			owner.removeListener('closed', queue.cleanup);
+		},
+	};
+	startupNotifications.set(owner, queue);
+	owner.on('show', queue.flush);
+	owner.once('closed', queue.cleanup);
+	return queue;
+}
 
 function requestExtensionDialog(request: UiExtensionDialogRequest, signal?: AbortSignal): Promise<string | boolean | null> {
-	const owner = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows().find((win) => !win.isDestroyed());
+	if (disposingServices) return Promise.resolve(null);
+	// The focused window can still be the logo splash while Pi initializes.
+	// Only a renderer with our preload bridge can display/answer extension UI.
+	const owner = getDialogWindow();
 	if (!owner || owner.isDestroyed() || owner.webContents.isDestroyed()) return Promise.resolve(null);
 	if (request.kind === 'notify') {
-		owner.webContents.send(IPC_CHANNELS.agentExtensionDialog, request);
+		if (notificationReadyWindows.has(owner)) owner.webContents.send(IPC_CHANNELS.agentExtensionDialog, request);
+		else {
+			// Do not lose startup notices before React subscribes, or let their
+			// dismissal timers expire behind the splash. A notice never reveals UI.
+			const queue = notificationsFor(owner);
+			queue.requests.push(request);
+			if (queue.requests.length > MAX_STARTUP_NOTIFICATIONS) queue.requests.shift();
+		}
 		return Promise.resolve(null);
 	}
 	return new Promise((resolve) => {
@@ -87,17 +144,17 @@ export const agentService = createIsolatedAgentService({ requestProjectTrust: as
 	const sessionPath = activeSessionPath;
 	automaticRecoveryTimer = setTimeout(() => {
 		automaticRecoveryTimer = null;
-		if (disposingServices || activeWorkspace !== cwd) return;
-		const recovery = agentService.init({ cwd }).then(async () => {
+		// Recovery changes the active Pi context too. Use the same queue as
+		// workspace selection so neither transition can interrupt the other.
+		void queueWorkspaceActivation(async () => {
+			if (activeWorkspace !== cwd) return;
+			const excluded = automationExecutor.sessionPaths(cwd);
+			await agentService.init(excluded.length ? { cwd, excludeSessionPaths: excluded } : { cwd });
 			if (sessionPath && (await agentService.listSessions(cwd)).some((session) => session.path === sessionPath)) {
 				await agentService.switchSession(sessionPath);
 			}
 		}).catch((error: unknown) => {
 			console.error('Pi agent recovery failed:', error);
-		});
-		automaticRecoveryPromise = recovery;
-		void recovery.finally(() => {
-			if (automaticRecoveryPromise === recovery) automaticRecoveryPromise = null;
 		});
 	}, 250);
 } });
@@ -235,19 +292,55 @@ function likelySessionOwners(path: string, workspaces: string[]): string[] {
 		`--${resolve(cwd).replace(/^[/\\]/, '').replace(/[/\\:]/g, '-')}--` === directory);
 }
 
+/** Validate session ownership against the current list of registered projects. */
+async function requireSessionOwner(path: string, allowCurrentDraft = false): Promise<string> {
+	if (typeof path !== 'string' || path.length === 0) throw new Error('会话路径无效');
+	if (automationExecutor.isSessionRunning(path)) throw new Error('自动化仍在运行，请结束后再打开会话');
+	// Only explicit naming may materialize a currently loaded, unsaved session.
+	// Snapshot identity is trusted host state; the agent rechecks its runtime path.
+	const current = allowCurrentDraft ? await agentService.getSnapshot() : null;
+	const knownWorkspaces = await listWorkspaces();
+	if (current?.sessionId && current.sessionPath === path && knownWorkspaces.includes(current.cwd)) return current.cwd;
+	let owner: string | undefined;
+	const cached = sessionOwnerByPath.get(path);
+	if (cached && knownWorkspaces.includes(cached)
+		&& (await agentService.listSessions(cached)).some((session) => session.path === path)) owner = cached;
+	else sessionOwnerByPath.delete(path);
+	if (!owner) {
+		const workspaces = knownWorkspaces.filter((cwd) => cwd !== cached);
+		const likely = likelySessionOwners(path, workspaces);
+		for (const cwd of likely) {
+			if ((await agentService.listSessions(cwd)).some((session) => session.path === path)) { owner = cwd; break; }
+		}
+		if (!owner) {
+			const remaining = workspaces.filter((cwd) => !likely.includes(cwd));
+			const owners = await Promise.all(remaining.map(async (cwd) => ({ cwd, sessions: await agentService.listSessions(cwd) })));
+			owner = owners.find(({ sessions }) => sessions.some((session) => session.path === path))?.cwd;
+		}
+		if (owner) rememberSessionOwner(path, owner);
+	}
+	if (!owner) throw new Error('未找到会话');
+	return owner;
+}
+
 function activateWorkspace(cwd: string, initialize: boolean): Promise<void> {
-	const result = workspaceActivationQueue.then(() => performWorkspaceActivation(cwd, initialize));
+	if (pluginMutationActive) return Promise.reject(new Error('插件正在更新，请完成后再切换项目'));
+	if (automaticRecoveryTimer) clearTimeout(automaticRecoveryTimer);
+	automaticRecoveryTimer = null;
+	return queueWorkspaceActivation(() => performWorkspaceActivation(cwd, initialize));
+}
+
+function queueWorkspaceActivation(action: () => Promise<void>): Promise<void> {
+	const result = workspaceActivationQueue.then(() => {
+		if (disposingServices) throw new Error('Pi agent is shutting down');
+		return action();
+	});
 	workspaceActivationQueue = result.catch(() => {});
 	return result;
 }
 
 async function performWorkspaceActivation(cwd: string, initialize: boolean): Promise<void> {
 	if (typeof cwd !== 'string') throw new Error('未知工作区');
-	if (initialize && automaticRecoveryTimer) {
-		clearTimeout(automaticRecoveryTimer);
-		automaticRecoveryTimer = null;
-	}
-	if (initialize && automaticRecoveryPromise) await automaticRecoveryPromise;
 	const saved = await readWorkspaceSettingsAsync();
 	const known = [activeWorkspace, saved.cwd, ...(saved.workspaces ?? [])];
 	if (!known.includes(cwd) && !pickedWorkspaces.has(cwd)) throw new Error('未知工作区');
@@ -257,7 +350,9 @@ async function performWorkspaceActivation(cwd: string, initialize: boolean): Pro
 	const previous = activeWorkspace;
 	activeWorkspace = cwd;
 	try {
-		if (initialize) await agentService.init({ cwd });
+		const excludeSessionPaths = automationExecutor.sessionPaths(cwd);
+		if (initialize) await agentService.init(excludeSessionPaths.length ? { cwd, excludeSessionPaths } : { cwd });
+		else if (excludeSessionPaths.length) await agentService.switchWorkspace(cwd, excludeSessionPaths);
 		else await agentService.switchWorkspace(cwd);
 	} catch (error) {
 		activeWorkspace = previous;
@@ -283,8 +378,118 @@ function invokingWindow(event: IpcMainInvokeEvent): BrowserWindow {
 	return win;
 }
 
-export function registerIpc(): void {
+function requirePluginSender(event: IpcMainInvokeEvent): BrowserWindow {
+	const owner = getDialogWindow();
+	if (disposingServices || !owner || owner.isDestroyed() || owner.webContents.isDestroyed()
+		|| event.sender !== owner.webContents || event.senderFrame !== owner.webContents.mainFrame) throw new Error('Invalid plugin sender');
+	return owner;
+}
+
+function requirePluginWorkspace(cwd: unknown): asserts cwd is string {
+	if (typeof cwd !== 'string' || !cwd || cwd !== activeWorkspace) throw new Error('项目已切换，请刷新插件页面后重试');
+}
+
+async function withPluginMutation<T>(cwd: string, action: () => Promise<T>): Promise<T> {
+	if (pluginMutationActive) throw new Error('已有插件操作正在进行，请稍后重试');
+	requirePluginWorkspace(cwd);
+	// Reserve before any asynchronous read: new schedules are deferred, while
+	// already claimed runs are observed by the serialized snapshot below.
+	pluginMutationActive = true;
+	try {
+		let result!: T;
+		await queueWorkspaceActivation(async () => {
+			requirePluginWorkspace(cwd);
+			if (await automationService?.hasActiveRuns() || automationExecutor.hasActiveWorkers()) throw new Error('自动化仍在运行，请结束后再修改插件');
+			result = await action();
+		});
+		return result;
+	} finally { pluginMutationActive = false; }
+}
+
+export function registerIpc(options: {
+	onRendererReady?(win: BrowserWindow): void;
+	getDialogWindow?(): BrowserWindow | undefined;
+} = {}): void {
+	getDialogWindow = options.getDialogWindow ?? (() => undefined);
 	workbenchService = registerWorkbenchIpc(() => activeWorkspace);
+	const automations = createAutomationService({
+		filePath: join(app.getPath('userData'), 'automations.json'),
+		execute: (task, signal) => automationExecutor.execute(task, signal),
+		canRun: () => pluginMutationActive ? false : automationExecutor.hasUnreleasedWorkers()
+			? '上次自动化执行进程尚未退出，请重启应用后重试' : true,
+		validateWorkspace: async (cwd) => {
+			if (!(await listWorkspaces()).includes(cwd)) throw new Error('未知工作区，请先在侧栏打开项目');
+		},
+		onChanged: (snapshot) => {
+			const win = getDialogWindow();
+			if (win && !win.isDestroyed() && !win.webContents.isDestroyed()) win.webContents.send(IPC_CHANNELS.automationChanged, snapshot);
+		},
+		onError: (error) => console.error('Automation scheduler failed:', error),
+	});
+	automationService = automations;
+	ipcMain.handle(IPC_CHANNELS.pluginCatalog, (event, cwd: unknown) => {
+		requirePluginSender(event); requirePluginWorkspace(cwd);
+		return agentService.getPluginCatalog(cwd);
+	});
+	ipcMain.handle(IPC_CHANNELS.pluginMutate, (event, input: UiPluginMutation) => {
+		requirePluginSender(event);
+		if (!isRecord(input)) throw new Error('插件操作参数无效');
+		requirePluginWorkspace(input.cwd);
+		return withPluginMutation(input.cwd, () => agentService.mutatePlugin(input));
+	});
+	ipcMain.handle(IPC_CHANNELS.pluginPreview, (event, request: { cwd: string; path: string; kind: UiPluginResourceKind; scope: UiPluginScope }) => {
+		requirePluginSender(event);
+		if (!isRecord(request)) throw new Error('插件预览参数无效');
+		requirePluginWorkspace(request.cwd);
+		return agentService.previewPluginResource(request);
+	});
+	ipcMain.handle(IPC_CHANNELS.pluginPickDirectory, async (event) => {
+		const owner = requirePluginSender(event);
+		const selected = await dialog.showOpenDialog(owner, {
+			properties: ['openDirectory'], title: getAppLocale() === 'en-US' ? 'Choose a Pi plugin directory' : '选择 Pi 插件目录',
+		});
+		return selected.canceled ? null : selected.filePaths[0] ?? null;
+	});
+	ipcMain.handle(IPC_CHANNELS.pluginDiscover, (event, query: unknown) => {
+		requirePluginSender(event);
+		return discoverPlugins(query);
+	});
+	const automationHandler = (action: (...args: any[]) => unknown) => (event: IpcMainInvokeEvent, ...args: unknown[]) => {
+		const owner = getDialogWindow();
+		if (disposingServices || !owner || owner.isDestroyed() || owner.webContents.isDestroyed()
+			|| event.sender !== owner.webContents || event.senderFrame !== owner.webContents.mainFrame) throw new Error('Invalid automation sender');
+		return action(...args);
+	};
+	ipcMain.handle(IPC_CHANNELS.automationSnapshot, automationHandler(() => automations.snapshot()));
+	ipcMain.handle(IPC_CHANNELS.automationSave, automationHandler((input) => automations.save(input)));
+	ipcMain.handle(IPC_CHANNELS.automationSetEnabled, automationHandler((id, enabled) => automations.setEnabled(id, enabled)));
+	ipcMain.handle(IPC_CHANNELS.automationDelete, automationHandler((id) => automations.delete(id)));
+	ipcMain.handle(IPC_CHANNELS.automationRun, automationHandler((id) => automations.run(id)));
+	ipcMain.handle(IPC_CHANNELS.automationCancelRun, automationHandler((runId) => automations.cancelRun(runId)));
+	const groups = new SessionGroupService({
+		path: join(app.getPath('userData'), 'session-groups.json'),
+		validateSessionPath: async (path) => { await requireSessionOwner(path); },
+		onCorruptState: (backup) => {
+			const english = getAppLocale() === 'en-US';
+			dialog.showErrorBox(english ? 'Session groups recovered' : '会话分组已恢复',
+				english ? `The damaged group settings were saved to:\n${backup}\n\nYour sessions have not been changed.`
+					: `损坏的分组设置已备份到：\n${backup}\n\n原有会话未作修改。`);
+		},
+	});
+	sessionGroupService = groups;
+	ipcMain.handle(IPC_CHANNELS.rendererReady, (event) => {
+		const win = invokingWindow(event);
+		if (event.senderFrame !== win.webContents.mainFrame) throw new Error('Invalid renderer-ready sender');
+		options.onRendererReady?.(win);
+		void automations.start().catch((error: unknown) => {
+			if (!disposingServices) console.error('Automation scheduler failed to start:', error);
+		});
+		if (!win.isDestroyed() && !notificationReadyWindows.has(win)) {
+			const queue = notificationsFor(win);
+			queue.rendererReady = true;
+			queue.flush();
+		}
+	});
 	// Agent events → all renderer windows.
 	agentService.onEvent((event: AgentEventEnvelope) => {
 		if (event.event.type === 'ready') activeSessionPath = event.event.sessionPath;
@@ -347,18 +552,38 @@ export function registerIpc(): void {
 		return selected;
 	});
 	ipcMain.handle(IPC_CHANNELS.agentListWorkspaces, () => listWorkspaces());
+	ipcMain.handle(IPC_CHANNELS.agentListSessionGroups, () => groups.list());
+	ipcMain.handle(IPC_CHANNELS.agentUpdateSessionGroups, (_event, change: UiSidebarGroupChange) => groups.update(change));
 	ipcMain.handle(IPC_CHANNELS.workspaceSwitch, (_event, cwd: string) => activateWorkspace(cwd, false));
 	ipcMain.handle(IPC_CHANNELS.agentInit, (_event, cwd: string) => activateWorkspace(cwd, true));
 	ipcMain.handle(IPC_CHANNELS.agentSnapshot, () => agentService.getSnapshot());
 	ipcMain.handle(IPC_CHANNELS.agentListSessions, async (_event, cwd?: string) => {
 		const targetCwd = cwd ?? activeWorkspace;
 		if (targetCwd && !(await listWorkspaces()).includes(targetCwd)) throw new Error('未知工作区');
-		const sessions = await agentService.listSessions(targetCwd);
+		const sessions = (await agentService.listSessions(targetCwd)).filter((session) => !automationExecutor.isSessionRunning(session.path));
 		for (const session of sessions) rememberSessionOwner(session.path, targetCwd);
 		const meta = await withSessionMeta((value) => value);
 		return sessions.map((session) => ({ ...session, ...meta[session.path] }));
 	});
+	ipcMain.handle(IPC_CHANNELS.agentSearchSessions, async (_event, query: string) => {
+		const request = ++sessionSearchRequest;
+		const workspaces = await listWorkspaces();
+		if (request !== sessionSearchRequest) return { sessions: [], truncated: true };
+		const result = await agentService.searchSessions(workspaces, query);
+		const meta = await withSessionMeta((value) => value);
+		for (const session of result.sessions) rememberSessionOwner(session.path, session.cwd);
+		return { ...result, sessions: result.sessions.filter((session) => !automationExecutor.isSessionRunning(session.path)).map((session) => ({ ...session, ...meta[session.path] })) };
+	});
+	ipcMain.handle(IPC_CHANNELS.workspaceSearchFiles, (_event, query: string, options?: { includeDirectories?: boolean }) => agentService.searchWorkspaceFiles(activeWorkspace, query, options));
+	ipcMain.handle(IPC_CHANNELS.contextRead, async (_event, request: unknown) => {
+		validateContextRequest(request);
+		if (!(await listWorkspaces()).includes(request.workspace)) throw new Error('未知工作区');
+		if (request.kind !== 'session') return readWorkspaceContext(request);
+		if (await requireSessionOwner(request.path) !== request.workspace) throw new Error('会话不属于此工作区');
+		return agentService.readSessionContext(request.workspace, request.path);
+	});
 	ipcMain.handle(IPC_CHANNELS.agentSwitchSession, async (_event, path: string) => {
+		if (automationExecutor.isSessionRunning(path)) throw new Error('自动化仍在运行，请结束后再打开会话');
 		await agentService.switchSession(path);
 		await markSessionRead(path);
 	});
@@ -368,24 +593,7 @@ export function registerIpc(): void {
 		for (const key of metaKeys) {
 			if (patch[key] !== undefined && typeof patch[key] !== 'boolean') throw new Error('会话状态无效');
 		}
-		let owner: string | undefined;
-		const cached = sessionOwnerByPath.get(path);
-		if (cached && (await agentService.listSessions(cached)).some((session) => session.path === path)) owner = cached;
-		else sessionOwnerByPath.delete(path);
-		if (!owner) {
-			const workspaces = (await listWorkspaces()).filter((cwd) => cwd !== cached);
-			const likely = likelySessionOwners(path, workspaces);
-			for (const cwd of likely) {
-				if ((await agentService.listSessions(cwd)).some((session) => session.path === path)) { owner = cwd; break; }
-			}
-			if (!owner) {
-				const remaining = workspaces.filter((cwd) => !likely.includes(cwd));
-				const owners = await Promise.all(remaining.map(async (cwd) => ({ cwd, sessions: await agentService.listSessions(cwd) })));
-				owner = owners.find(({ sessions }) => sessions.some((session) => session.path === path))?.cwd;
-			}
-			if (owner) rememberSessionOwner(path, owner);
-		}
-		if (!owner) throw new Error('未找到会话');
+		const owner = await requireSessionOwner(path, patch.name !== undefined);
 		if (patch.name !== undefined) await agentService.renameSession(path, patch.name, owner);
 		if (!metaKeys.some((key) => patch[key] !== undefined)) return;
 		await withSessionMeta(async (meta) => {
@@ -400,13 +608,27 @@ export function registerIpc(): void {
 		});
 	});
 	ipcMain.handle(IPC_CHANNELS.agentListModels, () => agentService.listModels());
+	ipcMain.handle(IPC_CHANNELS.agentListModelProviders, () => agentService.listModelProviders());
+	ipcMain.handle(IPC_CHANNELS.agentSaveCustomProvider, (_event, request: unknown) => agentService.saveCustomProvider(request));
+	ipcMain.handle(IPC_CHANNELS.agentRemoveCustomProvider, (_event, provider: string) => agentService.removeCustomProvider(provider));
+	ipcMain.handle(IPC_CHANNELS.agentListSlashCommands, () => agentService.listSlashCommands());
+	ipcMain.handle(IPC_CHANNELS.agentExecuteSlashCommand, (event, request: UiSlashCommandRequest) => {
+		if (request?.name === 'reload') {
+			requirePluginSender(event);
+			return withPluginMutation(request.cwd, () => agentService.executeSlashCommand(request));
+		}
+		return agentService.executeSlashCommand(request);
+	});
 	ipcMain.handle(IPC_CHANNELS.agentSetModel, (_event, provider: string, id: string) => agentService.setModel(provider, id));
 	ipcMain.handle(IPC_CHANNELS.agentSetThinkingLevel, (_event, level: UiThinkingLevel) => agentService.setThinkingLevel(level));
 	ipcMain.handle(IPC_CHANNELS.agentListProviderAuth, () => agentService.listProviderAuth());
 	ipcMain.handle(IPC_CHANNELS.agentSetProviderApiKey, (_event, provider: string, key: string) => agentService.setProviderApiKey(provider, key));
 	ipcMain.handle(IPC_CHANNELS.agentRemoveProviderCredential, (_event, provider: string) => agentService.removeProviderCredential(provider));
 	ipcMain.handle(IPC_CHANNELS.agentListExtensions, () => agentService.listExtensions());
-	ipcMain.handle(IPC_CHANNELS.agentSetExtensionEnabled, (_event, path: string, enabled: boolean) => agentService.setExtensionEnabled(path, enabled));
+	ipcMain.handle(IPC_CHANNELS.agentSetExtensionEnabled, (event, path: string, enabled: boolean) => {
+		requirePluginSender(event);
+		return withPluginMutation(activeWorkspace, () => agentService.setExtensionEnabled(path, enabled));
+	});
 
 	ipcMain.handle(IPC_CHANNELS.agentPrompt, async (_event, text: string, behavior?: 'steer' | 'followUp', attachments?: UiAttachment[]) => {
 		await agentService.prompt(text, behavior, attachments);
@@ -424,10 +646,21 @@ export function registerIpc(): void {
 	});
 }
 
-export async function disposeServices(): Promise<void> {
+export function disposeServices(): Promise<void> {
+	if (serviceShutdown) return serviceShutdown;
 	disposingServices = true;
+	for (const queue of startupNotifications.values()) queue.cleanup();
+	for (const pending of pendingDialogs.values()) pending.resolve(null);
 	if (automaticRecoveryTimer) clearTimeout(automaticRecoveryTimer);
 	automaticRecoveryTimer = null;
-	await Promise.all([agentService.dispose(), workbenchService?.dispose()]);
-	await sessionMetaQueue;
+	return serviceShutdown = (async () => {
+		// A pending move may still need the agent to validate session ownership.
+		await sessionGroupService?.flush();
+		const results = await Promise.allSettled([agentService.dispose(), workbenchService?.dispose(), automationService?.dispose()]);
+		// A failed service must not let app.quit interrupt another service's
+		// cleanup or metadata that was queued by its final activity events.
+		await sessionMetaQueue;
+		const failure = results.find((result) => result.status === 'rejected');
+		if (failure?.status === 'rejected') throw failure.reason;
+	})();
 }

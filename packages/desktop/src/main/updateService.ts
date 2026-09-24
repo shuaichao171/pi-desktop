@@ -3,7 +3,7 @@ import { readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { IPC_CHANNELS, type UiUpdateState, type UiUpdateUnavailableReason } from '@pidesktop/shared';
 import { getAppLocale } from './appLocale';
-import { parseUpdateFeedUrl } from './updateFeed';
+import { isGitHubReleaseFeedUrl, parseUpdateFeedUrl } from './updateFeed';
 
 type Updater = typeof import('electron-updater').autoUpdater;
 
@@ -61,6 +61,7 @@ class UpdateService {
 	private interval: ReturnType<typeof setInterval> | null = null;
 	private beforeInstall: (() => Promise<void>) | null = null;
 	private installing = false;
+	private servicesClosedForInstall = false;
 
 	constructor() {
 		const initial = initialState();
@@ -93,12 +94,32 @@ class UpdateService {
 		}
 	}
 
+	private reportError(error: unknown): void {
+		const missingReleaseManifest = this.feedUrl && isGitHubReleaseFeedUrl(this.feedUrl)
+			&& error instanceof Error && 'code' in error && error.code === 'ERR_UPDATER_CHANNEL_FILE_NOT_FOUND';
+		const message = missingReleaseManifest
+			? getAppLocale() === 'en-US'
+				? 'GitHub has not published an update for this installation type yet. Please try again later.'
+				: 'GitHub 尚未发布适用于此安装方式的更新，请稍后重试。'
+			: error instanceof Error ? error.message : String(error);
+		const restartHint = this.installing && this.servicesClosedForInstall
+			? getAppLocale() === 'en-US' ? ' Restart the app before retrying.' : ' 请重启应用后重试。'
+			: '';
+		if (this.installing) {
+			this.installing = false;
+			this.start();
+		}
+		this.publish({ phase: 'error', error: `${message.slice(0, 300 - restartHint.length)}${restartHint}` });
+	}
+
 	private async getUpdater(): Promise<Updater> {
 		if (!this.feedUrl) throw new Error('Update source is not configured.');
 		this.updaterPromise ??= import('electron-updater').then((module) => {
 			// electron-updater is CommonJS and Electron Vite emits ESM for this project.
 			const updater = module.default?.autoUpdater ?? module.autoUpdater;
-			updater.setFeedURL({ provider: 'generic', url: this.feedUrl! });
+			updater.setFeedURL({ provider: 'generic', url: this.feedUrl!,
+				...(isGitHubReleaseFeedUrl(this.feedUrl!) ? { useMultipleRangeRequest: false } : {}),
+			});
 			updater.autoDownload = true;
 			updater.autoInstallOnAppQuit = false;
 			updater.allowDowngrade = false;
@@ -108,7 +129,8 @@ class UpdateService {
 			updater.on('download-progress', (progress) => this.publish({ phase: 'downloading', progressPercent: Number.isFinite(progress.percent) ? Math.max(0, Math.min(100, progress.percent)) : 0 }));
 			updater.on('update-not-available', () => this.publish({ phase: 'up-to-date', availableVersion: undefined, progressPercent: undefined }));
 			updater.on('update-downloaded', (info) => this.publish({ phase: 'ready', availableVersion: info.version, progressPercent: 100 }));
-			updater.on('error', (error) => this.publish({ phase: 'error', error: error.message.slice(0, 300) }));
+			// Installers can report failure through this event without throwing from quitAndInstall.
+			updater.on('error', (error) => this.reportError(error));
 			return updater;
 		}).catch((error: unknown) => {
 			this.updaterPromise = null;
@@ -124,9 +146,12 @@ class UpdateService {
 			this.publish({ phase: 'checking', error: undefined, progressPercent: undefined });
 			try {
 				const updater = await this.getUpdater();
-				await updater.checkForUpdates();
+				const result = await updater.checkForUpdates();
+				// Metadata checking resolves before the automatic download. Its separate promise
+				// still rejects after the updater emits "error", so it needs its own handler.
+				void result?.downloadPromise?.catch((error: unknown) => this.reportError(error));
 			} catch (error) {
-				this.publish({ phase: 'error', error: (error instanceof Error ? error.message : String(error)).slice(0, 300) });
+				this.reportError(error);
 			} finally {
 				this.checkPromise = null;
 			}
@@ -139,21 +164,18 @@ class UpdateService {
 		if (this.state.phase !== 'ready' || this.installing) throw new Error('No downloaded update is ready to install.');
 		if (!this.beforeInstall) throw new Error('Update installation is unavailable.');
 		this.installing = true;
-		let servicesClosed = false;
+		this.servicesClosedForInstall = false;
 		try {
 			const updater = await this.getUpdater();
+			// Shutdown may partially succeed before rejecting; either case requires a restart.
+			this.servicesClosedForInstall = true;
 			await this.beforeInstall();
-			servicesClosed = true;
 			this.stop();
 			updater.quitAndInstall(false, true);
+			if (!this.installing) throw new Error(this.state.error || 'Update installation failed.');
 		} catch (error) {
-			this.installing = false;
-			this.start();
-			const message = error instanceof Error ? error.message : String(error);
-			const restartHint = servicesClosed
-				? getAppLocale() === 'en-US' ? ' Restart the app before retrying.' : ' 请重启应用后重试。'
-				: '';
-			this.publish({ phase: 'error', error: `${message}${restartHint}`.slice(0, 300) });
+			// An emitted error has already released the lock and published its restart hint.
+			if (this.installing) this.reportError(error);
 			throw error;
 		}
 	}

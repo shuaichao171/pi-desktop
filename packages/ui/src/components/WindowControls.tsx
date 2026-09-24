@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useChatStore } from '../store';
 import { useT } from '../i18n';
 import { Icon } from './Icons';
+import { HoverTooltip } from './HoverTooltip';
 
 /** Windows frameless controls, kept above dialogs so the window can always be closed. */
 export function WindowControls() {
@@ -39,9 +40,9 @@ export function WindowControls() {
 	return (
 		<div className="pd-window-controls" aria-label={t('window.controls')}>
 			{error && <span className="pd-window-control-error" role="alert">{error}</span>}
-			<button type="button" className="pd-window-control" aria-label={t('window.minimize')} title={t('window.minimizeShort')} onClick={() => run(() => bridge.minimizeWindow())}><Icon name="minimize" width="16" height="16" /></button>
-			<button type="button" className="pd-window-control" aria-label={t(maximized ? 'window.restore' : 'window.maximize')} title={t(maximized ? 'window.restoreShort' : 'window.maximizeShort')} onClick={() => run(() => bridge.toggleMaximizeWindow())}><Icon name={maximized ? 'restore' : 'maximize'} width="16" height="16" /></button>
-			<button type="button" className="pd-window-control is-close" aria-label={t('window.close')} title={t('window.closeShort')} onClick={() => run(() => bridge.closeWindow())}><Icon name="close" width="16" height="16" /></button>
+			<HoverTooltip title={t('window.minimizeShort')}><button type="button" className="pd-window-control" aria-label={t('window.minimize')} onClick={() => run(() => bridge.minimizeWindow())}><Icon name="minimize" width="16" height="16" /></button></HoverTooltip>
+			<HoverTooltip title={t(maximized ? 'window.restoreShort' : 'window.maximizeShort')}><button type="button" className="pd-window-control" aria-label={t(maximized ? 'window.restore' : 'window.maximize')} onClick={() => run(() => bridge.toggleMaximizeWindow())}><Icon name={maximized ? 'restore' : 'maximize'} width="16" height="16" /></button></HoverTooltip>
+			<HoverTooltip title={t('window.closeShort')}><button type="button" className="pd-window-control is-close" aria-label={t('window.close')} onClick={() => run(() => bridge.closeWindow())}><Icon name="close" width="16" height="16" /></button></HoverTooltip>
 		</div>
 	);
 }

@@ -1,12 +1,19 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ChangeEvent, type ClipboardEvent, type DragEvent, type KeyboardEvent } from 'react';
-import type { UiAttachment, UiThinkingLevel } from '@pidesktop/shared';
+import { useEffect, useLayoutEffect, useRef, useState, type ChangeEvent, type ClipboardEvent, type DragEvent, type KeyboardEvent } from 'react';
+import type { UiAttachment, UiContextRequest, UiSlashCommand } from '@pidesktop/shared';
 import { inspectAttachmentFile, MAX_ATTACHMENTS } from '../attachmentPolicy';
+import { appendFileAttachments, clearSubmittedDraft, type ComposerDraft } from '../composerDrafts';
 import { useT, type Translate } from '../i18n';
 import { useChatStore } from '../store';
 import { Icon } from './Icons';
+import { ComposerControls } from './ComposerControls';
+import { HoverTooltip } from './HoverTooltip';
+import { ComposerContextPicker, type ComposerContextPickerHandle } from './ComposerContextPicker';
+import { consumeContextMention, contextMentionAt, hasContextSource, type ContextMention } from '../composerContext';
+import { completeSlashCommand, slashTriggerAt, type SlashTrigger } from '../composerSlash';
+import { ComposerSlashPicker, type ComposerSlashPickerHandle } from './ComposerSlashPicker';
+import './composerLayout.css';
 
 type BusyBehavior = 'steer' | 'followUp';
-type Draft = { text: string; attachments: UiAttachment[] };
 
 function draftStorageKey(cwd: string, sessionPath: string | null): string {
 	return `pi-desktop:draft:${encodeURIComponent(cwd)}:${encodeURIComponent(sessionPath ?? 'new')}`;
@@ -43,27 +50,21 @@ async function readFileAttachment(file: File, t: Translate): Promise<UiAttachmen
 }
 
 function attachmentLabel(attachment: UiAttachment, t: Translate): string {
+	if (attachment.kind === 'text' && attachment.source) return t(attachment.source.kind === 'session' ? 'composer.contextSession' : attachment.source.kind === 'directory' ? 'composer.contextDirectory' : 'composer.contextFile');
 	return t(attachment.kind === 'image' ? 'composer.image' : 'composer.text');
 }
 
 export function Composer() {
 	const { t } = useT();
+	const bridge = useChatStore((s) => s.bridge);
 	const status = useChatStore((s) => s.status);
-	const model = useChatStore((s) => s.model);
-	const modelProvider = useChatStore((s) => s.modelProvider);
-	const thinkingLevel = useChatStore((s) => s.thinkingLevel);
-	const availableThinkingLevels = useChatStore((s) => s.availableThinkingLevels);
-	const models = useChatStore((s) => s.models);
-	const settingsLoading = useChatStore((s) => s.settingsLoading);
 	const queuedCount = useChatStore((s) => s.queuedCount);
 	const cwd = useChatStore((s) => s.cwd);
 	const sessionPath = useChatStore((s) => s.sessionPath);
+	const sessionId = useChatStore((s) => s.sessionId);
 	const send = useChatStore((s) => s.send);
 	const abort = useChatStore((s) => s.abort);
 	const retryAgent = useChatStore((s) => s.retryAgent);
-	const refreshModels = useChatStore((s) => s.refreshModels);
-	const setModel = useChatStore((s) => s.setModel);
-	const setThinkingLevel = useChatStore((s) => s.setThinkingLevel);
 	const draftKey = draftStorageKey(cwd, sessionPath);
 	const [text, setText] = useState(() => readDraft(draftKey));
 	const [attachments, setAttachments] = useState<UiAttachment[]>([]);
@@ -72,58 +73,84 @@ export function Composer() {
 	const [attaching, setAttaching] = useState(false);
 	const [submissionError, setSubmissionError] = useState<string | null>(null);
 	const [draftWarning, setDraftWarning] = useState(false);
-	const [pickerOpen, setPickerOpen] = useState(false);
-	const [modelSearch, setModelSearch] = useState('');
-	const [pickerError, setPickerError] = useState<string | null>(null);
-	const [pickerPending, setPickerPending] = useState(false);
 	const textRef = useRef(text);
 	const attachmentsRef = useRef(attachments);
-	const draftsRef = useRef(new Map<string, Draft>([[draftKey, { text, attachments: [] }]]));
+	const draftsRef = useRef(new Map<string, ComposerDraft>([[draftKey, { text, attachments }]]));
+	const pendingAttachmentsRef = useRef(0);
+	const sendingRef = useRef(false);
 	const currentKeyRef = useRef(draftKey);
 	const textareaRef = useRef<HTMLTextAreaElement>(null);
 	const fileInputRef = useRef<HTMLInputElement>(null);
-	const pickerRef = useRef<HTMLDivElement>(null);
-	const pickerButtonRef = useRef<HTMLButtonElement>(null);
-	const pickerSearchRef = useRef<HTMLInputElement>(null);
+	const shellRef = useRef<HTMLDivElement>(null);
+	const contextButtonRef = useRef<HTMLButtonElement>(null);
+	const pickerRef = useRef<ComposerContextPickerHandle>(null);
+	const slashPickerRef = useRef<ComposerSlashPickerHandle>(null);
+	const [slashTrigger, setSlashTrigger] = useState<SlashTrigger | null>(null);
+	const [slashRetry, setSlashRetry] = useState(0);
+	const [slashCatalog, setSlashCatalog] = useState<{ key: string; commands: UiSlashCommand[]; loading: boolean; error: string | null }>({ key: '', commands: [], loading: false, error: null });
+	const dismissedSlash = useRef<string | null>(null);
+	const [contextPicker, setContextPicker] = useState<{ mode: 'menu' } | { mode: 'mention'; mention: ContextMention } | null>(null);
+	const dismissedMention = useRef<{ start: number; prefix: string } | null>(null);
+	const composingRef = useRef(false);
 	const busy = status === 'busy';
 	const unavailable = status === 'starting' || status === 'uninitialized' || status === 'error';
+	const placeholder = t(status === 'error' ? 'composer.connectionErrorPlaceholder' : unavailable ? 'composer.connecting' : busy ? 'composer.busyPlaceholder' : 'composer.placeholder');
 	const canSubmit = Boolean(text.trim() || attachments.length) && !sending && !attaching && !unavailable;
-	const canChangeModel = status === 'idle' && !settingsLoading && !pickerPending;
-	const filteredModels = useMemo(() => {
-		const query = modelSearch.trim().toLocaleLowerCase();
-		return models.filter((item) => `${item.provider} ${item.id} ${item.name}`.toLocaleLowerCase().includes(query)).slice(0, 80);
-	}, [models, modelSearch]);
+	const slashCatalogKey = JSON.stringify([cwd, sessionId]);
+	const slashOpen = slashTrigger !== null;
 
 	useEffect(() => {
+		if (!slashOpen || !bridge || unavailable) return;
+		let cancelled = false;
+		setSlashCatalog({ key: slashCatalogKey, commands: [], loading: true, error: null });
+		void bridge.listSlashCommands().then((commands) => {
+			if (!cancelled) setSlashCatalog({ key: slashCatalogKey, commands, loading: false, error: null });
+		}, (error: unknown) => {
+			if (!cancelled) setSlashCatalog({ key: slashCatalogKey, commands: [], loading: false, error: error instanceof Error ? error.message : String(error) });
+		});
+		return () => { cancelled = true; };
+	}, [slashOpen, bridge, unavailable, slashCatalogKey, slashRetry]);
+
+	useLayoutEffect(() => {
 		if (currentKeyRef.current === draftKey) return;
 		draftsRef.current.set(currentKeyRef.current, { text: textRef.current, attachments: attachmentsRef.current });
 		const next = draftsRef.current.get(draftKey) ?? { text: readDraft(draftKey), attachments: [] };
+		draftsRef.current.set(draftKey, next);
 		currentKeyRef.current = draftKey;
 		textRef.current = next.text;
 		attachmentsRef.current = next.attachments;
 		setText(next.text);
 		setAttachments(next.attachments);
 		setSubmissionError(null);
-		setPickerOpen(false);
+		setContextPicker(null);
+		dismissedMention.current = null;
+		setSlashTrigger(null);
+		dismissedSlash.current = null;
 	}, [draftKey]);
 
-	useLayoutEffect(() => {
-		const textarea = textareaRef.current;
-		if (!textarea) return;
-		textarea.style.height = 'auto';
-		textarea.style.height = `${Math.min(textarea.scrollHeight, 220)}px`;
-	}, [text]);
+	useEffect(() => { if (unavailable) { setContextPicker(null); setSlashTrigger(null); } }, [unavailable]);
 
-	useEffect(() => {
-		if (!pickerOpen) return;
-		pickerSearchRef.current?.focus();
-		void refreshModels().catch((error: unknown) => setPickerError(error instanceof Error ? error.message : String(error)));
-		const outside = (event: MouseEvent) => {
-			if (!pickerRef.current?.contains(event.target as Node) && !pickerButtonRef.current?.contains(event.target as Node)) setPickerOpen(false);
+	useLayoutEffect(() => {
+		const shell = shellRef.current;
+		const textarea = textareaRef.current;
+		if (!shell || !textarea) return;
+		const resize = () => {
+			textarea.style.height = '0px';
+			textarea.style.height = `${Math.min(textarea.scrollHeight, 220)}px`;
 		};
-		document.addEventListener('mousedown', outside);
-		return () => document.removeEventListener('mousedown', outside);
-	}, [pickerOpen, refreshModels]);
+		resize();
+		let frame = 0;
+		let previousWidth = shell.clientWidth;
+		const observer = new ResizeObserver(() => {
+			// Reflow wrapped text on width changes without observing our own height writes.
+			if (shell.clientWidth === previousWidth) return;
+			previousWidth = shell.clientWidth;
+			cancelAnimationFrame(frame);
+			frame = requestAnimationFrame(resize);
+		});
+		observer.observe(shell);
+		return () => { observer.disconnect(); cancelAnimationFrame(frame); };
+	}, [text, placeholder]);
 
 	function changeText(value: string) {
 		textRef.current = value;
@@ -142,21 +169,115 @@ export function Composer() {
 		}
 	}
 
-	async function addFiles(files: File[]) {
-		if (!files.length) return;
+	function syncCompletions(value: string, start: number, end: number) {
+		if (composingRef.current || contextPicker?.mode === 'menu' || unavailable) return;
+		const trigger = slashTriggerAt(value, start, end);
+		const signature = trigger ? JSON.stringify(trigger) : null;
+		if (trigger && signature !== dismissedSlash.current) {
+			setSlashTrigger(trigger);
+			setContextPicker(null);
+			return;
+		}
+		setSlashTrigger(null);
+		if (!trigger) dismissedSlash.current = null;
+		if (attachmentsRef.current.length >= MAX_ATTACHMENTS) { setContextPicker(null); return; }
+		const mention = contextMentionAt(value, start, end);
+		if (!mention) { dismissedMention.current = null; setContextPicker(null); return; }
+		if (dismissedMention.current?.start === mention.start && dismissedMention.current.prefix === value.slice(0, mention.start + 1)) return;
+		setContextPicker({ mode: 'mention', mention });
+	}
+
+	function closeSlash() {
+		dismissedSlash.current = slashTrigger ? JSON.stringify(slashTrigger) : null;
+		setSlashTrigger(null);
+	}
+
+	function selectSlash(command: UiSlashCommand) {
+		if (!slashTrigger || busy && command.requiresIdle) return;
+		const completed = completeSlashCommand(textRef.current, slashTrigger, command.name);
+		if (!completed) return;
 		const key = currentKeyRef.current;
+		setSlashTrigger(null);
+		dismissedSlash.current = null;
+		changeText(completed.text);
+		requestAnimationFrame(() => {
+			if (currentKeyRef.current !== key) return;
+			textareaRef.current?.focus({ preventScroll: true });
+			textareaRef.current?.setSelectionRange(completed.caret, completed.caret);
+		});
+	}
+
+	function closeContext(restoreFocus = false) {
+		if (contextPicker?.mode === 'mention') dismissedMention.current = { start: contextPicker.mention.start, prefix: textRef.current.slice(0, contextPicker.mention.start + 1) };
+		setContextPicker(null);
+		if (restoreFocus) textareaRef.current?.focus({ preventScroll: true });
+	}
+
+	function consumeDraftMention(key: string, original: string, mention: ContextMention | null) {
+		if (!mention) return;
+		const draft = draftsRef.current.get(key);
+		if (!draft || draft.text.slice(0, mention.start) !== original.slice(0, mention.start)) return;
+		const consumed = consumeContextMention(draft.text, mention);
+		if (!consumed) return;
+		if (key === currentKeyRef.current) {
+			const start = textareaRef.current?.selectionStart ?? consumed.caret;
+			const end = textareaRef.current?.selectionEnd ?? start;
+			const adjust = (position: number) => position < mention.start ? position : position <= mention.end ? mention.start : position - (mention.end - mention.start);
+			changeText(consumed.text);
+			requestAnimationFrame(() => {
+				if (key === currentKeyRef.current && document.activeElement === textareaRef.current) textareaRef.current?.setSelectionRange(adjust(start), adjust(end));
+			});
+		} else { draftsRef.current.set(key, { ...draft, text: consumed.text }); writeDraft(key, consumed.text); }
+	}
+
+	async function selectContext(request: UiContextRequest) {
+		if (!bridge || unavailable) return;
+		const key = currentKeyRef.current;
+		const original = textRef.current;
+		const mention = contextPicker?.mode === 'mention' ? contextPicker.mention : null;
+		setContextPicker(null);
+		dismissedMention.current = mention ? { start: mention.start, prefix: original.slice(0, mention.start + 1) } : null;
+		requestAnimationFrame(() => {
+			if (key !== currentKeyRef.current) return;
+			textareaRef.current?.focus({ preventScroll: true });
+		});
+		if (hasContextSource(attachmentsRef.current, request)) { consumeDraftMention(key, original, mention); return; }
+		pendingAttachmentsRef.current += 1;
 		setAttaching(true);
 		setSubmissionError(null);
 		try {
-			for (const file of files) {
-				const current = draftsRef.current.get(key)?.attachments ?? [];
+			if ((draftsRef.current.get(key)?.attachments.length ?? 0) >= MAX_ATTACHMENTS) throw new Error(t('composer.maxAttachments', { count: MAX_ATTACHMENTS }));
+			const attachment = await bridge.readContext(request);
+			const current = draftsRef.current.get(key)?.attachments ?? [];
+			if (!hasContextSource(current, request)) {
 				if (current.length >= MAX_ATTACHMENTS) throw new Error(t('composer.maxAttachments', { count: MAX_ATTACHMENTS }));
-				changeAttachments([...current, await readFileAttachment(file, t)], key);
+				changeAttachments([...current, attachment], key);
 			}
+			consumeDraftMention(key, original, mention);
 		} catch (error) {
-			setSubmissionError(error instanceof Error ? error.message : String(error));
+			if (currentKeyRef.current === key) setSubmissionError(error instanceof Error ? error.message : String(error));
 		} finally {
-			setAttaching(false);
+			pendingAttachmentsRef.current -= 1;
+			setAttaching(pendingAttachmentsRef.current > 0);
+		}
+	}
+
+	async function addFiles(files: File[]) {
+		if (!files.length) return;
+		const key = currentKeyRef.current;
+		pendingAttachmentsRef.current += 1;
+		setAttaching(true);
+		setSubmissionError(null);
+		try {
+			await appendFileAttachments(files, (file) => readFileAttachment(file, t),
+				() => draftsRef.current.get(key)?.attachments ?? [],
+				(next) => changeAttachments(next, key),
+				() => new Error(t('composer.maxAttachments', { count: MAX_ATTACHMENTS })));
+		} catch (error) {
+			if (currentKeyRef.current === key) setSubmissionError(error instanceof Error ? error.message : String(error));
+		} finally {
+			pendingAttachmentsRef.current -= 1;
+			setAttaching(pendingAttachmentsRef.current > 0);
 		}
 	}
 
@@ -181,50 +302,36 @@ export function Composer() {
 	async function submit(behavior?: BusyBehavior): Promise<void> {
 		const value = textRef.current.trim();
 		const submittedAttachments = attachmentsRef.current;
-		if ((!value && !submittedAttachments.length) || sending || attaching || unavailable) return;
+		if ((!value && !submittedAttachments.length) || sendingRef.current || pendingAttachmentsRef.current > 0 || unavailable) return;
 		const submittedKey = currentKeyRef.current;
+		sendingRef.current = true;
 		setSending(true);
 		setSubmissionError(null);
+		setSlashTrigger(null);
+		setContextPicker(null);
 		try {
 			await send(value, busy ? (behavior ?? 'followUp') : undefined, submittedAttachments);
-			if (currentKeyRef.current === submittedKey) {
-				if (textRef.current.trim() === value && attachmentsRef.current === submittedAttachments) {
+			if (clearSubmittedDraft(draftsRef.current, submittedKey, { text: value, attachments: submittedAttachments })) {
+				if (currentKeyRef.current === submittedKey) {
 					changeText('');
 					changeAttachments([]);
-				}
-			} else {
-				draftsRef.current.set(submittedKey, { text: '', attachments: [] });
-				writeDraft(submittedKey, '');
+				} else writeDraft(submittedKey, '');
 			}
 		} catch (error) {
-			setSubmissionError(error instanceof Error ? error.message : String(error));
+			if (currentKeyRef.current === submittedKey) setSubmissionError(error instanceof Error ? error.message : String(error));
 		} finally {
+			sendingRef.current = false;
 			setSending(false);
 		}
 	}
 
 	function onKeyDown(event: KeyboardEvent<HTMLTextAreaElement>): void {
+		if (composingRef.current || event.nativeEvent.isComposing || event.keyCode === 229) return;
+		if (slashTrigger && slashPickerRef.current?.handleKeyDown(event)) return;
+		if (contextPicker && pickerRef.current?.handleKeyDown(event)) return;
 		if (event.key !== 'Enter' || event.shiftKey || event.nativeEvent.isComposing) return;
 		event.preventDefault();
 		void submit(busy && (event.ctrlKey || event.metaKey) ? 'steer' : undefined);
-	}
-
-	async function chooseModel(provider: string, id: string) {
-		if (!canChangeModel) return;
-		setPickerPending(true);
-		setPickerError(null);
-		try { await setModel(provider, id); }
-		catch (error) { setPickerError(error instanceof Error ? error.message : String(error)); }
-		finally { setPickerPending(false); }
-	}
-
-	async function chooseThinking(level: UiThinkingLevel) {
-		if (!canChangeModel) return;
-		setPickerPending(true);
-		setPickerError(null);
-		try { await setThinkingLevel(level); }
-		catch (error) { setPickerError(error instanceof Error ? error.message : String(error)); }
-		finally { setPickerPending(false); }
 	}
 
 	async function retryConnection() {
@@ -241,39 +348,30 @@ export function Composer() {
 			<div className="pd-composer-wrap">
 				{submissionError && <div className="pd-composer-error" role="alert">{submissionError}</div>}
 				{draftWarning && <div className="pd-composer-error" role="status">{t('composer.draftWarning')}</div>}
-				{pickerOpen && <div ref={pickerRef} className="pd-composer-picker-popover" role="dialog" aria-label={t('composer.pickerLabel')} onKeyDown={(event) => { if (event.key === 'Escape') { event.stopPropagation(); setPickerOpen(false); pickerButtonRef.current?.focus(); } }}>
-					<div className="pd-composer-picker-head"><strong>{t('composer.pickerTitle')}</strong><button type="button" onClick={() => setPickerOpen(false)} aria-label={t('composer.pickerClose')}><Icon name="close" width="15" height="15" /></button></div>
-					<input ref={pickerSearchRef} className="pd-composer-picker-search" type="search" value={modelSearch} onChange={(event) => setModelSearch(event.target.value)} placeholder={t('composer.pickerSearchPlaceholder')} aria-label={t('composer.pickerSearchLabel')} />
-					{pickerError && <div className="pd-composer-picker-error" role="alert">{pickerError}</div>}
-					<div className="pd-composer-picker-list" aria-label={t('composer.pickerList')}>
-						{filteredModels.map((item) => <button key={`${item.provider}/${item.id}`} type="button" className={`pd-composer-picker-model${item.provider === modelProvider && item.id === model ? ' is-selected' : ''}`} aria-pressed={item.provider === modelProvider && item.id === model} disabled={!canChangeModel} onClick={() => void chooseModel(item.provider, item.id)}><span><strong>{item.name || item.id}</strong><small>{item.provider}/{item.id}</small></span>{item.provider === modelProvider && item.id === model && <em>{t('composer.pickerCurrent')}</em>}</button>)}
-						{filteredModels.length === 0 && <div className="pd-composer-picker-empty">{t(settingsLoading ? 'composer.pickerLoading' : modelSearch ? 'composer.pickerNoMatch' : 'composer.pickerEmpty')}</div>}
-					</div>
-					<div className="pd-composer-picker-thinking"><strong>{t('composer.pickerThinking')}</strong><div>{availableThinkingLevels.map((level) => <button key={level} type="button" className={thinkingLevel === level ? 'is-selected' : ''} aria-pressed={thinkingLevel === level} disabled={!canChangeModel} onClick={() => void chooseThinking(level)}>{t(`composer.thinking.${level}`)}</button>)}</div></div>
-					{status !== 'idle' && <p className="pd-composer-picker-hint">{t('composer.pickerBusy')}</p>}
-				</div>}
-				<div className="pd-composer-shell" onDragOver={(event) => { if (event.dataTransfer.types.includes('Files')) event.preventDefault(); }} onDrop={onDrop}>
-					{attachments.length > 0 && <div className="pd-composer-attachments" aria-label={t('composer.pendingAttachments')}>{attachments.map((attachment, index) => <div className="pd-composer-attachment" key={`${attachment.name}-${index}`}>
-						{attachment.kind === 'image' ? <img src={`data:${attachment.mimeType};base64,${attachment.data}`} alt="" /> : <span className="pd-composer-attachment-type">TXT</span>}
-						<span className="pd-composer-attachment-name" title={attachment.name}>{attachment.name}<small>{attachmentLabel(attachment, t)}</small></span>
-						<button type="button" onClick={() => changeAttachments(attachmentsRef.current.filter((_, itemIndex) => itemIndex !== index))} aria-label={t('composer.removeAttachment', { name: attachment.name })}><Icon name="close" width="14" height="14" /></button>
+				<div ref={shellRef} className="pd-composer-shell" data-composer-layout="multiline" onDragOver={(event) => { if (event.dataTransfer.types.includes('Files')) event.preventDefault(); }} onDrop={onDrop}>
+					{attachments.length > 0 && <div className="pd-composer-attachments" aria-label={t('composer.pendingAttachments')}>{attachments.map((attachment, index) => <div className={`pd-composer-attachment${attachment.kind === 'text' && attachment.source ? ' is-context' : ''}`} key={`${attachment.name}-${index}`}>
+						{attachment.kind === 'image' ? <img src={`data:${attachment.mimeType};base64,${attachment.data}`} alt="" /> : <span className="pd-composer-attachment-type">{attachment.source ? <Icon name={attachment.source.kind === 'session' ? 'message' : attachment.source.kind === 'directory' ? 'folder' : 'file'} width="16" height="16" /> : 'TXT'}</span>}
+						<HoverTooltip title={attachment.name} description={attachment.kind === 'text' && attachment.source ? `${attachment.source.workspace}\n${attachment.source.path}${attachment.source.truncated ? `\n${t('composer.contextTruncated')}` : ''}` : attachmentLabel(attachment, t)}><span className="pd-composer-attachment-name" tabIndex={0}>{attachment.name}<small>{attachmentLabel(attachment, t)}{attachment.kind === 'text' && attachment.source?.truncated ? ` · ${t('composer.contextTruncatedShort')}` : ''}</small></span></HoverTooltip>
+						<button type="button" onClick={() => { changeAttachments(attachmentsRef.current.filter((_, itemIndex) => itemIndex !== index)); textareaRef.current?.focus(); }} aria-label={t('composer.removeAttachment', { name: attachment.name })}><Icon name="close" width="14" height="14" /></button>
 					</div>)}</div>}
-					<textarea ref={textareaRef} value={text} rows={2} placeholder={t(status === 'error' ? 'composer.connectionErrorPlaceholder' : unavailable ? 'composer.connecting' : busy ? 'composer.busyPlaceholder' : 'composer.placeholder')} aria-label={t('composer.messageLabel')} disabled={unavailable} onChange={(event) => changeText(event.target.value)} onKeyDown={onKeyDown} onPaste={onPaste} />
+					<textarea ref={textareaRef} value={text} rows={2} placeholder={placeholder} aria-label={t('composer.messageLabel')} disabled={unavailable} onChange={(event) => { changeText(event.target.value); syncCompletions(event.target.value, event.target.selectionStart, event.target.selectionEnd); }} onSelect={(event) => syncCompletions(event.currentTarget.value, event.currentTarget.selectionStart, event.currentTarget.selectionEnd)} onCompositionStart={() => { composingRef.current = true; setContextPicker(null); setSlashTrigger(null); }} onCompositionEnd={(event) => { composingRef.current = false; syncCompletions(event.currentTarget.value, event.currentTarget.selectionStart, event.currentTarget.selectionEnd); }} onKeyDown={onKeyDown} onPaste={onPaste} />
 					<div className="pd-composer-toolbar">
 						<div className="pd-composer-meta">
 							<input ref={fileInputRef} type="file" multiple className="pd-composer-file-input" tabIndex={-1} aria-hidden="true" onChange={onFileChange} />
-							<button type="button" className="pd-composer-add-attachment" onClick={() => fileInputRef.current?.click()} disabled={unavailable || attaching || attachments.length >= MAX_ATTACHMENTS} aria-label={t('composer.addAttachment')} title={t('composer.addAttachment')}><Icon name="plus" width="16" height="16" /></button>
-							<button ref={pickerButtonRef} type="button" className="pd-model-chip pd-composer-model-trigger" onClick={() => { setPickerError(null); setPickerOpen((open) => !open); }} aria-haspopup="dialog" aria-expanded={pickerOpen} title={model ? `${modelProvider}/${model} · ${t('composer.thinkingTitle', { level: thinkingLevel ? t(`composer.thinking.${thinkingLevel}`) : '' })}` : t('composer.selectModel')}><span>{model || t('composer.selectModel')}</span><Icon name="chevronDown" width="13" height="13" /></button>
-							<span className="pd-keyboard-hint">{busy ? queuedCount > 0 ? t('composer.queueHint', { count: queuedCount }) : t('composer.busyHint') : t('composer.idleHint')}</span>
+							<HoverTooltip title={t('composer.contextAddTitle')} shortcut="@"><button ref={contextButtonRef} type="button" className="pd-composer-add-attachment" onMouseDown={(event) => event.preventDefault()} onClick={() => { closeSlash(); setContextPicker((current) => current?.mode === 'menu' ? null : { mode: 'menu' }); }} disabled={unavailable || attaching || attachments.length >= MAX_ATTACHMENTS} aria-label={t('composer.contextAddTitle')} aria-haspopup="dialog" aria-expanded={contextPicker !== null}><Icon name="plus" width="16" height="16" /></button></HoverTooltip>
 						</div>
 						<div className="pd-composer-actions">
-							{busy && <><button type="button" className="pd-composer-action" onClick={() => void abort().catch((error: unknown) => setSubmissionError(error instanceof Error ? error.message : String(error)))} title={t('composer.stopTitle')} aria-label={t('composer.stopTitle')}><Icon name="square" width="16" height="16" /><span>{t('composer.stop')}</span></button><button type="button" className="pd-composer-action pd-steer-action" onClick={() => void submit('steer')} disabled={!canSubmit} title={t('composer.steerTitle')}>{t('composer.steer')}</button></>}
+							<ComposerControls />
+							{busy && <><HoverTooltip title={t('composer.stopTitle')}><button type="button" className="pd-composer-action" onClick={() => void abort().catch((error: unknown) => setSubmissionError(error instanceof Error ? error.message : String(error)))} aria-label={t('composer.stopTitle')}><Icon name="square" width="16" height="16" /><span>{t('composer.stop')}</span></button></HoverTooltip><HoverTooltip title={t('composer.steer')} shortcut="Ctrl+Enter"><button type="button" className="pd-composer-action pd-steer-action" onClick={() => void submit('steer')} disabled={!canSubmit}>{t('composer.steer')}</button></HoverTooltip></>}
 							{status === 'error' || retrying
-								? <button type="button" className="pd-send-button pd-composer-retry" onClick={() => void retryConnection()} disabled={retrying} title={t('composer.retryConnection')}><Icon name="refresh" width="15" height="15" /><span>{t(retrying ? 'composer.retryingConnection' : 'composer.retryConnection')}</span></button>
-								: <button type="button" className="pd-send-button" onClick={() => void submit(busy ? 'followUp' : undefined)} disabled={!canSubmit} title={t(busy ? 'composer.queueSendTitle' : 'composer.sendTitle')}><span>{t(sending ? 'composer.sending' : busy ? 'composer.queueSend' : 'composer.send')}</span><Icon name="arrowUp" width="16" height="16" /></button>}
+								? <HoverTooltip title={t('composer.retryConnection')}><button type="button" className="pd-send-button pd-composer-retry" onClick={() => void retryConnection()} disabled={retrying}><Icon name="refresh" width="15" height="15" /><span>{t(retrying ? 'composer.retryingConnection' : 'composer.retryConnection')}</span></button></HoverTooltip>
+								: <HoverTooltip title={t(busy ? 'composer.queueSend' : 'composer.send')} description={t(busy ? 'composer.busyHint' : 'composer.idleHint')} shortcut="Enter"><button type="button" className="pd-send-button" onClick={() => void submit(busy ? 'followUp' : undefined)} disabled={!canSubmit} aria-label={t(busy ? 'composer.queueSend' : 'composer.send')}><Icon name="arrowUp" width="16" height="16" /></button></HoverTooltip>}
 						</div>
 					</div>
 				</div>
+				{contextPicker && !unavailable && shellRef.current && <ComposerContextPicker ref={pickerRef} anchor={shellRef.current} trigger={contextButtonRef.current} mode={contextPicker.mode} query={contextPicker.mode === 'mention' ? contextPicker.mention.query : ''} workspace={cwd} sessionPath={sessionPath} onSelect={(request) => void selectContext(request)} onUpload={() => { closeContext(); fileInputRef.current?.click(); }} onClose={closeContext} />}
+				{slashTrigger && !unavailable && shellRef.current && <ComposerSlashPicker ref={slashPickerRef} anchor={shellRef.current} query={slashTrigger.query} commands={slashCatalog.key === slashCatalogKey ? slashCatalog.commands : []} loading={slashCatalog.key !== slashCatalogKey || slashCatalog.loading} error={slashCatalog.key === slashCatalogKey ? slashCatalog.error : null} busy={busy} onSelect={selectSlash} onClose={closeSlash} onRetry={() => setSlashRetry((value) => value + 1)} />}
+				{busy && <p className="pd-composer-attachment-hint" role="status">{queuedCount > 0 ? t('composer.queueHint', { count: queuedCount }) : t('composer.busyHint')}</p>}
 				{attaching && <p className="pd-composer-attachment-hint" role="status">{t('composer.readingAttachments')}</p>}
 				{attachments.length > 0 && <p className="pd-composer-attachment-hint">{t('composer.attachmentPersistence')}</p>}
 			</div>

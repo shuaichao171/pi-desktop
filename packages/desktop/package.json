@@ -1,7 +1,7 @@
 {
   "name": "@pidesktop/desktop",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.1.1",
   "license": "MIT",
   "description": "Desktop workbench for the Pi coding agent",
   "author": "Pi Desktop contributors",
@@ -11,11 +11,11 @@
   "main": "out/main/index.js",
   "scripts": {
     "dev": "electron-vite dev",
-    "build": "electron-vite build",
-    "pack:dir": "pnpm build && electron-builder --dir --win --x64 --publish never",
-    "dist:win": "pnpm build && electron-builder --win nsis portable --x64 --publish never",
+    "build": "electron-vite build && node ../../scripts/prepare-update-config.mjs",
+    "pack:dir": "pnpm build && node ../../scripts/dist-win.mjs --dir",
+    "dist:win": "node ../../scripts/make-portable-splash.mjs && pnpm build && node ../../scripts/dist-win.mjs",
     "dist:mac": "node ../../scripts/dist-mac-native.mjs",
-    "dist:linux": "pnpm build && electron-builder --linux AppImage deb --x64 --publish never",
+    "dist:linux": "pnpm build && node ../../scripts/dist-linux.mjs",
     "typecheck": "tsc -p tsconfig.node.json && tsc -p tsconfig.web.json",
     "clean": "rimraf out dist"
   },

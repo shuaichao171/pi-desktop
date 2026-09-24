@@ -19,10 +19,16 @@ asarUnpack:
   - '**/esbuild/bin/**'
 
 extraResources:
-  - from: build/update-config.json
+  - from: out/update-config.json
     to: update-config.json
   - from: ../../LICENSE
     to: LICENSE.txt
+
+# Public Releases also host latest*.yml. Packaging scripts keep environment
+# overrides aligned with the embedded out/update-config.json.
+publish:
+  provider: generic
+  url: https://github.com/shuaichao171/pi-desktop/releases/latest/download/
 
 win:
   icon: build/icon.ico

@@ -1,0 +1,103 @@
+/* Higher specificity keeps these rules independent of the legacy sheet order. */
+.pd-app-shell > .pd-sidebar {
+  transition: flex-basis var(--pd-motion-normal, 280ms) var(--pd-ease-enter, cubic-bezier(.19, 1, .22, 1));
+}
+.pd-app-shell.is-sidebar-resizing > .pd-sidebar { transition: none; }
+.pd-app-shell.is-sidebar-resizing { cursor: col-resize; user-select: none; }
+.pd-sidebar .pd-sidebar-session-content { display: flex; flex: 1; flex-direction: column; min-height: 0; }
+.pd-sidebar.is-collapsed .pd-sidebar-session-content { visibility: hidden; pointer-events: none; }
+
+.pd-app-shell > .pd-workbench {
+  --pd-workbench-size: 360px;
+  display: flex;
+  flex: 0 0 0;
+  overflow: hidden;
+  border-left-width: 0;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: flex-basis var(--pd-motion-normal, 280ms) var(--pd-ease-enter, cubic-bezier(.19, 1, .22, 1)),
+    opacity var(--pd-motion-fast, 150ms) ease,
+    visibility 0s var(--pd-motion-normal, 280ms);
+}
+.pd-app-shell > .pd-workbench.is-open {
+  flex-basis: var(--pd-workbench-size);
+  border-left-width: 1px;
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transition-delay: 0s;
+}
+.pd-workbench > .pd-workbench-content {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  width: var(--pd-workbench-size, 360px);
+  min-height: 0;
+}
+.pd-app-shell > :is(.pd-sidebar-scrim, .pd-workbench-scrim) {
+  background: var(--pd-overlay);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity var(--pd-motion-normal, 280ms) ease, visibility 0s var(--pd-motion-normal, 280ms);
+}
+.pd-app-shell > :is(.pd-sidebar-scrim, .pd-workbench-scrim).is-open {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transition-delay: 0s;
+}
+
+.pd-segmented { position: relative; isolation: isolate; }
+.pd-segmented > .pd-segmented-indicator {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: -1;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: var(--pd-selected);
+  pointer-events: none;
+  transition: transform var(--pd-motion-normal, 280ms) var(--pd-ease-enter, cubic-bezier(.19, 1, .22, 1)),
+    width var(--pd-motion-normal, 280ms) var(--pd-ease-enter, cubic-bezier(.19, 1, .22, 1)),
+    height var(--pd-motion-normal, 280ms) var(--pd-ease-enter, cubic-bezier(.19, 1, .22, 1));
+}
+.pd-workbench-tabs.pd-segmented[data-indicator-ready='true'] > button.is-active,
+.pd-search-scopes.pd-segmented[data-indicator-ready='true'] > button.is-active { background: transparent; border-color: transparent; }
+.pd-search-scopes.pd-segmented > .pd-segmented-indicator { border-color: var(--pd-border); border-radius: 7px; background: var(--pd-surface-hover); }
+
+@media (max-width: 1100px) {
+  .pd-app-shell > .pd-workbench {
+    --pd-workbench-size: min(420px, calc(100vw - 56px));
+    position: absolute;
+    top: 56px;
+    bottom: 0;
+    right: 0;
+    z-index: 26;
+    width: var(--pd-workbench-size);
+    height: auto;
+    border-left-width: 1px;
+    transform: translateX(100%);
+    box-shadow: var(--pd-shadow-popover);
+    transition: transform var(--pd-motion-normal, 280ms) var(--pd-ease-enter, cubic-bezier(.19, 1, .22, 1)),
+      opacity var(--pd-motion-fast, 150ms) ease, visibility 0s var(--pd-motion-normal, 280ms);
+  }
+  .pd-app-shell > .pd-workbench.is-open { transform: translateX(0); transition-delay: 0s; }
+}
+@media (max-width: 880px) {
+  .pd-app-shell > .pd-sidebar {
+    visibility: hidden;
+    pointer-events: none;
+    transition: transform var(--pd-motion-normal, 280ms) var(--pd-ease-enter, cubic-bezier(.19, 1, .22, 1)),
+      visibility 0s var(--pd-motion-normal, 280ms);
+  }
+  .pd-app-shell > .pd-sidebar.is-open { visibility: visible; pointer-events: auto; transition-delay: 0s; }
+}
+@media (max-width: 650px) {
+  .pd-app-shell > .pd-workbench { --pd-workbench-size: min(100vw, 420px); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pd-app-shell > :is(.pd-sidebar, .pd-workbench, .pd-sidebar-scrim, .pd-workbench-scrim),
+  .pd-segmented > .pd-segmented-indicator { transition: none; }
+}

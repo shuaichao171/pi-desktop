@@ -3,9 +3,12 @@ import type { WorkspaceCommandEvent, WorkspaceEntry, WorkspaceGitStatus } from '
 import { useChatStore } from '../store';
 import { useT } from '../i18n';
 import { Icon } from './Icons';
+import { HoverTooltip } from './HoverTooltip';
+import { SegmentedIndicator } from './SegmentedIndicator';
 
 type WorkbenchTab = 'files' | 'git' | 'command';
 type CommandRun = { id: string; command: string; cwd: string };
+export interface WorkbenchOpenRequest { cwd: string; path: string; requestId: number }
 
 function parentDirectory(path: string): string {
 	return path.split('/').slice(0, -1).join('/');
@@ -18,7 +21,7 @@ function readableSize(size?: number): string {
 	return `${(size / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-export function WorkbenchSidePane({ open, onClose }: { open: boolean; onClose(): void }) {
+export function WorkbenchSidePane({ open, onClose, openRequest }: { open: boolean; onClose(): void; openRequest?: WorkbenchOpenRequest | null }) {
 	const { t } = useT();
 	const bridge = useChatStore((state) => state.bridge);
 	const cwd = useChatStore((state) => state.cwd);
@@ -51,6 +54,7 @@ export function WorkbenchSidePane({ open, onClose }: { open: boolean; onClose():
 	const ignoredCommandIdsRef = useRef(new Set<string>());
 	const eventRenderTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 	const currentCwdRef = useRef(cwd);
+	const handledOpenRequest = useRef<number | null>(null);
 	currentCwdRef.current = cwd;
 	const listingRequest = useRef(0);
 	const fileRequest = useRef(0);
@@ -91,6 +95,14 @@ export function WorkbenchSidePane({ open, onClose }: { open: boolean; onClose():
 		setDiffPath(null);
 		setDiffText('');
 	}, [cwd]);
+
+	useEffect(() => {
+		if (!open || !bridge || !openRequest || openRequest.cwd !== cwd || handledOpenRequest.current === openRequest.requestId) return;
+		handledOpenRequest.current = openRequest.requestId;
+		setTab('files');
+		setDirectory(parentDirectory(openRequest.path));
+		void openFile({ kind: 'file', path: openRequest.path, name: openRequest.path.split('/').at(-1) ?? openRequest.path });
+	}, [open, bridge, cwd, openRequest]);
 
 	useEffect(() => {
 		if (!bridge) return;
@@ -228,29 +240,30 @@ export function WorkbenchSidePane({ open, onClose }: { open: boolean; onClose():
 
 	return (
 		<aside className={`pd-workbench${open ? ' is-open' : ''}`} aria-label={t('workbench.panel')} aria-hidden={!open} inert={!open}>
+			<div className="pd-workbench-content">
 			<header className="pd-workbench-header">
 				<div><span className="pd-workbench-eyebrow">{t('workbench.workspace')}</span><h2>{t('workbench.title')}</h2></div>
 				<button type="button" className="pd-icon-button" onClick={onClose} aria-label={t('workbench.close')}><Icon name="close" width="17" height="17" /></button>
 			</header>
-			<nav className="pd-workbench-tabs" aria-label={t('workbench.tabs')}>
-				<button type="button" className={tab === 'files' ? 'is-active' : ''} aria-current={tab === 'files' ? 'page' : undefined} onClick={() => setTab('files')}><Icon name="file" width="15" height="15" />{t('workbench.files')}</button>
-				<button type="button" className={tab === 'git' ? 'is-active' : ''} aria-current={tab === 'git' ? 'page' : undefined} onClick={() => setTab('git')}><Icon name="gitBranch" width="15" height="15" />{t('workbench.git')}</button>
-				<button type="button" className={tab === 'command' ? 'is-active' : ''} aria-current={tab === 'command' ? 'page' : undefined} onClick={() => setTab('command')}><Icon name="terminal" width="15" height="15" />{t('workbench.command')}</button>
-			</nav>
+			<SegmentedIndicator as="nav" activeKey={tab} className="pd-workbench-tabs" label={t('workbench.tabs')}>
+				<button data-segment-key="files" type="button" className={tab === 'files' ? 'is-active' : ''} aria-current={tab === 'files' ? 'page' : undefined} onClick={() => setTab('files')}><Icon name="file" width="15" height="15" />{t('workbench.files')}</button>
+				<button data-segment-key="git" type="button" className={tab === 'git' ? 'is-active' : ''} aria-current={tab === 'git' ? 'page' : undefined} onClick={() => setTab('git')}><Icon name="gitBranch" width="15" height="15" />{t('workbench.git')}</button>
+				<button data-segment-key="command" type="button" className={tab === 'command' ? 'is-active' : ''} aria-current={tab === 'command' ? 'page' : undefined} onClick={() => setTab('command')}><Icon name="terminal" width="15" height="15" />{t('workbench.command')}</button>
+			</SegmentedIndicator>
 			<div className="pd-workbench-body">
 				{!cwd && <div className="pd-workbench-empty">{t('workbench.emptyWorkspace')}</div>}
 
 				{cwd && tab === 'files' && <>
 					<div className="pd-workbench-toolbar">
 						<div className="pd-workbench-breadcrumb">
-							<button type="button" onClick={() => { setDirectory(''); setSelectedFile(null); }} title={cwd}>{cwd.split(/[\\/]/).filter(Boolean).at(-1) ?? cwd}</button>
+							<HoverTooltip title={cwd}><button type="button" onClick={() => { setDirectory(''); setSelectedFile(null); }}>{cwd.split(/[\\/]/).filter(Boolean).at(-1) ?? cwd}</button></HoverTooltip>
 							{breadcrumb.map((part, index) => <span key={`${index}:${part}`}><Icon name="chevronRight" width="12" height="12" /><button type="button" onClick={() => { setDirectory(breadcrumb.slice(0, index + 1).join('/')); setSelectedFile(null); }}>{part}</button></span>)}
 						</div>
-						<button type="button" className="pd-icon-button" onClick={() => setListingRevision((value) => value + 1)} aria-label={t('workbench.refreshFiles')} title={t('workbench.refresh')}><Icon name="refresh" width="15" height="15" /></button>
+						<HoverTooltip title={t('workbench.refresh')}><button type="button" className="pd-icon-button" onClick={() => setListingRevision((value) => value + 1)} aria-label={t('workbench.refreshFiles')}><Icon name="refresh" width="15" height="15" /></button></HoverTooltip>
 					</div>
 					<div className="pd-workbench-file-list" aria-label={t('workbench.fileList')}>
 						{directory && <button type="button" className="pd-workbench-entry" onClick={() => { setDirectory(parentDirectory(directory)); setSelectedFile(null); }}><Icon name="folder" width="15" height="15" /><span>..</span></button>}
-						{entries.map((entry) => <button key={entry.path} type="button" className={`pd-workbench-entry${selectedFile === entry.path ? ' is-selected' : ''}`} onClick={() => void openFile(entry)} title={entry.path}><Icon name={entry.kind === 'directory' ? 'folder' : 'file'} width="15" height="15" /><span>{entry.name}</span>{entry.kind === 'file' && <small>{readableSize(entry.size)}</small>}</button>)}
+						{entries.map((entry) => <HoverTooltip key={entry.path} title={entry.path}><button type="button" className={`pd-workbench-entry${selectedFile === entry.path ? ' is-selected' : ''}`} onClick={() => void openFile(entry)}><Icon name={entry.kind === 'directory' ? 'folder' : 'file'} width="15" height="15" /><span>{entry.name}</span>{entry.kind === 'file' && <small>{readableSize(entry.size)}</small>}</button></HoverTooltip>)}
 						{listingLoading && <div className="pd-workbench-empty">{t('workbench.loadingFolder')}</div>}
 						{listingError && <div className="pd-workbench-error" role="alert">{listingError}</div>}
 						{!listingLoading && !listingError && entries.length === 0 && <div className="pd-workbench-empty">{t('workbench.folderEmpty')}</div>}
@@ -263,13 +276,13 @@ export function WorkbenchSidePane({ open, onClose }: { open: boolean; onClose():
 				</>}
 
 				{cwd && tab === 'git' && <>
-					<div className="pd-workbench-toolbar"><strong>{t('workbench.gitStatus')}</strong><button type="button" className="pd-icon-button" onClick={() => setGitRevision((value) => value + 1)} aria-label={t('workbench.refreshGit')} title={t('workbench.refresh')}><Icon name="refresh" width="15" height="15" /></button></div>
+					<div className="pd-workbench-toolbar"><strong>{t('workbench.gitStatus')}</strong><HoverTooltip title={t('workbench.refresh')}><button type="button" className="pd-icon-button" onClick={() => setGitRevision((value) => value + 1)} aria-label={t('workbench.refreshGit')}><Icon name="refresh" width="15" height="15" /></button></HoverTooltip></div>
 					{gitLoading && <div className="pd-workbench-empty">{t('workbench.loadingGit')}</div>}
 					{gitError && <div className="pd-workbench-error" role="alert">{gitError}</div>}
 					{!gitLoading && !gitError && gitStatus && (gitStatus.isRepository ? <>
 						<div className="pd-workbench-branch"><Icon name="gitBranch" width="15" height="15" /><span>{gitStatus.branch || 'HEAD'}</span><small>{t('workbench.changes', { count: gitStatus.entries.length })}</small></div>
 						<div className="pd-workbench-changes">
-							{gitStatus.entries.map((entry) => <button key={entry.path} type="button" className={`pd-workbench-change${diffPath === entry.path ? ' is-selected' : ''}`} onClick={() => void openDiff(entry.path)} title={entry.path}><span className="pd-workbench-git-status">{entry.status.replaceAll(' ', '·')}</span><span>{entry.path}</span></button>)}
+							{gitStatus.entries.map((entry) => <HoverTooltip key={entry.path} title={entry.path}><button type="button" className={`pd-workbench-change${diffPath === entry.path ? ' is-selected' : ''}`} onClick={() => void openDiff(entry.path)}><span className="pd-workbench-git-status">{entry.status.replaceAll(' ', '·')}</span><span>{entry.path}</span></button></HoverTooltip>)}
 							{gitStatus.entries.length === 0 && <div className="pd-workbench-empty">{t('workbench.clean')}</div>}
 						</div>
 						{diffPath && <section className="pd-workbench-preview" aria-label={t('workbench.diff')}>
@@ -296,6 +309,7 @@ export function WorkbenchSidePane({ open, onClose }: { open: boolean; onClose():
 						<pre aria-live="polite">{outputEvents.map((event, index) => <span className={event.type === 'stderr' || event.type === 'error' ? 'is-stderr' : ''} key={index}>{event.data}</span>)}{outputEvents.length === 0 && t(commandRunning ? 'workbench.waitingOutput' : 'workbench.noOutput')}</pre>
 					</section>}
 				</>}
+			</div>
 			</div>
 		</aside>
 	);
