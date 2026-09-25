@@ -532,7 +532,7 @@ export interface AppInfo {
   platform: string;
 }
 
-export type UiUpdatePhase = 'unavailable' | 'idle' | 'checking' | 'downloading' | 'ready' | 'up-to-date' | 'error';
+export type UiUpdatePhase = 'unavailable' | 'idle' | 'checking' | 'downloading' | 'ready' | 'installing' | 'up-to-date' | 'error';
 export type UiUpdateUnavailableReason = 'development' | 'portable' | 'unsupported' | 'unconfigured' | 'invalid-feed';
 
 export interface UiUpdateState {
@@ -541,6 +541,7 @@ export interface UiUpdateState {
   currentVersion: string;
   availableVersion?: string;
   progressPercent?: number;
+  installRequested?: boolean;
   error?: string;
 }
 

@@ -10,7 +10,7 @@ https://github.com/shuaichao171/pi-desktop/releases/latest/download/
 
 ## 当前支持
 
-- Windows Setup：检查版本、自动下载、显示进度，用户点击后退出并安装、重新启动。启动 15 秒后首次检查，此后每 6 小时检查，也可在“设置 → 软件更新”手动检查。
+- Windows Setup：启动 15 秒后首次检查，此后每 4 小时检查并自动下载，也可在“设置 → 更新”手动检查。有新版本时，左下角设置右侧显示独立的“更新”按钮；点击后直接安装并重启，若仍在下载则在下载完成后安装。没有新版本时按钮隐藏，未点击时不会自动重启。下载失败可从按钮重试。
 - Windows Portable：仍需下载新版并手动替换，不使用 Setup 的自动安装流程。
 - Linux AppImage：支持软件内更新；DEB 由系统包管理器更新。
 - macOS：只有配置完整签名与公证凭据后，发布流程才构建正式 DMG／ZIP；未配置时跳过，Windows／Linux 继续发布。

@@ -36,9 +36,10 @@ export function WorkspaceFolderButton({ cwd }: { cwd: string }) {
 	}
 
 	const label = t(opening ? 'chat.openingWorkspaceFolder' : 'chat.openWorkspaceFolder');
+	const projectName = cwd.split(/[\\/]/).filter(Boolean).pop() || cwd;
 	return <div className="pd-chat-workspace" onKeyDown={(event) => { if (event.key === 'Escape' && error) { event.stopPropagation(); setError(null); } }}>
-		<HoverTooltip title={label} description={cwd} align="start" disabled={Boolean(error)}>
-			<button type="button" className="pd-icon-button pd-chat-workspace-button" aria-label={cwd ? `${label}: ${cwd}` : label} aria-busy={opening} disabled={!bridge || !cwd || navigationPending || opening} onClick={() => void openFolder()}><Icon name="folder" width="16" height="16" /></button>
+		<HoverTooltip title={projectName} align="start" disabled={Boolean(error) || !projectName}>
+			<button type="button" className="pd-icon-button pd-chat-workspace-button" aria-label={projectName ? `${label}: ${projectName}` : label} aria-busy={opening} disabled={!bridge || !cwd || navigationPending || opening} onClick={() => void openFolder()}><Icon name="folder" width="16" height="16" /></button>
 		</HoverTooltip>
 		{error && <div className="pd-chat-title-error pd-chat-workspace-error" role="alert">{t('chat.openWorkspaceFolderError', { message: error })}</div>}
 	</div>;

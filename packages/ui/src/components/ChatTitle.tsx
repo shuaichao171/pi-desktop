@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { useT } from '../i18n';
 import { useChatStore } from '../store';
-import { HoverTooltip } from './HoverTooltip';
 
 /** Keyed by conversation so a pending rename never edits the next title. */
 export function ChatTitle({ title, sessionPath }: { title: string; sessionPath: string | null }) {
@@ -94,14 +93,14 @@ export function ChatTitle({ title, sessionPath }: { title: string; sessionPath: 
 					if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); if (!savingRef.current) finishEditing(true); }
 				}}
 				onBlur={() => finishEditing(false)}
-			/> : <HoverTooltip title={t('chat.renameTitle')} description={t('chat.renameTitleHint')} disabled={!canRename} align="start"><button
+			/> : <button
 				ref={buttonRef}
 				type="button"
 				className="pd-chat-title-button"
 				aria-label={t('chat.renameTitleLabel', { title })}
 				aria-disabled={!canRename}
 				onClick={startEditing}
-			>{title}</button></HoverTooltip>}
+			>{title}</button>}
 		</h1>
 		<span id={hintId} className="pd-chat-title-sr-only">{t('chat.renameTitleHint')}</span>
 		{saving && <span className="pd-chat-title-sr-only" role="status">{t('chat.titleSaving')}</span>}

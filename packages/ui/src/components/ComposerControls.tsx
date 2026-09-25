@@ -163,24 +163,14 @@ export function ComposerControls({ onOpenModelManagement }: { onOpenModelManagem
 		const place = () => {
 			const rect = anchor.getBoundingClientRect();
 			const box = popover.getBoundingClientRect();
-			const preferredLeft = open === 'model' ? rect.left + (rect.width - box.width) / 2 : rect.right - box.width;
+			const preferredLeft = rect.left + (rect.width - box.width) / 2;
 			const left = Math.max(8, Math.min(preferredLeft, window.innerWidth - box.width - 8));
-			if (open === 'model') {
-				// Center above the clicked button. Shrink/scroll the contents
-				// when space is limited, leaving the window controls accessible.
-				const chrome = document.querySelector('.pd-window-controls')?.getBoundingClientRect();
-				const topInset = chrome && chrome.width > 0 && chrome.height > 0 && left < chrome.right && left + box.width > chrome.left
-					? Math.max(8, chrome.bottom + 8) : 8;
-				updatePosition({ left, bottom: window.innerHeight - rect.top + 6, maxHeight: Math.max(0, Math.min(440, rect.top - 6 - topInset)) });
-				return;
-			}
-			const height = Math.min(box.height, window.innerHeight - 16);
-			const above = rect.top - height - 6;
-			const below = rect.bottom + 6;
-			updatePosition({
-				left,
-				top: above >= 8 ? above : below + height <= window.innerHeight - 8 ? below : 8,
-			});
+			// Keep both pickers centered above their buttons. Limit their height
+			// to the available space and leave the window controls accessible.
+			const chrome = document.querySelector('.pd-window-controls')?.getBoundingClientRect();
+			const topInset = chrome && chrome.width > 0 && chrome.height > 0 && left < chrome.right && left + box.width > chrome.left
+				? Math.max(8, chrome.bottom + 8) : 8;
+			updatePosition({ left, bottom: window.innerHeight - rect.top + 6, maxHeight: Math.max(0, Math.min(440, rect.top - 6 - topInset)) });
 		};
 		place();
 		// Panel transitions can move the button without resizing it. Track only
@@ -245,11 +235,8 @@ export function ComposerControls({ onOpenModelManagement }: { onOpenModelManagem
 	}
 
 	const contextDescription = <span className="pd-context-details">
-		<span className="pd-context-summary"><strong>{amount === null ? t('composer.contextUnknown') : tokenLabel(amount)} / {capacityLabel}</strong><span>{percentLabel}{percent === null ? '' : '%'}</span></span>
+		<span className="pd-context-summary"><strong>{amount === null ? '—' : tokenLabel(amount)} / {capacityLabel}</strong><span>{percentLabel}{percent === null ? '' : '%'}</span></span>
 		<span className="pd-context-progress" aria-hidden="true"><span style={{ width: `${Math.max(0, Math.min(100, percent ?? 0))}%` }} /></span>
-		<span className="pd-context-stat"><span>{t('composer.contextUsed')}</span><span>{amount === null ? t('composer.contextUnknown') : `${amount.toLocaleString(locale)} tokens`}</span></span>
-		<span className="pd-context-stat"><span>{t('composer.contextCapacity')}</span><span>{capacity ? `${capacity.toLocaleString(locale)} tokens` : t('composer.contextUnknown')}</span></span>
-		<span className="pd-context-note">{t(amount === null ? 'composer.contextPending' : 'composer.contextEstimate')}</span>
 	</span>;
 
 	return <div className="pd-composer-config">
@@ -263,7 +250,7 @@ export function ComposerControls({ onOpenModelManagement }: { onOpenModelManagem
 				<Icon name="spark" className="pd-model-trigger-icon" width="16" height="16" /><span>{modelLabel}</span><Icon name="chevronDown" width="12" height="12" />
 			</button>
 		</HoverTooltip>
-		<HoverTooltip title={t('composer.pickerThinking')} description={t(!thinking ? 'composer.thinkingUnknown' : canThink ? 'composer.thinkingDescription' : 'composer.thinkingUnavailable')} disabled={open !== null}>
+		<HoverTooltip title={t('composer.pickerThinking')} description={!thinking ? t('composer.thinkingUnknown') : canThink ? undefined : t('composer.thinkingUnavailable')} disabled={open !== null}>
 			<button ref={thinkingRef} type="button" className="pd-composer-control pd-composer-thinking-trigger" aria-disabled={!canThink} onClick={() => toggle('thinking')} aria-label={`${t('composer.pickerThinking')}: ${thinkingLabel}`} aria-haspopup="menu" aria-expanded={open === 'thinking'} aria-controls={open === 'thinking' ? 'pd-composer-thinking-picker' : undefined}>
 				<Icon name="brain" width="16" height="16" /><span>{thinkingLabel}</span>{canThink && <Icon name="chevronDown" width="12" height="12" />}
 			</button>

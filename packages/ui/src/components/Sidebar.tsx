@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { UiUpdateState } from '@pidesktop/shared';
 import { useChatStore } from '../store';
 import { useT } from '../i18n';
@@ -32,14 +32,26 @@ export function Sidebar({ open, narrow, onToggle, onNavigate, onOpenSettings, on
 	const pickWorkspace = useChatStore((s) => s.pickWorkspace);
 	const newSession = useChatStore((s) => s.newSession);
 	const [actionError, setActionError] = useState<string | null>(null);
+	const [updateActionError, setUpdateActionError] = useState<string | null>(null);
+	const [updatePending, setUpdatePending] = useState(false);
+	const updateActionLock = useRef(false);
 	const [updateSnapshot, setUpdateSnapshot] = useState<{ bridge: typeof bridge; state: UiUpdateState } | null>(null);
 	const updateState = updateSnapshot?.bridge === bridge ? updateSnapshot.state : null;
-	const updateAvailable = updateState?.phase === 'downloading' || updateState?.phase === 'ready'
+	const updateAvailable = updateState?.phase === 'downloading' || updateState?.phase === 'ready' || updateState?.phase === 'installing'
 		|| Boolean(updateState?.availableVersion && (updateState.phase === 'error' || updateState.phase === 'checking'));
 	const updatePercent = Number.isFinite(updateState?.progressPercent) ? Math.round(Math.max(0, Math.min(100, updateState!.progressPercent!))) : 0;
-	const updateLabel = updateState?.phase === 'ready' ? t('settings.updateReadyNotice')
-		: updateState?.phase === 'downloading' ? t('settings.updateDownloading', { percent: updatePercent })
+	const updateBusy = updatePending || Boolean(updateState?.installRequested) || updateState?.phase === 'installing';
+	const updateError = updateActionError ?? (updateState?.phase === 'error' && updateState.availableVersion ? updateState.error : null);
+	const updateLabel = updateError ? `${updateError}\n${t('settings.updateRetryNotice')}`
+		: updateState?.phase === 'installing' ? t('settings.updateInstalling')
+		: updateState?.installRequested ? t('settings.updateRequestedNotice')
+		: updateState?.phase === 'ready' ? t('settings.updateReadyNotice')
+		: updateState?.phase === 'downloading' ? t('settings.updateDownloadNotice', { percent: updatePercent })
 		: t('settings.updateAvailableNotice');
+	const updateButtonText = updateState?.phase === 'installing' ? t('sidebar.updateRestarting')
+		: updateState?.phase === 'downloading' ? `${updatePercent}%`
+		: updateBusy ? t('sidebar.updatePending')
+		: updateError ? t('sidebar.updateRetry') : t('sidebar.update');
 	const collapsed = !open && !narrow;
 
 	useEffect(() => {
@@ -48,7 +60,10 @@ export function Sidebar({ open, narrow, onToggle, onNavigate, onOpenSettings, on
 		let receivedEvent = false;
 		const unsubscribe = bridge.onUpdateStateChanged((state) => {
 			receivedEvent = true;
-			if (active) setUpdateSnapshot({ bridge, state });
+			if (active) {
+				setUpdateSnapshot({ bridge, state });
+				if (state.phase !== 'error') setUpdateActionError(null);
+			}
 		});
 		// A delayed initial read must not replace a newer download notification.
 		void bridge.getUpdateState().then((state) => {
@@ -61,6 +76,16 @@ export function Sidebar({ open, narrow, onToggle, onNavigate, onOpenSettings, on
 		setActionError(null);
 		try { await (cwd ? newSession() : pickWorkspace()); onNavigate(); }
 		catch (error) { setActionError(error instanceof Error ? error.message : String(error)); }
+	}
+
+	async function updateNow() {
+		if (!bridge || !updateAvailable || updateBusy || updateActionLock.current) return;
+		updateActionLock.current = true;
+		setUpdatePending(true);
+		setUpdateActionError(null);
+		try { await bridge.installUpdate(); }
+		catch (error) { setUpdateActionError(error instanceof Error ? error.message : String(error)); }
+		finally { updateActionLock.current = false; setUpdatePending(false); }
 	}
 
 	return <aside className={`pd-sidebar${collapsed ? ' is-collapsed' : ''}${open ? ' is-open' : ''}`} aria-label={t('sidebar.main')} aria-hidden={narrow && !open} inert={narrow && !open}>
@@ -81,11 +106,12 @@ export function Sidebar({ open, narrow, onToggle, onNavigate, onOpenSettings, on
 		</div>
 		<div className="pd-sidebar-footer">
 			{actionError && <div className="pd-sidebar-error pd-sidebar-detail" role="alert">{actionError}</div>}
+			{updateError && <div className="pd-sidebar-error pd-sidebar-detail" role="alert">{updateError}</div>}
 			<div className="pd-sidebar-footer-actions">
 				<HoverTooltip title={t('sidebar.settings')} align="start"><button type="button" className="pd-settings-entry" aria-label={t('sidebar.settings')} onClick={() => onOpenSettings()}><Icon name="settings" width="17" height="17" /><span className="pd-sidebar-detail">{t('sidebar.settings')}</span><Icon name="chevronRight" className="pd-sidebar-detail" width="15" height="15" /></button></HoverTooltip>
 				{updateAvailable && <HoverTooltip title={updateLabel} align="end">
-					<button type="button" className={`pd-sidebar-update${updateState?.phase === 'downloading' ? ' is-downloading' : ''}`} aria-label={updateLabel} aria-haspopup="dialog" data-update-phase={updateState?.phase} onClick={() => onOpenSettings('updates')}>
-						<span className="pd-sidebar-update-pill" aria-hidden="true"><Icon name="update" width="12" height="12" /><span className="pd-sidebar-update-label">{updateState?.phase === 'downloading' ? `${updatePercent}%` : t('sidebar.update')}</span></span>
+					<button type="button" className={`pd-sidebar-update${updateState?.phase === 'downloading' ? ' is-downloading' : ''}`} aria-label={updateLabel} aria-busy={updateBusy} disabled={updateBusy || !bridge} data-update-phase={updateState?.phase} onClick={() => void updateNow()}>
+						<Icon name="update" width="13" height="13" aria-hidden="true" /><span className="pd-sidebar-update-label" aria-hidden="true">{updateButtonText}</span>
 					</button>
 				</HoverTooltip>}
 			</div>

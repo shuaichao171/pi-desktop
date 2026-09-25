@@ -42,6 +42,218 @@ function createService(feedUrl = 'https://updates.example.com/') {
   }
 }
 
+const flush = () => new Promise((resolve) => setImmediate(resolve));
+function deferred() {
+  let resolve, reject;
+  const promise = new Promise((yes, no) => { resolve = yes; reject = no; });
+  return { promise, resolve, reject };
+}
+
+test('background downloads become ready without installing until the user clicks', async () => {
+  const service = createService();
+  let shutdowns = 0;
+  let installs = 0;
+  service.setBeforeInstall(async () => { shutdowns += 1; });
+  updater.quitAndInstall = () => { installs += 1; };
+  updater.checkForUpdates = async () => { updater.emit('update-available', { version: '0.2.0' }); return {}; };
+  try {
+    await service.check();
+    updater.emit('update-downloaded', { version: '0.2.0' });
+    updater.emit('download-progress', { percent: 50 });
+    await flush();
+    assert.equal(service.getState().phase, 'ready');
+    assert.equal(service.getState().progressPercent, 100);
+    assert.equal(!!service.getState().installRequested, false);
+    assert.equal(shutdowns, 0);
+    assert.equal(installs, 0);
+    await service.install();
+    assert.equal(service.getState().phase, 'installing');
+    assert.equal(shutdowns, 1);
+    assert.equal(installs, 1);
+  } finally { service.stop(); }
+});
+
+test('clicking during download installs once and ignores duplicate clicks and stale progress', async () => {
+  const service = createService();
+  const shutdown = deferred();
+  let shutdowns = 0;
+  let installs = 0;
+  service.setBeforeInstall(() => { shutdowns += 1; return shutdown.promise; });
+  updater.quitAndInstall = () => { installs += 1; };
+  updater.checkForUpdates = async () => { updater.emit('update-available', { version: '0.2.0' }); return {}; };
+  try {
+    await service.check();
+    await Promise.all([service.install(), service.install()]);
+    assert.equal(service.getState().installRequested, true);
+    assert.equal(service.getState().phase, 'downloading');
+    assert.equal(shutdowns, 0);
+    updater.emit('update-downloaded', { version: '0.2.0' });
+    await flush();
+    assert.equal(service.getState().phase, 'installing');
+    assert.equal(shutdowns, 1);
+    assert.equal(installs, 0);
+    updater.emit('download-progress', { percent: 1 });
+    updater.emit('checking-for-update');
+    updater.emit('update-not-available');
+    updater.emit('update-available', { version: '0.2.0' });
+    updater.emit('update-downloaded', { version: '0.2.0' });
+    await service.install();
+    assert.equal(service.getState().phase, 'installing');
+    assert.equal(service.getState().progressPercent, 100);
+    shutdown.resolve();
+    await flush();
+    await service.install();
+    assert.equal(installs, 1);
+    assert.equal(shutdowns, 1);
+  } finally { shutdown.resolve(); service.stop(); }
+});
+
+test('download errors cancel automatic installation and require another explicit click', async () => {
+  const service = createService();
+  let installs = 0;
+  let downloadFailure;
+  service.setBeforeInstall(async () => {});
+  updater.quitAndInstall = () => { installs += 1; };
+  updater.checkForUpdates = async () => {
+    updater.emit('update-available', { version: '0.2.0' });
+    return { downloadPromise: { catch(handler) { downloadFailure = handler; return Promise.resolve(); } } };
+  };
+  try {
+    await service.check();
+    await service.install();
+    const error = new Error('Connection lost');
+    updater.emit('error', error);
+    downloadFailure(error);
+    assert.equal(service.getState().phase, 'error');
+    assert.equal(service.getState().installRequested, false);
+    assert.equal(service.getState().availableVersion, '0.2.0');
+    updater.emit('download-progress', { percent: 90 });
+    updater.emit('update-downloaded', { version: '0.2.0' });
+    await flush();
+    assert.equal(service.getState().phase, 'error');
+    assert.equal(installs, 0);
+    await service.install();
+    assert.equal(service.getState().phase, 'downloading');
+    assert.equal(service.getState().installRequested, true);
+    updater.emit('update-downloaded', { version: '0.2.0' });
+    await flush();
+    assert.equal(installs, 1);
+  } finally { service.stop(); }
+});
+
+test('retry waits for the failed metadata check and old download rejection cannot cancel it', async () => {
+  const service = createService();
+  const metadata = deferred();
+  let checks = 0;
+  let installs = 0;
+  let oldDownloadFailure;
+  service.setBeforeInstall(async () => {});
+  updater.quitAndInstall = () => { installs += 1; };
+  updater.checkForUpdates = () => {
+    checks += 1;
+    updater.emit('update-available', { version: '0.2.0' });
+    if (checks === 1) return metadata.promise;
+    return Promise.resolve({});
+  };
+  try {
+    const checking = service.check();
+    await flush();
+    await service.install();
+    const failure = new Error('First download failed');
+    updater.emit('error', failure);
+    const retry = service.install();
+    assert.equal(checks, 1);
+    assert.equal(service.getState().installRequested, true);
+    metadata.resolve({ downloadPromise: { catch(handler) { oldDownloadFailure = handler; handler(failure); return Promise.resolve(); } } });
+    await Promise.all([checking, retry]);
+    assert.equal(checks, 2);
+    assert.equal(service.getState().phase, 'downloading');
+    assert.equal(service.getState().installRequested, true);
+    oldDownloadFailure(new Error('Late rejection of the first download'));
+    assert.equal(service.getState().phase, 'downloading');
+    assert.equal(service.getState().installRequested, true);
+    updater.emit('update-downloaded', { version: '0.2.0' });
+    await flush();
+    assert.equal(installs, 1);
+  } finally { metadata.resolve({}); service.stop(); }
+});
+
+test('clicking during a known-version check requests installation and up-to-date clears it', async () => {
+  const service = createService();
+  const metadata = deferred();
+  let checks = 0;
+  let installs = 0;
+  service.setBeforeInstall(async () => {});
+  updater.quitAndInstall = () => { installs += 1; };
+  updater.checkForUpdates = async () => {
+    checks += 1;
+    if (checks === 1) updater.emit('update-available', { version: '0.2.0' });
+    else return metadata.promise;
+    return {};
+  };
+  try {
+    await service.check();
+    updater.emit('error', new Error('Temporary outage'));
+    const checking = service.check();
+    await flush();
+    assert.equal(service.getState().phase, 'checking');
+    await service.install();
+    assert.equal(service.getState().installRequested, true);
+    updater.emit('update-not-available');
+    metadata.resolve({});
+    await checking;
+    assert.equal(service.getState().phase, 'up-to-date');
+    assert.equal(service.getState().installRequested, false);
+    assert.equal(service.getState().availableVersion, undefined);
+    assert.equal(installs, 0);
+  } finally { metadata.resolve({}); service.stop(); }
+});
+
+test('an installer error during shutdown prevents a later installer invocation', async () => {
+  const service = createService();
+  const shutdown = deferred();
+  let installs = 0;
+  service.setBeforeInstall(() => shutdown.promise);
+  updater.quitAndInstall = () => { installs += 1; };
+  updater.checkForUpdates = async () => { updater.emit('update-downloaded', { version: '0.2.0' }); return {}; };
+  try {
+    await service.check();
+    const installation = service.install();
+    await flush();
+    updater.emit('error', new Error('Installer preparation failed'));
+    shutdown.resolve();
+    await assert.rejects(installation, /Installer preparation failed/);
+    assert.equal(installs, 0);
+    assert.equal(service.getState().phase, 'error');
+    assert.equal(service.getState().installRequested, false);
+    assert.match(service.getState().error, /Restart the app/);
+  } finally { shutdown.resolve(); service.stop(); }
+});
+
+test('automatic checks start after 15 seconds and repeat every four hours', (context) => {
+  context.mock.timers.enable({ apis: ['setTimeout', 'setInterval'] });
+  const service = createService();
+  let checks = 0;
+  service.check = async () => { checks += 1; return service.getState(); };
+  try {
+    service.start();
+    service.start();
+    context.mock.timers.tick(14_999);
+    assert.equal(checks, 0);
+    context.mock.timers.tick(1);
+    assert.equal(checks, 1);
+    context.mock.timers.tick(4 * 60 * 60 * 1_000 - 15_001);
+    assert.equal(checks, 1);
+    context.mock.timers.tick(1);
+    assert.equal(checks, 2);
+    context.mock.timers.tick(4 * 60 * 60 * 1_000);
+    assert.equal(checks, 3);
+    service.stop();
+    context.mock.timers.tick(4 * 60 * 60 * 1_000);
+    assert.equal(checks, 3);
+  } finally { service.stop(); context.mock.timers.reset(); }
+});
+
 test('update checks handle the separate automatic download rejection', async () => {
   const service = createService();
   let downloadFailure;
@@ -59,11 +271,12 @@ test('update checks handle the separate automatic download rejection', async () 
   } finally { service.stop(); }
 });
 
-test('installer errors emitted instead of thrown release the install lock and restore checks', async () => {
+test('installer errors emitted instead of thrown require restart without closing services twice', async () => {
   for (const asynchronous of [false, true]) {
     const service = createService();
     updater.checkForUpdates = async () => { updater.emit('update-downloaded', { version: '0.2.0' }); return {}; };
-    service.setBeforeInstall(async () => {});
+    let shutdowns = 0;
+    service.setBeforeInstall(async () => { shutdowns += 1; });
     updater.quitAndInstall = () => {
       if (!asynchronous) updater.emit('error', new Error('installer missing'));
     };
@@ -76,7 +289,11 @@ test('installer errors emitted instead of thrown release the install lock and re
       assert.equal(service.installing, false);
       assert.equal(service.getState().phase, 'error');
       assert.match(service.getState().error, /Restart the app/);
-      assert.ok(service.interval, 'automatic checks must resume after a failed install');
+      assert.equal(service.getState().installRequested, false);
+      assert.equal(service.interval, null, 'checks must not restart after services were closed');
+      await assert.rejects(service.install(), /Restart the app/);
+      assert.equal((await service.check()).phase, 'error');
+      assert.equal(shutdowns, 1);
     } finally { service.stop(); }
   }
 });
@@ -85,14 +302,17 @@ test('failed shutdown prevents installation and reports the required restart', a
   const service = createService();
   updater.checkForUpdates = async () => { updater.emit('update-downloaded', { version: '0.2.0' }); return {}; };
   let installs = 0;
+  let shutdowns = 0;
   updater.quitAndInstall = () => { installs += 1; };
-  service.setBeforeInstall(async () => { throw new Error('Could not save final state'); });
+  service.setBeforeInstall(async () => { shutdowns += 1; throw new Error('Could not save final state'); });
   try {
     await service.check();
     await assert.rejects(service.install(), /Could not save final state/);
     assert.equal(installs, 0);
     assert.equal(service.getState().phase, 'error');
     assert.match(service.getState().error, /Could not save final state.*Restart the app/);
+    await assert.rejects(service.install(), /Restart the app/);
+    assert.equal(shutdowns, 1);
   } finally { service.stop(); }
 });
 

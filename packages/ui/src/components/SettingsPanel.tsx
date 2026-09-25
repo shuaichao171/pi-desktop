@@ -121,8 +121,15 @@ export function SettingsPanel({ initialPage = 'general', modelManagementTarget, 
 	useEffect(() => {
 		if (!bridge) return;
 		let active = true;
-		const unsubscribe = bridge.onUpdateStateChanged((next) => { if (active) setUpdateState(next); });
-		void bridge.getUpdateState().then((next) => { if (active) setUpdateState(next); }).catch((error: unknown) => {
+		let receivedEvent = false;
+		const unsubscribe = bridge.onUpdateStateChanged((next) => {
+			receivedEvent = true;
+			if (active) {
+				setUpdateState(next);
+				if (next.phase !== 'error') setUpdateActionError(null);
+			}
+		});
+		void bridge.getUpdateState().then((next) => { if (active && !receivedEvent) setUpdateState(next); }).catch((error: unknown) => {
 			if (active) setUpdateActionError(error instanceof Error ? error.message : String(error));
 		});
 		return () => { active = false; unsubscribe(); };
@@ -162,7 +169,7 @@ export function SettingsPanel({ initialPage = 'general', modelManagementTarget, 
 	}
 
 	async function checkForUpdates() {
-		if (!bridge || updatePending) return;
+		if (!bridge || updateBusy) return;
 		setUpdatePending(true);
 		setUpdateActionError(null);
 		try { setUpdateState(await bridge.checkForUpdates()); }
@@ -171,15 +178,21 @@ export function SettingsPanel({ initialPage = 'general', modelManagementTarget, 
 	}
 
 	async function installUpdate() {
-		if (!bridge || updatePending || updateState?.phase !== 'ready') return;
+		if (!bridge || updateBusy || !updateAvailable) return;
 		setUpdatePending(true);
 		setUpdateActionError(null);
 		try { await bridge.installUpdate(); }
-		catch (error) { setUpdateActionError(error instanceof Error ? error.message : String(error)); setUpdatePending(false); }
+		catch (error) { setUpdateActionError(error instanceof Error ? error.message : String(error)); }
+		finally { setUpdatePending(false); }
 	}
 
+	const updateBusy = updatePending || Boolean(updateState?.installRequested) || updateState?.phase === 'installing';
+	const updateAvailable = updateState?.phase === 'downloading' || updateState?.phase === 'ready' || updateState?.phase === 'installing'
+		|| Boolean(updateState?.availableVersion && (updateState.phase === 'error' || updateState.phase === 'checking'));
 	const updateStatus = updateState?.phase === 'unavailable'
 		? t(`settings.updateUnavailable.${updateState.unavailableReason ?? 'unsupported'}`)
+		: updateState?.phase === 'installing' ? t('settings.updateInstalling')
+		: updateState?.installRequested ? t('settings.updateRequestedNotice')
 		: updateState?.phase === 'checking' ? t('settings.updateChecking')
 		: updateState?.phase === 'downloading' ? t('settings.updateDownloading', { percent: Math.round(updateState.progressPercent ?? 0) })
 		: updateState?.phase === 'ready' ? t('settings.updateReady', { version: updateState.availableVersion ?? '' })
@@ -235,8 +248,8 @@ export function SettingsPanel({ initialPage = 'general', modelManagementTarget, 
 								{updateState?.error && <p className="pd-settings-error" role="alert">{updateState.error}</p>}
 								{updateActionError && <p className="pd-settings-error" role="alert">{updateActionError}</p>}
 								<div className="pd-update-actions">
-									<button type="button" className="pd-extension-refresh" onClick={() => void checkForUpdates()} disabled={!bridge || updatePending || !updateState || !['idle', 'up-to-date', 'error'].includes(updateState.phase)}>{t('settings.updateCheck')}</button>
-									{updateState?.phase === 'ready' && <button type="button" className="pd-extension-refresh" onClick={() => void installUpdate()} disabled={updatePending}>{t('settings.updateInstall')}</button>}
+									<button type="button" className="pd-extension-refresh" onClick={() => void checkForUpdates()} disabled={!bridge || updateBusy || !updateState || !['idle', 'up-to-date', 'error'].includes(updateState.phase)}>{t('settings.updateCheck')}</button>
+									{updateAvailable && <button type="button" className="pd-extension-refresh" onClick={() => void installUpdate()} disabled={!bridge || updateBusy}>{t(updateState?.phase === 'ready' ? 'settings.updateInstall' : 'settings.updateNow')}</button>}
 								</div>
 							</div>
 						</>}
