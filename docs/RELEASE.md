@@ -33,7 +33,58 @@ release/
 
 `latest.yml` 引用 Setup，不引用 Portable。资源目录同时包含客户端读取的 `update-config.json` 和 electron-updater 使用的 `app-update.yml`；后者包含下载缓存配置，不能遗漏。
 
-## 日常发布步骤
+## 一键发布
+
+Windows 双击根目录的 `release.cmd` 即可发布。默认将当前补丁版本加一，例如 `0.1.1` → `0.1.2`；也可指定更高的稳定版本。**本次发布会提交整个当前工作区：所有未被 Git 忽略的新增文件、修改和删除都会通过 `git add -A` 纳入发布提交。** 运行前应完成本次版本要包含的改动。
+
+准备 Node.js ≥ 22.19、项目指定的 pnpm（当前为 11.11.0）、Git 和 GitHub CLI，并使用 `gh auth login` 登录有本仓库写入权限的 GitHub 账号。脚本要求当前分支为 `main`，`origin` 指向公开仓库 `shuaichao171/pi-desktop`，并自动检查这些条件。依赖安装、推送和 GitHub Actions 构建需要联网。
+
+在仓库根目录的 PowerShell 中使用：
+
+```powershell
+.\release.cmd --dry-run  # 只读预览，不修改文件、Git 或远程
+.\release.cmd            # 默认补丁版本 +1
+.\release.cmd 0.2.0      # 指定更高的稳定 X.Y.Z 版本
+```
+
+macOS／Linux 或普通终端可使用跨平台入口，参数完全相同：
+
+```bash
+node scripts/release.mjs --dry-run
+node scripts/release.mjs
+node scripts/release.mjs 0.2.0
+```
+
+一键发布按顺序完成以下操作：
+
+1. 检查工具、GitHub 登录、分支和远程仓库，同步根目录 `package.json` 与 `packages/desktop/package.json` 的应用版本。
+2. 使用冻结锁文件安装依赖，校验 Pi SDK 版本，运行类型检查、测试和生产构建。
+3. 暂存整个工作区并创建发布提交，创建匹配的 `vX.Y.Z` 标签，再原子推送 `main` 和本次标签，确保两者一起成功或一起失败。
+4. 跟踪本次标签对应的 `Desktop release` 工作流。GitHub Actions 始终构建 Windows／Linux；macOS 仅在完整签名与公证凭据可用时构建。
+5. 工作流成功后，校验草稿 Release 的产物，再自动公开并设为 Latest，供软件内更新使用。
+
+Windows 签名凭据可选；macOS 的条件见下文“签名配置”。双击启动的发布窗口在成功或失败后都会暂停，方便查看结果。`--dry-run` 只读取并预览发布计划，不安装依赖、不更新版本、不提交或推送，也不修改 Release。
+
+## 失败后继续
+
+脚本把发布进度保存在仓库的 `.git` 内。中断或失败后，再运行**原命令**会接续同一次发布和同一个版本，不会再次递增版本号。例如最初运行的是 `release.cmd 0.2.0`，恢复时仍运行 `release.cmd 0.2.0`；双击开始的发布再次双击即可继续。
+
+CI 失败时，可以重新运行同一提交的工作流：
+
+```powershell
+.\release.cmd --retry
+```
+
+如果需要修改源码来修复失败，先清除本地发布进度，再修复并发布新版本：
+
+```powershell
+.\release.cmd --reset
+# 修复源码后，重新运行 release.cmd 或指定更高版本
+```
+
+`--reset` 仅清除本地进度，不撤销提交、不删除已推送标签，也不撤回 Release。修复后的源码应使用新版本发布；已经公开的同名 Release 不允许覆盖。跨平台入口同样支持 `--retry` 和 `--reset`。
+
+## 手动发布步骤
 
 1. 同时修改根目录 `package.json` 与 `packages/desktop/package.json` 的版本，例如下一版 `0.1.2`。正式通道使用稳定的 `X.Y.Z`，并始终增加版本号。
 2. 运行 `pnpm typecheck`、`pnpm test`、`pnpm build`，提交完整源代码并推送 `main`，检查 CI。

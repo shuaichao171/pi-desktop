@@ -11,6 +11,7 @@ const electronStub = `
     getAllWindows: () => [],
   };
   export const dialog = { showMessageBox: async (_window, options) => globalThis.__testDialog(options) };
+  export const shell = { openPath: async path => globalThis.__testOpenPath(path) };
   export const ipcMain = { handle: (channel, handler) => globalThis.__testHandlers.set(channel, handler) };
 `;
 registerHooks({
@@ -57,4 +58,32 @@ test('workbench command requires main-frame native confirmation and checks the w
   await assert.rejects(handler({ sender: webContents, senderFrame: {} }, 'Write-Output safe'), /无法确认命令来源/);
   assert.equal(await handler(event, 'Write-Output safe'), 'command-1');
   assert.deepEqual(started, [['Write-Output safe', cwd]]);
+});
+
+test('opening the workspace folder rejects foreign frames and rechecks the sender before native dispatch', async () => {
+  const mainFrame = {};
+  let destroyed = false;
+  const webContents = { mainFrame, isDestroyed: () => destroyed };
+  const win = { webContents, isDestroyed: () => destroyed };
+  globalThis.__testWindow = win;
+  const service = registerWorkbenchIpc(() => 'C:\\project');
+  const handler = globalThis.__testHandlers.get(IPC_CHANNELS.workspaceOpenFolder);
+  const event = { sender: webContents, senderFrame: mainFrame };
+  const opened = [];
+  globalThis.__testOpenPath = async path => { opened.push(path); return ''; };
+  service.openWorkspaceFolder = async (cwd, openPath) => { assert.equal(cwd, 'C:\\project'); await openPath('C:\\resolved-project'); };
+
+  await assert.rejects(handler({ sender: webContents, senderFrame: {} }, 'C:\\project'), /无法确认/);
+  await assert.rejects(handler({ sender: { isDestroyed: () => false }, senderFrame: mainFrame }, 'C:\\project'), /无法确认/);
+  globalThis.__testWindow = null;
+  await assert.rejects(handler(event, 'C:\\project'), /无法确认/);
+  assert.deepEqual(opened, []);
+  globalThis.__testWindow = win;
+  await handler(event, 'C:\\project');
+  assert.deepEqual(opened, ['C:\\resolved-project']);
+
+  service.openWorkspaceFolder = async (_cwd, openPath) => { destroyed = true; await openPath('C:\\resolved-project'); };
+  await assert.rejects(handler(event, 'C:\\project'), /无法确认/);
+  assert.equal(opened.length, 1, 'destroyed renderers cannot open Explorer after path resolution');
+  await service.dispose();
 });

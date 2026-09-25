@@ -56,6 +56,8 @@ const onUpdateStateChanged: AgentBridge['onUpdateStateChanged'] = (listener) => 
 };
 
 const bridge: AgentBridge = {
+	getPersonalization: () => invoke(IPC_CHANNELS.personalizationRead),
+	saveInstruction: (request) => invoke(IPC_CHANNELS.personalizationSave, request),
 	getPluginCatalog: (cwd) => invoke(IPC_CHANNELS.pluginCatalog, cwd),
 	mutatePlugin: (input) => invoke(IPC_CHANNELS.pluginMutate, input),
 	previewPluginResource: (request) => invoke(IPC_CHANNELS.pluginPreview, request),
@@ -85,6 +87,7 @@ const bridge: AgentBridge = {
 	toggleMaximizeWindow: () => invoke(IPC_CHANNELS.windowToggleMaximize),
 	closeWindow: () => invoke(IPC_CHANNELS.windowClose),
 	pickWorkspace: () => invoke(IPC_CHANNELS.workspacePick),
+	openWorkspaceFolder: (cwd) => invoke(IPC_CHANNELS.workspaceOpenFolder, cwd),
 	listWorkspaceEntries: (relativePath) => invoke(IPC_CHANNELS.workspaceListEntries, relativePath),
 	searchWorkspaceFiles: (query, options) => invoke(IPC_CHANNELS.workspaceSearchFiles, query, options),
 	readWorkspaceFile: (relativePath) => invoke(IPC_CHANNELS.workspaceReadFile, relativePath),
@@ -106,6 +109,7 @@ const bridge: AgentBridge = {
 	updateSessionGroups: (change) => invoke(IPC_CHANNELS.agentUpdateSessionGroups, change),
 	listModels: () => invoke(IPC_CHANNELS.agentListModels),
 	listModelProviders: () => invoke(IPC_CHANNELS.agentListModelProviders),
+	discoverProviderModels: (request) => invoke(IPC_CHANNELS.agentDiscoverProviderModels, request),
 	saveCustomProvider: (request) => invoke(IPC_CHANNELS.agentSaveCustomProvider, request),
 	removeCustomProvider: (provider) => invoke(IPC_CHANNELS.agentRemoveCustomProvider, provider),
 	listSlashCommands: () => invoke(IPC_CHANNELS.agentListSlashCommands),

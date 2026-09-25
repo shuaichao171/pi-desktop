@@ -4,6 +4,7 @@ import type { ProjectTrustDecision } from '@pidesktop/agent';
 import type { AgentEventEnvelope, AgentSnapshot, UiAttachment, UiExtensionDialogRequest, UiSessionSummary, UiSessionSearchResult, UiSlashCommand, UiSlashCommandRequest, WorkspaceEntry } from '@pidesktop/shared';
 import type { AgentHostMethod, AgentHostToMain, MainToAgentHost } from './agentHostProtocol';
 import type { UiPluginCatalog, UiPluginMutation, UiPluginResourceKind, UiPluginResourcePreview, UiPluginScope } from '@pidesktop/shared';
+import type { UiInstructionDocument, UiSaveInstructionRequest, UiSaveInstructionResult } from '@pidesktop/shared';
 
 export interface AgentHostUiHandlers {
 	requestProjectTrust(cwd: string): Promise<ProjectTrustDecision>;
@@ -177,7 +178,9 @@ export class AgentHostClient {
 		try {
 			const value = message.request.kind === 'project-trust'
 				? await this.ui.requestProjectTrust(message.request.cwd)
-				: await this.ui.requestExtensionDialog(message.request.dialog, controller.signal);
+				: message.request.kind === 'resolve-proxy'
+					? await (await import('electron')).session.defaultSession.resolveProxy(message.request.url)
+					: await this.ui.requestExtensionDialog(message.request.dialog, controller.signal);
 			if (this.host === host && !controller.signal.aborted) {
 				const reply: MainToAgentHost = { kind: 'ui-reply', id: message.id, value };
 				host.postMessage(reply);
@@ -285,6 +288,8 @@ export function createIsolatedAgentService(ui: AgentHostUiHandlers) {
 	const client = new AgentHostClient(ui);
 	return {
 		get cwd(): string { return client.cwd; },
+		getPersonalization: (): Promise<UiInstructionDocument[]> => client.call('getPersonalization') as Promise<UiInstructionDocument[]>,
+		saveInstruction: (request: UiSaveInstructionRequest): Promise<UiSaveInstructionResult> => client.call('saveInstruction', request) as Promise<UiSaveInstructionResult>,
 		onEvent: (listener: (event: AgentEventEnvelope) => void): void => client.onEvent(listener),
 		onBackgroundActivity: (listener: (cwd: string, path: string) => void): void => client.onBackgroundActivity(listener),
 		init: (...args: unknown[]) => client.call('init', ...args),
@@ -302,6 +307,7 @@ export function createIsolatedAgentService(ui: AgentHostUiHandlers) {
 		renameSession: (...args: unknown[]) => client.call('renameSession', ...args),
 		listModels: (...args: unknown[]) => client.call('listModels', ...args),
 		listModelProviders: (...args: unknown[]) => client.call('listModelProviders', ...args),
+		discoverProviderModels: (...args: unknown[]) => client.call('discoverProviderModels', ...args),
 		saveCustomProvider: (...args: unknown[]) => client.call('saveCustomProvider', ...args),
 		removeCustomProvider: (...args: unknown[]) => client.call('removeCustomProvider', ...args),
 		setModel: (...args: unknown[]) => client.call('setModel', ...args),

@@ -210,6 +210,22 @@ test('invalid custom-provider input and built-in mutations never change either c
       ['URL hash', request('desktop-invalid', { baseUrl: 'https://example.invalid/v1#fragment' })],
       ['negative context', request('desktop-invalid', { models: [{ id: 'one', contextWindow: -1 }] })],
       ['invalid input modality', request('desktop-invalid', { models: [{ id: 'one', input: ['audio'] }] })],
+      ['header name injection', request('desktop-invalid', { headers: { 'x-name\r\ninjected': 'value' } })],
+      ['header value injection', request('desktop-invalid', { headers: { 'x-name': 'value\r\ninjected' } })],
+      ['reserved transport header', request('desktop-invalid', { headers: { Host: 'other.example.invalid' } })],
+      ['case-insensitive duplicate headers', request('desktop-invalid', { headers: { Authorization: 'first', authorization: 'second' } })],
+      ['oversized header value', request('desktop-invalid', { headers: { 'x-value': 'x'.repeat(16385) } })],
+      ['too many headers', request('desktop-invalid', { headers: Object.fromEntries(Array.from({ length: 65 }, (_, index) => [`x-${index}`, 'v'])) })],
+      ['oversized total headers', request('desktop-invalid', { headers: { 'x-one': 'x'.repeat(12000), 'x-two': 'x'.repeat(12000), 'x-three': 'x'.repeat(12000) } })],
+      ['missing preserved header', request('desktop-existing', { mode: 'update', headers: { 'x-missing': null } })],
+      ['proxy string', request('desktop-invalid', { useSystemProxy: 'true' })],
+      ['proxy null', request('desktop-invalid', { useSystemProxy: null })],
+      ['unknown thinking level', request('desktop-invalid', { models: [{ id: 'one', thinkingLevelMap: { ultra: 'high' } }] })],
+      ['invalid thinking value', request('desktop-invalid', { models: [{ id: 'one', thinkingLevelMap: { low: 3 } }] })],
+      ['blank thinking value', request('desktop-invalid', { models: [{ id: 'one', thinkingLevelMap: { low: ' ' } }] })],
+      ['thinking value injection', request('desktop-invalid', { models: [{ id: 'one', thinkingLevelMap: { low: 'low\nhigh' } }] })],
+      ['oversized thinking value', request('desktop-invalid', { models: [{ id: 'one', thinkingLevelMap: { low: 'x'.repeat(81) } }] })],
+      ['thinking map array', request('desktop-invalid', { models: [{ id: 'one', thinkingLevelMap: ['low'] }] })],
     ];
     for (const [label, value] of invalid) {
       const before = f.disk();
@@ -443,4 +459,162 @@ test('providers registered by a cached workspace extension cannot be overwritten
     assert.equal((await f.service.listModelProviders()).find((item) => item.provider === provider).models[0]?.id, 'extension-owned-model');
     f.assertOffline();
   } finally { await f.cleanup(); }
+});
+
+test('custom headers stay literal, remain private, and support preserve, replace, delete, and restart', async () => {
+  const f = await fixture();
+  const provider = 'desktop-header-persistence';
+  const authorization = 'Bearer literal-${PI_CUSTOM_PROVIDER_LITERAL_SECRET}-$$';
+  const commandLiteral = '!echo $PI_CUSTOM_PROVIDER_LITERAL_SECRET';
+  try {
+    await f.service.saveCustomProvider(request(provider, {
+      apiKey: 'fixture-api-key', headers: { Authorization: authorization, 'X-Literal': commandLiteral }, useSystemProxy: false,
+    }));
+    async function check(expectedHeaders, expectedProxy) {
+      const runtime = f.service.active.runtime.session.modelRuntime;
+      const model = runtime.getModels(provider).find((item) => item.id === 'custom-one');
+      assert.ok(model);
+      const auth = await runtime.getAuth(model);
+      for (const [name, value] of Object.entries(expectedHeaders)) {
+        const actual = Object.entries(auth.auth.headers ?? {}).find(([header]) => header.toLowerCase() === name.toLowerCase());
+        assert.equal(actual?.[1], value, 'configured headers must remain literal in the real SDK request');
+      }
+      const summary = (await f.service.listModelProviders()).find((item) => item.provider === provider);
+      assert.deepEqual(summary.headerNames.map((name) => name.toLowerCase()).sort(), Object.keys(expectedHeaders).map((name) => name.toLowerCase()).sort());
+      assert.equal(summary.useSystemProxy, expectedProxy);
+      const serialized = JSON.stringify(summary);
+      for (const secret of [authorization, commandLiteral, 'must-not-interpolate-this-value', 'fixture-api-key']) assert.ok(!serialized.includes(secret));
+      return auth.auth.headers;
+    }
+    await check({ Authorization: authorization, 'X-Literal': commandLiteral }, false);
+    const originalHeaders = JSON.parse(contents(f.modelsPath)).providers[provider].headers;
+    assert.equal(JSON.parse(contents(f.modelsPath)).providers[provider].desktopUseSystemProxy, false);
+
+    await f.service.saveCustomProvider(request(provider, { mode: 'update', name: 'Omitted options stay intact' }));
+    assert.deepEqual(JSON.parse(contents(f.modelsPath)).providers[provider].headers, originalHeaders);
+    await check({ Authorization: authorization, 'X-Literal': commandLiteral }, false);
+
+    await f.service.saveCustomProvider(request(provider, { mode: 'update', headers: { authorization: null, 'X-New': 'new-literal-value' }, useSystemProxy: true }));
+    const headers = await check({ authorization, 'X-New': 'new-literal-value' }, true);
+    assert.ok(!Object.keys(headers).some((name) => name.toLowerCase() === 'x-literal'), 'omitted rows in an explicit header object are removed');
+    assert.equal(JSON.parse(contents(f.modelsPath)).providers[provider].headers.authorization, originalHeaders.Authorization, 'null preserves the exact stored expression without exposing it');
+    await f.reopen();
+    await check({ authorization, 'X-New': 'new-literal-value' }, true);
+
+    await f.service.saveCustomProvider(request(provider, { mode: 'update', headers: {} }));
+    assert.deepEqual(JSON.parse(contents(f.modelsPath)).providers[provider].headers, {});
+    await check({}, true);
+    f.assertOffline();
+  } finally { await f.cleanup(); }
+});
+
+test('thinking-level maps persist into the SDK and update selected-session choices across restart', async () => {
+  const f = await fixture();
+  const provider = 'desktop-thinking-mapping';
+  const thinkingLevelMap = { off: 'none', minimal: null, low: 'low', medium: null, high: 'high', xhigh: null, max: 'max' };
+  try {
+    const configuredModel = { ...request().models[0], thinkingLevelMap };
+    await f.service.saveCustomProvider(request(provider, { api: 'openai-responses', apiKey: 'fixture-thinking-key', models: [configuredModel] }));
+    await f.service.setModel(provider, configuredModel.id);
+    assert.deepEqual(f.service.getSnapshot().availableThinkingLevels, ['off', 'low', 'high', 'max']);
+    assert.deepEqual(f.service.active.runtime.session.model.thinkingLevelMap, thinkingLevelMap);
+    const summary = (await f.service.listModelProviders()).find((item) => item.provider === provider).models[0];
+    assert.deepEqual(summary.thinkingLevelMap, thinkingLevelMap);
+    assert.deepEqual(summary.thinkingLevels, ['off', 'low', 'high', 'max']);
+    await f.service.setThinkingLevel('max');
+    assert.equal(f.service.getSnapshot().thinkingLevel, 'max');
+
+    await f.service.saveCustomProvider(request(provider, { mode: 'update', api: 'openai-responses' }));
+    assert.deepEqual(JSON.parse(contents(f.modelsPath)).providers[provider].models[0].thinkingLevelMap, thinkingLevelMap, 'omitting a map preserves the existing explicit model mapping');
+    await f.reopen();
+    await f.service.setModel(provider, configuredModel.id);
+    assert.deepEqual(f.service.getSnapshot().availableThinkingLevels, ['off', 'low', 'high', 'max']);
+
+    const mediumOnly = { off: null, minimal: null, low: null, medium: 'medium', high: null, xhigh: null, max: null };
+    await f.service.saveCustomProvider(request(provider, { mode: 'update', api: 'openai-responses', models: [{ ...configuredModel, thinkingLevelMap: mediumOnly }] }));
+    assert.deepEqual(f.service.getSnapshot().availableThinkingLevels, ['medium']);
+    assert.equal(f.service.getSnapshot().thinkingLevel, 'medium', 'the SDK clamps a selected level that the new map disables');
+    assert.deepEqual(f.service.listModels().find((model) => model.provider === provider).thinkingLevels, ['medium']);
+    f.assertOffline();
+  } finally { await f.cleanup(); }
+});
+
+test('Gemini preserves independent input/output limits while total-context protocols reject an oversized output', async () => {
+  const f = await fixture();
+  const limits = { id: 'independent-limits', contextWindow: 8192, maxTokens: 32768 };
+  try {
+    await f.service.saveCustomProvider(request('desktop-gemini-limits', { api: 'google-generative-ai', models: [limits] }));
+    const model = (await f.service.listModelProviders()).find((item) => item.provider === 'desktop-gemini-limits').models[0];
+    assert.equal(model.contextWindow, 8192);
+    assert.equal(model.maxTokens, 32768);
+    const before = f.disk();
+    await assert.rejects(f.service.saveCustomProvider(request('desktop-openai-limits', { models: [limits] })));
+    assert.deepEqual(f.disk(), before);
+    f.assertOffline();
+  } finally { await f.cleanup(); }
+});
+
+test('model discovery resolves saved credentials and draft overrides without persisting a model response', async () => {
+  const f = await fixture();
+  const provider = 'desktop-discovery-auth';
+  const savedKey = 'saved-fixture-key-${PI_CUSTOM_PROVIDER_LITERAL_SECRET}';
+  const savedHeader = '!echo $PI_CUSTOM_PROVIDER_LITERAL_SECRET';
+  const calls = [];
+  let responseStatus = 200;
+  let fixtureFetch;
+  try {
+    await f.service.saveCustomProvider(request(provider, { apiKey: savedKey, headers: { 'X-Private-Tenant': savedHeader } }));
+    const before = f.disk();
+    fixtureFetch = globalThis.fetch;
+    globalThis.fetch = async (input, init) => {
+      calls.push({ url: String(input), headers: Object.fromEntries(new Headers(init.headers)), redirect: init.redirect });
+      return new Response(JSON.stringify(responseStatus === 200
+        ? { data: [{ id: 'discovered-only-model', name: 'Discovered Only', context_length: 65536, max_output_tokens: 8192, reasoning: true }] }
+        : { error: `private response containing ${savedKey}` }), { status: responseStatus, headers: { 'content-type': 'application/json' } });
+    };
+    let result = await f.service.discoverProviderModels({ provider });
+    assert.equal(result.models[0].id, 'discovered-only-model');
+    assert.equal(calls[0].url, 'https://models.example.invalid/v1/models');
+    assert.equal(calls[0].headers.authorization, `Bearer ${savedKey}`);
+    assert.equal(calls[0].headers['x-private-tenant'], savedHeader);
+    assert.equal(calls[0].redirect, 'manual');
+    assert.deepEqual(f.disk(), before, 'discovery must not save its catalog or resolved credentials');
+    assert.ok(!f.service.listModels().some((model) => model.id === 'discovered-only-model'));
+    assert.ok(!JSON.stringify(result).includes(savedKey));
+    assert.ok(!JSON.stringify(result).includes(savedHeader));
+
+    await f.service.discoverProviderModels({ provider, apiKey: 'draft-replacement-key', headers: { 'X-Private-Tenant': null, 'X-New-Draft': 'draft-value' } });
+    assert.equal(calls.at(-1).headers.authorization, 'Bearer draft-replacement-key');
+    assert.equal(calls.at(-1).headers['x-private-tenant'], savedHeader);
+    assert.equal(calls.at(-1).headers['x-new-draft'], 'draft-value');
+    await f.service.discoverProviderModels({ provider, headers: {} });
+    assert.equal(calls.at(-1).headers['x-private-tenant'], undefined, 'an explicit empty header map applies the pending deletion');
+    assert.equal(calls.at(-1).headers.authorization, `Bearer ${savedKey}`);
+
+    result = await f.service.discoverProviderModels({ baseUrl: 'http://localhost:12345/v1', api: 'openai-responses', apiKey: 'unsaved-provider-key', headers: { 'X-Draft': 'unsaved-header' } });
+    assert.equal(calls.at(-1).url, 'http://localhost:12345/v1/models');
+    assert.equal(calls.at(-1).headers.authorization, 'Bearer unsaved-provider-key');
+    assert.equal(calls.at(-1).headers['x-draft'], 'unsaved-header');
+    assert.equal(result.models.length, 1);
+    assert.deepEqual(f.disk(), before);
+
+    const beforeRejected = calls.length;
+    for (const changed of [
+      { provider, baseUrl: 'https://other.example.invalid/v1', api: 'openai-completions' },
+      { provider, baseUrl: 'https://other.example.invalid/v1', api: 'openai-completions', apiKey: 'new-origin-key', headers: { 'X-Private-Tenant': null } },
+      { provider, headers: { 'X-No-Such-Header': null } },
+    ]) await assert.rejects(f.service.discoverProviderModels(changed));
+    assert.equal(calls.length, beforeRejected, 'changing origin cannot reuse stored secrets or preserved header placeholders');
+    await f.service.discoverProviderModels({ provider, baseUrl: 'https://other.example.invalid/v1', api: 'openai-completions', apiKey: 'new-origin-key' });
+    assert.equal(calls.at(-1).headers.authorization, 'Bearer new-origin-key');
+    assert.equal(calls.at(-1).headers['x-private-tenant'], undefined);
+
+    responseStatus = 401;
+    await assert.rejects(f.service.discoverProviderModels({ provider }), (error) => error.status === 401 && !String(error).includes(savedKey));
+    assert.deepEqual(f.disk(), before, 'failed discovery must also leave both files untouched');
+    f.assertOffline();
+  } finally {
+    if (fixtureFetch) globalThis.fetch = fixtureFetch;
+    await f.cleanup();
+  }
 });

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdtempSync, mkdirSync, realpathSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
+import { realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join, relative, sep } from 'node:path';
 import { test } from 'node:test';
@@ -13,6 +14,47 @@ function removeSafeTemp(tempRoot) {
     || !rel.startsWith('pi-desktop-')) throw new Error('Unsafe temporary path');
   rmSync(target, { recursive: true, force: true });
 }
+
+test('opening the workspace validates the directory, propagates native failures and rejects stale selections', async () => {
+  const tempRoot = mkdtempSync(join(tmpdir(), 'pi-desktop-open-folder-'));
+  const workspace = join(tempRoot, 'workspace');
+  const other = join(tempRoot, 'other');
+  mkdirSync(workspace); mkdirSync(other);
+  const file = join(tempRoot, 'file.txt');
+  writeFileSync(file, 'not a directory');
+  const { WorkbenchService } = await import('../packages/desktop/src/main/workbenchService.ts');
+  let cwd = workspace;
+  const service = new WorkbenchService(() => cwd, () => {});
+  const opened = [];
+  const openPath = async path => { opened.push(path); return ''; };
+  try {
+    await service.openWorkspaceFolder(workspace, openPath);
+    assert.deepEqual(opened, [await realpath(workspace)]);
+    await assert.rejects(service.openWorkspaceFolder(other, openPath), /工作区已切换/);
+    for (const invalid of [null, '', '.', 'https://example.invalid', 'file:\/\/\/tmp', workspace + '\0']) {
+      await assert.rejects(service.openWorkspaceFolder(invalid, openPath), /工作区路径无效/);
+    }
+    cwd = file;
+    await assert.rejects(service.openWorkspaceFolder(file, openPath), /不是文件夹/);
+    cwd = join(tempRoot, 'missing');
+    await assert.rejects(service.openWorkspaceFolder(cwd, openPath), /ENOENT/);
+    cwd = workspace;
+    await assert.rejects(service.openWorkspaceFolder(cwd, async () => 'Native file manager unavailable'), /Native file manager unavailable/);
+    await assert.rejects(service.openWorkspaceFolder(cwd, async () => { throw new Error('Native dispatch rejected'); }), /Native dispatch rejected/);
+
+    const changed = service.openWorkspaceFolder(cwd, openPath);
+    cwd = other;
+    await assert.rejects(changed, /工作区已切换/);
+    cwd = workspace;
+    const reset = service.openWorkspaceFolder(cwd, openPath);
+    await service.reset();
+    await assert.rejects(reset, /工作区已切换/);
+    assert.equal(opened.length, 1, 'failed validation and asynchronous switches never invoke the native opener');
+  } finally {
+    await service.dispose();
+    removeSafeTemp(tempRoot);
+  }
+});
 
 test('workbench file access stays within the workspace and Git diff includes deleted files', async () => {
   const tempRoot = mkdtempSync(join(tmpdir(), 'pi-desktop-workbench-'));

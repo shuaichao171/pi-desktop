@@ -106,6 +106,34 @@ beforeEach(() => {
   useChatStore.setState(useChatStore.getInitialState(), true);
 });
 
+test('conversation file changes hydrate, replay newer events, and reset across sessions and bridges', async () => {
+  const first = { path: 'src/app.ts', kind: 'modified', additions: 2, deletions: 1, diff: '@@ -1 +1,2 @@\n-before\n+after\n+new\n' };
+  const latest = { ...first, additions: 3, diff: 'updated diff' };
+  const pending = deferred();
+  const host = createBridge({ snapshot: pending.promise });
+  useChatStore.getState().setBridge(host.bridge);
+  host.emit(2, { type: 'file-changes', items: [latest] });
+  pending.resolve({ ...baseSnapshot, fileChanges: [first] });
+  await settle();
+  assert.deepEqual(useChatStore.getState().fileChanges, [latest]);
+  host.emit(3, { type: 'status', status: 'idle' });
+  assert.deepEqual(useChatStore.getState().fileChanges, [latest]);
+  host.emit(4, { ...baseSnapshot, type: 'ready', fileChanges: [first], sessionId: 'restored' });
+  assert.deepEqual(useChatStore.getState().fileChanges, [first]);
+  host.emit(5, { type: 'file-changes', items: [] });
+  assert.deepEqual(useChatStore.getState().fileChanges, []);
+  host.emit(6, { type: 'file-changes', items: [latest] });
+  host.emit(7, { type: 'reset', cwd: 'C:\\second-project' });
+  assert.deepEqual(useChatStore.getState().fileChanges, []);
+  host.emit(8, { ...baseSnapshot, type: 'ready', fileChanges: [first] });
+  const replacement = createBridge();
+  useChatStore.getState().setBridge(replacement.bridge);
+  assert.deepEqual(useChatStore.getState().fileChanges, []);
+  host.emit(9, { type: 'file-changes', items: [latest] });
+  await settle();
+  assert.deepEqual(useChatStore.getState().fileChanges, []);
+});
+
 test('thinking projections survive bootstrap and finalization without leaking across sessions or hosts', async () => {
   const snapshot = deferred();
   const host = createBridge({ snapshot: snapshot.promise });
@@ -483,6 +511,55 @@ test('busy send queues a Pi follow-up, while explicit steer and idle prompt keep
     ['change direction', 'steer'],
     ['ordinary task', undefined],
   ]);
+});
+
+test('queued instructions hydrate from the host snapshot and disappear only when the SDK consumes them', async () => {
+  const queued = [
+    { id: 'steer-1', text: '先检查错误处理', behavior: 'steer' },
+    { id: 'follow-1', text: '然后补充文档', behavior: 'followUp', attachments: [{ kind: 'image', name: 'screen.png', mimeType: 'image/png' }] },
+  ];
+  const host = createBridge({ snapshot: { ...baseSnapshot, status: 'busy', queuedCount: 2, queuedMessages: queued } });
+  useChatStore.getState().setBridge(host.bridge);
+  await settle();
+  assert.deepEqual(useChatStore.getState().queuedMessages, queued);
+  host.emit(2, { type: 'queue', count: 1, items: [queued[1]] });
+  assert.deepEqual(useChatStore.getState().queuedMessages, [queued[1]]);
+  assert.equal(useChatStore.getState().queuedCount, 1);
+  host.emit(3, { type: 'status', status: 'idle' });
+  assert.deepEqual(useChatStore.getState().queuedMessages, [queued[1]], 'stopping a task does not pretend the SDK queue was cleared');
+  host.emit(4, { type: 'queue', count: 0, items: [] });
+  assert.deepEqual(useChatStore.getState().queuedMessages, []);
+  assert.equal(useChatStore.getState().queuedCount, 0);
+});
+
+test('pending instructions do not leak across session or bridge replacement', async () => {
+  const oldItem = { id: 'old-queue', text: 'only for the old session', behavior: 'followUp' };
+  const newItem = { id: 'new-queue', text: 'only for the new session', behavior: 'steer' };
+  const oldHost = createBridge({ snapshot: { ...baseSnapshot, queuedCount: 1, queuedMessages: [oldItem] } });
+  useChatStore.getState().setBridge(oldHost.bridge);
+  await settle();
+  oldHost.emit(2, { type: 'ready', model: 'test-model', modelProvider: 'test-provider', thinkingLevel: 'off', availableThinkingLevels: ['off'], cwd: baseSnapshot.cwd, sessionId: 'session-2', sessionPath: 'two.jsonl', messages: [], activities: [] });
+  assert.deepEqual(useChatStore.getState().queuedMessages, []);
+  oldHost.emit(3, { type: 'queue', count: 1, items: [newItem] });
+  assert.deepEqual(useChatStore.getState().queuedMessages, [newItem]);
+  oldHost.emit(4, { type: 'reset', cwd: 'C:\\other-project' });
+  assert.deepEqual(useChatStore.getState().queuedMessages, []);
+  const replacement = createBridge();
+  useChatStore.getState().setBridge(replacement.bridge);
+  await settle();
+  oldHost.emit(5, { type: 'queue', count: 1, items: [oldItem] });
+  assert.deepEqual(useChatStore.getState().queuedMessages, []);
+});
+
+test('a rejected queued send leaves both the real queue and the user timeline unchanged', async () => {
+  const queued = { id: 'existing', text: 'already queued', behavior: 'followUp' };
+  const host = createBridge({ snapshot: { ...baseSnapshot, status: 'busy', queuedCount: 1, queuedMessages: [queued] }, onPrompt: async () => { throw new Error('queue rejected'); } });
+  useChatStore.getState().setBridge(host.bridge);
+  await settle();
+  await assert.rejects(useChatStore.getState().send('new instruction'), /queue rejected/);
+  assert.deepEqual(useChatStore.getState().queuedMessages, [queued]);
+  assert.equal(useChatStore.getState().queuedCount, 1);
+  assert.deepEqual(useChatStore.getState().messages, []);
 });
 
 test('prompt rejection reaches the caller and remains visible in store state', async () => {

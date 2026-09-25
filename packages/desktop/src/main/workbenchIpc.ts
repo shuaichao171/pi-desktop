@@ -1,4 +1,4 @@
-import { BrowserWindow, dialog, ipcMain } from 'electron';
+import { BrowserWindow, dialog, ipcMain, shell } from 'electron';
 import { IPC_CHANNELS } from '@pidesktop/shared';
 import { getAppLocale } from './appLocale';
 import { WorkbenchService } from './workbenchService';
@@ -8,6 +8,19 @@ export function registerWorkbenchIpc(getWorkspace: () => string): WorkbenchServi
 		for (const win of BrowserWindow.getAllWindows()) {
 			win.webContents.send(IPC_CHANNELS.workspaceCommandEvent, event);
 		}
+	});
+	ipcMain.handle(IPC_CHANNELS.workspaceOpenFolder, async (event, cwd: string) => {
+		const requireSender = () => {
+			const win = BrowserWindow.fromWebContents(event.sender);
+			if (!win || win.isDestroyed() || event.sender.isDestroyed() || win.webContents !== event.sender || event.senderFrame !== win.webContents.mainFrame) {
+				throw new Error('无法确认文件夹打开请求来源');
+			}
+		};
+		requireSender();
+		await service.openWorkspaceFolder(cwd, (path) => {
+			requireSender();
+			return shell.openPath(path);
+		});
 	});
 	ipcMain.handle(IPC_CHANNELS.workspaceListEntries, (_event, relativePath?: string) => service.listEntries(relativePath));
 	ipcMain.handle(IPC_CHANNELS.workspaceReadFile, (_event, relativePath: string) => service.readFile(relativePath));

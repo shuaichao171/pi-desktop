@@ -10,7 +10,6 @@ export function ThinkingActivity({ message }: { message: UiMessage }) {
 	const { t } = useT();
 	const detailId = useId();
 	const [userExpanded, setUserExpanded] = useState<boolean | null>(null);
-	const [showAll, setShowAll] = useState(false);
 	const outputRef = useRef<HTMLDivElement>(null);
 	const followsOutput = useRef(true);
 	const thinking = message.thinking ?? '';
@@ -18,13 +17,10 @@ export function ThinkingActivity({ message }: { message: UiMessage }) {
 	const active = status === 'streaming';
 	const hasContent = Boolean(thinking.trim());
 	const expanded = hasContent && (userExpanded ?? active);
-	const limit = 12000;
-	const isLong = thinking.length > limit;
-	const visibleThinking = showAll ? thinking : active ? thinking.slice(-limit) : thinking.slice(0, limit);
 	const label = t('message.thinking.' + status);
 	useLayoutEffect(() => {
 		if (active && expanded && followsOutput.current && outputRef.current) outputRef.current.scrollTop = outputRef.current.scrollHeight;
-	}, [active, expanded, visibleThinking]);
+	}, [active, expanded, thinking]);
 	return (
 		<div className={'pd-thinking-activity is-' + status}>
 			{hasContent ? <button type="button" className="pd-thinking-summary" aria-expanded={expanded} aria-controls={detailId} onClick={() => setUserExpanded(!expanded)}>
@@ -37,8 +33,7 @@ export function ThinkingActivity({ message }: { message: UiMessage }) {
 					<div ref={outputRef} className="pd-markdown pd-thinking-markdown" onScroll={() => {
 						const node = outputRef.current;
 						if (node) followsOutput.current = node.scrollHeight - node.scrollTop - node.clientHeight < 32;
-					}}><Markdown remarkPlugins={[remarkGfm]}>{visibleThinking}</Markdown></div>
-					{isLong && <button type="button" className="pd-activity-show-all" onClick={() => { setShowAll((value) => !value); setUserExpanded(true); }}>{t(showAll ? 'message.thinking.showLess' : 'message.thinking.showMore')}</button>}
+					}}><Markdown remarkPlugins={[remarkGfm]}>{thinking}</Markdown></div>
 					{message.thinkingTruncated && <p className="pd-activity-note">{t('message.thinking.truncated')}</p>}
 				</div>
 			</ActivityDisclosure>

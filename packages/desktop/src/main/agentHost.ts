@@ -2,7 +2,7 @@
  * Pi runs in an Electron utility process so SDK work cannot block the window's
  * main process. Only plain data crosses this internal RPC boundary.
  */
-import { AgentService } from '@pidesktop/agent';
+import { AgentService, configureProviderNetwork } from '@pidesktop/agent';
 import { getAgentDir } from '@earendil-works/pi-coding-agent';
 import { join } from 'node:path';
 import { readSessionContext, searchSessions, searchWorkspaceFiles } from './searchService';
@@ -51,6 +51,12 @@ function askMain<T>(
 		post({ kind: 'ui-request', id, callId: callContext.getStore(), request });
 	});
 }
+
+configureProviderNetwork(async (url) => {
+	const proxy = await askMain<string | null>({ kind: 'resolve-proxy', url }, AbortSignal.timeout(10000));
+	if (proxy === null) throw new Error('系统代理解析超时，请检查本机代理设置');
+	return proxy;
+});
 
 const agent = new AgentService(
 	(cwd): Promise<ProjectTrustDecision> => askMain({ kind: 'project-trust', cwd }),

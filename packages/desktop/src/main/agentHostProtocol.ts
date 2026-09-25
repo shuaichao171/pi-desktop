@@ -2,6 +2,8 @@ import type { AgentEventEnvelope, UiExtensionDialogRequest } from '@pidesktop/sh
 import type { ProjectTrustDecision } from '@pidesktop/agent';
 
 export const AGENT_HOST_METHODS = [
+	'getPersonalization',
+	'saveInstruction',
 	'init',
 	'switchWorkspace',
 	'getSnapshot',
@@ -15,6 +17,7 @@ export const AGENT_HOST_METHODS = [
 	'renameSession',
 	'listModels',
 	'listModelProviders',
+	'discoverProviderModels',
 	'saveCustomProvider',
 	'removeCustomProvider',
 	'setModel',
@@ -47,4 +50,4 @@ export type AgentHostToMain =
 	| { kind: 'event'; envelope: AgentEventEnvelope }
 	| { kind: 'background-activity'; cwd: string; path: string }
 	| { kind: 'ui-cancel'; id: number }
-	| { kind: 'ui-request'; id: number; callId?: number; request: { kind: 'project-trust'; cwd: string } | { kind: 'extension'; dialog: UiExtensionDialogRequest } };
+	| { kind: 'ui-request'; id: number; callId?: number; request: { kind: 'project-trust'; cwd: string } | { kind: 'extension'; dialog: UiExtensionDialogRequest } | { kind: 'resolve-proxy'; url: string } };

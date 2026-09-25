@@ -1,9 +1,11 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { useT } from '../i18n';
 import { useChatStore } from '../store';
+import type { ModelManagementTarget } from '../modelManagement';
 import { buildTimelineLayout, type TimelineEntry } from '../timeline';
 import { Composer } from './Composer';
 import { ChatTitle } from './ChatTitle';
+import { WorkspaceFolderButton } from './WorkspaceFolderButton';
 import { Icon } from './Icons';
 import { HoverTooltip } from './HoverTooltip';
 import { MessageItem } from './MessageItem';
@@ -28,7 +30,7 @@ function EmptyState() {
 
 export interface SearchMessageTarget { sessionPath: string; messageId: string; snippet?: string; requestId: number }
 
-export function ChatView({ onToggleSidebar, searchTarget, historyControls, navigationError }: { onToggleSidebar(): void; searchTarget?: SearchMessageTarget | null; historyControls?: ReactNode; navigationError?: string | null }) {
+export function ChatView({ onToggleSidebar, onOpenModelManagement, searchTarget, historyControls, navigationError }: { onToggleSidebar(): void; onOpenModelManagement(target: ModelManagementTarget): void; searchTarget?: SearchMessageTarget | null; historyControls?: ReactNode; navigationError?: string | null }) {
 	const { t } = useT();
 	const messages = useChatStore((s) => s.messages);
 	const activities = useChatStore((s) => s.activities);
@@ -166,7 +168,7 @@ export function ChatView({ onToggleSidebar, searchTarget, historyControls, navig
 			<header className="pd-chat-header">
 				{historyControls}
 				<HoverTooltip title={t('chat.toggleSidebar')}><button type="button" className="pd-icon-button pd-header-sidebar-toggle" onClick={onToggleSidebar} aria-label={t('chat.toggleSidebar')}><Icon name="panel" /></button></HoverTooltip>
-				<div className="pd-chat-heading"><span className="pd-chat-workspace-icon" title={cwd || t('chat.workspace')}><Icon name="folder" width="16" height="16" /></span><ChatTitle key={`${cwd}\0${sessionId}`} title={title} sessionPath={sessionPath} /></div>
+				<div className="pd-chat-heading"><WorkspaceFolderButton key={`folder:${cwd}\0${sessionId}`} cwd={cwd} /><ChatTitle key={`${cwd}\0${sessionId}`} title={title} sessionPath={sessionPath} /></div>
 			</header>
 
 			<div ref={bodyRef} className={`pd-conversation-body${isEmpty ? ' is-empty' : ''}`}>
@@ -190,7 +192,7 @@ export function ChatView({ onToggleSidebar, searchTarget, historyControls, navig
 						{agentStatus === 'busy' ? <span className="pd-back-to-bottom-dots" aria-hidden="true"><span /><span /><span /></span> : <Icon name="arrowDown" width="20" height="20" />}
 					</button>
 				</div>
-				<Composer />
+				<Composer onOpenModelManagement={onOpenModelManagement} />
 			</div>
 		</main>
 	);

@@ -15,7 +15,9 @@
 import { randomUUID } from 'node:crypto';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { existsSync, writeFileSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { basename, extname, join, relative, resolve } from 'node:path';
+import { getSupportedThinkingLevels } from '@earendil-works/pi-ai';
 
 import {
 	type AgentSessionEvent,
@@ -43,9 +45,13 @@ import type {
 	UiContextUsage,
 	UiExtensionDialogRequest,
 	UiExtensionSummary,
+	UiFileChange,
 	UiMessage,
 	UiModelSummary,
 	UiModelProvider,
+	UiDiscoverProviderModelsRequest,
+	UiProviderModelDiscovery,
+	UiProviderApi,
 	UiPluginCatalog,
 	UiPluginMutation,
 	UiPluginResourceKind,
@@ -53,17 +59,25 @@ import type {
 	UiPluginScope,
 	UiSaveCustomProviderRequest,
 	UiProviderAuthStatus,
+	UiQueuedAttachment,
 	UiSessionSummary,
 	UiSlashCommand,
 	UiSlashCommandRequest,
 	UiThinkingLevel,
 	UiThinkingOutput,
 	UiThinkingStatus,
+	UiSaveInstructionRequest,
 	UiToolActivity,
 } from '@pidesktop/shared';
 import { BUILTIN_SLASH_COMMANDS, expandSlashPrompt, validateSlashCommandRequest, validSlashCommandName } from './slashCommands.ts';
-import { commitProviderDocument, getBuiltinProviderIds, isEditableProvider, literalApiKey, mergeProvider, readProviderDocument, safeProviderUrl, validateProviderId, validateProviderRequest, validateProviderWithSdk, type ProviderDocument } from './customProviders.ts';
+import { commitProviderDocument, CUSTOM_PROVIDER_APIS, getBuiltinProviderIds, isEditableProvider, literalApiKey, mergeProvider, readProviderDocument, safeProviderUrl, validateDiscoveryRequest, validateProviderId, validateProviderRequest, validateProviderWithSdk, type ProviderDocument } from './customProviders.ts';
+import { discoverProviderModels } from './providerDiscovery.ts';
+import { bindProviderNetwork, runWithProviderNetwork } from './providerNetwork.ts';
+export { configureProviderNetwork } from './providerNetwork.ts';
 import { applyPluginMutation, readPluginCatalog, readPluginResourcePreview } from './plugins.ts';
+import { cloneQueuedMessage, reconcileQueuedMessages, type QueuedMessageRecord, type SdkQueueSnapshot } from './queuedMessages.ts';
+import { SessionFileChanges } from './fileChanges.ts';
+import { createPersonalizationService } from './personalization.ts';
 
 export interface AgentInitOptions {
 	cwd: string;
@@ -101,6 +115,8 @@ async function listWorkspaceSessions(cwd: string) {
 function createRuntimeFactory(
 	requestProjectTrust: RequestProjectTrust,
 	projectTrustByCwd: Map<string, boolean>,
+	trackFileChanges: (session: PiRuntime['session'], tracker: SessionFileChanges) => void,
+	publishFileChanges: (sessionId: string, changes: UiFileChange[]) => void,
 ): CreateAgentSessionRuntimeFactory {
 	return async ({ cwd, agentDir, sessionManager, sessionStartEvent }) => {
 		const needsTrust = hasTrustRequiringProjectResources(cwd);
@@ -112,10 +128,12 @@ function createRuntimeFactory(
 		const shouldPrompt = needsTrust && cachedTrust === undefined && savedTrust === null && defaultTrust === 'ask';
 		const projectTrusted = !needsTrust || (cachedTrust ?? savedTrust ?? (defaultTrust === 'always'));
 		const settingsManager = SettingsManager.create(cwd, agentDir, { projectTrusted });
+		const fileChanges = new SessionFileChanges(cwd, sessionManager, (changes) => publishFileChanges(sessionManager.getSessionId(), changes));
 		const services = await createAgentSessionServices({
 			cwd,
 			agentDir,
 			settingsManager,
+			resourceLoaderOptions: { extensionFactories: [{ name: 'desktop-file-changes', hidden: true, factory: fileChanges.extension }] },
 			resourceLoaderReloadOptions: shouldPrompt ? {
 				resolveProjectTrust: async () => {
 					const decision = await requestProjectTrust(cwd);
@@ -126,8 +144,11 @@ function createRuntimeFactory(
 				},
 			} : undefined,
 		});
+		bindProviderNetwork(services.modelRuntime, join(agentDir, 'models.json'));
+		const created = await createAgentSessionFromServices({ services, sessionManager, sessionStartEvent });
+		trackFileChanges(created.session, fileChanges);
 		return {
-			...(await createAgentSessionFromServices({ services, sessionManager, sessionStartEvent })),
+			...created,
 			services,
 			diagnostics: services.diagnostics,
 		};
@@ -158,6 +179,12 @@ class SingleAgentService {
 	private readonly requestExtensionDialog: RequestExtensionDialog;
 	private readonly reserveSessionSwitch: (path: string) => () => void;
 	private readonly slashCommandExecution = new AsyncLocalStorage<{ name: string; error: string | null }>();
+	private readonly queuedPrompt = new AsyncLocalStorage<{ text: string; behavior: 'steer' | 'followUp' | undefined; images: UiQueuedAttachment[]; claimed: boolean }>();
+	private queuedMessages: QueuedMessageRecord[] = [];
+	private queueRefreshSession: PiRuntime['session'] | null = null;
+	private readonly queuedPreviewIds = new WeakMap<object, string>();
+	private deliveredEmptyQueued = { steer: 0, followUp: 0 };
+	private readonly fileChangeTrackers = new WeakMap<PiRuntime['session'], SessionFileChanges>();
 	private state: Omit<AgentSnapshot, 'sequence'> = {
 		status: 'uninitialized',
 		model: '',
@@ -172,6 +199,8 @@ class SingleAgentService {
 		messages: [],
 		activities: [],
 		queuedCount: 0,
+		queuedMessages: [],
+		fileChanges: [],
 		error: null,
 	};
 
@@ -184,7 +213,9 @@ class SingleAgentService {
 		reserveSessionSwitch: (path: string) => () => void,
 	) {
 		this.projectTrustByCwd = projectTrustByCwd;
-		this.createRuntime = createRuntimeFactory(requestProjectTrust, this.projectTrustByCwd);
+		this.createRuntime = createRuntimeFactory(requestProjectTrust, this.projectTrustByCwd,
+			(session, tracker) => { this.fileChangeTrackers.set(session, tracker); },
+			(sessionId, items) => { if (this.runtime?.session.sessionId === sessionId) this.fire({ type: 'file-changes', items }); });
 		this.requestExtensionDialog = requestExtensionDialog;
 		this.reserveSessionSwitch = reserveSessionSwitch;
 	}
@@ -200,7 +231,7 @@ class SingleAgentService {
 
 	get canEvict(): boolean {
 		return this.activePromptCalls === 0 && this.activeConfigurationCalls === 0 && !this.lifecycleOperation &&
-			(this.runtime?.session.isIdle ?? true);
+			this.state.queuedCount === 0 && (this.runtime?.session.isIdle ?? true);
 	}
 
 	getSnapshot(): AgentSnapshot {
@@ -211,6 +242,8 @@ class SingleAgentService {
 			contextUsage: this.state.contextUsage ? { ...this.state.contextUsage } : null,
 			messages: this.state.messages.map((message) => ({ ...message })),
 			activities: this.state.activities.map((activity) => ({ ...activity })),
+			queuedMessages: this.state.queuedMessages.map(cloneQueuedMessage),
+			fileChanges: this.state.fileChanges.map((file) => ({ ...file })),
 		};
 	}
 
@@ -324,6 +357,8 @@ class SingleAgentService {
 			input: [...model.input],
 			contextWindow: model.contextWindow,
 			maxTokens: model.maxTokens,
+			thinkingLevels: getSupportedThinkingLevels(model),
+			...(model.thinkingLevelMap ? { thinkingLevelMap: { ...model.thinkingLevelMap } } : {}),
 		}));
 	}
 
@@ -366,10 +401,56 @@ class SingleAgentService {
 				custom, editable: custom && !builtinIds.has(id) && !registered.has(id) && isEditableProvider(config!) && (!credential || credential.type === 'api_key'),
 				configured: runtime.getProviderAuthStatus(id).configured,
 				baseUrl: safeProviderUrl(config?.baseUrl), api: typeof config?.api === 'string' ? config.api : null,
+				headerNames: config?.headers && typeof config.headers === 'object' && !Array.isArray(config.headers) ? Object.keys(config.headers) : [],
+				...(typeof config?.desktopUseSystemProxy === 'boolean' ? { useSystemProxy: config.desktopUseSystemProxy } : {}),
 				models: runtime.getModels(id).map((model) => ({ provider: model.provider, id: model.id, name: model.name, reasoning: model.reasoning,
-					input: [...model.input], contextWindow: model.contextWindow, maxTokens: model.maxTokens })),
+					input: [...model.input], contextWindow: model.contextWindow, maxTokens: model.maxTokens, thinkingLevels: getSupportedThinkingLevels(model),
+					...(model.thinkingLevelMap ? { thinkingLevelMap: { ...model.thinkingLevelMap } } : {}) })),
 			};
 		}).sort((a, b) => a.provider.localeCompare(b.provider));
+	}
+
+	async discoverModels(request: UiDiscoverProviderModelsRequest, document: ProviderDocument): Promise<UiProviderModelDiscovery> {
+		const runtime = this.runtime?.session.modelRuntime;
+		if (!runtime) throw new Error('Agent is not initialized');
+		const provider = request.provider;
+		const model = provider ? runtime.getModels(provider)[0] : undefined;
+		if (provider && !runtime.getProvider(provider)) throw new Error('供应商不存在，请刷新后重试');
+		const config = provider && Object.hasOwn(document.data.providers, provider) ? document.data.providers[provider] : undefined;
+		const savedUrl = safeProviderUrl(config?.baseUrl) ?? safeProviderUrl(model?.baseUrl);
+		const baseUrl = request.baseUrl ?? savedUrl;
+		const api = request.api ?? config?.api ?? model?.api;
+		if (!baseUrl || !CUSTOM_PROVIDER_APIS.includes(api as UiProviderApi)) throw new Error('此供应商不支持标准模型列表接口，请使用手动配置或添加自定义供应商');
+		const sameOrigin = savedUrl && new URL(savedUrl).origin === new URL(baseUrl).origin;
+		if (provider && !sameOrigin && (request.apiKey === undefined || Object.values(request.headers ?? {}).includes(null))) {
+			throw new Error('供应商地址已改变，请重新输入密钥和请求头值后获取模型');
+		}
+		const useSystemProxy = request.useSystemProxy ?? (typeof config?.desktopUseSystemProxy === 'boolean' ? config.desktopUseSystemProxy : undefined);
+		const discover = async () => {
+			let key = request.apiKey;
+			let headers = new Headers();
+			if (model && sameOrigin) {
+				try {
+					const auth = await runtime.getAuth(model, { apiKey: key, signal: AbortSignal.timeout(15000) });
+					key ??= auth?.auth.apiKey;
+					const resolvedHeaders = auth?.auth.headers ?? runtime.getCompatibilityRequestConfig(model).headers;
+					headers = new Headers(Object.entries(resolvedHeaders ?? {}).filter((entry): entry is [string, string] => typeof entry[1] === 'string'));
+				} catch { throw new Error('无法读取供应商凭据，请检查密钥或登录状态后重试'); }
+			}
+			if (request.headers !== undefined) {
+				const saved = new Headers(headers);
+				const storedNames = config?.headers && typeof config.headers === 'object' ? Object.keys(config.headers) : [];
+				for (const name of storedNames) headers.delete(name);
+				for (const [name, value] of Object.entries(request.headers)) {
+					if (value === null) {
+						if (!sameOrigin || !storedNames.some((item) => item.toLowerCase() === name.toLowerCase()) || !saved.has(name)) throw new Error('要保留的请求头已不存在，请刷新后重试');
+						headers.set(name, saved.get(name)!);
+					} else headers.set(name, value);
+				}
+			}
+			return discoverProviderModels({ baseUrl, api: api as UiProviderApi, apiKey: key, headers: Object.fromEntries(headers) });
+		};
+		return useSystemProxy === undefined ? discover() : runWithProviderNetwork(useSystemProxy, discover);
 	}
 
 	lockProviderConfiguration(): () => void {
@@ -623,7 +704,10 @@ class SingleAgentService {
 		this.activePromptCalls += 1;
 		await new Promise<void>((resolve, reject) => {
 			let acknowledged = false;
-			void session.prompt(promptText, {
+			void this.queuedPrompt.run({
+				text: promptText, behavior, claimed: false,
+				images: attachments.filter((attachment) => attachment.kind === 'image').map(({ kind, name, mimeType }) => ({ kind, name, mimeType })),
+			}, () => session.prompt(promptText, {
 				expandPromptTemplates,
 				streamingBehavior: behavior,
 				images,
@@ -633,7 +717,7 @@ class SingleAgentService {
 						resolve();
 					}
 				},
-			}).catch((error: unknown) => {
+			})).catch((error: unknown) => {
 				if (session.isIdle) this.finishInterruptedAssistant(errorMessage(error));
 				this.fire({ type: 'error', message: errorMessage(error) });
 				if (!acknowledged) {
@@ -893,6 +977,9 @@ class SingleAgentService {
 		this.pluginModelError = null;
 		this.clearPendingThinking();
 		this.contextRefreshSession = null;
+		this.queueRefreshSession = null;
+		this.queuedMessages = [];
+		this.deliveredEmptyQueued = { steer: 0, followUp: 0 };
 		this.unsubscribe?.();
 		this.unsubscribe = null;
 		this.assistantId = null;
@@ -929,6 +1016,69 @@ class SingleAgentService {
 			sessionPath: session.sessionFile ?? null,
 			messages: timeline.messages,
 			activities: timeline.activities,
+			fileChanges: this.fileChangeTrackers.get(session)?.restore() ?? [],
+		});
+		this.publishQueue({ steering: session.getSteeringMessages(), followUp: session.getFollowUpMessages() });
+	}
+
+	private publishQueue(queue: SdkQueueSnapshot): void {
+		const submitted = this.queuedPrompt.getStore();
+		const pending = (values: readonly string[], behavior: 'steer' | 'followUp') => {
+			// Pi 0.87 ignores empty text on delivery, leaving its display mirror
+			// stale. Subtract only entries observed in the real next-turn preview
+			// and subsequently confirmed by the SDK's message_start event.
+			this.deliveredEmptyQueued[behavior] = Math.min(this.deliveredEmptyQueued[behavior], values.filter((value) => value === '').length);
+			let consumed = this.deliveredEmptyQueued[behavior];
+			return values.filter((value) => value !== '' || consumed-- <= 0);
+		};
+		this.queuedMessages = reconcileQueuedMessages(this.queuedMessages, {
+			steering: pending(queue.steering, 'steer'), followUp: pending(queue.followUp, 'followUp'),
+		}, (raw, behavior) => {
+			const attachments: UiQueuedAttachment[] = (userAttachments({ role: 'user', content: raw }) ?? [])
+				.map(({ kind, name, mimeType }) => ({ kind, name, mimeType }));
+			// Associate submitted image labels only after the SDK confirms this exact
+			// input entered the queue. Transformed/plugin inputs are read from Pi below.
+			if (submitted && !submitted.claimed && submitted.text === raw && submitted.behavior === behavior) {
+				submitted.claimed = true;
+				attachments.unshift(...submitted.images);
+			}
+			return { id: randomUUID(), text: userText({ role: 'user', content: raw }), behavior, ...(attachments.length ? { attachments } : {}) };
+		});
+		this.fire({ type: 'queue', count: this.queuedMessages.length, items: this.queuedMessages.map(({ item }) => cloneQueuedMessage(item)) });
+		this.scheduleQueueImageRefresh();
+	}
+
+	/** Pi's queue_update precedes low-level insertion. A microtask can inspect
+	 * the public next-turn preview, including extension-supplied image attachments. */
+	private scheduleQueueImageRefresh(): void {
+		const session = this.runtime?.session;
+		if (!session || this.queueRefreshSession === session || !this.queuedMessages.length) return;
+		this.queueRefreshSession = session;
+		queueMicrotask(() => {
+			if (this.queueRefreshSession !== session) return;
+			this.queueRefreshSession = null;
+			if (this.runtime?.session !== session) return;
+			const behavior = this.queuedMessages.some((record) => record.item.behavior === 'steer') ? 'steer' : 'followUp';
+			const candidates = this.queuedMessages.filter((record) => record.item.behavior === behavior);
+			let changed = false;
+			for (const message of session.agent.peekQueuedMessages()) {
+				if (message.role !== 'user') continue;
+				const raw = queuedMessageText(message);
+				const index = candidates.findIndex((record) => record.raw === raw);
+				if (index < 0) continue;
+				const [record] = candidates.splice(index, 1);
+				this.queuedPreviewIds.set(message, record!.item.id);
+				const images = (userAttachments(message) ?? []).filter((attachment) => attachment.kind === 'image');
+				const existingImages = record!.item.attachments?.filter((attachment) => attachment.kind === 'image') ?? [];
+				const attachments = [
+					...images.map(({ kind, name, mimeType }, imageIndex) => ({ kind, name: existingImages[imageIndex]?.name ?? name, mimeType })),
+					...(record!.item.attachments?.filter((attachment) => attachment.kind === 'text') ?? []),
+				];
+				if (JSON.stringify(record!.item.attachments ?? []) === JSON.stringify(attachments)) continue;
+				record!.item = { ...record!.item, attachments: attachments.length ? attachments : undefined };
+				changed = true;
+			}
+			if (changed) this.fire({ type: 'queue', count: this.queuedMessages.length, items: this.queuedMessages.map(({ item }) => cloneQueuedMessage(item)) });
 		});
 	}
 
@@ -952,6 +1102,8 @@ class SingleAgentService {
 	private reduce(event: AgentUiEvent): void {
 		switch (event.type) {
 			case 'reset':
+				this.queuedMessages = [];
+				this.deliveredEmptyQueued = { steer: 0, followUp: 0 };
 				this.state = {
 					status: 'uninitialized',
 					model: '',
@@ -966,6 +1118,8 @@ class SingleAgentService {
 					messages: [],
 					activities: [],
 					queuedCount: 0,
+					queuedMessages: [],
+					fileChanges: [],
 					error: null,
 				};
 				break;
@@ -988,6 +1142,8 @@ class SingleAgentService {
 					messages: event.messages,
 					activities: event.activities,
 					queuedCount: 0,
+					queuedMessages: [],
+					fileChanges: event.fileChanges.map((file) => ({ ...file })),
 					error: null,
 				};
 				break;
@@ -1049,6 +1205,10 @@ class SingleAgentService {
 			}
 			case 'queue':
 				this.state.queuedCount = event.count;
+				this.state.queuedMessages = event.items.map(cloneQueuedMessage);
+				break;
+			case 'file-changes':
+				this.state.fileChanges = event.items.map((file) => ({ ...file }));
 				break;
 			case 'error':
 				this.state.error = event.message;
@@ -1125,7 +1285,7 @@ class SingleAgentService {
 				return;
 			}
 			case 'queue_update': {
-				this.fire({ type: 'queue', count: event.steering.length + event.followUp.length });
+				this.publishQueue(event);
 				return;
 			}
 			case 'entry_appended': {
@@ -1142,6 +1302,15 @@ class SingleAgentService {
 			case 'message_start': {
 				const message = event.message;
 				if (message.role === 'user') {
+					if (queuedMessageText(message) === '') {
+						const deliveredId = this.queuedPreviewIds.get(message);
+						const delivered = this.queuedMessages.find((record) => record.item.id === deliveredId);
+						const session = this.runtime?.session;
+						if (delivered && session) {
+							this.deliveredEmptyQueued[delivered.item.behavior] += 1;
+							this.publishQueue({ steering: session.getSteeringMessages(), followUp: session.getFollowUpMessages() });
+						}
+					}
 					this.fire({ type: 'user-message', id: this.nextId('user'), order: this.timelineOrder++, text: userText(message), attachments: userAttachments(message) });
 				} else if (message.role === 'assistant') {
 					this.finishInterruptedAssistant();
@@ -1246,6 +1415,7 @@ class SingleAgentService {
 
 /** Keep independent Pi runtimes alive while the user moves between conversations. */
 export class AgentService {
+	private readonly personalization = createPersonalizationService({ userDirectory: homedir(), agentDirectory: getAgentDir() });
 	private readonly contexts = new Map<string, SingleAgentService>();
 	private readonly reservedSessionPaths = new Map<string, SingleAgentService>();
 	private readonly projectTrustByCwd = new Map<string, boolean>();
@@ -1275,6 +1445,8 @@ export class AgentService {
 
 	get cwd(): string { return this.active?.cwd ?? ''; }
 	get hasSession(): boolean { return this.active?.hasSession ?? false; }
+	getPersonalization() { return this.personalization.list(); }
+	saveInstruction(request: UiSaveInstructionRequest) { return this.personalization.save(request); }
 
 	onEvent(fn: EventEmitter): void { this.emit = fn; }
 	onBackgroundActivity(fn: (cwd: string, path: string) => void): void { this.backgroundActivity = fn; }
@@ -1284,7 +1456,7 @@ export class AgentService {
 		return snapshot ? { ...snapshot, sequence: this.sequence } : {
 			sequence: this.sequence, status: 'uninitialized', model: '', modelName: null, modelProvider: '',
 			thinkingLevel: 'off', availableThinkingLevels: ['off'], contextUsage: null, cwd: '', sessionId: null,
-			sessionPath: null, messages: [], activities: [], queuedCount: 0, error: null,
+			sessionPath: null, messages: [], activities: [], queuedCount: 0, queuedMessages: [], fileChanges: [], error: null,
 		};
 	}
 
@@ -1411,6 +1583,12 @@ export class AgentService {
 	async saveCustomProvider(input: UiSaveCustomProviderRequest): Promise<void> {
 		const request = validateProviderRequest(input);
 		await this.updateCustomProvider(request.provider, request);
+	}
+	async discoverProviderModels(input: UiDiscoverProviderModelsRequest): Promise<UiProviderModelDiscovery> {
+		const request = validateDiscoveryRequest(input);
+		const service = this.requireActive();
+		const document = await readProviderDocument(join(service.agentDirectory, 'models.json'));
+		return service.discoverModels(request, document);
 	}
 	async removeCustomProvider(provider: string): Promise<void> {
 		await this.updateCustomProvider(validateProviderId(provider));
@@ -1692,9 +1870,10 @@ export class AgentService {
 			contextUsage: snapshot.contextUsage,
 			cwd: snapshot.cwd, sessionId: snapshot.sessionId, sessionPath: snapshot.sessionPath,
 			messages: snapshot.messages, activities: snapshot.activities,
+			fileChanges: snapshot.fileChanges,
 		});
 		this.fire({ type: 'status', status: snapshot.status, message: snapshot.statusMessage });
-		if (snapshot.queuedCount) this.fire({ type: 'queue', count: snapshot.queuedCount });
+		this.fire({ type: 'queue', count: snapshot.queuedCount, items: snapshot.queuedMessages });
 		if (snapshot.error) this.fire({ type: 'error', message: snapshot.error });
 	}
 
@@ -1759,6 +1938,13 @@ function contextUsage(session: PiRuntime['session']): UiContextUsage | null {
 
 function errorMessage(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
+}
+
+/** Match the SDK's queue keys, which concatenate text blocks without a separator. */
+function queuedMessageText(message: MessageLike): string {
+	return typeof message.content === 'string' ? message.content : (Array.isArray(message.content) ? message.content : [])
+		.filter((part): part is { type: 'text'; text: string } => part?.type === 'text' && typeof part.text === 'string')
+		.map((part) => part.text).join('');
 }
 
 function userText(message: MessageLike): string {

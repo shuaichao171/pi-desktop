@@ -6,6 +6,7 @@ import { test } from 'node:test';
 const electronStub = `
   export const app = { getAppPath: () => 'test-app' };
   export const utilityProcess = { fork: () => globalThis.__piTestHost };
+  export const session = { defaultSession: { resolveProxy: (url) => globalThis.__piResolveProxy(url) } };
 `;
 registerHooks({
   resolve(specifier, context, nextResolve) {
@@ -40,6 +41,30 @@ async function startCall(client, host, method, rejectionPattern) {
   await settle();
   return { result, rejection };
 }
+
+test('model requests resolve the OS proxy in Electron without opening an extension dialog', async () => {
+  const host = createHost();
+  const urls = [];
+  globalThis.__piResolveProxy = async (url) => { urls.push(url); return 'PROXY 127.0.0.1:7890'; };
+  const client = new AgentHostClient({
+    requestProjectTrust: async () => ({ trusted: false, remember: false }),
+    requestExtensionDialog: async () => { throw new Error('proxy resolution must not show a dialog'); },
+  });
+  try {
+    const { result } = await startCall(client, host, 'discoverProviderModels');
+    const call = host.messages.at(-1);
+    host.emit('message', { kind: 'ui-request', id: 7, callId: call.id, request: { kind: 'resolve-proxy', url: 'https://models.example.invalid/v1/models' } });
+    await settle();
+    await settle();
+    assert.deepEqual(urls, ['https://models.example.invalid/v1/models']);
+    assert.deepEqual(host.messages.find((message) => message.kind === 'ui-reply'), { kind: 'ui-reply', id: 7, value: 'PROXY 127.0.0.1:7890' });
+    host.emit('message', { kind: 'reply', id: call.id, value: { models: [], warnings: [] } });
+    assert.deepEqual(await result, { models: [], warnings: [] });
+  } finally {
+    await client.dispose();
+    delete globalThis.__piResolveProxy;
+  }
+});
 
 test('unanswered RPC rejects while the Pi host remains alive for later calls', async () => {
   const host = createHost();

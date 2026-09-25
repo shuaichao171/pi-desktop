@@ -12,8 +12,10 @@
     "clean": "rimraf dist"
   },
   "dependencies": {
+    "@earendil-works/pi-ai": "0.87.1",
     "@earendil-works/pi-coding-agent": "0.87.1",
-    "@pidesktop/shared": "workspace:*"
+    "@pidesktop/shared": "workspace:*",
+    "undici": "8.10.2"
   },
   "devDependencies": {
     "typescript": "~5.9.3"

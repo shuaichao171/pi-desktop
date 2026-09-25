@@ -6,11 +6,14 @@ import { useT, type Translate } from '../i18n';
 import { useChatStore } from '../store';
 import { Icon } from './Icons';
 import { ComposerControls } from './ComposerControls';
+import type { ModelManagementTarget } from '../modelManagement';
 import { HoverTooltip } from './HoverTooltip';
 import { ComposerContextPicker, type ComposerContextPickerHandle } from './ComposerContextPicker';
 import { consumeContextMention, contextMentionAt, hasContextSource, type ContextMention } from '../composerContext';
 import { completeSlashCommand, slashTriggerAt, type SlashTrigger } from '../composerSlash';
 import { ComposerSlashPicker, type ComposerSlashPickerHandle } from './ComposerSlashPicker';
+import { ComposerQueue } from './ComposerQueue';
+import { ComposerChanges } from './ComposerChanges';
 import './composerLayout.css';
 
 type BusyBehavior = 'steer' | 'followUp';
@@ -54,11 +57,13 @@ function attachmentLabel(attachment: UiAttachment, t: Translate): string {
 	return t(attachment.kind === 'image' ? 'composer.image' : 'composer.text');
 }
 
-export function Composer() {
+export function Composer({ onOpenModelManagement }: { onOpenModelManagement(target: ModelManagementTarget): void }) {
 	const { t } = useT();
 	const bridge = useChatStore((s) => s.bridge);
 	const status = useChatStore((s) => s.status);
-	const queuedCount = useChatStore((s) => s.queuedCount);
+	const queuedMessages = useChatStore((s) => s.queuedMessages);
+	const fileChanges = useChatStore((s) => s.fileChanges);
+	const platform = useChatStore((s) => s.appInfo?.platform);
 	const cwd = useChatStore((s) => s.cwd);
 	const sessionPath = useChatStore((s) => s.sessionPath);
 	const sessionId = useChatStore((s) => s.sessionId);
@@ -93,6 +98,7 @@ export function Composer() {
 	const dismissedMention = useRef<{ start: number; prefix: string } | null>(null);
 	const composingRef = useRef(false);
 	const busy = status === 'busy';
+	const steerShortcut = platform === 'darwin' ? '⌘Enter' : 'Ctrl+Enter';
 	const unavailable = status === 'starting' || status === 'uninitialized' || status === 'error';
 	const placeholder = t(status === 'error' ? 'composer.connectionErrorPlaceholder' : unavailable ? 'composer.connecting' : busy ? 'composer.busyPlaceholder' : 'composer.placeholder');
 	const canSubmit = Boolean(text.trim() || attachments.length) && !sending && !attaching && !unavailable;
@@ -348,7 +354,9 @@ export function Composer() {
 			<div className="pd-composer-wrap">
 				{submissionError && <div className="pd-composer-error" role="alert">{submissionError}</div>}
 				{draftWarning && <div className="pd-composer-error" role="status">{t('composer.draftWarning')}</div>}
-				<div ref={shellRef} className="pd-composer-shell" data-composer-layout="multiline" onDragOver={(event) => { if (event.dataTransfer.types.includes('Files')) event.preventDefault(); }} onDrop={onDrop}>
+				{fileChanges.length > 0 && <ComposerChanges key={`changes:${cwd}\0${sessionId}`} items={fileChanges} />}
+				<ComposerQueue key={`queue:${cwd}\0${sessionId}`} items={queuedMessages} />
+				<div ref={shellRef} className={`pd-composer-shell${queuedMessages.length ? ' has-queue' : ''}`} data-composer-layout="multiline" onDragOver={(event) => { if (event.dataTransfer.types.includes('Files')) event.preventDefault(); }} onDrop={onDrop}>
 					{attachments.length > 0 && <div className="pd-composer-attachments" aria-label={t('composer.pendingAttachments')}>{attachments.map((attachment, index) => <div className={`pd-composer-attachment${attachment.kind === 'text' && attachment.source ? ' is-context' : ''}`} key={`${attachment.name}-${index}`}>
 						{attachment.kind === 'image' ? <img src={`data:${attachment.mimeType};base64,${attachment.data}`} alt="" /> : <span className="pd-composer-attachment-type">{attachment.source ? <Icon name={attachment.source.kind === 'session' ? 'message' : attachment.source.kind === 'directory' ? 'folder' : 'file'} width="16" height="16" /> : 'TXT'}</span>}
 						<HoverTooltip title={attachment.name} description={attachment.kind === 'text' && attachment.source ? `${attachment.source.workspace}\n${attachment.source.path}${attachment.source.truncated ? `\n${t('composer.contextTruncated')}` : ''}` : attachmentLabel(attachment, t)}><span className="pd-composer-attachment-name" tabIndex={0}>{attachment.name}<small>{attachmentLabel(attachment, t)}{attachment.kind === 'text' && attachment.source?.truncated ? ` · ${t('composer.contextTruncatedShort')}` : ''}</small></span></HoverTooltip>
@@ -361,17 +369,17 @@ export function Composer() {
 							<HoverTooltip title={t('composer.contextAddTitle')} shortcut="@"><button ref={contextButtonRef} type="button" className="pd-composer-add-attachment" onMouseDown={(event) => event.preventDefault()} onClick={() => { closeSlash(); setContextPicker((current) => current?.mode === 'menu' ? null : { mode: 'menu' }); }} disabled={unavailable || attaching || attachments.length >= MAX_ATTACHMENTS} aria-label={t('composer.contextAddTitle')} aria-haspopup="dialog" aria-expanded={contextPicker !== null}><Icon name="plus" width="16" height="16" /></button></HoverTooltip>
 						</div>
 						<div className="pd-composer-actions">
-							<ComposerControls />
-							{busy && <><HoverTooltip title={t('composer.stopTitle')}><button type="button" className="pd-composer-action" onClick={() => void abort().catch((error: unknown) => setSubmissionError(error instanceof Error ? error.message : String(error)))} aria-label={t('composer.stopTitle')}><Icon name="square" width="16" height="16" /><span>{t('composer.stop')}</span></button></HoverTooltip><HoverTooltip title={t('composer.steer')} shortcut="Ctrl+Enter"><button type="button" className="pd-composer-action pd-steer-action" onClick={() => void submit('steer')} disabled={!canSubmit}>{t('composer.steer')}</button></HoverTooltip></>}
+							<ComposerControls onOpenModelManagement={onOpenModelManagement} />
+							{busy && <><HoverTooltip title={t('composer.stopTitle')}><button type="button" className="pd-composer-action" onClick={() => void abort().catch((error: unknown) => setSubmissionError(error instanceof Error ? error.message : String(error)))} aria-label={t('composer.stopTitle')}><Icon name="square" width="16" height="16" /><span>{t('composer.stop')}</span></button></HoverTooltip><HoverTooltip title={t('composer.steer')} description={t('composer.queuedSteerDescription')} shortcut={steerShortcut}><button type="button" className="pd-composer-action pd-steer-action" onClick={() => void submit('steer')} disabled={!canSubmit} aria-label={t('composer.steer')}><Icon name="steer" width="15" height="15" /><span>{t('composer.steer')}</span></button></HoverTooltip></>}
 							{status === 'error' || retrying
 								? <HoverTooltip title={t('composer.retryConnection')}><button type="button" className="pd-send-button pd-composer-retry" onClick={() => void retryConnection()} disabled={retrying}><Icon name="refresh" width="15" height="15" /><span>{t(retrying ? 'composer.retryingConnection' : 'composer.retryConnection')}</span></button></HoverTooltip>
-								: <HoverTooltip title={t(busy ? 'composer.queueSend' : 'composer.send')} description={t(busy ? 'composer.busyHint' : 'composer.idleHint')} shortcut="Enter"><button type="button" className="pd-send-button" onClick={() => void submit(busy ? 'followUp' : undefined)} disabled={!canSubmit} aria-label={t(busy ? 'composer.queueSend' : 'composer.send')}><Icon name="arrowUp" width="16" height="16" /></button></HoverTooltip>}
+								: <HoverTooltip title={t(busy ? 'composer.queueSend' : 'composer.send')} description={t(busy ? 'composer.busyHint' : 'composer.idleHint', { shortcut: steerShortcut })} shortcut="Enter"><button type="button" className="pd-send-button" onClick={() => void submit(busy ? 'followUp' : undefined)} disabled={!canSubmit} aria-label={t(busy ? 'composer.queueSend' : 'composer.send')}><Icon name={busy ? 'queue' : 'arrowUp'} width="16" height="16" /></button></HoverTooltip>}
 						</div>
 					</div>
 				</div>
 				{contextPicker && !unavailable && shellRef.current && <ComposerContextPicker ref={pickerRef} anchor={shellRef.current} trigger={contextButtonRef.current} mode={contextPicker.mode} query={contextPicker.mode === 'mention' ? contextPicker.mention.query : ''} workspace={cwd} sessionPath={sessionPath} onSelect={(request) => void selectContext(request)} onUpload={() => { closeContext(); fileInputRef.current?.click(); }} onClose={closeContext} />}
 				{slashTrigger && !unavailable && shellRef.current && <ComposerSlashPicker ref={slashPickerRef} anchor={shellRef.current} query={slashTrigger.query} commands={slashCatalog.key === slashCatalogKey ? slashCatalog.commands : []} loading={slashCatalog.key !== slashCatalogKey || slashCatalog.loading} error={slashCatalog.key === slashCatalogKey ? slashCatalog.error : null} busy={busy} onSelect={selectSlash} onClose={closeSlash} onRetry={() => setSlashRetry((value) => value + 1)} />}
-				{busy && <p className="pd-composer-attachment-hint" role="status">{queuedCount > 0 ? t('composer.queueHint', { count: queuedCount }) : t('composer.busyHint')}</p>}
+				{busy && <p className="pd-composer-attachment-hint">{t('composer.busyHint', { shortcut: steerShortcut })}</p>}
 				{attaching && <p className="pd-composer-attachment-hint" role="status">{t('composer.readingAttachments')}</p>}
 				{attachments.length > 0 && <p className="pd-composer-attachment-hint">{t('composer.attachmentPersistence')}</p>}
 			</div>

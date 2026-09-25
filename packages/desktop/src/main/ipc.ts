@@ -22,7 +22,7 @@ import { readWorkspaceContext, validateContextRequest } from './contextService';
 import { createAutomationService } from './automationService';
 import { createAutomationExecutor } from './automationExecutor';
 import { createPluginDiscovery } from './pluginDiscovery';
-import type { UiPluginMutation, UiPluginResourceKind, UiPluginScope } from '@pidesktop/shared';
+import type { UiPluginMutation, UiPluginResourceKind, UiPluginScope, UiSaveInstructionRequest } from '@pidesktop/shared';
 
 type PendingDialog = {
 	request: UiExtensionDialogRequest;
@@ -412,6 +412,14 @@ export function registerIpc(options: {
 } = {}): void {
 	getDialogWindow = options.getDialogWindow ?? (() => undefined);
 	workbenchService = registerWorkbenchIpc(() => activeWorkspace);
+	ipcMain.handle(IPC_CHANNELS.personalizationRead, (event) => {
+		requirePluginSender(event);
+		return agentService.getPersonalization();
+	});
+	ipcMain.handle(IPC_CHANNELS.personalizationSave, (event, request: UiSaveInstructionRequest) => {
+		requirePluginSender(event);
+		return agentService.saveInstruction(request);
+	});
 	const automations = createAutomationService({
 		filePath: join(app.getPath('userData'), 'automations.json'),
 		execute: (task, signal) => automationExecutor.execute(task, signal),
@@ -609,6 +617,10 @@ export function registerIpc(options: {
 	});
 	ipcMain.handle(IPC_CHANNELS.agentListModels, () => agentService.listModels());
 	ipcMain.handle(IPC_CHANNELS.agentListModelProviders, () => agentService.listModelProviders());
+	ipcMain.handle(IPC_CHANNELS.agentDiscoverProviderModels, (event, request: unknown) => {
+		requirePluginSender(event);
+		return agentService.discoverProviderModels(request);
+	});
 	ipcMain.handle(IPC_CHANNELS.agentSaveCustomProvider, (_event, request: unknown) => agentService.saveCustomProvider(request));
 	ipcMain.handle(IPC_CHANNELS.agentRemoveCustomProvider, (_event, provider: string) => agentService.removeCustomProvider(provider));
 	ipcMain.handle(IPC_CHANNELS.agentListSlashCommands, () => agentService.listSlashCommands());

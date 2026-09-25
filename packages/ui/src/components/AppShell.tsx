@@ -15,6 +15,9 @@ import { useChatStore } from '../store';
 import { useT } from '../i18n';
 import { useSessionNavigation } from '../useSessionNavigation';
 import { HistoryNavigation, type HistoryNavigationProps } from './HistoryNavigation';
+import { SearchButton } from './SearchButton';
+import { applyThemeColors, readColorPreferences, writeColorPreferences } from '../themeColors';
+import type { ModelManagementTarget } from '../modelManagement';
 import './shellMotion.css';
 
 const NARROW_WINDOW_QUERY = '(max-width: 880px)';
@@ -53,13 +56,16 @@ export function AppShell() {
 	const [sidebarWidth, setSidebarWidth] = useState(readSidebarWidth);
 	const [sidebarResizing, setSidebarResizing] = useState(false);
 	const [themePreference, setThemePreference] = useState<ThemePreference>(readThemePreference);
+	const [colorPreferences, setColorPreferences] = useState(readColorPreferences);
+	const [colorSaveFailed, setColorSaveFailed] = useState(false);
 	const [settingsOpen, setSettingsOpen] = useState(false);
 	const [searchOpen, setSearchOpen] = useState(false);
 	const [mainView, setMainView] = useState<'chat' | 'automations' | 'plugins'>('chat');
 	const [searchMessageTarget, setSearchMessageTarget] = useState<SearchMessageTarget | null>(null);
 	const [workbenchRequest, setWorkbenchRequest] = useState<WorkbenchOpenRequest | null>(null);
 	const navigationRequest = useRef(0);
-	const [settingsInitialPage, setSettingsInitialPage] = useState<'appearance' | 'updates'>('appearance');
+	const [settingsInitialPage, setSettingsInitialPage] = useState<'general' | 'model' | 'updates'>('general');
+	const [modelManagementTarget, setModelManagementTarget] = useState<ModelManagementTarget>({ kind: 'manage' });
 	const [workbenchOpen, setWorkbenchOpen] = useState(readWorkbenchOpen);
 	const resizeStart = useRef<{ x: number; width: number } | null>(null);
 	const workbenchToggleRef = useRef<HTMLButtonElement>(null);
@@ -113,12 +119,17 @@ export function AppShell() {
 			const resolved = themePreference === 'system' ? (media.matches ? 'dark' : 'light') : themePreference;
 			document.documentElement.dataset.theme = resolved;
 			document.documentElement.style.colorScheme = resolved;
+			applyThemeColors(document.documentElement, colorPreferences[resolved], resolved);
 		};
 		applyTheme();
 		media.addEventListener('change', applyTheme);
 		writeStoredPreference('pi-desktop.theme', themePreference);
 		return () => media.removeEventListener('change', applyTheme);
-	}, [themePreference]);
+	}, [themePreference, colorPreferences]);
+
+	useEffect(() => {
+		setColorSaveFailed(!writeColorPreferences(colorPreferences));
+	}, [colorPreferences]);
 
 	useEffect(() => {
 		writeStoredPreference('pi-desktop.sidebar-width', String(sidebarWidth));
@@ -172,7 +183,7 @@ export function AppShell() {
 		{ id: 'open-project', label: t('sidebar.openProject'), icon: 'folder', keywords: 'open folder workspace 项目 文件夹 工作区', run: async () => { await useChatStore.getState().pickWorkspace(); setMainView('chat'); } },
 		{ id: 'automations', label: t('sidebar.automation'), icon: 'automation', keywords: 'automation schedule recurring 自动化 定时 计划', run: () => { setMainView('automations'); if (narrow) setSidebarOpen(false); } },
 		{ id: 'plugins', label: t('sidebar.plugins'), icon: 'plugins', keywords: 'plugins extensions skills prompts 插件 扩展 技能 提示词', run: () => { setMainView('plugins'); if (narrow) setSidebarOpen(false); } },
-		{ id: 'settings', label: t('sidebar.settings'), icon: 'settings', keywords: 'preferences appearance model 设置 偏好 模型', run: () => { setSettingsInitialPage('appearance'); setSettingsOpen(true); } },
+		{ id: 'settings', label: t('sidebar.settings'), icon: 'settings', keywords: 'preferences general appearance model language 设置 常规 偏好 模型 语言', run: () => { setSettingsInitialPage('general'); setSettingsOpen(true); } },
 		{ id: 'sidebar', label: t('settings.shortcutSidebar'), icon: 'panel', shortcut: platform === 'darwin' ? '⌘B' : 'Ctrl+B', keywords: 'sidebar toggle 侧栏', run: () => setSidebarOpen((open) => !open) },
 		{ id: 'workbench', label: t('app.openWorkbench'), icon: 'panelRight', keywords: 'files git terminal workbench 文件 工作台', run: () => { setMainView('chat'); setWorkbenchOpen(true); } },
 	];
@@ -201,6 +212,12 @@ export function AppShell() {
 		setWorkbenchOpen(false);
 		workbenchToggleRef.current?.focus();
 	}
+	function openModelManagement(target: ModelManagementTarget): void {
+		setModelManagementTarget(target);
+		setSettingsInitialPage('model');
+		setSettingsOpen(true);
+	}
+	const headerControls = !sidebarOpen && !narrow ? <div className="pd-header-navigation"><HistoryNavigation {...history} /><SearchButton open={searchOpen} onClick={() => setSearchOpen(true)} /></div> : undefined;
 
 	return (
 		<div className={`pd-app-shell flex${isWindows ? ' is-frameless' : ''}${settingsOpen || searchOpen ? ' is-settings-open' : ''}${sidebarResizing ? ' is-sidebar-resizing' : ''}`} style={{ '--pd-sidebar-width': `${sidebarWidth}px` } as CSSProperties}>
@@ -214,7 +231,7 @@ export function AppShell() {
 				onOpenAutomations={() => { setMainView('automations'); if (narrow) setSidebarOpen(false); }}
 				pluginsOpen={mainView === 'plugins'}
 				onOpenPlugins={() => { setMainView('plugins'); if (narrow) setSidebarOpen(false); }}
-				onOpenSettings={(page) => { if (narrow) setSidebarOpen(false); setSettingsInitialPage(page ?? 'appearance'); setSettingsOpen(true); }}
+				onOpenSettings={(page) => { if (narrow) setSidebarOpen(false); setSettingsInitialPage(page ?? 'general'); setSettingsOpen(true); }}
 				searchOpen={searchOpen}
 				history={history}
 				onOpenSearch={() => setSearchOpen(true)}
@@ -224,13 +241,13 @@ export function AppShell() {
 				event.preventDefault();
 				setSidebarWidth((value) => Math.max(MIN_SIDEBAR_WIDTH, Math.min(MAX_SIDEBAR_WIDTH, value + (event.key === 'ArrowRight' ? 16 : -16))));
 			}} />}
-			<div className="pd-chat-view-host" hidden={mainView !== 'chat'} inert={mainView !== 'chat'}><ChatView onToggleSidebar={() => setSidebarOpen((open) => !open)} searchTarget={searchMessageTarget} navigationError={navigation.error} historyControls={!sidebarOpen && !narrow ? <HistoryNavigation {...history} /> : undefined} /></div>
-			{mainView === 'automations' && <AutomationPage onToggleSidebar={() => setSidebarOpen((open) => !open)} onOpenSession={async (cwd, path) => { const selected = await useChatStore.getState().selectSession(cwd, path); if (selected) { setSearchMessageTarget(null); setMainView('chat'); if (narrow) setSidebarOpen(false); } return selected; }} />}
-			{mainView === 'plugins' && <PluginsPage onToggleSidebar={() => setSidebarOpen((open) => !open)} />}
+			<div className="pd-chat-view-host" hidden={mainView !== 'chat'} inert={mainView !== 'chat'}><ChatView onToggleSidebar={() => setSidebarOpen((open) => !open)} onOpenModelManagement={openModelManagement} searchTarget={searchMessageTarget} navigationError={navigation.error} historyControls={mainView === 'chat' ? headerControls : undefined} /></div>
+			{mainView === 'automations' && <AutomationPage headerControls={headerControls} onToggleSidebar={() => setSidebarOpen((open) => !open)} onOpenSession={async (cwd, path) => { const selected = await useChatStore.getState().selectSession(cwd, path); if (selected) { setSearchMessageTarget(null); setMainView('chat'); if (narrow) setSidebarOpen(false); } return selected; }} />}
+			{mainView === 'plugins' && <PluginsPage headerControls={headerControls} onToggleSidebar={() => setSidebarOpen((open) => !open)} />}
 			<button type="button" className={`pd-workbench-scrim${workbenchOpen && mainView === 'chat' ? ' is-open' : ''}`} aria-label={t('app.closeWorkbench')} aria-hidden={!workbenchOpen || mainView !== 'chat'} inert={!workbenchOpen || mainView !== 'chat'} tabIndex={-1} onClick={closeWorkbench} />
 			<WorkbenchSidePane open={workbenchOpen && mainView === 'chat'} onClose={closeWorkbench} openRequest={workbenchRequest} />
 			{mainView === 'chat' && <HoverTooltip title={t('app.workbench')}><button ref={workbenchToggleRef} type="button" className="pd-workbench-toggle pd-icon-button" aria-label={t(workbenchOpen ? 'app.closeWorkbench' : 'app.openWorkbench')} aria-pressed={workbenchOpen} onClick={() => setWorkbenchOpen((value) => !value)}><Icon name="panelRight" width="17" height="17" /></button></HoverTooltip>}
-			{settingsOpen && <SettingsPanel initialPage={settingsInitialPage} onClose={() => setSettingsOpen(false)} onOpenPlugins={() => { setSettingsOpen(false); setMainView('plugins'); if (narrow) setSidebarOpen(false); }} themePreference={themePreference} onThemePreferenceChange={setThemePreference} />}
+			{settingsOpen && <SettingsPanel initialPage={settingsInitialPage} modelManagementTarget={settingsInitialPage === 'model' ? modelManagementTarget : undefined} onClose={() => setSettingsOpen(false)} themePreference={themePreference} onThemePreferenceChange={setThemePreference} colorPreferences={colorPreferences} onColorPreferencesChange={setColorPreferences} colorSaveFailed={colorSaveFailed} />}
 			{searchOpen && <SearchDialog commands={searchCommands} onClose={() => setSearchOpen(false)} onSelectSession={selectSearchSession} onSelectFile={selectSearchFile} />}
 			{isWindows && <WindowControls />}
 			<ExtensionDialogHost />

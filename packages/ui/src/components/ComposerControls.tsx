@@ -3,7 +3,8 @@ import { createPortal } from 'react-dom';
 import type { UiThinkingLevel } from '@pidesktop/shared';
 import { useChatStore } from '../store';
 import { useT } from '../i18n';
-import { groupModelsByProvider, selectModelProvider } from '../modelPicker';
+import { groupModelsByProvider, listUnconfiguredProviders, selectModelProvider } from '../modelPicker';
+import type { ModelManagementTarget } from '../modelManagement';
 import { HoverTooltip } from './HoverTooltip';
 import { Icon } from './Icons';
 
@@ -16,12 +17,14 @@ function tokenLabel(value: number): string {
 }
 
 /** Model, reasoning and context controls share one mutually exclusive picker. */
-export function ComposerControls() {
+export function ComposerControls({ onOpenModelManagement }: { onOpenModelManagement(target: ModelManagementTarget): void }) {
 	const { t, locale } = useT();
 	const model = useChatStore((s) => s.model);
 	const modelName = useChatStore((s) => s.modelName);
 	const provider = useChatStore((s) => s.modelProvider);
 	const models = useChatStore((s) => s.models);
+	const modelProviders = useChatStore((s) => s.modelProviders);
+	const providerAuth = useChatStore((s) => s.providerAuth);
 	const thinking = useChatStore((s) => s.thinkingLevel);
 	const levels = useChatStore((s) => s.availableThinkingLevels);
 	const usage = useChatStore((s) => s.contextUsage);
@@ -31,6 +34,8 @@ export function ComposerControls() {
 	const sessionId = useChatStore((s) => s.sessionId);
 	const cwd = useChatStore((s) => s.cwd);
 	const refreshModels = useChatStore((s) => s.refreshModels);
+	const refreshModelProviders = useChatStore((s) => s.refreshModelProviders);
+	const refreshProviderAuth = useChatStore((s) => s.refreshProviderAuth);
 	const setModel = useChatStore((s) => s.setModel);
 	const setThinkingLevel = useChatStore((s) => s.setThinkingLevel);
 	const [open, setOpen] = useState<Picker | null>(null);
@@ -60,6 +65,7 @@ export function ComposerControls() {
 	const capacityLabel = capacity ? tokenLabel(capacity) : '—';
 	const thinkingLabel = thinking ? t(`composer.thinking.${thinking}`) : t('composer.pickerThinking');
 	const providerGroups = useMemo(() => groupModelsByProvider(models, search, locale), [models, search, locale]);
+	const unconfiguredProviders = useMemo(() => listUnconfiguredProviders(modelProviders, providerAuth, search, locale), [modelProviders, providerAuth, search, locale]);
 	const activeProvider = selectModelProvider(providerGroups, requestedProvider, provider);
 	const visibleModels = providerGroups.find((group) => group.provider === activeProvider)?.models ?? [];
 	const providerTabId = (name: string) => `${pickerId}-provider-${encodeURIComponent(name)}`;
@@ -95,11 +101,19 @@ export function ComposerControls() {
 		setOpen((current) => current === picker ? null : picker);
 	}
 
+	function openManagement(target: ModelManagementTarget) {
+		close('trigger');
+		onOpenModelManagement(target);
+	}
+
 	useEffect(() => {
 		if (!open) return;
 		let active = true;
 		if (open === 'model') {
-			void refreshModels().catch((reason: unknown) => { if (active) setError(reason instanceof Error ? reason.message : String(reason)); });
+			void Promise.allSettled([refreshModels(), refreshModelProviders(), refreshProviderAuth()]).then((results) => {
+				const failed = results.find((result) => result.status === 'rejected');
+				if (active && failed?.status === 'rejected') setError(failed.reason instanceof Error ? failed.reason.message : String(failed.reason));
+			});
 		}
 		const outside = (event: Event) => {
 			const target = event.target as Node;
@@ -115,7 +129,7 @@ export function ComposerControls() {
 			document.removeEventListener('pointerdown', outside);
 			document.removeEventListener('focusin', outside);
 		};
-	}, [open, refreshModels]);
+	}, [open, refreshModels, refreshModelProviders, refreshProviderAuth]);
 
 	useLayoutEffect(() => {
 		// The first portal render is hidden until measured; hidden controls cannot focus.
@@ -211,6 +225,7 @@ export function ComposerControls() {
 				return;
 			}
 			if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
+			if (!providerButton && !modelButton && target !== searchRef.current) return;
 			event.preventDefault(); event.stopPropagation();
 			const options = Array.from((modelButton ? modelListRef : providerListRef).current?.querySelectorAll<HTMLButtonElement>(modelButton ? '[data-picker-option]:not(:disabled)' : '[data-provider]:not(:disabled)') ?? []);
 			if (!options.length) return;
@@ -271,6 +286,14 @@ export function ComposerControls() {
 						</div>
 					</section>
 				</div> : <div className="pd-composer-picker-empty">{t(loading ? 'composer.pickerLoading' : search ? 'composer.pickerNoMatch' : 'composer.pickerEmpty')}</div>}
+				{unconfiguredProviders.length > 0 && <section className="pd-composer-unconfigured" aria-label={t('settings.providersUnconfigured')}>
+					<div className="pd-composer-unconfigured-heading"><span>{t('settings.providersUnconfigured')}</span><small>{t('composer.configureProviderHint')}</small></div>
+					<div className="pd-composer-unconfigured-list">{unconfiguredProviders.map((item) => <button key={item.provider} type="button" data-configure-provider={item.provider} disabled={pending} onClick={() => openManagement({ kind: 'provider', provider: item.provider })}><span>{item.name}</span><Icon name="chevronRight" width="12" height="12" /></button>)}</div>
+				</section>}
+				<div className="pd-composer-model-actions">
+					<button type="button" disabled={pending} onClick={() => openManagement({ kind: 'add-provider' })}><Icon name="plus" width="15" height="15" /><span>{t('settings.providerAdd')}</span></button>
+					<button type="button" disabled={pending} onClick={() => openManagement({ kind: 'manage' })}><Icon name="settings" width="15" height="15" /><span>{t('settings.modelManagement')}</span></button>
+				</div>
 			</> : <div className="pd-composer-thinking-options">
 				{levels.map((level: UiThinkingLevel) => <button key={level} data-picker-option type="button" role="menuitemradio" aria-checked={thinking === level} disabled={!canChange} onClick={() => void choose(() => setThinkingLevel(level))}><span>{t(`composer.thinking.${level}`)}</span>{thinking === level && <span aria-hidden="true">✓</span>}</button>)}
 			</div>}

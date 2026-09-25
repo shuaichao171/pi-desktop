@@ -17,12 +17,14 @@ import type {
 	AgentUiEvent,
 	AppInfo,
 	UiAttachment,
+	UiFileChange,
 	UiContextUsage,
 	UiMessage,
 	UiModelSummary,
 	UiModelProvider,
 	UiSaveCustomProviderRequest,
 	UiProviderAuthStatus,
+	UiQueuedMessage,
 	UiSessionSummary,
 	UiSessionMetaPatch,
 	UiThinkingLevel,
@@ -54,6 +56,8 @@ interface ChatState {
 	activities: UiToolActivity[];
 	timelineRevision: number;
 	queuedCount: number;
+	queuedMessages: UiQueuedMessage[];
+	fileChanges: UiFileChange[];
 	error: string | null;
 	appInfo: AppInfo | null;
 	/** Latest explicit project/session navigation intent; stale requests cannot overwrite it. */
@@ -154,6 +158,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
 	activities: [],
 	timelineRevision: 0,
 	queuedCount: 0,
+	queuedMessages: [],
+	fileChanges: [],
 	error: null,
 	appInfo: null,
 	navigationRequestId: 0,
@@ -219,6 +225,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
 					activities: snapshot.activities,
 					timelineRevision: get().timelineRevision + 1,
 					queuedCount: snapshot.queuedCount,
+					queuedMessages: snapshot.queuedMessages ?? [],
+					fileChanges: snapshot.fileChanges ?? [],
 					error: snapshot.error,
 				});
 				bootstrapping = false;
@@ -298,6 +306,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
 					activities: [],
 					timelineRevision: get().timelineRevision + 1,
 					queuedCount: 0,
+					queuedMessages: [],
+					fileChanges: [],
 					error: null,
 				});
 				return;
@@ -334,6 +344,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
 					activities: event.activities,
 					timelineRevision: get().timelineRevision + 1,
 					queuedCount: 0,
+					queuedMessages: [],
+					fileChanges: event.fileChanges ?? [],
 					error: null,
 				});
 				return;
@@ -415,7 +427,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
 				return;
 			}
 			case 'queue':
-				set({ queuedCount: event.count });
+				set({ queuedCount: event.count, queuedMessages: event.items ?? [] });
+				return;
+			case 'file-changes':
+				set({ fileChanges: event.items });
 				return;
 			case 'sessions-changed':
 				void get().refreshWorkspaceSessions(event.cwd);

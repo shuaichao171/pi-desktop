@@ -5,6 +5,9 @@ type IconName =
 	| 'folder'
 	| 'plus'
 	| 'refresh'
+	| 'update'
+	| 'queue'
+	| 'steer'
 	| 'message'
 	| 'arrowUp'
 	| 'arrowDown'
@@ -49,6 +52,9 @@ const paths: Record<IconName, ReactNode> = {
 	folder: <path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z" />,
 	plus: <><path d="M12 5v14" /><path d="M5 12h14" /></>,
 	refresh: <><path d="M20 7v5h-5" /><path d="M4 17v-5h5" /><path d="M5.9 9a7 7 0 0 1 12.1-2L20 12M4 12l2 5a7 7 0 0 0 12.1-2" /></>,
+	update: <><path d="M12 3v12m-5-5 5 5 5-5M4 16v4a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-4" /></>,
+	queue: <path d="M4 6h16M4 12h10M4 18h5m7-4 4 4-4 4m-4-4h8" />,
+	steer: <path d="M4 20v-8a4 4 0 0 1 4-4h12m-5-5 5 5-5 5" />,
 	message: <path d="M20 11.5a7.5 7.5 0 0 1-7.5 7.5H6l-3 2v-9.5A7.5 7.5 0 0 1 10.5 4h2A7.5 7.5 0 0 1 20 11.5Z" />,
 	arrowUp: <><path d="M12 19V5" /><path d="m6 11 6-6 6 6" /></>,
 	arrowDown: <><path d="M12 5v14" /><path d="m6 13 6 6 6-6" /></>,

@@ -21,10 +21,11 @@ export interface HoverTooltipProps {
 	shortcut?: string;
 	disabled?: boolean;
 	align?: 'start' | 'center' | 'end';
+	side?: 'top' | 'right';
 }
 
 type TriggerProps = ButtonHTMLAttributes<HTMLButtonElement> & RefAttributes<HTMLButtonElement>;
-type TooltipPosition = { left: number; top: number; side: 'top' | 'bottom'; zIndex: number };
+type TooltipPosition = { left: number; top: number; side: 'top' | 'bottom' | 'right'; zIndex: number };
 
 const VIEWPORT_PADDING = 8;
 const TRIGGER_GAP = 6;
@@ -32,7 +33,7 @@ const TOOLTIP_OPEN_EVENT = 'pd:hover-tooltip-open';
 const CLOSE_DELAY = 180;
 
 /** A layout-neutral hint for a native button, including aria-disabled buttons. */
-export function HoverTooltip({ children, title, description, shortcut, disabled = false, align = 'center' }: HoverTooltipProps) {
+export function HoverTooltip({ children, title, description, shortcut, disabled = false, align = 'center', side: preferredSide = 'top' }: HoverTooltipProps) {
 	const trigger = children as ReactElement<TriggerProps>;
 	const triggerRef = useRef<HTMLButtonElement | null>(null);
 	const tooltipRef = useRef<HTMLDivElement | null>(null);
@@ -106,15 +107,24 @@ export function HoverTooltip({ children, title, description, shortcut, disabled 
 		if (!button || !hint) return;
 		const place = () => {
 			const rect = button.getBoundingClientRect();
-			const bounds = hint.getBoundingClientRect();
 			const width = document.documentElement.clientWidth;
 			const height = document.documentElement.clientHeight;
+			if (preferredSide === 'right') {
+				const availableWidth = width - rect.right - TRIGGER_GAP - VIEWPORT_PADDING;
+				// A sidebar hint must never fall back over the rows being browsed.
+				// Hide it when the window cannot fit a readable hint beside the list.
+				if (availableWidth < 120) { setPosition(null); return; }
+				hint.style.setProperty('--pd-tooltip-available-width', `${availableWidth}px`);
+			} else hint.style.removeProperty('--pd-tooltip-available-width');
+			const bounds = hint.getBoundingClientRect();
 			const roomAbove = rect.top - TRIGGER_GAP - VIEWPORT_PADDING;
 			const roomBelow = height - rect.bottom - TRIGGER_GAP - VIEWPORT_PADDING;
-			const side = roomAbove >= bounds.height || roomAbove >= roomBelow ? 'top' : 'bottom';
-			const preferredLeft = align === 'start' ? rect.left : align === 'end' ? rect.right - bounds.width : rect.left + (rect.width - bounds.width) / 2;
-			const preferredTop = side === 'top' ? rect.top - bounds.height - TRIGGER_GAP : rect.bottom + TRIGGER_GAP;
-			const left = Math.max(VIEWPORT_PADDING, Math.min(preferredLeft, width - bounds.width - VIEWPORT_PADDING));
+			const side = preferredSide === 'right' ? 'right' : roomAbove >= bounds.height || roomAbove >= roomBelow ? 'top' : 'bottom';
+			const preferredLeft = side === 'right' ? rect.right + TRIGGER_GAP : align === 'start' ? rect.left : align === 'end' ? rect.right - bounds.width : rect.left + (rect.width - bounds.width) / 2;
+			const preferredTop = side === 'right'
+				? align === 'start' ? rect.top : align === 'end' ? rect.bottom - bounds.height : rect.top + (rect.height - bounds.height) / 2
+				: side === 'top' ? rect.top - bounds.height - TRIGGER_GAP : rect.bottom + TRIGGER_GAP;
+			const left = side === 'right' ? preferredLeft : Math.max(VIEWPORT_PADDING, Math.min(preferredLeft, width - bounds.width - VIEWPORT_PADDING));
 			const top = Math.max(VIEWPORT_PADDING, Math.min(preferredTop, height - bounds.height - VIEWPORT_PADDING));
 			// Hints inside a picker must sit above that picker; ordinary composer hints
 			// retain their low layer so they cannot cover settings or search dialogs.
@@ -175,7 +185,7 @@ export function HoverTooltip({ children, title, description, shortcut, disabled 
 			window.removeEventListener('blur', close);
 			document.removeEventListener('selectionchange', onSelectionChange);
 		};
-	}, [visible, align, close, leave, clearCloseTimer, hasSelectedText, title, description, shortcut, tooltipId]);
+	}, [visible, align, preferredSide, close, leave, clearCloseTimer, hasSelectedText, title, description, shortcut, tooltipId]);
 
 	return <>
 		{cloneElement(trigger, {
@@ -208,7 +218,7 @@ export function HoverTooltip({ children, title, description, shortcut, disabled 
 				id={tooltipId}
 				role="tooltip"
 				className={`pd-hover-tooltip${description != null ? ' has-description' : ''}`}
-				data-side={position?.side ?? 'top'}
+				data-side={position?.side ?? preferredSide}
 				style={{ left: position?.left ?? 0, top: position?.top ?? 0, zIndex: position?.zIndex, visibility: position ? 'visible' : 'hidden' }}
 				onPointerEnter={() => { pointerInTooltip.current = true; clearCloseTimer(); }}
 				onPointerLeave={() => { pointerInTooltip.current = false; leave(); }}

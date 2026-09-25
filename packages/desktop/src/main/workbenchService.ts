@@ -35,12 +35,21 @@ export class WorkbenchService {
 		this.emit = emit;
 	}
 
-	private async workspaceRoot(): Promise<string> {
-		const cwd = this.getWorkspace();
+	private async workspaceRoot(cwd = this.getWorkspace()): Promise<string> {
 		if (!cwd) throw new Error('请先打开工作区');
 		const root = await realpath(cwd);
 		if (!(await stat(root)).isDirectory()) throw new Error('工作区不是文件夹');
 		return root;
+	}
+
+	async openWorkspaceFolder(cwd: string, openPath: (path: string) => Promise<string>): Promise<void> {
+		if (typeof cwd !== 'string' || !cwd || cwd.includes('\0') || !isAbsolute(cwd)) throw new Error('工作区路径无效');
+		if (cwd !== this.getWorkspace()) throw new Error('工作区已切换，请重试');
+		const generation = this.commandGeneration;
+		const root = await this.workspaceRoot(cwd);
+		if (generation !== this.commandGeneration || cwd !== this.getWorkspace()) throw new Error('工作区已切换，请重试');
+		const error = await openPath(root);
+		if (error) throw new Error(`无法打开工作区文件夹：${error}`);
 	}
 
 	private async resolveEntry(relativePath: string, root?: string): Promise<{ root: string; path: string; relativePath: string }> {

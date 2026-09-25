@@ -11,7 +11,7 @@
   cursor: text;
   z-index: 20;
   width: max-content;
-  max-width: min(28rem, calc(100vw - 16px));
+  max-width: min(28rem, calc(100vw - 16px), var(--pd-tooltip-available-width, 100vw));
   max-height: calc(100vh - 16px);
   overflow: hidden;
   padding: 6px 9px;
@@ -27,7 +27,9 @@
   -webkit-app-region: no-drag;
 }
 
-.pd-hover-tooltip.has-description { max-width: min(288px, calc(100vw - 16px)); padding: 9px 11px; }
+.pd-hover-tooltip.has-description { max-width: min(288px, calc(100vw - 16px), var(--pd-tooltip-available-width, 100vw)); padding: 9px 11px; }
+.pd-hover-tooltip[data-side='right'] { animation-name: pd-tooltip-enter-right; }
+@keyframes pd-tooltip-enter-right { from { opacity: 0; translate: -4px 0; } to { opacity: 1; translate: 0 0; } }
 .pd-hover-tooltip-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
 .pd-hover-tooltip-title { min-width: 0; font-weight: 500; white-space: pre-line; overflow-wrap: anywhere; }
 .pd-hover-tooltip-description { margin-top: 6px; color: var(--pd-tooltip-subtle); line-height: 1.55; overflow-wrap: anywhere; }

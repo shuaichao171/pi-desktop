@@ -30,7 +30,7 @@ registerHooks({ resolve(specifier, context, nextResolve) {
 } });
 const deferred = () => { let resolve; const promise = new Promise(done => { resolve = done; }); return { promise, resolve }; };
 
-test('plugin IPC authenticates senders, binds workspace and coordinates mutations with automation claims', async () => {
+test('settings and plugin IPC authenticate senders; plugin mutations coordinate with automation claims', async () => {
   const root = await mkdtemp(join(tmpdir(), 'pi-plugin-ipc-'));
   const cwd = join(root, 'project');
   await mkdir(cwd);
@@ -39,10 +39,14 @@ test('plugin IPC authenticates senders, binds workspace and coordinates mutation
   globalThis.__pluginHandlers = new Map();
   globalThis.__pluginWorkerStuck = false;
   const catalog = { cwd, packages: [], resources: [], warnings: [], projectTrusted: true };
+  const instructions = [{ id: 'user', path: join(root, 'AGENTS.md'), content: 'Use Chinese.', exists: true, revision: 'initial' }];
   let mutations = 0;
   let mutate = async () => catalog;
   globalThis.__pluginAgent = {
     onEvent() {}, onBackgroundActivity() {}, async dispose() {},
+    async getPersonalization() { return instructions; },
+    async discoverProviderModels(request) { assert.deepEqual(request, { provider: 'custom-test' }); return { models: [{ id: 'remote-model' }], warnings: [] }; },
+    async saveInstruction(request) { assert.deepEqual(request, { id: 'user', content: 'Updated.', revision: 'initial' }); return { status: 'saved', document: { ...instructions[0], content: request.content, revision: 'saved' } }; },
     async getPluginCatalog(requested) { assert.equal(requested, cwd); return catalog; },
     async previewPluginResource(request) { return { path: request.path, text: 'preview', truncated: false }; },
     async mutatePlugin(input) { mutations++; return mutate(input); },
@@ -65,7 +69,7 @@ test('plugin IPC authenticates senders, binds workspace and coordinates mutation
   const reload = { cwd, action: 'reload' };
   let release;
   try {
-    for (const channel of [ch.pluginCatalog, ch.pluginMutate, ch.pluginPreview, ch.pluginDiscover, ch.pluginPickDirectory, ch.agentSetExtensionEnabled]) {
+    for (const channel of [ch.personalizationRead, ch.personalizationSave, ch.agentDiscoverProviderModels, ch.pluginCatalog, ch.pluginMutate, ch.pluginPreview, ch.pluginDiscover, ch.pluginPickDirectory, ch.agentSetExtensionEnabled]) {
       const handler = globalThis.__pluginHandlers.get(channel);
       await assert.rejects(async () => handler({ sender: {}, senderFrame: event.senderFrame }), /Invalid plugin sender/);
       await assert.rejects(async () => handler({ sender: event.sender, senderFrame: {} }), /Invalid plugin sender/);
@@ -74,6 +78,9 @@ test('plugin IPC authenticates senders, binds workspace and coordinates mutation
       assert.throws(() => call(channel, input), /项目已切换/);
     }
     assert.deepEqual(await call(ch.pluginCatalog, cwd), catalog);
+    assert.deepEqual(await call(ch.personalizationRead), instructions);
+    assert.deepEqual(await call(ch.agentDiscoverProviderModels, { provider: 'custom-test' }), { models: [{ id: 'remote-model' }], warnings: [] });
+    assert.equal((await call(ch.personalizationSave, { id: 'user', content: 'Updated.', revision: 'initial' })).document.revision, 'saved');
     assert.equal(await call(ch.pluginPickDirectory), root);
     assert.equal(globalThis.__pluginPickerOwner, owner);
     assert.equal((await call(ch.pluginPreview, { cwd, path: 'known.md' })).text, 'preview');

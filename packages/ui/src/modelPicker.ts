@@ -1,4 +1,4 @@
-import type { UiModelSummary } from '@pidesktop/shared';
+import type { UiModelProvider, UiModelSummary, UiProviderAuthStatus } from '@pidesktop/shared';
 
 export interface ModelProviderGroup {
 	provider: string;
@@ -23,4 +23,14 @@ export function selectModelProvider(groups: ModelProviderGroup[], requested: str
 	if (requested !== null && groups.some((group) => group.provider === requested)) return requested;
 	if (groups.some((group) => group.provider === current)) return current;
 	return groups[0]?.provider ?? null;
+}
+
+/** Missing credentials are configuration destinations, never selectable models. */
+export function listUnconfiguredProviders(providers: UiModelProvider[], auth: UiProviderAuthStatus[], query: string, locale: string): UiModelProvider[] {
+	const search = query.trim().toLowerCase();
+	const configured = new Map(auth.map((entry) => [entry.provider, entry.configured]));
+	return providers.filter((provider) => !(configured.get(provider.provider) ?? provider.configured)
+		&& (!search || `${provider.provider} ${provider.name}`.toLowerCase().includes(search)
+			|| provider.models.some((model) => `${model.id} ${model.name}`.toLowerCase().includes(search))))
+		.sort((left, right) => left.name.localeCompare(right.name, locale));
 }

@@ -11,6 +11,8 @@
 /* ------------------------------------------------------------------ */
 
 export const IPC_CHANNELS = {
+  personalizationRead: 'personalization:read',
+  personalizationSave: 'personalization:save',
   pluginCatalog: 'plugins:catalog',
   pluginMutate: 'plugins:mutate',
   pluginPreview: 'plugins:preview',
@@ -48,6 +50,7 @@ export const IPC_CHANNELS = {
   agentExtensionDialogResponse: 'agent:extension-dialog-response',
   agentListModels: 'agent:list-models',
   agentListModelProviders: 'agent:list-model-providers',
+  agentDiscoverProviderModels: 'agent:discover-provider-models',
   agentSaveCustomProvider: 'agent:save-custom-provider',
   agentRemoveCustomProvider: 'agent:remove-custom-provider',
   agentSetModel: 'agent:set-model',
@@ -61,6 +64,7 @@ export const IPC_CHANNELS = {
   agentSetExtensionEnabled: 'agent:set-extension-enabled',
   workspacePick: 'workspace:pick',
   workspaceSwitch: 'workspace:switch',
+  workspaceOpenFolder: 'workspace:open-folder',
   workspaceListEntries: 'workspace:list-entries',
   workspaceSearchFiles: 'workspace:search-files',
   workspaceReadFile: 'workspace:read-file',
@@ -159,6 +163,8 @@ export interface UiModelSummary {
   input: ('text' | 'image')[];
   contextWindow: number;
   maxTokens: number;
+  thinkingLevels?: UiThinkingLevel[];
+  thinkingLevelMap?: Partial<Record<UiThinkingLevel, string | null>>;
 }
 
 /** Protocols supported by the custom-provider settings editor. */
@@ -171,6 +177,36 @@ export interface UiCustomProviderModel {
   input?: ('text' | 'image')[];
   contextWindow?: number;
   maxTokens?: number;
+  thinkingLevelMap?: Partial<Record<UiThinkingLevel, string | null>>;
+}
+
+/** Null preserves a stored header without returning its value to the renderer. */
+export type UiProviderHeaders = Record<string, string | null>;
+
+export interface UiDiscoverProviderModelsRequest {
+  provider?: string;
+  /** Omit connection fields to use the saved provider. */
+  baseUrl?: string;
+  api?: UiProviderApi;
+  apiKey?: string;
+  headers?: UiProviderHeaders;
+  useSystemProxy?: boolean;
+}
+
+export interface UiDiscoveredProviderModel {
+  id: string;
+  name?: string;
+  contextWindow?: number;
+  maxTokens?: number;
+  reasoning?: boolean;
+  input?: ('text' | 'image')[];
+  /** Only present when advertised by the provider, never inferred from its name. */
+  thinkingLevels?: UiThinkingLevel[];
+}
+
+export interface UiProviderModelDiscovery {
+  models: UiDiscoveredProviderModel[];
+  warnings: string[];
 }
 
 export interface UiSaveCustomProviderRequest {
@@ -180,6 +216,8 @@ export interface UiSaveCustomProviderRequest {
   api: UiProviderApi;
   /** Omit to keep the existing credential; never returned by the host. */
   apiKey?: string;
+  headers?: UiProviderHeaders;
+  useSystemProxy?: boolean;
   models: UiCustomProviderModel[];
   mode?: 'create' | 'update';
 }
@@ -193,6 +231,9 @@ export interface UiModelProvider {
   configured: boolean;
   baseUrl: string | null;
   api: string | null;
+  headerNames?: string[];
+  /** Undefined preserves the existing Pi network behavior until explicitly configured. */
+  useSystemProxy?: boolean;
   models: UiModelSummary[];
 }
 
@@ -314,6 +355,31 @@ export type UiAttachment =
   | { kind: 'image'; name: string; mimeType: string; data: string }
   | { kind: 'text'; name: string; mimeType: string; text: string; source?: UiContextSource };
 
+/** Queue previews never repeat large image or context payloads over IPC. */
+export interface UiQueuedAttachment {
+  kind: 'image' | 'text';
+  name: string;
+  mimeType: string;
+}
+
+export interface UiQueuedMessage {
+  /** Stable for the lifetime of this accepted SDK queue entry. */
+  id: string;
+  text: string;
+  behavior: 'steer' | 'followUp';
+  attachments?: UiQueuedAttachment[];
+}
+
+/** Changes made during this session, relative to the file just before its first tool edit. */
+export interface UiFileChange {
+  path: string;
+  kind: 'added' | 'modified' | 'deleted';
+  additions: number | null;
+  deletions: number | null;
+  diff: string | null;
+  preview?: 'binary' | 'too-large' | 'unavailable';
+}
+
 export interface UiExtensionDialogRequest {
   id: string;
   kind: 'select' | 'confirm' | 'input' | 'editor' | 'notify';
@@ -347,7 +413,7 @@ export interface UiToolActivity {
 export type AgentUiEvent =
   | { type: 'reset'; cwd: string }
   | { type: 'status'; status: AgentStatus; message?: string }
-  | { type: 'ready'; model: string; modelName?: string | null; modelProvider: string; thinkingLevel: UiThinkingLevel; availableThinkingLevels: UiThinkingLevel[]; contextUsage: UiContextUsage | null; cwd: string; sessionId: string; sessionPath: string | null; messages: UiMessage[]; activities: UiToolActivity[] }
+  | { type: 'ready'; model: string; modelName?: string | null; modelProvider: string; thinkingLevel: UiThinkingLevel; availableThinkingLevels: UiThinkingLevel[]; contextUsage: UiContextUsage | null; cwd: string; sessionId: string; sessionPath: string | null; messages: UiMessage[]; activities: UiToolActivity[]; fileChanges: UiFileChange[] }
   | { type: 'model'; model: string; modelName?: string | null; modelProvider: string; thinkingLevel: UiThinkingLevel; availableThinkingLevels: UiThinkingLevel[]; contextUsage: UiContextUsage | null }
   | { type: 'context-usage'; contextUsage: UiContextUsage | null }
   | { type: 'thinking-level'; level: UiThinkingLevel }
@@ -357,7 +423,8 @@ export type AgentUiEvent =
   | ({ type: 'assistant-thinking'; id: string } & UiThinkingOutput)
   | ({ type: 'assistant-end'; id: string; text: string; aborted?: boolean; errorMessage?: string } & Partial<UiThinkingOutput>)
   | { type: 'tool'; activity: UiToolActivity }
-  | { type: 'queue'; count: number }
+  | { type: 'queue'; count: number; items: UiQueuedMessage[] }
+  | { type: 'file-changes'; items: UiFileChange[] }
   | { type: 'sessions-changed'; cwd: string }
   | { type: 'error'; message: string };
 
@@ -383,6 +450,8 @@ export interface AgentSnapshot {
   messages: UiMessage[];
   activities: UiToolActivity[];
   queuedCount: number;
+  queuedMessages: UiQueuedMessage[];
+  fileChanges: UiFileChange[];
   error: string | null;
 }
 
@@ -485,12 +554,34 @@ export interface WindowChromeState {
 /* Renderer → host bridge (implemented in preload)                     */
 /* ------------------------------------------------------------------ */
 
+export interface UiInstructionDocument {
+  id: 'user' | 'pi';
+  path: string;
+  exists: boolean;
+  content: string;
+  revision: string | null;
+  error?: string;
+}
+
+export interface UiSaveInstructionRequest {
+  id: UiInstructionDocument['id'];
+  content: string;
+  revision: string | null;
+}
+
+export interface UiSaveInstructionResult {
+  status: 'saved' | 'conflict';
+  document: UiInstructionDocument;
+}
+
 /**
  * The renderer never touches ipcRenderer directly; it programs against this
  * interface. Implemented by the preload script in @pidesktop/desktop and
  * exposed as `window.piDesktop`.
  */
 export interface AgentBridge {
+  getPersonalization(): Promise<UiInstructionDocument[]>;
+  saveInstruction(request: UiSaveInstructionRequest): Promise<UiSaveInstructionResult>;
   getPluginCatalog(cwd: string): Promise<UiPluginCatalog>;
   mutatePlugin(input: UiPluginMutation): Promise<UiPluginCatalog>;
   previewPluginResource(request: { cwd: string; path: string; kind: UiPluginResourceKind; scope: UiPluginScope }): Promise<UiPluginResourcePreview>;
@@ -522,6 +613,7 @@ export interface AgentBridge {
   closeWindow(): Promise<void>;
   /** Opens a native directory picker. Returns null when cancelled. */
   pickWorkspace(): Promise<string | null>;
+  openWorkspaceFolder(cwd: string): Promise<void>;
   listWorkspaceEntries(relativePath?: string): Promise<WorkspaceEntry[]>;
   searchWorkspaceFiles(query: string, options?: { includeDirectories?: boolean }): Promise<{ files: WorkspaceEntry[]; truncated: boolean }>;
   readWorkspaceFile(relativePath: string): Promise<string>;
@@ -543,6 +635,7 @@ export interface AgentBridge {
   updateSessionGroups(change: UiSidebarGroupChange): Promise<UiSessionGroup[]>;
   listModels(): Promise<UiModelSummary[]>;
   listModelProviders(): Promise<UiModelProvider[]>;
+  discoverProviderModels(request: UiDiscoverProviderModelsRequest): Promise<UiProviderModelDiscovery>;
   saveCustomProvider(request: UiSaveCustomProviderRequest): Promise<void>;
   removeCustomProvider(provider: string): Promise<void>;
   setModel(provider: string, id: string): Promise<void>;

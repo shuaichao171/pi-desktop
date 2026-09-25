@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { ModelRuntime } from '@earendil-works/pi-coding-agent';
-import type { UiProviderApi, UiSaveCustomProviderRequest } from '@pidesktop/shared';
+import type { UiDiscoverProviderModelsRequest, UiProviderApi, UiProviderHeaders, UiSaveCustomProviderRequest, UiThinkingLevel } from '@pidesktop/shared';
 
 type JsonObject = Record<string, unknown>;
 export interface ProviderDocument { raw: string | null; data: JsonObject & { providers: Record<string, JsonObject> } }
@@ -90,33 +90,84 @@ export function validateProviderId(value: unknown): string {
 	return id;
 }
 
+export function validateProviderHeaders(value: unknown): UiProviderHeaders {
+	if (!record(value) || Object.keys(value).length > 64) throw new Error('最多设置 64 个请求头');
+	const result: UiProviderHeaders = {};
+	const names = new Set<string>();
+	let size = 0;
+	for (const [name, header] of Object.entries(value)) {
+		const lower = name.toLowerCase();
+		if (!/^[!#$%&'*+.^_`|~0-9a-z-]+$/iu.test(name) || name.length > 256 || names.has(lower)
+			|| /^(?:host|connection|content-length|transfer-encoding|proxy-authorization|proxy-connection|upgrade|trailer|te)$/iu.test(name)) throw new Error('请求头名称无效、重复或不可自定义');
+		if (header !== null && (typeof header !== 'string' || header.length > 16384 || /[\u0000-\u0008\u000a-\u001f\u007f]/u.test(header))) throw new Error('请求头值无效');
+		try { if (header !== null) new Headers({ [name]: header }); } catch { throw new Error('请求头值无效'); }
+		size += name.length + (header?.length ?? 0);
+		if (size > 32768) throw new Error('请求头总长度不能超过 32 KB');
+		names.add(lower);
+		Object.defineProperty(result, name, { value: header, enumerable: true, writable: true, configurable: true });
+	}
+	return result;
+}
+
+/** Keep stored expressions opaque; new values must never become Pi shell/env templates. */
+export function mergeProviderHeaders(previous: unknown, headers: UiProviderHeaders): Record<string, string> {
+	const stored = record(previous) ? previous : {};
+	return Object.fromEntries(Object.entries(headers).map(([name, value]) => {
+		if (value !== null) return [name, literalApiKey(value)];
+		const key = Object.keys(stored).find((item) => item.toLowerCase() === name.toLowerCase());
+		if (!key || typeof stored[key] !== 'string') throw new Error('要保留的请求头已不存在，请刷新后重试');
+		return [name, stored[key]];
+	}));
+}
+
+export function validateDiscoveryRequest(value: unknown): UiDiscoverProviderModelsRequest {
+	if (!record(value) || Object.keys(value).some((key) => !['provider', 'baseUrl', 'api', 'apiKey', 'headers', 'useSystemProxy'].includes(key))) throw new Error('获取模型的参数无效');
+	const provider = value.provider === undefined ? undefined : validateProviderId(value.provider);
+	const baseUrl = value.baseUrl === undefined ? undefined : text(value.baseUrl, '供应商 URL', 2048);
+	if ((!provider && !baseUrl) || (baseUrl && !safeProviderUrl(baseUrl))) throw new Error('请先配置有效的供应商 URL');
+	if ((baseUrl && value.api === undefined) || (value.api !== undefined && !CUSTOM_PROVIDER_APIS.includes(value.api as UiProviderApi))) throw new Error('请选择支持的对话协议');
+	if (value.apiKey !== undefined && (typeof value.apiKey !== 'string' || !value.apiKey.trim() || value.apiKey.length > 16384 || /[\u0000-\u001f\u007f]/u.test(value.apiKey))) throw new Error('API Key 无效');
+	if (value.useSystemProxy !== undefined && typeof value.useSystemProxy !== 'boolean') throw new Error('代理设置无效');
+	return { ...(provider ? { provider } : {}), ...(baseUrl ? { baseUrl } : {}), ...(value.api ? { api: value.api as UiProviderApi } : {}),
+		...(value.apiKey === undefined ? {} : { apiKey: (value.apiKey as string).trim() }),
+		...(value.headers === undefined ? {} : { headers: validateProviderHeaders(value.headers) }),
+		...(value.useSystemProxy === undefined ? {} : { useSystemProxy: value.useSystemProxy }) };
+}
+
 export function validateProviderRequest(value: unknown): UiSaveCustomProviderRequest {
-	if (!record(value) || Object.keys(value).some((key) => !['provider', 'name', 'baseUrl', 'api', 'apiKey', 'models', 'mode'].includes(key))) throw new Error('供应商参数无效');
+	if (!record(value) || Object.keys(value).some((key) => !['provider', 'name', 'baseUrl', 'api', 'apiKey', 'models', 'mode', 'headers', 'useSystemProxy'].includes(key))) throw new Error('供应商参数无效');
 	const provider = validateProviderId(value.provider);
 	const baseUrl = text(value.baseUrl, '供应商 URL', 2048);
 	if (!safeProviderUrl(baseUrl)) throw new Error('URL 只支持 HTTP/HTTPS，不能包含用户名、密码、查询参数或片段');
 	if (!CUSTOM_PROVIDER_APIS.includes(value.api as UiProviderApi)) throw new Error('不支持此对话协议');
 	if (value.mode !== undefined && value.mode !== 'create' && value.mode !== 'update') throw new Error('供应商保存模式无效');
 	if (value.apiKey !== undefined && (typeof value.apiKey !== 'string' || !value.apiKey.trim() || value.apiKey.length > 16_384 || /[\u0000-\u001f\u007f]/u.test(value.apiKey))) throw new Error('API Key 无效');
+	if (value.useSystemProxy !== undefined && typeof value.useSystemProxy !== 'boolean') throw new Error('代理设置无效');
+	const headers = value.headers === undefined ? undefined : validateProviderHeaders(value.headers);
 	if (!Array.isArray(value.models) || value.models.length < 1 || value.models.length > 1000) throw new Error('请配置 1–1000 个模型');
 	const ids = new Set<string>();
 	const models = value.models.map((model) => {
-		if (!record(model) || Object.keys(model).some((key) => !['id', 'name', 'reasoning', 'input', 'contextWindow', 'maxTokens'].includes(key))) throw new Error('模型参数无效');
+		if (!record(model) || Object.keys(model).some((key) => !['id', 'name', 'reasoning', 'input', 'contextWindow', 'maxTokens', 'thinkingLevelMap'].includes(key))) throw new Error('模型参数无效');
 		const id = text(model.id, '模型 ID', 200);
 		if (ids.has(id)) throw new Error('同一供应商不能包含重复模型 ID');
 		ids.add(id);
 		if (model.reasoning !== undefined && typeof model.reasoning !== 'boolean') throw new Error('模型思考能力参数无效');
+		if (model.thinkingLevelMap !== undefined && (!record(model.thinkingLevelMap) || Object.entries(model.thinkingLevelMap).some(([key, mapped]) =>
+			!['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'].includes(key) || (mapped !== null && (typeof mapped !== 'string' || !mapped.trim() || mapped.length > 80 || /[\u0000-\u001f\u007f]/u.test(mapped)))))) throw new Error('模型思考强度映射无效');
 		const input = model.input ?? ['text'];
 		if (!Array.isArray(input) || !input.includes('text') || input.length > 2 || new Set(input).size !== input.length || input.some((item) => item !== 'text' && item !== 'image')) throw new Error('模型输入必须包含文本，可额外支持图片');
 		const contextWindow = model.contextWindow ?? 128000;
 		const maxTokens = model.maxTokens ?? Math.min(16384, Number(contextWindow));
 		if (!Number.isSafeInteger(contextWindow) || Number(contextWindow) <= 0 || Number(contextWindow) > 100_000_000
-			|| !Number.isSafeInteger(maxTokens) || Number(maxTokens) <= 0 || Number(maxTokens) > Number(contextWindow)) throw new Error('模型 token 限额必须为正整数，输出限额不能超过上下文容量');
+			|| !Number.isSafeInteger(maxTokens) || Number(maxTokens) <= 0 || Number(maxTokens) > 100_000_000
+			|| (value.api !== 'google-generative-ai' && Number(maxTokens) > Number(contextWindow))) throw new Error('模型 token 限额无效；非 Gemini 模型的输出限额不能超过上下文容量');
 		return { id, name: model.name === undefined ? id : text(model.name, '模型名称', 200), reasoning: model.reasoning ?? false,
-			input: input as ('text' | 'image')[], contextWindow: Number(contextWindow), maxTokens: Number(maxTokens) };
+			input: input as ('text' | 'image')[], contextWindow: Number(contextWindow), maxTokens: Number(maxTokens),
+			...(model.thinkingLevelMap === undefined ? {} : { thinkingLevelMap: { ...model.thinkingLevelMap } as Partial<Record<UiThinkingLevel, string | null>> }) };
 	});
 	return { provider, name: value.name === undefined ? provider : text(value.name, '供应商名称', 200), baseUrl, api: value.api as UiProviderApi,
-		models, ...(value.apiKey === undefined ? {} : { apiKey: (value.apiKey as string).trim() }), ...(value.mode === undefined ? {} : { mode: value.mode }) };
+		models, ...(headers === undefined ? {} : { headers }), ...(value.useSystemProxy === undefined ? {} : { useSystemProxy: value.useSystemProxy }),
+		...(value.apiKey === undefined ? {} : { apiKey: (value.apiKey as string).trim() }), ...(value.mode === undefined ? {} : { mode: value.mode }) };
 }
 
 export function mergeProvider(document: ProviderDocument, request: UiSaveCustomProviderRequest): ProviderDocument['data'] {
@@ -124,6 +175,8 @@ export function mergeProvider(document: ProviderDocument, request: UiSaveCustomP
 	const previousModels = new Map((Array.isArray(previous.models) ? previous.models : []).filter(record).map((model) => [model.id, model]));
 	return { ...document.data, providers: { ...document.data.providers, [request.provider]: {
 		...previous, name: request.name, baseUrl: request.baseUrl, api: request.api,
+		...(request.headers === undefined ? {} : { headers: mergeProviderHeaders(previous.headers, request.headers) }),
+		...(request.useSystemProxy === undefined ? {} : { desktopUseSystemProxy: request.useSystemProxy }),
 		models: request.models.map((model) => ({ ...previousModels.get(model.id), ...model })),
 	} } };
 }

@@ -1,8 +1,22 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { groupModelsByProvider, selectModelProvider } from '../packages/ui/src/modelPicker.ts';
+import { groupModelsByProvider, listUnconfiguredProviders, selectModelProvider } from '../packages/ui/src/modelPicker.ts';
 
 const model = (provider, id, name = id) => ({ provider, id, name, reasoning: false, input: ['text'], contextWindow: 100000, maxTokens: 8192 });
+
+test('unconfigured destinations respect refreshed credentials, including environment and login availability', () => {
+  const provider = (id, configured) => ({ provider: id, name: id, configured, models: [model(id, `${id}-model`)] });
+  const providers = [provider('stored', false), provider('environment', false), provider('login', true), provider('removed', true), provider('missing', false)];
+  const auth = [
+    { provider: 'stored', configured: true, source: 'stored' },
+    { provider: 'environment', configured: true, source: 'environment' },
+    { provider: 'removed', configured: false },
+  ];
+  assert.deepEqual(listUnconfiguredProviders(providers, auth, '', 'en-US').map((item) => item.provider), ['missing', 'removed']);
+  assert.deepEqual(listUnconfiguredProviders(providers, auth, ' MISSING-MODEL ', 'en-US').map((item) => item.provider), ['missing']);
+  assert.deepEqual(listUnconfiguredProviders(providers, auth, 'stored', 'en-US'), []);
+  assert.equal(providers[0].configured, false, 'catalog snapshots must not be mutated');
+});
 
 test('model groups use provider identity and locale order while preserving model order and the input catalog', () => {
   const models = Object.freeze([

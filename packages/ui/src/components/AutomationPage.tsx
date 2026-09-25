@@ -113,7 +113,7 @@ function AutomationEditor({ initial, workspaces, models, busy, error, onSave, on
 	</Modal>;
 }
 
-export function AutomationPage({ onToggleSidebar, onOpenSession }: { onToggleSidebar(): void; onOpenSession(cwd: string, path: string): Promise<boolean> }) {
+export function AutomationPage({ onToggleSidebar, onOpenSession, headerControls }: { onToggleSidebar(): void; onOpenSession(cwd: string, path: string): Promise<boolean>; headerControls?: ReactNode }) {
 	const { t, locale } = useT();
 	const bridge = useChatStore((state) => state.bridge);
 	const cwd = useChatStore((state) => state.cwd);
@@ -182,7 +182,7 @@ export function AutomationPage({ onToggleSidebar, onOpenSession }: { onToggleSid
 	const historyTask = snapshot.automations.find((task) => task.id === historyId);
 	const history = snapshot.runs.filter((run) => historyId === 'all' || run.automationId === historyId).sort((a, b) => b.startedAt.localeCompare(a.startedAt));
 	return <main className="pd-main pd-automation-page">
-		<header className="pd-chat-header"><button className="pd-icon-button pd-header-sidebar-toggle" type="button" onClick={onToggleSidebar} aria-label={t('chat.toggleSidebar')}><Icon name="panel" /></button><div className="pd-automation-header-title"><Icon name="automation" width="16" height="16" /><span>{t('sidebar.automation')}</span></div></header>
+		<header className="pd-chat-header">{headerControls}<button className="pd-icon-button pd-header-sidebar-toggle" type="button" onClick={onToggleSidebar} aria-label={t('chat.toggleSidebar')}><Icon name="panel" /></button><div className="pd-automation-header-title"><Icon name="automation" width="16" height="16" /><span>{t('sidebar.automation')}</span></div></header>
 		<div className="pd-automation-scroll"><div className="pd-automation-content">
 			<div className="pd-automation-intro"><div><span className="pd-automation-eyebrow">{t('automation.eyebrow')}</span><h1>{t('automation.title')}</h1><p>{t('automation.description')}</p></div><button type="button" className="pd-automation-button is-primary" onClick={() => create()} disabled={!bridge || loading || busy}><Icon name="plus" width="16" height="16" />{t('automation.create')}</button></div>
 			<div className="pd-automation-toolbar"><SegmentedIndicator className="pd-automation-filters" label={t('automation.filter')} activeKey={filter}>{(['all', 'active', 'paused'] as Filter[]).map((value) => <button key={value} type="button" data-segment-key={value} className={filter === value ? 'is-active' : ''} aria-pressed={filter === value} onClick={() => setFilter(value)}>{t(`automation.${value}`)}<span>{snapshot.automations.filter((task) => value === 'all' || (value === 'active' ? task.enabled : !task.enabled)).length}</span></button>)}</SegmentedIndicator><label className="pd-automation-search"><Icon name="search" width="15" height="15" /><input type="search" aria-label={t('automation.search')} placeholder={t('automation.search')} value={query} onChange={(event) => setQuery(event.target.value)} /></label><button type="button" className="pd-automation-button is-quiet" onClick={() => setHistoryId('all')} disabled={loading}><Icon name="clock" width="15" height="15" />{t('automation.history')}</button></div>

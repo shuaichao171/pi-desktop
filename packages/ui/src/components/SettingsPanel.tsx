@@ -1,12 +1,16 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
 import type { UiProviderAuthStatus, UiUpdateState } from '@pidesktop/shared';
 import { useChatStore } from '../store';
 import { useT, type Translate } from '../i18n';
 import { Icon } from './Icons';
 import { ModelSettingsPanel } from './ModelSettingsPanel';
+import { ColorThemeSettings } from './ColorThemeSettings';
+import { PersonalizationPanel } from './PersonalizationPanel';
+import type { ThemeColorPreferences } from '../themeColors';
+import type { ModelManagementTarget } from '../modelManagement';
 
 export type ThemePreference = 'system' | 'dark' | 'light';
-type SettingsPage = 'appearance' | 'model' | 'credentials' | 'extensions' | 'shortcuts' | 'updates' | 'about';
+type SettingsPage = 'general' | 'appearance' | 'personalization' | 'model' | 'shortcuts' | 'updates' | 'about';
 
 function authSourceLabel({ configured, source }: UiProviderAuthStatus, t: Translate): string {
 	if (!configured) return t('settings.authMissing');
@@ -79,16 +83,21 @@ function ProviderCredentialRow({ provider, configured, source, supportsApiKey }:
 	);
 }
 
-export function SettingsPanel({ initialPage = 'appearance', onClose, onOpenPlugins, themePreference, onThemePreferenceChange }: { initialPage?: 'appearance' | 'updates'; onClose(): void; onOpenPlugins?(): void; themePreference: ThemePreference; onThemePreferenceChange(theme: ThemePreference): void }) {
+export function SettingsPanel({ initialPage = 'general', modelManagementTarget, onClose, themePreference, onThemePreferenceChange, colorPreferences, onColorPreferencesChange, colorSaveFailed }: { initialPage?: 'general' | 'appearance' | 'model' | 'updates'; modelManagementTarget?: ModelManagementTarget; onClose(): void; themePreference: ThemePreference; onThemePreferenceChange(theme: ThemePreference): void; colorPreferences: ThemeColorPreferences; onColorPreferencesChange(preferences: ThemeColorPreferences): void; colorSaveFailed: boolean }) {
 	const { t, locale, setLocale } = useT();
 	const [page, setPage] = useState<SettingsPage>(initialPage);
+	const [modelTarget, setModelTarget] = useState(modelManagementTarget);
+	const [draftState, setDraftState] = useState({ dirty: false, saving: false });
+	const [discardAction, setDiscardAction] = useState<(() => void) | null>(null);
+	const keepEditingRef = useRef<HTMLButtonElement>(null);
+	const wasConfirmingDiscard = useRef(false);
 	const [updateState, setUpdateState] = useState<UiUpdateState | null>(null);
 	const [updatePending, setUpdatePending] = useState(false);
 	const [updateActionError, setUpdateActionError] = useState<string | null>(null);
 	const dialogRef = useRef<HTMLDivElement>(null);
 	const closeRef = useRef<HTMLButtonElement>(null);
-	const providerAuth = useChatStore((s) => s.providerAuth);
-	const settingsLoading = useChatStore((s) => s.settingsLoading);
+	// Capture the opener before a child layout effect can focus a configuration target.
+	const [returnFocus] = useState(() => document.activeElement instanceof HTMLElement ? document.activeElement : null);
 	const settingsError = useChatStore((s) => s.settingsError);
 	const status = useChatStore((s) => s.status);
 	const cwd = useChatStore((s) => s.cwd);
@@ -97,7 +106,17 @@ export function SettingsPanel({ initialPage = 'appearance', onClose, onOpenPlugi
 	const refreshModels = useChatStore((s) => s.refreshModels);
 	const refreshProviderAuth = useChatStore((s) => s.refreshProviderAuth);
 	const waitingForAgent = status === 'starting' || status === 'uninitialized';
-	const sortedProviderAuth = useMemo(() => [...providerAuth].sort((a, b) => Number(b.configured) - Number(a.configured) || a.provider.localeCompare(b.provider)), [providerAuth]);
+	function requestLeave(action = onClose) {
+		if (draftState.saving) return;
+		if (draftState.dirty) setDiscardAction(() => action);
+		else action();
+	}
+	useEffect(() => {
+		if (discardAction) keepEditingRef.current?.focus();
+		else if (wasConfirmingDiscard.current) closeRef.current?.focus();
+		wasConfirmingDiscard.current = Boolean(discardAction);
+	}, [discardAction]);
+	function keepEditing() { setDiscardAction(null); setPage('personalization'); }
 
 	useEffect(() => {
 		if (!bridge) return;
@@ -110,13 +129,12 @@ export function SettingsPanel({ initialPage = 'appearance', onClose, onOpenPlugi
 	}, [bridge]);
 
 	useEffect(() => {
-		const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-		closeRef.current?.focus();
+		if (!dialogRef.current?.contains(document.activeElement)) closeRef.current?.focus();
 		return () => {
 			const canReceiveFocus = (element: HTMLElement | null): element is HTMLElement =>
 				Boolean(element?.isConnected && !element.closest('[inert]') && element.getClientRects().length > 0);
-			if (canReceiveFocus(previous)) {
-				previous.focus();
+			if (canReceiveFocus(returnFocus)) {
+				returnFocus.focus();
 				return;
 			}
 			const settingsEntry = document.querySelector<HTMLButtonElement>('.pd-settings-entry');
@@ -124,7 +142,7 @@ export function SettingsPanel({ initialPage = 'appearance', onClose, onOpenPlugi
 			if (canReceiveFocus(settingsEntry)) settingsEntry.focus();
 			else if (canReceiveFocus(sidebarToggle)) sidebarToggle.focus();
 		};
-	}, []);
+	}, [returnFocus]);
 
 	useEffect(() => {
 		if (waitingForAgent) return;
@@ -133,9 +151,9 @@ export function SettingsPanel({ initialPage = 'appearance', onClose, onOpenPlugi
 	}, [waitingForAgent, refreshModels, refreshProviderAuth]);
 
 	function onDialogKeyDown(event: KeyboardEvent<HTMLDivElement>) {
-		if (event.key === 'Escape') { event.stopPropagation(); onClose(); return; }
+		if (event.key === 'Escape') { event.stopPropagation(); if (discardAction) keepEditing(); else requestLeave(); return; }
 		if (event.key !== 'Tab') return;
-		const elements = Array.from(dialogRef.current?.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), summary, [tabindex]:not([tabindex="-1"])') ?? []).filter((element) => element.getClientRects().length > 0 && getComputedStyle(element).visibility !== 'hidden' && !element.matches(':disabled'));
+		const elements = Array.from(dialogRef.current?.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), summary, [tabindex]:not([tabindex="-1"])') ?? []).filter((element) => element.getClientRects().length > 0 && getComputedStyle(element).visibility !== 'hidden' && !element.matches(':disabled') && !element.closest('[inert]'));
 		if (!elements?.length) return;
 		const first = elements[0];
 		const last = elements[elements.length - 1];
@@ -170,44 +188,40 @@ export function SettingsPanel({ initialPage = 'appearance', onClose, onOpenPlugi
 		: t('settings.updateIdle');
 
 	return (
-		<div className="pd-settings-overlay" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+		<div className="pd-settings-overlay" onMouseDown={(event) => { if (event.target === event.currentTarget && !discardAction) requestLeave(); }}>
 			<div ref={dialogRef} className="pd-settings-dialog" role="dialog" aria-modal="true" aria-labelledby="pd-settings-title" onKeyDown={onDialogKeyDown}>
-				<header className="pd-settings-header"><div><span className="pd-settings-eyebrow">PI DESKTOP</span><h1 id="pd-settings-title">{t('settings.title')}</h1></div><button ref={closeRef} type="button" className="pd-icon-button" onClick={onClose} aria-label={t('settings.close')}><Icon name="close" /></button></header>
-				<div className="pd-settings-layout">
+				<header className="pd-settings-header" inert={Boolean(discardAction)}><div><span className="pd-settings-eyebrow">PI DESKTOP</span><h1 id="pd-settings-title">{t('settings.title')}</h1></div><button ref={closeRef} type="button" className="pd-icon-button" disabled={draftState.saving} onClick={() => requestLeave()} aria-label={t('settings.close')}><Icon name="close" /></button></header>
+				{discardAction && <div className="pd-settings-discard" role="alertdialog" aria-modal="true" aria-labelledby="pd-discard-title" aria-describedby="pd-discard-description"><h2 id="pd-discard-title">{t('personalization.discardTitle')}</h2><p id="pd-discard-description">{t('personalization.discardDescription')}</p><div className="pd-instruction-actions"><button ref={keepEditingRef} className="pd-instruction-button" type="button" onClick={keepEditing}>{t('personalization.keepEditing')}</button><button className="pd-instruction-button" type="button" onClick={discardAction}>{t('personalization.discard')}</button></div></div>}
+				<div className="pd-settings-layout" inert={Boolean(discardAction)}>
 					<nav className="pd-settings-nav" aria-label={t('settings.category')}>
+						<button type="button" className={page === 'general' ? 'is-active' : ''} aria-current={page === 'general' ? 'page' : undefined} onClick={() => setPage('general')}>{t('settings.general')}</button>
 						<button type="button" className={page === 'appearance' ? 'is-active' : ''} aria-current={page === 'appearance' ? 'page' : undefined} onClick={() => setPage('appearance')}>{t('settings.appearance')}</button>
-						<button type="button" className={page === 'model' ? 'is-active' : ''} aria-current={page === 'model' ? 'page' : undefined} onClick={() => setPage('model')}>{t('settings.modelThinking')}</button>
-						<button type="button" className={page === 'credentials' ? 'is-active' : ''} aria-current={page === 'credentials' ? 'page' : undefined} onClick={() => setPage('credentials')}>{t('settings.credentials')}</button>
-						<button type="button" className={page === 'extensions' ? 'is-active' : ''} aria-current={page === 'extensions' ? 'page' : undefined} onClick={() => setPage('extensions')}>{t('settings.extensions')}</button>
+						<button type="button" className={page === 'personalization' ? 'is-active' : ''} aria-current={page === 'personalization' ? 'page' : undefined} onClick={() => setPage('personalization')}>{t('settings.personalization')}</button>
+						<button type="button" className={page === 'model' ? 'is-active' : ''} aria-current={page === 'model' ? 'page' : undefined} onClick={() => { if (page !== 'model') { setModelTarget(undefined); setPage('model'); } }}>{t('settings.modelManagement')}</button>
 						<button type="button" className={page === 'shortcuts' ? 'is-active' : ''} aria-current={page === 'shortcuts' ? 'page' : undefined} onClick={() => setPage('shortcuts')}>{t('settings.shortcuts')}</button>
 						<button type="button" className={page === 'updates' ? 'is-active' : ''} aria-current={page === 'updates' ? 'page' : undefined} onClick={() => setPage('updates')}>{t('settings.updates')}</button>
 						<button type="button" className={page === 'about' ? 'is-active' : ''} aria-current={page === 'about' ? 'page' : undefined} onClick={() => setPage('about')}>{t('settings.about')}</button>
 					</nav>
 					<div className="pd-settings-content">
 						{settingsError && <div className="pd-settings-error" role="alert">{settingsError}</div>}
+						<PersonalizationPanel active={page === 'personalization'} onDraftStateChange={setDraftState} />
+						{page === 'general' && <>
+							<div className="pd-settings-section-head"><h2>{t('settings.general')}</h2><p>{t('settings.generalDescription')}</p></div>
+							<div className="pd-settings-section-head"><h3>{t('settings.language')}</h3><p>{t('settings.languageDescription')}</p></div>
+							<div className="pd-language-options" role="group" aria-label={t('settings.language')}>
+								<button type="button" className={locale === 'zh-CN' ? 'is-selected' : ''} aria-pressed={locale === 'zh-CN'} onClick={() => setLocale('zh-CN')}>{t('settings.languageZh')}</button>
+								<button type="button" className={locale === 'en-US' ? 'is-selected' : ''} aria-pressed={locale === 'en-US'} onClick={() => setLocale('en-US')}>{t('settings.languageEn')}</button>
+							</div>
+						</>}
 						{page === 'appearance' && <>
 							<div className="pd-settings-section-head"><h2>{t('settings.appearance')}</h2><p>{t('settings.appearanceDescription')}</p></div>
 							<div className="pd-appearance-options" role="group" aria-label={t('settings.themeLabel')}>
 								{(['system', 'dark', 'light'] as const).map((theme) => <button type="button" key={theme} className={`pd-appearance-choice${themePreference === theme ? ' is-selected' : ''}`} aria-pressed={themePreference === theme} onClick={() => onThemePreferenceChange(theme)}><span className={`pd-theme-swatch is-${theme}`} aria-hidden="true" /><strong>{t(theme === 'system' ? 'settings.themeSystem' : theme === 'dark' ? 'settings.themeDark' : 'settings.themeLight')}</strong></button>)}
 							</div>
 							<div className="pd-settings-divider" />
-							<div className="pd-settings-section-head"><h2>{t('settings.language')}</h2><p>{t('settings.languageDescription')}</p></div>
-							<div className="pd-language-options" role="group" aria-label={t('settings.language')}>
-								<button type="button" className={locale === 'zh-CN' ? 'is-selected' : ''} aria-pressed={locale === 'zh-CN'} onClick={() => setLocale('zh-CN')}>{t('settings.languageZh')}</button>
-								<button type="button" className={locale === 'en-US' ? 'is-selected' : ''} aria-pressed={locale === 'en-US'} onClick={() => setLocale('en-US')}>{t('settings.languageEn')}</button>
-							</div>
+							<ColorThemeSettings themePreference={themePreference} preferences={colorPreferences} onChange={onColorPreferencesChange} saveFailed={colorSaveFailed} />
 						</>}
-						{page === 'model' && <ModelSettingsPanel key={cwd} renderCredential={(provider) => <ProviderCredentialRow key={provider.provider} {...provider} />} />}
-						{page === 'credentials' && <>
-							<div className="pd-settings-section-head"><h2>{t('settings.credentials')}</h2><p>{t('settings.credentialDescription')}</p></div>
-							<div className="pd-provider-list">{sortedProviderAuth.map((item) => <ProviderCredentialRow key={item.provider} {...item} />)}</div>
-							{providerAuth.length === 0 && <div className="pd-settings-empty">{t(settingsLoading || waitingForAgent ? 'settings.providerLoading' : status === 'error' ? 'settings.agentError' : 'settings.providerEmpty')}</div>}
-							{status !== 'idle' && <p className="pd-settings-hint">{t('settings.providerBusy')}</p>}
-						</>}
-						{page === 'extensions' && <>
-							<div className="pd-settings-section-head"><h2>{t('sidebar.plugins')}</h2><p>{t('plugins.settingsDescription')}</p></div>
-							{onOpenPlugins && <button type="button" className="pd-settings-primary" onClick={onOpenPlugins}>{t('plugins.openPage')}</button>}
-						</>}
+						{page === 'model' && <ModelSettingsPanel key={cwd} initialTarget={modelTarget} renderCredential={(provider) => <ProviderCredentialRow key={provider.provider} {...provider} />} />}
 						{page === 'shortcuts' && <>
 							<div className="pd-settings-section-head"><h2>{t('settings.shortcuts')}</h2><p>{t('settings.shortcutsDescription')}</p></div>
 							<dl className="pd-shortcut-list"><div><dt>{t('settings.shortcutSearch')}</dt><dd><kbd>{appInfo?.platform === 'darwin' ? '⌘' : 'Ctrl'}</kbd> + <kbd>K</kbd></dd></div><div><dt>{t('settings.shortcutSidebar')}</dt><dd><kbd>{appInfo?.platform === 'darwin' ? '⌘' : 'Ctrl'}</kbd> + <kbd>B</kbd></dd></div><div><dt>{t('settings.shortcutSend')}</dt><dd><kbd>Enter</kbd></dd></div><div><dt>{t('settings.shortcutNewline')}</dt><dd><kbd>Shift</kbd> + <kbd>Enter</kbd></dd></div><div><dt>{t('settings.shortcutClose')}</dt><dd><kbd>Esc</kbd></dd></div></dl>

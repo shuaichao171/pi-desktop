@@ -185,7 +185,7 @@ export function SidebarSessionPanel({ visible, onNavigate, onError }: { visible:
 				if (event.key === 'Enter') event.currentTarget.blur();
 				if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); renameCancelled.current = true; setRenaming(null); }
 			}} onBlur={() => { if (renameCancelled.current) return; setRenaming(null); void perform(() => updateSessionMeta(session.path, { name: renameDraft.trim() })); }} /> : <>
-				<HoverTooltip title={title} description={`${session.workspace} · ${t('sidebar.messageCount', { count: session.messageCount })}`} align="start">
+				<HoverTooltip title={title} description={`${session.workspace} · ${t('sidebar.messageCount', { count: session.messageCount })}`} side="right" align="start">
 					<button type="button" className="pd-session-row" onClick={() => openSession(session)} disabled={status === 'starting' || navigating} aria-current={active ? 'page' : undefined}>
 						{session.unread && <span className="pd-session-unread" aria-label={t('sidebar.unread')} />}
 						<span className="pd-session-copy"><strong>{title}</strong>{source && <small>{workspaceName(session.workspace)}</small>}</span>
@@ -193,7 +193,7 @@ export function SidebarSessionPanel({ visible, onNavigate, onError }: { visible:
 						<time dateTime={session.modified}>{dateLabel(session.modified)}</time>
 					</button>
 				</HoverTooltip>
-				<div className="pd-session-actions"><HoverTooltip title={t('sidebar.menuTitle')}><button type="button" className="pd-session-more pd-icon-button" aria-label={t('sidebar.menuLabel', { title })} aria-haspopup="menu" aria-expanded={(popup?.kind === 'session' || popup?.kind === 'move') && popup.session.path === session.path} onClick={(event) => setPopup({ kind: 'session', anchor: event.currentTarget, session })}><Icon name="more" width="15" height="15" /></button></HoverTooltip></div>
+				<div className="pd-session-actions"><HoverTooltip title={t('sidebar.menuTitle')} side="right"><button type="button" className="pd-session-more pd-icon-button" aria-label={t('sidebar.menuLabel', { title })} aria-haspopup="menu" aria-expanded={(popup?.kind === 'session' || popup?.kind === 'move') && popup.session.path === session.path} onClick={(event) => setPopup({ kind: 'session', anchor: event.currentTarget, session })}><Icon name="more" width="15" height="15" /></button></HoverTooltip></div>
 			</>}
 		</div>;
 	}
