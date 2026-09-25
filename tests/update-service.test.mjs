@@ -13,6 +13,7 @@ registerHooks({
     if (specifier === 'electron') source = `
       export const app = { isPackaged: true, getVersion: () => '0.1.0' };
       export const BrowserWindow = { getAllWindows: () => [] };
+      export const net = { fetch: async () => ({ ok: false }) };
     `;
     if (specifier === 'electron-updater') source = 'export const autoUpdater = globalThis.__testUpdater;';
     if (specifier === './appLocale') source = "export const getAppLocale = () => globalThis.__testUpdateLocale ?? 'en-US';";
@@ -49,27 +50,33 @@ function deferred() {
   return { promise, resolve, reject };
 }
 
-test('background downloads become ready without installing until the user clicks', async () => {
+test('downloads start only after the user clicks and install once ready', async () => {
   const service = createService();
   let shutdowns = 0;
   let installs = 0;
   service.setBeforeInstall(async () => { shutdowns += 1; });
   updater.quitAndInstall = () => { installs += 1; };
   updater.checkForUpdates = async () => { updater.emit('update-available', { version: '0.2.0' }); return {}; };
+  updater.downloadUpdate = async () => {};
   try {
     await service.check();
-    updater.emit('update-downloaded', { version: '0.2.0' });
-    updater.emit('download-progress', { percent: 50 });
-    await flush();
-    assert.equal(service.getState().phase, 'ready');
-    assert.equal(service.getState().progressPercent, 100);
+    assert.equal(service.getState().phase, 'available', 'updates are found without downloading');
     assert.equal(!!service.getState().installRequested, false);
-    assert.equal(shutdowns, 0);
-    assert.equal(installs, 0);
+    await service.install();
+    assert.equal(service.getState().phase, 'downloading');
+    assert.equal(service.getState().installRequested, true);
+    updater.emit('download-progress', { percent: 50 });
+    assert.equal(service.getState().progressPercent, 50);
+    updater.emit('update-downloaded', { version: '0.2.0' });
+    await flush();
+    assert.equal(service.getState().phase, 'installing', 'the consented click installs as soon as the download lands');
+    assert.equal(service.getState().progressPercent, 100);
+    assert.equal(shutdowns, 1);
+    assert.equal(installs, 1);
     await service.install();
     assert.equal(service.getState().phase, 'installing');
     assert.equal(shutdowns, 1);
-    assert.equal(installs, 1);
+    assert.equal(installs, 1, 'duplicate clicks must not install twice');
   } finally { service.stop(); }
 });
 
@@ -81,6 +88,7 @@ test('clicking during download installs once and ignores duplicate clicks and st
   service.setBeforeInstall(() => { shutdowns += 1; return shutdown.promise; });
   updater.quitAndInstall = () => { installs += 1; };
   updater.checkForUpdates = async () => { updater.emit('update-available', { version: '0.2.0' }); return {}; };
+  updater.downloadUpdate = async () => {};
   try {
     await service.check();
     await Promise.all([service.install(), service.install()]);
@@ -108,22 +116,24 @@ test('clicking during download installs once and ignores duplicate clicks and st
   } finally { shutdown.resolve(); service.stop(); }
 });
 
-test('download errors cancel automatic installation and require another explicit click', async () => {
+test('download errors cancel the pending installation and require another explicit click', async () => {
   const service = createService();
   let installs = 0;
-  let downloadFailure;
+  let downloadReject;
   service.setBeforeInstall(async () => {});
   updater.quitAndInstall = () => { installs += 1; };
-  updater.checkForUpdates = async () => {
-    updater.emit('update-available', { version: '0.2.0' });
-    return { downloadPromise: { catch(handler) { downloadFailure = handler; return Promise.resolve(); } } };
-  };
+  updater.checkForUpdates = async () => { updater.emit('update-available', { version: '0.2.0' }); return {}; };
+  let downloadAttempt = 0;
+  updater.downloadUpdate = () => new Promise((done, nope) => { downloadAttempt += 1; if (downloadAttempt === 1) downloadReject = nope; else done(); });
   try {
     await service.check();
-    await service.install();
-    const error = new Error('Connection lost');
-    updater.emit('error', error);
-    downloadFailure(error);
+    const download = service.install();
+    await flush();
+    assert.equal(service.getState().phase, 'downloading');
+    assert.equal(service.getState().installRequested, true);
+    downloadReject(new Error('Connection lost'));
+    await download;
+    await flush();
     assert.equal(service.getState().phase, 'error');
     assert.equal(service.getState().installRequested, false);
     assert.equal(service.getState().availableVersion, '0.2.0');
@@ -155,6 +165,7 @@ test('retry waits for the failed metadata check and old download rejection canno
     if (checks === 1) return metadata.promise;
     return Promise.resolve({});
   };
+  updater.downloadUpdate = async () => {};
   try {
     const checking = service.check();
     await flush();
@@ -254,7 +265,7 @@ test('automatic checks start after 15 seconds and repeat every four hours', (con
   } finally { service.stop(); context.mock.timers.reset(); }
 });
 
-test('update checks handle the separate automatic download rejection', async () => {
+test('update checks handle download-promise rejections without pretending to download', async () => {
   const service = createService();
   let downloadFailure;
   updater.checkForUpdates = async () => {
@@ -263,7 +274,7 @@ test('update checks handle the separate automatic download rejection', async () 
     return { downloadPromise: { catch(handler) { downloadFailure = handler; return Promise.resolve(); } } };
   };
   try {
-    assert.equal((await service.check()).phase, 'downloading');
+    assert.equal((await service.check()).phase, 'available');
     assert.equal(typeof downloadFailure, 'function');
     await downloadFailure(new Error('download disconnected'));
     assert.equal(service.getState().phase, 'error');
@@ -326,7 +337,7 @@ test('GitHub release downloads disable multipart ranges and retain the default s
     assert.equal((await service.check()).phase, 'up-to-date');
     assert.deepEqual(feedConfigurations.at(-1), { provider: 'generic', url, useMultipleRangeRequest: false });
     assert.equal(updater.verifyUpdateCodeSignature, signatureVerifier);
-    assert.equal(updater.autoDownload, true);
+    assert.equal(updater.autoDownload, false, 'updates are never downloaded without user consent');
     assert.equal(updater.autoInstallOnAppQuit, false);
     assert.equal(updater.allowDowngrade, false);
   } finally { service.stop(); delete updater.verifyUpdateCodeSignature; }

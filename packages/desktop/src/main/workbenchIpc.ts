@@ -29,12 +29,15 @@ export function registerWorkbenchIpc(getWorkspace: () => string): WorkbenchServi
 		}
 		await service.openWorkspaceInVsCode(cwd);
 	});
+	ipcMain.handle(IPC_CHANNELS.workspaceOpeners, () => service.listWorkspaceOpeners());
 	ipcMain.handle(IPC_CHANNELS.workspaceCommitContext, () => service.gitCommitContext());
 	ipcMain.handle(IPC_CHANNELS.workspaceCommit, (_event, message: string) => service.gitCommit(message));
 	ipcMain.handle(IPC_CHANNELS.workspaceListEntries, (_event, relativePath?: string) => service.listEntries(relativePath));
 	ipcMain.handle(IPC_CHANNELS.workspaceReadFile, (_event, relativePath: string) => service.readFile(relativePath));
 	ipcMain.handle(IPC_CHANNELS.workspaceGitStatus, () => service.gitStatus());
 	ipcMain.handle(IPC_CHANNELS.workspaceGitDiff, (_event, relativePath: string) => service.gitDiff(relativePath));
+	ipcMain.handle(IPC_CHANNELS.workspaceBranches, () => service.gitBranches());
+	ipcMain.handle(IPC_CHANNELS.workspaceCheckoutBranch, (_event, branch: string) => service.gitCheckout(branch));
 	ipcMain.handle(IPC_CHANNELS.workspaceCommandStart, async (event, command: string) => {
 		if (typeof command !== 'string' || !command.trim() || command.length > 4000) throw new Error('命令无效或过长');
 		const win = BrowserWindow.fromWebContents(event.sender);

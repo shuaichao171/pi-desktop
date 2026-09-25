@@ -9,6 +9,9 @@ const stubs = {
   electron: `
     export const app = { getPath: () => globalThis.__groupsRoot };
     export const BrowserWindow = { getAllWindows: () => [] };
+    export const Menu = { buildFromTemplate: () => ({}) };
+    export const nativeImage = { createFromPath: () => ({ isEmpty: () => true }) };
+    export const Tray = class {};
     export const dialog = { showErrorBox: () => {} };
     export const ipcMain = { handle: (channel, handler) => globalThis.__groupsHandlers.set(channel, handler) };
   `,

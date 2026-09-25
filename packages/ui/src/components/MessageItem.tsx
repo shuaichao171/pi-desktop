@@ -121,13 +121,34 @@ const UserMessageItem = memo(function UserMessageItem({ message, highlighted }: 
 	);
 });
 
-export const MessageItem = memo(function MessageItem({ message, highlighted = false }: { message: UiMessage; highlighted?: boolean }) {
+const AssistantMessageItem = memo(function AssistantMessageItem({ message, highlighted }: { message: UiMessage; highlighted: boolean }) {
 	const { t } = useT();
-	if (message.role === 'user') return <UserMessageItem message={message} highlighted={highlighted} />;
+	const [copied, setCopied] = useState(false);
+	const [forking, setForking] = useState(false);
+
+	const copy = async () => {
+		if (!message.text || !navigator.clipboard) return;
+		try { await navigator.clipboard.writeText(message.text); } catch { return; }
+		setCopied(true);
+		window.setTimeout(() => setCopied(false), 1200);
+	};
+
+	const fork = async () => {
+		if (forking) return;
+		setForking(true);
+		try {
+			await useChatStore.getState().forkMessage(message.id);
+		} catch {
+			// The store surfaces the failure in the chat banner.
+		} finally {
+			setForking(false);
+		}
+	};
 
 	const hasThinking = Boolean(message.thinking || message.thinkingStatus);
-	if (!message.text && !hasThinking && message.status === 'done') return null;
+	const showActions = message.status === 'done' && Boolean(message.text);
 
+	if (message.status === 'done' && !message.text && !hasThinking && !message.errorMessage) return null;
 	return (
 		<div className={`pd-message-row is-assistant${highlighted ? ' is-search-match' : ''}`} data-message-id={message.id}>
 			<div className="pd-message-column">
@@ -136,7 +157,17 @@ export const MessageItem = memo(function MessageItem({ message, highlighted = fa
 				{message.text && <div className="pd-markdown"><Markdown remarkPlugins={[remarkGfm]}>{message.text}</Markdown></div>}
 				{message.status === 'streaming' && message.thinkingStatus !== 'streaming' && <span className="pd-response-pending" role="status"><ActivityLabel active>{t(message.text ? 'message.generating' : 'message.preparing')}</ActivityLabel></span>}
 				{message.status === 'error' && <div className="pd-message-interrupted">{message.errorMessage || t('message.interrupted')}</div>}
+				{showActions && (
+					<div className="pd-message-actions">
+						<button type="button" className="pd-message-action" onClick={() => void copy()} aria-label={t(copied ? 'message.copied' : 'message.copy')}><Icon name={copied ? 'check' : 'copy'} width="14" height="14" /></button>
+						<button type="button" className="pd-message-action" onClick={() => void fork()} disabled={forking} aria-label={t('message.fork')}><Icon name="gitBranch" width="14" height="14" /></button>
+					</div>
+				)}
 			</div>
 		</div>
 	);
+});
+export const MessageItem = memo(function MessageItem({ message, highlighted = false }: { message: UiMessage; highlighted?: boolean }) {
+	if (message.role === 'user') return <UserMessageItem message={message} highlighted={highlighted} />;
+	return <AssistantMessageItem message={message} highlighted={highlighted} />;
 });

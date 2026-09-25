@@ -8,6 +8,9 @@ import { test } from 'node:test';
 const stubs = {
   electron: `
     export const app = { getPath: () => globalThis.__automationRoot };
+    export const Menu = { buildFromTemplate: () => ({}) };
+    export const nativeImage = { createFromPath: () => ({ isEmpty: () => true }) };
+    export const Tray = class {};
     export const BrowserWindow = { getAllWindows: () => [] };
     export const dialog = { showErrorBox: () => {} };
     export const ipcMain = { handle: (channel, handler) => globalThis.__automationHandlers.set(channel, handler) };

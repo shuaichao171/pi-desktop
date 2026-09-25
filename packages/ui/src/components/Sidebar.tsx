@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
+import Markdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import type { UiUpdateState } from '@pidesktop/shared';
 import { useChatStore } from '../store';
 import { useT } from '../i18n';
@@ -24,7 +26,7 @@ interface SidebarProps {
 }
 
 export function Sidebar({ open, narrow, onToggle, onNavigate, onOpenSettings, onOpenSearch, searchOpen, automationsOpen, onOpenAutomations, pluginsOpen, onOpenPlugins, history }: SidebarProps) {
-	const { t } = useT();
+	const { t, locale } = useT();
 	const bridge = useChatStore((s) => s.bridge);
 	const platform = useChatStore((s) => s.appInfo?.platform);
 	const cwd = useChatStore((s) => s.cwd);
@@ -37,7 +39,7 @@ export function Sidebar({ open, narrow, onToggle, onNavigate, onOpenSettings, on
 	const updateActionLock = useRef(false);
 	const [updateSnapshot, setUpdateSnapshot] = useState<{ bridge: typeof bridge; state: UiUpdateState } | null>(null);
 	const updateState = updateSnapshot?.bridge === bridge ? updateSnapshot.state : null;
-	const updateAvailable = updateState?.phase === 'downloading' || updateState?.phase === 'ready' || updateState?.phase === 'installing'
+	const updateAvailable = updateState?.phase === 'available' || updateState?.phase === 'downloading' || updateState?.phase === 'ready' || updateState?.phase === 'installing'
 		|| Boolean(updateState?.availableVersion && (updateState.phase === 'error' || updateState.phase === 'checking'));
 	const updatePercent = Number.isFinite(updateState?.progressPercent) ? Math.round(Math.max(0, Math.min(100, updateState!.progressPercent!))) : 0;
 	const updateBusy = updatePending || Boolean(updateState?.installRequested) || updateState?.phase === 'installing';
@@ -48,6 +50,14 @@ export function Sidebar({ open, narrow, onToggle, onNavigate, onOpenSettings, on
 		: updateState?.phase === 'ready' ? t('settings.updateReadyNotice')
 		: updateState?.phase === 'downloading' ? t('settings.updateDownloadNotice', { percent: updatePercent })
 		: t('settings.updateAvailableNotice');
+	// zcode-style: hovering the entry shows the release notes. The changelog is
+	// hidden once the download is underway — progress becomes the story then.
+	const notesState = updateState?.releaseNotes ? updateState : null;
+	const updateNotesVisible = notesState !== null && notesState.phase !== 'downloading' && notesState.phase !== 'installing';
+	const rawNotesDate = notesState?.releaseDate;
+	const updateNotesDate = rawNotesDate && !Number.isNaN(Date.parse(rawNotesDate))
+		? new Intl.DateTimeFormat(locale === 'en-US' ? 'en-US' : 'zh-CN', { year: 'numeric', month: 'long', day: 'numeric', timeZone: 'UTC' }).format(new Date(rawNotesDate))
+		: null;
 	const updateButtonText = updateState?.phase === 'installing' ? t('sidebar.updateRestarting')
 		: updateState?.phase === 'downloading' ? `${updatePercent}%`
 		: updateBusy ? t('sidebar.updatePending')
@@ -109,7 +119,12 @@ export function Sidebar({ open, narrow, onToggle, onNavigate, onOpenSettings, on
 			{updateError && <div className="pd-sidebar-error pd-sidebar-detail" role="alert">{updateError}</div>}
 			<div className="pd-sidebar-footer-actions">
 				<HoverTooltip title={t('sidebar.settings')} align="start"><button type="button" className="pd-settings-entry" aria-label={t('sidebar.settings')} onClick={() => onOpenSettings()}><Icon name="settings" width="17" height="17" /><span className="pd-sidebar-detail">{t('sidebar.settings')}</span><Icon name="chevronRight" className="pd-sidebar-detail" width="15" height="15" /></button></HoverTooltip>
-				{updateAvailable && <HoverTooltip title={updateLabel} align="end">
+				{updateAvailable && <HoverTooltip title={updateLabel} align="end" description={updateNotesVisible ? (
+					<div className="pd-update-notes">
+						{updateNotesDate && <div className="pd-update-notes-date">{updateNotesDate}</div>}
+						<div className="pd-update-notes-body"><Markdown remarkPlugins={[remarkGfm]}>{notesState!.releaseNotes}</Markdown></div>
+					</div>
+				) : undefined}>
 					<button type="button" className={`pd-sidebar-update${updateState?.phase === 'downloading' ? ' is-downloading' : ''}`} aria-label={updateLabel} aria-busy={updateBusy} disabled={updateBusy || !bridge} data-update-phase={updateState?.phase} onClick={() => void updateNow()}>
 						<Icon name="update" width="13" height="13" aria-hidden="true" /><span className="pd-sidebar-update-label" aria-hidden="true">{updateButtonText}</span>
 					</button>

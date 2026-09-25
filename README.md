@@ -111,6 +111,8 @@ pnpm dist:linux # Linux：AppImage + DEB，x64（在 Linux 上运行）
 
 输出位于 `release/`。Windows 的 Portable 是单文件自解压包，每次启动都要先解压 Electron 和应用文件；解压期间会显示原生启动图。日常使用推荐安装 Setup 版，从其快捷方式启动可跳过每次解压，并支持软件内更新。打包默认嵌入本仓库公开 Releases 地址，同时生成 `latest.yml`；Portable 需要手动替换。此前未配置更新源的 `0.1.0` 需要手动安装一次新的 Setup，之后才能接收更新。Windows 应用图标源文件是 `packages/desktop/build/icon.svg`，可运行 `python scripts/make-icon.py` 重新生成 PNG 与 ICO（需要 Pillow）。启动 Logo 位于 `packages/desktop/src/main/splash.ts`；`pnpm dist:win` 会直接从该 SVG 生成便携版启动图，也可单独运行 `node scripts/make-portable-splash.mjs`。便携版启动器启用 DPI 感知，图标按原生像素显示，避免 Windows 放大位图造成模糊。
 
+双击根目录的 `debug.cmd` 可在本地构建调试用的便携版（输出到 `release-debug/`，无需发布）：独立的 "Pi Desktop Debug" 身份，userData 与正式安装互不影响；便携模式自动停用更新检查，不会误升级到线上版本；`run-debug.cmd` 以远程调试端口 `9223` 启动，便于用 CDP 检查 UI，`win-unpacked/` 里的 EXE 可免解压快速运行。打包在仓库外的暂存目录完成，避免编辑器/代理的文件监视锁住中间产物；若旧产物被占用无法替换，重启相关软件后手动删除即可。
+
 启动时并行加载界面和恢复会话，历史消息绘制完成后再从 Logo 切换到主窗口，避免先显示空对话。若初始化需要扩展交互，会先显示对应弹窗；初始化失败时显示错误提示。
 
 提交到 `main` 或提交 PR 会触发多平台 CI。单独推送与应用版本一致的稳定 `vX.Y.Z` 标签会创建**草稿 Release**；一键发布脚本负责等待、校验并公开该草稿。手动运行发布工作流时也可开启 `publish`，通过产物校验后自动公开并设为 Latest。公开 Release 即为默认更新源，无需额外服务器；本地 `0.1.0` 用户需先手动安装新版 Setup。具体步骤与升级验证见 [发布指南](docs/RELEASE.md)。

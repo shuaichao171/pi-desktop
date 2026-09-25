@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { IPC_CHANNELS } from '@pidesktop/shared';
 import { getAppLocale } from './appLocale';
 import { createSplashErrorHtml, createSplashHtml } from './splash';
+import { createAppTray, destroyAppTray } from './tray';
 
 const here = fileURLToPath(new URL('.', import.meta.url));
 let ipc: typeof import('./ipc') | null = null;
@@ -13,6 +14,15 @@ let mainRevealed = false;
 let startupCancelled = false;
 const pendingWindowReveals = new WeakMap<BrowserWindow, () => void>();
 const rendererWindows = new Set<BrowserWindow>();
+
+function showMainWindow(): void {
+	const windows = BrowserWindow.getAllWindows();
+	const target = windows.find((window) => window.isVisible()) ?? windows.find((window) => window.isMinimized()) ?? windows[0];
+	if (!target || target.isDestroyed()) return;
+	if (target.isMinimized()) target.restore();
+	target.show();
+	target.focus();
+}
 
 function splashUrl(html: string): string {
 	return `data:text/html;charset=utf-8,${encodeURIComponent(html)}`;
@@ -113,7 +123,9 @@ function createWindow(onReady?: () => void, onLoadError?: (error: unknown) => vo
 		}).then(({ response }) => {
 			if (win.isDestroyed()) return;
 			if (response === 0) win.reload();
-			else win.close();
+			// destroy() bypasses the Windows close-to-tray interception: a dead
+			// renderer must not linger as an invisible tray window.
+			else win.destroy();
 		}).catch((error: unknown) => console.error('Pi Desktop renderer recovery failed:', error))
 			.finally(() => { recoveryDialogVisible = false; });
 	};
@@ -133,6 +145,14 @@ function createWindow(onReady?: () => void, onLoadError?: (error: unknown) => vo
 	win.on('responsive', () => {
 		if (unresponsiveTimer) clearTimeout(unresponsiveTimer);
 		unresponsiveTimer = null;
+	});
+	// Windows mirrors ZCode: the close button hides to the tray while the
+	// agent keeps running. Real exits set readyToQuit (quit menu, updates, or
+	// window-all-closed paths) before closing.
+	win.on('close', (event) => {
+		if (process.platform !== 'win32' || readyToQuit) return;
+		event.preventDefault();
+		win.hide();
 	});
 	win.on('closed', () => {
 		if (unresponsiveTimer) clearTimeout(unresponsiveTimer);
@@ -229,18 +249,15 @@ if (!hasSingleInstanceLock) {
 	app.quit();
 } else {
 	app.on('second-instance', () => {
-		const windows = BrowserWindow.getAllWindows();
-		const target = windows.find((window) => window.isVisible()) ?? windows.find((window) => window.isMinimized());
-		if (!target || target.isDestroyed()) return;
-		if (target.isMinimized()) target.restore();
-		target.show();
-		target.focus();
+		// Also restores a window hidden to the tray (neither visible nor minimized).
+		showMainWindow();
 	});
 
 	void app.whenReady().then(() => {
 	if (process.platform === 'win32') {
 		app.setAppUserModelId('dev.pidesktop.app');
 		Menu.setApplicationMenu(null);
+		createAppTray({ showMainWindow, quitApp: () => app.quit() });
 	}
 	// The renderer only needs clipboard write for its explicit copy action.
 	session.defaultSession.setPermissionRequestHandler((_webContents, permission, callback) => {
@@ -307,6 +324,7 @@ let readyToQuit = false;
 let disposing = false;
 app.on('before-quit', (event) => {
 	updateService?.stop();
+	destroyAppTray();
 	if (readyToQuit || !ipc) return;
 	event.preventDefault();
 	if (disposing) return;

@@ -23,6 +23,8 @@ extraResources:
     to: update-config.json
   - from: ../../LICENSE
     to: LICENSE.txt
+  - from: build/icon.ico
+    to: icon.ico
 
 # Public Releases also host latest*.yml. Packaging scripts keep environment
 # overrides aligned with the embedded out/update-config.json.

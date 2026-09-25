@@ -324,6 +324,7 @@ export function createIsolatedAgentService(ui: AgentHostUiHandlers) {
 		abort: (...args: unknown[]) => client.call('abort', ...args),
 		newSession: (...args: unknown[]) => client.call('newSession', ...args),
 		editUserMessage: (...args: unknown[]) => client.call('editUserMessage', ...args),
+		forkAssistantMessage: (...args: unknown[]) => client.call('forkAssistantMessage', ...args),
 		generateCommitMessage: (...args: unknown[]) => client.call('generateCommitMessage', ...args),
 		dispose: () => client.dispose(),
 	};

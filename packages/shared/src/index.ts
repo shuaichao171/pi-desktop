@@ -35,6 +35,7 @@ export const IPC_CHANNELS = {
   agentInit: 'agent:init',
   agentPrompt: 'agent:prompt',
   agentEditMessage: 'agent:edit-message',
+  agentForkMessage: 'agent:fork-message',
   agentGenerateCommitMessage: 'agent:generate-commit-message',
   agentAbort: 'agent:abort',
   agentNewSession: 'agent:new-session',
@@ -67,6 +68,7 @@ export const IPC_CHANNELS = {
   agentSetExtensionEnabled: 'agent:set-extension-enabled',
   workspacePick: 'workspace:pick',
   workspaceSwitch: 'workspace:switch',
+  workspaceDefault: 'workspace:default',
   workspaceOpenFolder: 'workspace:open-folder',
   workspaceListEntries: 'workspace:list-entries',
   workspaceSearchFiles: 'workspace:search-files',
@@ -74,7 +76,10 @@ export const IPC_CHANNELS = {
   contextRead: 'context:read',
   workspaceGitStatus: 'workspace:git-status',
   workspaceGitDiff: 'workspace:git-diff',
+  workspaceBranches: 'workspace:branches',
+  workspaceCheckoutBranch: 'workspace:checkout-branch',
   workspaceOpenInVsCode: 'workspace:open-in-vscode',
+  workspaceOpeners: 'workspace:openers',
   workspaceCommitContext: 'workspace:commit-context',
   workspaceCommit: 'workspace:commit',
   workspaceCommandStart: 'workspace:command-start',
@@ -525,6 +530,19 @@ export interface WorkspaceGitStatus {
   entries: WorkspaceGitChange[];
 }
 
+
+export interface WorkspaceOpener {
+  id: 'explorer' | 'vscode' | (string & {});
+  /** Extracted editor icon as a data URL, when the executable was found. */
+  icon?: string;
+}
+export interface WorkspaceBranches {
+  isRepository: boolean;
+  current: string | null;
+  detached: boolean;
+  branches: string[];
+}
+
 export interface WorkspaceCommandEvent {
   id: string;
   type: 'stdout' | 'stderr' | 'exit' | 'error';
@@ -543,7 +561,8 @@ export interface AppInfo {
   platform: string;
 }
 
-export type UiUpdatePhase = 'unavailable' | 'idle' | 'checking' | 'downloading' | 'ready' | 'installing' | 'up-to-date' | 'error';
+// 'available' = an update was found but nothing downloads until the user consents.
+export type UiUpdatePhase = 'unavailable' | 'idle' | 'checking' | 'available' | 'downloading' | 'ready' | 'installing' | 'up-to-date' | 'error';
 export type UiUpdateUnavailableReason = 'development' | 'portable' | 'unsupported' | 'unconfigured' | 'invalid-feed';
 
 export interface UiUpdateState {
@@ -552,6 +571,8 @@ export interface UiUpdateState {
   currentVersion: string;
   availableVersion?: string;
   progressPercent?: number;
+  releaseNotes?: string;
+  releaseDate?: string;
   installRequested?: boolean;
   error?: string;
 }
@@ -615,7 +636,7 @@ export interface AgentBridge {
   getAppInfo(): Promise<AppInfo>;
   setAppLocale(locale: AppLocale): Promise<void>;
   getUpdateState(): Promise<UiUpdateState>;
-  checkForUpdates(): Promise<UiUpdateState>;
+  checkForUpdates(autoInstall?: boolean): Promise<UiUpdateState>;
   installUpdate(): Promise<void>;
   onUpdateStateChanged(listener: (state: UiUpdateState) => void): () => void;
   getWindowChromeState(): Promise<WindowChromeState>;
@@ -631,8 +652,14 @@ export interface AgentBridge {
   readWorkspaceFile(relativePath: string): Promise<string>;
   getWorkspaceGitStatus(): Promise<WorkspaceGitStatus>;
   getWorkspaceGitDiff(relativePath: string): Promise<string>;
+  /** Local branch list and current ref for the composer branch picker. */
+  getWorkspaceBranches(): Promise<WorkspaceBranches>;
+  /** Checks out an existing local branch in the active workspace. */
+  checkoutWorkspaceBranch(branch: string): Promise<void>;
   /** Opens the workspace folder in VS Code (zcode-style editor launch). */
   openWorkspaceInVsCode(cwd: string): Promise<void>;
+  /** Lists apps able to open the workspace for the open-with picker. */
+  listWorkspaceOpeners(): Promise<WorkspaceOpener[]>;
   /** Assembles the diff/status context used to generate a commit message. */
   getWorkspaceCommitContext(): Promise<string>;
   /** Stages all changes and commits them; returns the short commit hash. */
@@ -646,6 +673,7 @@ export interface AgentBridge {
   initAgent(cwd: string): Promise<void>;
   listWorkspaces(): Promise<string[]>;
   switchWorkspace(cwd: string): Promise<void>;
+  getDefaultWorkspace(): Promise<string>;
   getAgentSnapshot(): Promise<AgentSnapshot>;
   listSessions(cwd?: string): Promise<UiSessionSummary[]>;
   searchSessions(query: string): Promise<{ sessions: UiSessionSearchResult[]; truncated: boolean }>;
@@ -671,6 +699,8 @@ export interface AgentBridge {
   prompt(text: string, behavior?: 'steer' | 'followUp', attachments?: UiAttachment[]): Promise<void>;
   /** Rewind to a sent user message and resend the edited text (zcode-style edit). */
   editMessage(entryId: string, text: string, attachments?: UiAttachment[]): Promise<void>;
+  /** Fork the conversation at an assistant message: the visible branch rewinds to it and the next prompt grows a new branch (zcode-style fork). */
+  forkAssistantMessage(entryId: string): Promise<void>;
   abort(): Promise<void>;
   newSession(): Promise<void>;
   onExtensionDialog(listener: (request: UiExtensionDialogRequest) => void): () => void;

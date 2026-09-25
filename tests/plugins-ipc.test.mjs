@@ -9,6 +9,9 @@ const stubs = {
   electron: `
     export const app = { getPath: () => globalThis.__pluginRoot };
     export const BrowserWindow = { getAllWindows: () => [] };
+    export const Menu = { buildFromTemplate: () => ({}) };
+    export const nativeImage = { createFromPath: () => ({ isEmpty: () => true }) };
+    export const Tray = class {};
     export const dialog = { showErrorBox() {}, async showOpenDialog(owner) { globalThis.__pluginPickerOwner = owner; return { canceled: false, filePaths: [globalThis.__pluginRoot] }; } };
     export const ipcMain = { handle: (name, fn) => globalThis.__pluginHandlers.set(name, fn) };
   `,

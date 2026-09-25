@@ -32,6 +32,7 @@ export const AGENT_HOST_METHODS = [
 	'previewPluginResource',
 	'prompt',
 	'editUserMessage',
+	'forkAssistantMessage',
 	'generateCommitMessage',
 	'abort',
 	'newSession',

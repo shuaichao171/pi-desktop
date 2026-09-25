@@ -35,6 +35,7 @@ interface ChatState {
 	bridge: AgentBridge | null;
 	status: AgentStatus;
 	statusMessage: string | undefined;
+	sessionLoading: boolean;
 	model: string;
 	modelName: string | null;
 	modelProvider: string;
@@ -87,6 +88,8 @@ interface ChatState {
 	send(text: string, behavior?: 'steer' | 'followUp', attachments?: UiAttachment[]): Promise<void>;
 	/** Rewind to a sent user message and resend the edited text (zcode-style edit). */
 	editMessage(entryId: string, text: string, attachments?: UiAttachment[]): Promise<void>;
+	/** Fork the conversation at an assistant message (rewinds the visible branch to it). */
+	forkMessage(entryId: string): Promise<void>;
 	abort(): Promise<void>;
 	newSession(): Promise<void>;
 	pickWorkspace(): Promise<void>;
@@ -136,6 +139,19 @@ function endSettingsRequest(generation: number): void {
 	useChatStore.setState({ settingsLoading: settingsRequestCount > 0 });
 }
 
+// Tracks in-flight session/workspace switches so the chat area can show a
+// loading placeholder (logo) instead of the previous conversation while the
+// agent host loads the target session.
+let activeSessionLoads = 0;
+function beginSessionLoadIndicator(set: (partial: Partial<ChatState>) => void): void {
+	activeSessionLoads += 1;
+	set({ sessionLoading: true });
+}
+function finishSessionLoadIndicator(set: (partial: Partial<ChatState>) => void): void {
+	activeSessionLoads = Math.max(0, activeSessionLoads - 1);
+	set({ sessionLoading: activeSessionLoads > 0 });
+}
+
 export const useChatStore = create<ChatState>((set, get) => ({
 	bridge: null,
 	status: 'uninitialized',
@@ -160,6 +176,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 	messages: [],
 	activities: [],
 	timelineRevision: 0,
+	sessionLoading: false,
 	queuedCount: 0,
 	queuedMessages: [],
 	fileChanges: [],
@@ -627,6 +644,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 		const bridge = get().bridge;
 		if (!bridge) return;
 		const request = beginSessionNavigation();
+		beginSessionLoadIndicator(set);
 		try {
 			await bridge.switchSession(path);
 			if (!currentSessionNavigation(bridge, request)) return;
@@ -634,13 +652,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
 		} catch (error) {
 			if (currentSessionNavigation(bridge, request)) set({ error: errorMessage(error) });
 			throw error;
-		} finally { finishSessionNavigation(bridge, request); }
+		} finally { finishSessionNavigation(bridge, request); finishSessionLoadIndicator(set); }
 	},
 
 	async selectSession(cwd, path) {
 		const bridge = get().bridge;
 		if (!bridge || !cwd || !path) return false;
 		const request = beginSessionNavigation();
+		beginSessionLoadIndicator(set);
 		const workspaceChanged = get().cwd !== cwd;
 		try {
 			if (workspaceChanged) {
@@ -655,7 +674,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 			if (!currentSessionNavigation(bridge, request)) return false;
 			set({ error: errorMessage(error) });
 			throw error;
-		} finally { finishSessionNavigation(bridge, request); }
+		} finally { finishSessionNavigation(bridge, request); finishSessionLoadIndicator(set); }
 	},
 
 	async send(text, behavior, attachments) {
@@ -696,6 +715,23 @@ export const useChatStore = create<ChatState>((set, get) => ({
 		set({ error: null });
 		try {
 			await bridge.editMessage(entryId, trimmed, attachments);
+		} catch (error) {
+			if (get().bridge === bridge && get().cwd === cwd && get().sessionId === sessionId) set({ error: errorMessage(error) });
+			throw error;
+		}
+	},
+
+	async forkMessage(entryId) {
+		const { bridge, status, cwd, sessionId } = get();
+		if (!bridge || !entryId) return;
+		if (status !== 'idle') {
+			const error = new Error(translate('store.sessionBusy'));
+			set({ error: error.message });
+			throw error;
+		}
+		set({ error: null });
+		try {
+			await bridge.forkAssistantMessage(entryId);
 		} catch (error) {
 			if (get().bridge === bridge && get().cwd === cwd && get().sessionId === sessionId) set({ error: errorMessage(error) });
 			throw error;

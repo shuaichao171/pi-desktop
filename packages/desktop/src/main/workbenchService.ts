@@ -1,11 +1,13 @@
-import { execFile, spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import type { App } from 'electron';
+import { execFile, spawn, type ChildProcessWithoutNullStreams, type ExecFileException } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
+import { createRequire } from 'node:module';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { lstat, open, readFile, readdir, realpath, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
-import type { WorkspaceCommandEvent, WorkspaceEntry, WorkspaceGitStatus } from '@pidesktop/shared';
+import type { WorkspaceBranches, WorkspaceCommandEvent, WorkspaceEntry, WorkspaceGitStatus, WorkspaceOpener } from '@pidesktop/shared';
 
 const execFileAsync = promisify(execFile);
 const MAX_PREVIEW_BYTES = 1024 * 1024;
@@ -14,6 +16,22 @@ const MAX_ENTRIES = 400;
 const DIFF_TRUNCATED_NOTICE = '\n… 仅显示前 1 MB 的差异 / Diff preview limited to the first 1 MB.\n';
 const SAFE_GIT_ENV = { ...process.env, GIT_OPTIONAL_LOCKS: '0', GIT_LITERAL_PATHSPECS: '1' };
 
+
+/** Resolves Electron's app lazily so this module stays importable under plain Node (tests). */
+function electronApp(): App {
+	return (createRequire(import.meta.url)('electron') as { app: App }).app;
+}
+
+/** Extracts an executable's icon as a data URL for the open-with picker. */
+async function editorIcon(executable: string): Promise<string | undefined> {
+	try {
+		const image = await electronApp().getFileIcon(executable, { size: 'normal' });
+		if (image.isEmpty()) return undefined;
+		return image.toDataURL();
+	} catch {
+		return undefined;
+	}
+}
 function isWithin(root: string, candidate: string): boolean {
 	const rel = relative(root, candidate);
 	return rel === '' || (rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel));
@@ -53,6 +71,39 @@ export class WorkbenchService {
 	}
 
 	/**
+	 * List the apps that can open the workspace (zcode-style open-with picker).
+	 * Explorer is always available; VS Code only when an install is detected.
+	 */
+	async listWorkspaceOpeners(): Promise<WorkspaceOpener[]> {
+		const openers: WorkspaceOpener[] = [{ id: 'explorer' }];
+		const executable = await this.vsCodeExecutable();
+		if (executable) openers.push({ id: 'vscode', icon: await editorIcon(executable) });
+		else if (await this.vsCodeOnPath()) openers.push({ id: 'vscode' });
+		return openers;
+	}
+
+	/** Resolves the installed VS Code executable, or null when only the CLI exists. */
+	private async vsCodeExecutable(): Promise<string | null> {
+		const candidates: string[] = [];
+		if (process.env.LOCALAPPDATA) candidates.push(join(process.env.LOCALAPPDATA, 'Programs', 'Microsoft VS Code', 'Code.exe'));
+		candidates.push('C:\\Program Files\\Microsoft VS Code\\Code.exe', 'C:\\Program Files (x86)\\Microsoft VS Code\\Code.exe');
+		for (const candidate of candidates) {
+			try { if ((await stat(candidate)).isFile()) return candidate; } catch { /* keep probing */ }
+		}
+		return null;
+	}
+
+	private async vsCodeOnPath(): Promise<boolean> {
+		try {
+			await execFileAsync(process.platform === 'win32' ? 'where' : 'which', [process.platform === 'win32' ? 'code.cmd' : 'code'], { timeout: 5000, windowsHide: true });
+			return true;
+		} catch {
+			return false;
+		}
+	}
+
+
+	/**
 	 * Open the workspace root in VS Code (zcode-style editor launch).
 	 * Probes common Code.exe install locations first, then falls back to the
 	 * `code` CLI on PATH.
@@ -63,16 +114,12 @@ export class WorkbenchService {
 		const generation = this.commandGeneration;
 		const root = await this.workspaceRoot(cwd);
 		if (generation !== this.commandGeneration || cwd !== this.getWorkspace()) throw new Error('工作区已切换，请重试');
-		const candidates: string[] = [];
-		if (process.env.LOCALAPPDATA) candidates.push(join(process.env.LOCALAPPDATA, 'Programs', 'Microsoft VS Code', 'Code.exe'));
-		candidates.push('C:\\Program Files\\Microsoft VS Code\\Code.exe', 'C:\\Program Files (x86)\\Microsoft VS Code\\Code.exe');
-		let executable: string | null = null;
-		for (const candidate of candidates) {
-			try { if ((await stat(candidate)).isFile()) { executable = candidate; break; } } catch { /* keep probing */ }
-		}
-		// Detached spawn so closing pi never kills the editor window.
+		let executable = await this.vsCodeExecutable();
+		// Detached spawn so closing pi never kills the editor window. windowsHide
+		// must stay OFF: Electron-based editors (VS Code) honor the hidden start
+		// state and would open with an invisible window.
 		if (executable) {
-			const child = spawn(executable, [root], { detached: true, stdio: 'ignore', windowsHide: true });
+			const child = spawn(executable, [root], { detached: true, stdio: 'ignore' });
 			child.on('error', () => { /* launch errors surface below via exit check */ });
 			await new Promise<void>((resolve) => { child.once('spawn', () => resolve()); child.once('error', () => { executable = null; resolve(); }); });
 			if (executable) return;
@@ -164,6 +211,45 @@ export class WorkbenchService {
 			entries.push({ path: relative(root, candidate).split(sep).join('/'), status });
 		}
 		return { isRepository: true, branch: branchResult.stdout.trim() || null, entries };
+	}
+
+	/** Local branches plus the checked-out ref for the composer branch picker. */
+	async gitBranches(): Promise<WorkspaceBranches> {
+		const root = await this.workspaceRoot();
+		const prefix = this.gitPrefix(root);
+		try {
+			await execFileAsync('git', [...prefix, 'rev-parse', '--show-toplevel'], { timeout: 8000, maxBuffer: 1024 * 1024, env: SAFE_GIT_ENV });
+		} catch {
+			return { isRepository: false, current: null, detached: false, branches: [] };
+		}
+		const [currentResult, refsResult] = await Promise.all([
+			execFileAsync('git', [...prefix, 'branch', '--show-current'], { timeout: 8000, maxBuffer: 64 * 1024, env: SAFE_GIT_ENV }),
+			execFileAsync('git', [...prefix, 'for-each-ref', '--format=%(refname:short)', 'refs/heads'], { timeout: 8000, maxBuffer: 256 * 1024, env: SAFE_GIT_ENV }),
+		]);
+		const current = currentResult.stdout.trim() || null;
+		const branches = refsResult.stdout.split('\n').map((line) => line.trim()).filter((line) => line.length > 0 && line !== current).sort((a, b) => a.localeCompare(b));
+		// Empty --show-current means detached HEAD; keep the branch list usable.
+		return { isRepository: true, current, detached: current === null, branches: current ? [current, ...branches] : branches };
+		}
+
+	/** Check out an existing local branch. Branch names are matched against
+		 * the real ref list, so odd-looking names can never become git flags. */
+	async gitCheckout(branch: string): Promise<void> {
+		if (typeof branch !== 'string' || branch.length === 0 || branch.length > 250 || branch.includes('\0')) throw new Error('无效的分支名');
+		const listed = await this.gitBranches();
+		if (!listed.isRepository) throw new Error('当前工作区不是 git 仓库');
+		if (!listed.branches.includes(branch)) throw new Error('分支不存在');
+		const root = await this.workspaceRoot();
+		const prefix = this.gitPrefix(root);
+		if (resolve(root) !== resolve(await this.workspaceRoot())) throw new Error('工作区已切换，请重试');
+		try {
+			// `git switch` has no pathspec semantics; names are whitelisted against real refs.
+			await execFileAsync('git', [...prefix, 'switch', branch], { timeout: 30000, maxBuffer: 1024 * 1024, env: SAFE_GIT_ENV });
+		} catch (error) {
+			const raw = error instanceof Error ? (error as ExecFileException).stderr : undefined;
+			const detail = (typeof raw === 'string' ? raw : undefined)?.trim() || (error instanceof Error ? error.message : String(error));
+			throw new Error(`切换分支失败：${detail}`);
+		}
 	}
 
 	/**

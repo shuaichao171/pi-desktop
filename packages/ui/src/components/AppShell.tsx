@@ -10,6 +10,7 @@ import { Icon } from './Icons';
 import { HoverTooltip } from './HoverTooltip';
 import { WindowControls } from './WindowControls';
 import { ExtensionDialogHost } from './ExtensionDialogHost';
+import { UpdateNotice } from './UpdateNotice';
 import { WorkbenchSidePane, type WorkbenchOpenRequest } from './WorkbenchSidePane';
 import { useChatStore } from '../store';
 import { useT } from '../i18n';
@@ -251,6 +252,7 @@ export function AppShell() {
 			{searchOpen && <SearchDialog commands={searchCommands} onClose={() => setSearchOpen(false)} onSelectSession={selectSearchSession} onSelectFile={selectSearchFile} />}
 			{isWindows && <WindowControls />}
 			<ExtensionDialogHost />
+			<UpdateNotice />
 		</div>
 	);
 }

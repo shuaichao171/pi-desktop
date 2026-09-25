@@ -14,6 +14,7 @@ const stubs = {
     export const { agentService, updateService, registerIpc, defaultWorkspace, disposeServices } = env;
   `,
   './appLocale': `export const getAppLocale = () => 'en-US';`,
+  './tray': `export const createAppTray = () => null; export const destroyAppTray = () => {};`,
   './splash': `
     export const createSplashHtml = () => '<html>Splash</html>';
     export const createSplashErrorHtml = (message) => '<html>' + message + '</html>';

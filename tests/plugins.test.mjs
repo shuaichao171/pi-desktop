@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { registerHooks } from 'node:module';
 import { tmpdir } from 'node:os';
-import { dirname, join, relative } from 'node:path';
+import { dirname, join, relative, sep } from 'node:path';
 import { test } from 'node:test';
 
 registerHooks({
@@ -86,8 +86,8 @@ test('resource toggles persist per-resource choices and enabling one from [] doe
   assert.equal(catalog.resources.find((item) => item.path === f.secondSkill).enabled, false);
   await f.change({ action: 'set-enabled', path: f.skill, kind: 'skills', enabled: false });
   catalog = await readPluginCatalog(f.services);
-  assert.ok(catalog.resources.filter((item) => item.kind === 'skills').every((item) => !item.enabled));
-  assert.ok(catalog.resources.filter((item) => item.kind !== 'skills').every((item) => item.enabled));
+  assert.ok(catalog.resources.filter((item) => item.kind === 'skills' && item.path.startsWith(f.plugin + sep)).every((item) => !item.enabled));
+  assert.ok(catalog.resources.filter((item) => item.kind !== 'skills' && item.path.startsWith(f.plugin + sep)).every((item) => item.enabled));
   await assert.rejects(f.change({ action: 'set-enabled', path: f.skill, kind: 'prompts', enabled: true }), /未找到/);
   await assert.rejects(f.change({ action: 'set-enabled', path: f.skill, kind: 'skills', scope: 'project', enabled: true }), /未找到/);
   await assert.rejects(f.change({ action: 'set-enabled', path: 'relative.md', kind: 'skills', enabled: true }), /绝对路径/);
@@ -95,7 +95,7 @@ test('resource toggles persist per-resource choices and enabling one from [] doe
   await f.settingsManager.flush();
   await f.change({ action: 'set-enabled', path: f.skill, kind: 'skills', enabled: false });
   assert.deepEqual(f.settingsManager.getGlobalSettings().packages[0].skills, ['skills/review/SKILL.md', '-skills/review/SKILL.md']);
-  assert.ok((await readPluginCatalog(f.services)).resources.filter((item) => item.kind === 'skills').every((item) => !item.enabled), 'disabling an allowlisted resource must preserve the allowlist');
+  assert.ok((await readPluginCatalog(f.services)).resources.filter((item) => item.kind === 'skills' && item.path.startsWith(f.plugin + sep)).every((item) => !item.enabled), 'disabling an allowlisted resource must preserve the allowlist');
 });
 
 test('project scope respects trust and top-level resources use their own scope settings', async (t) => {

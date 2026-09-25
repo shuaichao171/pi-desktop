@@ -168,11 +168,11 @@ export function SettingsPanel({ initialPage = 'general', modelManagementTarget, 
 		else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
 	}
 
-	async function checkForUpdates() {
+	async function checkForUpdates(autoInstall = false) {
 		if (!bridge || updateBusy) return;
 		setUpdatePending(true);
 		setUpdateActionError(null);
-		try { setUpdateState(await bridge.checkForUpdates()); }
+		try { setUpdateState(await bridge.checkForUpdates(autoInstall)); }
 		catch (error) { setUpdateActionError(error instanceof Error ? error.message : String(error)); }
 		finally { setUpdatePending(false); }
 	}
@@ -187,7 +187,7 @@ export function SettingsPanel({ initialPage = 'general', modelManagementTarget, 
 	}
 
 	const updateBusy = updatePending || Boolean(updateState?.installRequested) || updateState?.phase === 'installing';
-	const updateAvailable = updateState?.phase === 'downloading' || updateState?.phase === 'ready' || updateState?.phase === 'installing'
+	const updateAvailable = updateState?.phase === 'available' || updateState?.phase === 'downloading' || updateState?.phase === 'ready' || updateState?.phase === 'installing'
 		|| Boolean(updateState?.availableVersion && (updateState.phase === 'error' || updateState.phase === 'checking'));
 	const updateStatus = updateState?.phase === 'unavailable'
 		? t(`settings.updateUnavailable.${updateState.unavailableReason ?? 'unsupported'}`)
@@ -196,6 +196,7 @@ export function SettingsPanel({ initialPage = 'general', modelManagementTarget, 
 		: updateState?.phase === 'checking' ? t('settings.updateChecking')
 		: updateState?.phase === 'downloading' ? t('settings.updateDownloading', { percent: Math.round(updateState.progressPercent ?? 0) })
 		: updateState?.phase === 'ready' ? t('settings.updateReady', { version: updateState.availableVersion ?? '' })
+		: updateState?.phase === 'available' ? t('settings.updateAvailableVersion', { version: updateState.availableVersion ?? '' })
 		: updateState?.phase === 'up-to-date' ? t('settings.updateCurrent')
 		: updateState?.phase === 'error' ? t('settings.updateFailed')
 		: t('settings.updateIdle');
@@ -248,7 +249,7 @@ export function SettingsPanel({ initialPage = 'general', modelManagementTarget, 
 								{updateState?.error && <p className="pd-settings-error" role="alert">{updateState.error}</p>}
 								{updateActionError && <p className="pd-settings-error" role="alert">{updateActionError}</p>}
 								<div className="pd-update-actions">
-									<button type="button" className="pd-extension-refresh" onClick={() => void checkForUpdates()} disabled={!bridge || updateBusy || !updateState || !['idle', 'up-to-date', 'error'].includes(updateState.phase)}>{t('settings.updateCheck')}</button>
+									<button type="button" className="pd-extension-refresh" onClick={() => void checkForUpdates(true)} disabled={!bridge || updateBusy || !updateState || !['idle', 'up-to-date', 'error'].includes(updateState.phase)}>{t('settings.updateCheck')}</button>
 									{updateAvailable && <button type="button" className="pd-extension-refresh" onClick={() => void installUpdate()} disabled={!bridge || updateBusy}>{t(updateState?.phase === 'ready' ? 'settings.updateInstall' : 'settings.updateNow')}</button>}
 								</div>
 							</div>

@@ -1,17 +1,21 @@
 export type ColorMode = 'light' | 'dark';
-export type ColorPresetId = 'default' | 'codex' | 'ocean' | 'forest' | 'sand' | 'custom';
+export type ColorPresetId = 'default' | 'sky' | 'codex' | 'ocean' | 'forest' | 'sand' | 'custom';
 
 export interface ThemeColors { accent: string; surface: string; ink: string; contrast: number }
 export interface ThemeColorChoice extends ThemeColors { preset: ColorPresetId }
 export interface ThemeColorPreferences { light: ThemeColorChoice; dark: ThemeColorChoice }
 
-export const COLOR_PRESET_IDS = ['default', 'codex', 'ocean', 'forest', 'sand'] as const;
+export const COLOR_PRESET_IDS = ['default', 'sky', 'codex', 'ocean', 'forest', 'sand'] as const;
 const STORAGE_KEY = 'pi-desktop.colors.v1';
 type NamedPreset = Exclude<ColorPresetId, 'custom'>;
 
 const PRESETS: Record<NamedPreset, Record<ColorMode, ThemeColors>> = {
 	default: {
-		light: { accent: '#445ca8', surface: '#ffffff', ink: '#20232b', contrast: 50 },
+		light: { accent: '#000000', surface: '#f8f8f8', ink: '#262626', contrast: 50 },
+		dark: { accent: '#ffffff', surface: '#161616', ink: '#d4d4d4', contrast: 50 },
+	},
+	sky: {
+		light: { accent: '#38bdf8', surface: '#fafafa', ink: '#404040', contrast: 50 },
 		dark: { accent: '#0ea5e9', surface: '#171717', ink: '#e5e5e5', contrast: 50 },
 	},
 	codex: {
@@ -34,38 +38,44 @@ const PRESETS: Record<NamedPreset, Record<ColorMode, ThemeColors>> = {
 
 // Saved-by-default palettes from earlier versions of the built-in look.
 // They must migrate to the current default instead of being pinned as a
-// stale "custom" choice (the dark default moved to the zcode neutral/sky look).
-const LEGACY_DEFAULTS: Record<ColorMode, ThemeColors> = {
-	light: { accent: '#445ca8', surface: '#ffffff', ink: '#20232b', contrast: 50 },
-	dark: { accent: '#aebaff', surface: '#111216', ink: '#ececef', contrast: 50 },
-};
+// stale "custom" choice (generation 1: original indigo; generation 2: zcode sky).
+const LEGACY_DEFAULT_GENERATIONS: Array<Record<ColorMode, ThemeColors>> = [
+	{
+		light: { accent: '#445ca8', surface: '#ffffff', ink: '#20232b', contrast: 50 },
+		dark: { accent: '#aebaff', surface: '#111216', ink: '#ececef', contrast: 50 },
+	},
+	{
+		light: { accent: '#38bdf8', surface: '#fafafa', ink: '#404040', contrast: 50 },
+		dark: { accent: '#0ea5e9', surface: '#171717', ink: '#e5e5e5', contrast: 50 },
+	},
+];
 
 // Keep the built-in appearance exactly aligned with styles.css. Reset removes
 // inline overrides, while these values also support an accurate default preview.
 const DEFAULT_TOKENS: Record<ColorMode, Record<string, string>> = {
 	dark: {
-		'--pd-bg': '#171717', '--pd-sidebar': '#0a0a0a', '--pd-header': '#171717', '--pd-surface': '#232323',
-		'--pd-surface-hover': '#2e2e2e', '--pd-selected': '#2e2e2e', '--pd-border': '#2e2e2e', '--pd-border-soft': '#272727',
-		'--pd-text': '#e5e5e5', '--pd-text-subtle': '#939393', '--pd-text-weak': '#555555',
-		'--pd-brand': '#0ea5e9', '--pd-brand-hover': '#38bdf8', '--pd-brand-ink': '#ffffff',
+		'--pd-bg': '#161616', '--pd-sidebar': '#2b2b2b', '--pd-sidebar-hover': '#404040', '--pd-sidebar-selected': '#404040', '--pd-sidebar-surface': '#363636', '--pd-sidebar-tab': '#161616', '--pd-header': '#161616', '--pd-surface': '#222222',
+		'--pd-surface-hover': '#2d2d2d', '--pd-selected': '#2d2d2d', '--pd-border': '#2d2d2d', '--pd-border-soft': '#262626',
+		'--pd-text': '#d4d4d4', '--pd-text-subtle': '#888888', '--pd-text-weak': '#4f4f4f',
+		'--pd-brand': '#ffffff', '--pd-brand-hover': '#d4d4d4', '--pd-brand-ink': '#000000',
 		'--pd-danger': '#f87171', '--pd-warning': '#fbbf24', '--pd-success': '#4ade80',
-		'--pd-chrome-border': '#2a2a2a', '--pd-surface-raised': '#262626', '--pd-surface-muted': '#121212',
-		'--pd-border-strong': '#3d3d3d', '--pd-user-surface': '#242424', '--pd-code-surface': '#131313',
-		'--pd-code-text': '#e5e5e5', '--pd-overlay': '#0a0a0a80',
-		'--pd-selection-bg': '#0ea5e955', '--pd-selection-ink': '#ffffff', '--pd-mark-border': '#38bdf852',
-		'--pd-assistant-mark-bg': '#0ea5e924', '--pd-brand-mark-bg': '#0ea5e920',
+		'--pd-chrome-border': '#2b2b2b', '--pd-surface-raised': '#2b2b2b', '--pd-surface-muted': '#0e0e0e',
+		'--pd-border-strong': '#404040', '--pd-user-surface': '#222222', '--pd-code-surface': '#0e0e0e',
+		'--pd-code-text': '#d4d4d4', '--pd-overlay': '#00000080',
+		'--pd-selection-bg': '#ffffff2e', '--pd-selection-ink': '#ffffff', '--pd-mark-border': '#ffffff40',
+		'--pd-assistant-mark-bg': '#ffffff14', '--pd-brand-mark-bg': '#ffffff12',
 	},
 	light: {
-		'--pd-bg': '#ffffff', '--pd-sidebar': '#f6f7f9', '--pd-header': '#ffffff', '--pd-surface': '#ffffff',
-		'--pd-surface-hover': '#e9ecf2', '--pd-selected': '#e6eafa', '--pd-border': '#d9dce3', '--pd-border-soft': '#e9ebef',
-		'--pd-text': '#20232b', '--pd-text-subtle': '#555b67', '--pd-text-weak': '#757c89',
-		'--pd-brand': '#445ca8', '--pd-brand-hover': '#344e9c', '--pd-brand-ink': '#ffffff',
-		'--pd-danger': '#ac3947', '--pd-warning': '#9a671c', '--pd-success': '#237552',
-		'--pd-chrome-border': '#dfe2e8', '--pd-surface-raised': '#ffffff', '--pd-surface-muted': '#f7f8fa',
-		'--pd-border-strong': '#c8cdd8', '--pd-user-surface': '#eef1f6', '--pd-code-surface': '#f1f3f8',
-		'--pd-code-text': '#344b91', '--pd-overlay': '#15203c40',
-		'--pd-selection-bg': '#0ea5e955', '--pd-selection-ink': '#ffffff', '--pd-mark-border': '#b8c3e8',
-		'--pd-assistant-mark-bg': '#e7ecfc', '--pd-brand-mark-bg': '#e7ecfc',
+		'--pd-bg': '#f8f8f8', '--pd-sidebar': '#ececee', '--pd-sidebar-hover': '#e1e1e3', '--pd-sidebar-selected': '#e1e1e3', '--pd-sidebar-surface': '#e5e5e7', '--pd-sidebar-tab': '#f8f8f8', '--pd-header': '#f8f8f8', '--pd-surface': '#f1f1f1',
+		'--pd-surface-hover': '#ececec', '--pd-selected': '#e5e5e5', '--pd-border': '#e0e0e0', '--pd-border-soft': '#e9e9e9',
+		'--pd-text': '#262626', '--pd-text-subtle': '#7a7a7a', '--pd-text-weak': '#a4a4a4',
+		'--pd-brand': '#000000', '--pd-brand-hover': '#262626', '--pd-brand-ink': '#ffffff',
+		'--pd-danger': '#ef4444', '--pd-warning': '#d97706', '--pd-success': '#16a34a',
+		'--pd-chrome-border': '#e0e0e0', '--pd-surface-raised': '#ffffff', '--pd-surface-muted': '#ececee',
+		'--pd-border-strong': '#c9c9c9', '--pd-user-surface': '#eeeeee', '--pd-code-surface': '#f0f0f0',
+		'--pd-code-text': '#262626', '--pd-overlay': '#0d0d0d40',
+		'--pd-selection-bg': '#00000026', '--pd-selection-ink': '#262626', '--pd-mark-border': '#0000002e',
+		'--pd-assistant-mark-bg': '#0000000f', '--pd-brand-mark-bg': '#00000012',
 	},
 };
 const DERIVED_DEFAULT_TOKENS = {
@@ -108,8 +118,14 @@ function normalizeChoice(input: unknown, mode: ColorMode): ThemeColorChoice {
 		ink: normalizeHexColor(value.ink as string) ?? fallback.ink,
 		contrast: typeof value.contrast === 'number' && Number.isFinite(value.contrast) ? Math.round(Math.max(0, Math.min(100, value.contrast))) : fallback.contrast,
 	};
-	const legacy = LEGACY_DEFAULTS[mode];
-	if ((['accent', 'surface', 'ink'] as const).every((key) => choice[key] === legacy[key]) && choice.contrast === legacy.contrast) return getPresetColors('default', mode);
+	// Only stale "default"-labeled choices migrate. An explicitly picked preset
+	// (e.g. 'sky', which reuses a former default palette) must survive untouched.
+	if (known === 'default') {
+		for (const generation of LEGACY_DEFAULT_GENERATIONS) {
+			const legacy = generation[mode];
+			if ((['accent', 'surface', 'ink'] as const).every((key) => choice[key] === legacy[key]) && choice.contrast === legacy.contrast) return getPresetColors('default', mode);
+		}
+	}
 	// A changed preset is a custom choice; its values must not disappear when
 	// applying the default preset's intentional "remove inline styles" behavior.
 	if (['accent', 'surface', 'ink', 'contrast'].some((key) => choice[key as keyof ThemeColors] !== fallback[key as keyof ThemeColors])) choice.preset = 'custom';
@@ -204,7 +220,14 @@ export function buildThemeTokens(choice: ThemeColorChoice, mode: ColorMode): Rec
 	const user = safeSurface(tone(0.04 + strength * 0.045));
 	const code = safeSurface(tone(0.03 + strength * 0.04));
 	const sidebar = safeSurface(tone(0.018 + strength * 0.025));
-	const header = safeSurface(tone(0.006 + strength * 0.01));
+	// zcode's Windows shell paints the sidebar lighter than the chat pane; hover
+	// and selected states sit on top of that raised base.
+	const sidebarHover = safeSurface(mix(sidebar, direction, light ? 0.05 : 0.1));
+	const sidebarSurface = safeSurface(mix(sidebar, direction, light ? 0.03 : 0.05));
+	const sidebarTab = safeSurface(mix(sidebar, bg, 0.62));
+	// zcode keeps the header on the chat surface itself — only the divider
+	// line separates them, so custom presets derive header straight from bg.
+	const header = bg;
 	const muted = safeSurface(tone(0.012 + strength * 0.014));
 	const backgrounds = [bg, surface, raised, hover, selected, user, code, sidebar, header, muted];
 	const text = readable(colors.ink, backgrounds, 7);
@@ -215,6 +238,7 @@ export function buildThemeTokens(choice: ThemeColorChoice, mode: ColorMode): Rec
 	const border = tone(0.12 + strength * 0.16);
 	return {
 		'--pd-bg': bg, '--pd-sidebar': sidebar, '--pd-header': header,
+		'--pd-sidebar-hover': sidebarHover, '--pd-sidebar-selected': sidebarHover, '--pd-sidebar-surface': sidebarSurface, '--pd-sidebar-tab': sidebarTab,
 		'--pd-surface': surface, '--pd-surface-hover': hover, '--pd-selected': selected,
 		'--pd-border': border, '--pd-border-soft': tone(0.07 + strength * 0.10),
 		'--pd-text': text, '--pd-text-subtle': subtle, '--pd-text-weak': weak,

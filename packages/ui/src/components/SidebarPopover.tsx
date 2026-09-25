@@ -1,13 +1,27 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 
+// Popovers mark the <html> element so drag regions (frameless title areas)
+// can stop swallowing mouse events while a menu is open — otherwise clicks
+// on the header never reach the outside-press handler that closes it.
+let openPopoverCount = 0;
+
 /** A measured, keyboard-accessible menu shared by the sidebar controls. */
-export function SidebarPopover({ anchor, label, dialog = false, children, onClose }: {
-	anchor: HTMLElement; label: string; dialog?: boolean; children: ReactNode; onClose(): void;
+export function SidebarPopover({ anchor, label, dialog = false, placement = 'bottom', children, onClose }: {
+	anchor: HTMLElement; label: string; dialog?: boolean; placement?: 'bottom' | 'top'; children: ReactNode; onClose(): void;
 }) {
 	const ref = useRef<HTMLDivElement>(null);
 	const closeRef = useRef(onClose);
 	closeRef.current = onClose;
+
+	useEffect(() => {
+		openPopoverCount += 1;
+		document.documentElement.classList.add('pd-popover-open');
+		return () => {
+			openPopoverCount -= 1;
+			if (openPopoverCount === 0) document.documentElement.classList.remove('pd-popover-open');
+		};
+	}, []);
 	const [position, setPosition] = useState<{ top: number; left: number } | null>(null);
 	useLayoutEffect(() => {
 		const menu = ref.current;
@@ -17,7 +31,9 @@ export function SidebarPopover({ anchor, label, dialog = false, children, onClos
 			const box = menu.getBoundingClientRect();
 			const next = {
 				left: Math.max(8, Math.min(rect.right - box.width, window.innerWidth - box.width - 8)),
-				top: Math.max(8, Math.min(rect.bottom + 5, window.innerHeight - box.height - 8)),
+				top: placement === 'top'
+					? Math.max(8, Math.min(rect.top - box.height - 5, window.innerHeight - box.height - 8))
+					: Math.max(8, Math.min(rect.bottom + 5, window.innerHeight - box.height - 8)),
 			};
 			setPosition((old) => old?.top === next.top && old.left === next.left ? old : next);
 		};
@@ -26,7 +42,7 @@ export function SidebarPopover({ anchor, label, dialog = false, children, onClos
 		observer.observe(menu);
 		window.addEventListener('resize', place);
 		return () => { observer.disconnect(); window.removeEventListener('resize', place); };
-	}, [anchor]);
+	}, [anchor, placement]);
 	const positioned = position !== null;
 	useLayoutEffect(() => {
 		if (positioned) ref.current?.querySelector<HTMLElement>('input, button:not(:disabled)')?.focus();

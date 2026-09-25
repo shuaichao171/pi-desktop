@@ -3,10 +3,13 @@ import { useT } from '../i18n';
 import { useChatStore } from '../store';
 import type { ModelManagementTarget } from '../modelManagement';
 import { buildTimelineLayout, type TimelineEntry } from '../timeline';
+import { ConversationRail } from './ConversationRail';
 import { Composer } from './Composer';
+import { ComposerContextBar } from './ComposerContextBar';
 import { ChatTitle, type ChatTitleHandle } from './ChatTitle';
 import { ChatHeaderMenu } from './ChatHeaderMenu';
 import { ChatCommitDialog } from './ChatCommitDialog';
+import { WorkspaceOpenButton } from './WorkspaceOpenButton';
 import { WorkspaceFolderButton } from './WorkspaceFolderButton';
 import { Icon } from './Icons';
 import { HoverTooltip } from './HoverTooltip';
@@ -30,6 +33,19 @@ function EmptyState() {
 	);
 }
 
+function SessionLoading() {
+	const { t } = useT();
+	return (
+		<div className="pd-session-loading" role="status" aria-live="polite">
+			<svg className="pd-session-loading-mark" viewBox="0 0 224 224" aria-hidden="true" focusable="false">
+				<path d="M52 72h120v24H52zM68 92h24v76c0 12-8 20-20 20h-4V92zm72 0h24v76c0 12-8 20-20 20h-4V92z" />
+				<circle cx="168" cy="164" r="12" />
+			</svg>
+			<span>{t('chat.loadingSession')}</span>
+		</div>
+	);
+}
+
 export interface SearchMessageTarget { sessionPath: string; messageId: string; snippet?: string; requestId: number }
 
 export function ChatView({ onToggleSidebar, onOpenModelManagement, searchTarget, historyControls, navigationError }: { onToggleSidebar(): void; onOpenModelManagement(target: ModelManagementTarget): void; searchTarget?: SearchMessageTarget | null; historyControls?: ReactNode; navigationError?: string | null }) {
@@ -44,6 +60,7 @@ export function ChatView({ onToggleSidebar, onOpenModelManagement, searchTarget,
 	const agentStatus = useChatStore((s) => s.status);
 	const error = navigationError ?? agentError;
 	const timelineRevision = useChatStore((s) => s.timelineRevision);
+	const sessionLoading = useChatStore((s) => s.sessionLoading);
 	const timelineRef = useRef<{ revision: number; entries: TimelineEntry[] } | null>(null);
 	if (timelineRef.current?.revision !== timelineRevision) {
 		timelineRef.current = { revision: timelineRevision, entries: buildTimelineLayout(messages, activities) };
@@ -174,6 +191,7 @@ export function ChatView({ onToggleSidebar, onOpenModelManagement, searchTarget,
 				{historyControls}
 				<HoverTooltip title={t('chat.toggleSidebar')}><button type="button" className="pd-icon-button pd-header-sidebar-toggle" onClick={onToggleSidebar} aria-label={t('chat.toggleSidebar')}><Icon name="panel" /></button></HoverTooltip>
 				<div className="pd-chat-heading"><WorkspaceFolderButton key={`folder:${cwd}\0${sessionId}`} cwd={cwd} /><ChatTitle key={`${cwd}\0${sessionId}`} ref={titleRef} title={title} sessionPath={sessionPath} /><ChatHeaderMenu title={title} sessionPath={sessionPath} cwd={cwd} onRename={() => titleRef.current?.beginRename()} onOpenCommit={() => setCommitOpen(true)} /></div>
+				<div className="pd-chat-header-actions"><WorkspaceOpenButton cwd={cwd} /></div>
 			</header>
 
 			<div ref={bodyRef} className={`pd-conversation-body${isEmpty ? ' is-empty' : ''}`}>
@@ -181,7 +199,7 @@ export function ChatView({ onToggleSidebar, onOpenModelManagement, searchTarget,
 					<div ref={scrollRef} className="pd-transcript" onScroll={handleScroll} onWheel={cancelScrollAnimation} onTouchStart={cancelScrollAnimation} onPointerDown={cancelScrollAnimation} onKeyDown={(event) => {
 						if (['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' '].includes(event.key)) cancelScrollAnimation();
 					}}>
-						{isEmpty ? <EmptyState /> : (
+						{sessionLoading ? <SessionLoading /> : isEmpty ? <EmptyState /> : (
 							<div ref={messageListRef} className="pd-message-list">
 								{timeline.map((entry) => entry.kind === 'message'
 									? <MessageItem key={`message-${entry.id}`} message={messages[entry.index]!} highlighted={highlightedMessage?.sessionPath === sessionPath && highlightedMessage.messageId === entry.id} />
@@ -196,8 +214,9 @@ export function ChatView({ onToggleSidebar, onOpenModelManagement, searchTarget,
 					<button type="button" className={`pd-back-to-bottom${showBackToBottom ? ' is-visible' : ''}`} aria-label={t('chat.backToBottom')} aria-hidden={!showBackToBottom} tabIndex={showBackToBottom ? 0 : -1} onClick={showBackToBottom ? scrollToBottom : undefined}>
 						{agentStatus === 'busy' ? <span className="pd-back-to-bottom-dots" aria-hidden="true"><span /><span /><span /></span> : <Icon name="arrowDown" width="20" height="20" />}
 					</button>
+					{!isEmpty && !sessionLoading && <ConversationRail messages={messages} getScrollElement={() => scrollRef.current} />}
 				</div>
-				<Composer onOpenModelManagement={onOpenModelManagement} />
+				<Composer header={isEmpty ? <ComposerContextBar /> : undefined} onOpenModelManagement={onOpenModelManagement} />
 			</div>
 			{commitOpen && <ChatCommitDialog onClose={() => setCommitOpen(false)} />}
 		</main>

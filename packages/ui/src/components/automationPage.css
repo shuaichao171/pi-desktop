@@ -11,12 +11,12 @@
 .pd-automation-button:hover:not(:disabled) { background: var(--pd-surface-hover); border-color: var(--pd-border-strong); }
 .pd-automation-button.is-primary { background: var(--pd-text); color: var(--pd-bg); border-color: transparent; font-weight: 600; }
 .pd-automation-button.is-primary:hover:not(:disabled) { background: color-mix(in srgb, var(--pd-text) 86%, var(--pd-bg)); }
-.pd-automation-button.is-quiet { background: transparent; border-color: transparent; color: var(--pd-text-subtle); }
+.pd-automation-button.is-quiet { background: transparent; border-color: transparent; color: var(--pd-text); }
 .pd-automation-button.is-danger { color: var(--pd-danger); border-color: var(--pd-danger-border); background: var(--pd-danger-surface); }
 .pd-automation-page button:disabled, .pd-automation-dialog button:disabled { opacity: .45; cursor: default; }
 .pd-automation-toolbar { display: flex; align-items: center; gap: 10px; margin-bottom: 20px; }
 .pd-automation-filters { display: flex; flex-shrink: 0; align-items: center; gap: 3px; padding: 3px; background: var(--pd-surface-muted); border: 1px solid var(--pd-border-soft); border-radius: 9px; }
-.pd-automation-filters > button { display: flex; align-items: center; gap: 7px; padding: 5px 9px; border: 0; background: transparent; color: var(--pd-text-weak); font: inherit; font-size: 11px; border-radius: 6px; }
+.pd-automation-filters > button { display: flex; align-items: center; gap: 7px; padding: 5px 9px; border: 0; background: transparent; color: var(--pd-text); font: inherit; font-size: 11px; border-radius: 6px; }
 .pd-automation-filters > button.is-active { color: var(--pd-text); }
 .pd-automation-filters > button span { font-size: 10px; opacity: .7; }
 .pd-automation-filters > .pd-segmented-indicator { background: var(--pd-surface-raised); box-shadow: var(--pd-shadow-low); }
@@ -85,7 +85,7 @@
 .pd-automation-schedule-fields { padding-top: 17px; border-top: 1px solid var(--pd-border-soft); }
 .pd-automation-days { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 16px; padding: 0; border: 0; }
 .pd-automation-days legend { margin-bottom: 8px; color: var(--pd-text-subtle); font-size: 11px; }
-.pd-automation-days button { min-width: 40px; padding: 7px 9px; border: 1px solid var(--pd-border); border-radius: 7px; background: transparent; color: var(--pd-text-subtle); font-size: 11px; }
+.pd-automation-days button { min-width: 40px; padding: 7px 9px; border: 1px solid var(--pd-border); border-radius: 7px; background: transparent; color: var(--pd-text); font-size: 11px; }
 .pd-automation-days button[aria-pressed='true'] { background: var(--pd-selected); color: var(--pd-text); border-color: var(--pd-focus-border); }
 .pd-automation-enable { display: flex; align-items: center; gap: 8px; color: var(--pd-text-subtle); font-size: 11px; }
 .pd-automation-enable input { accent-color: var(--pd-brand); }

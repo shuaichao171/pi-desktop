@@ -744,6 +744,14 @@ class SingleAgentService {
 		await this.prompt(text, undefined, attachments);
 	}
 
+	/** Fork the conversation in place: move the visible branch leaf to an assistant message so the next prompt grows a new branch. */
+	async forkAssistantMessage(entryId: string): Promise<void> {
+		const runtime = this.runtime;
+		if (!runtime) throw new Error('Agent is not initialized');
+		this.requireIdleSession();
+		await this.runExtensionSessionAction(runtime, () => runtime.session.navigateTree(entryId));
+	}
+
 	/**
 	 * Ask the current model for a commit message covering the given git context.
 	 * Standalone LLM call: never touches the session transcript, so it is safe
@@ -1318,7 +1326,13 @@ class SingleAgentService {
 				return;
 			}
 			case 'agent_settled': {
+				const hadPendingAssistant = this.assistantId !== null;
 				this.finishInterruptedAssistant();
+				// After a completed turn, re-sync the visible timeline from the transcript so
+				// live-streamed messages carry real session entry ids (message edit/fork needs
+				// them). Interrupted turns have no transcript entry for the partial reply, so
+				// skip the resync to keep the interrupted row visible.
+				if (!hadPendingAssistant) this.fireReady();
 				this.fire({ type: 'status', status: 'idle' });
 				return;
 			}
@@ -1712,6 +1726,11 @@ export class AgentService {
 	editUserMessage(entryId: string, text: string, attachments?: UiAttachment[]): Promise<void> {
 		if (this.pluginOperation) return Promise.reject(new Error('插件设置正在更新，请稍后发送消息'));
 		return this.requireActive().editUserMessage(entryId, text, attachments).finally(() => { void this.trimContexts(); });
+	}
+
+	forkAssistantMessage(entryId: string): Promise<void> {
+		if (this.pluginOperation) return Promise.reject(new Error('插件设置正在更新，请稍后再试'));
+		return this.requireActive().forkAssistantMessage(entryId).finally(() => { void this.trimContexts(); });
 	}
 
 	generateCommitMessage(context: string): Promise<string> {

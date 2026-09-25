@@ -6,7 +6,7 @@
 .pd-context-search::placeholder { color: var(--pd-text-weak); }
 .pd-context-at { flex: 0 0 auto; color: var(--pd-brand); font-size: 15px; }
 .pd-context-heading { flex: 1; overflow: hidden; color: var(--pd-text-subtle); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
-.pd-context-close, .pd-context-browse { display: grid; flex: 0 0 25px; place-items: center; height: 25px; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--pd-text-weak); }
+.pd-context-close, .pd-context-browse { display: grid; flex: 0 0 25px; place-items: center; height: 25px; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--pd-text); }
 .pd-context-close:hover, .pd-context-browse:hover { background: var(--pd-surface-hover); color: var(--pd-text); }
 .pd-context-close { margin-left: auto; }
 .pd-context-list { flex: 1 1 auto; min-height: 0; overflow-x: hidden; overflow-y: auto; padding: 5px; scroll-padding: 5px; overscroll-behavior: contain; }
@@ -31,7 +31,7 @@
 .pd-context-status { padding: 9px 10px 12px; color: var(--pd-text-weak); font-size: 11px; line-height: 1.5; }
 .pd-context-error { display: flex; align-items: center; gap: 8px; padding: 8px 10px; color: var(--pd-danger); font-size: 11px; line-height: 1.5; }
 .pd-context-error > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
-.pd-context-error > button { flex: 0 0 auto; padding: 3px 6px; border: 1px solid var(--pd-border); border-radius: 5px; background: transparent; color: var(--pd-text-subtle); font-size: 11px; }
+.pd-context-error > button { flex: 0 0 auto; padding: 3px 6px; border: 1px solid var(--pd-border); border-radius: 5px; background: transparent; color: var(--pd-text); font-size: 11px; }
 .pd-context-footer { display: flex; flex: 0 0 auto; align-items: center; gap: 4px; min-height: 27px; padding: 5px 12px; border-top: 1px solid var(--pd-border-soft); color: var(--pd-text-weak); font-size: 10px; }
 .pd-context-footer > span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pd-context-footer kbd { min-width: 18px; padding: 0 4px; border: 1px solid var(--pd-border-soft); border-radius: 4px; font-family: inherit; font-size: 10px; line-height: 15px; text-align: center; }

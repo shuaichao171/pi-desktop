@@ -1,4 +1,4 @@
-import { app, BrowserWindow } from 'electron';
+import { app, BrowserWindow, net } from 'electron';
 import { readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { IPC_CHANNELS, type UiUpdateState, type UiUpdateUnavailableReason } from '@pidesktop/shared';
@@ -60,6 +60,7 @@ class UpdateService {
 	private updaterPromise: Promise<Updater> | null = null;
 	private checkPromise: Promise<UiUpdateState> | null = null;
 	private checkAttempt: CheckAttempt | null = null;
+	private notesVersion: string | null = null;
 	private firstCheck: ReturnType<typeof setTimeout> | null = null;
 	private interval: ReturnType<typeof setInterval> | null = null;
 	private beforeInstall: (() => Promise<void>) | null = null;
@@ -131,6 +132,41 @@ class UpdateService {
 		return !this.installing && !this.servicesClosedForInstall && !this.checkAttempt?.failed;
 	}
 
+	/** Best-effort changelog for the hover hint; GitHub feeds publish it as the release body. */
+	private async fetchReleaseNotes(version: string): Promise<void> {
+		if (!this.feedUrl || !isGitHubReleaseFeedUrl(this.feedUrl) || this.notesVersion === version) return;
+		this.notesVersion = version;
+		const feed = this.feedUrl.match(/^https:\/\/github\.com\/([^/]+)\/([^/]+)\/releases\//);
+		if (!feed) return;
+		try {
+			const response = await net.fetch(`https://api.github.com/repos/${feed[1]}/${feed[2]}/releases/tags/v${encodeURIComponent(version)}`, {
+				headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'pi-desktop-update-check' },
+				signal: AbortSignal.timeout(10_000),
+			});
+			if (!response.ok) return;
+			const data: unknown = JSON.parse(await response.text());
+			if (!data || typeof data !== 'object') return;
+			const release = data as { body?: unknown; published_at?: unknown };
+			const notes = typeof release.body === 'string' ? release.body.replace(/\0/g, '').slice(0, 20_000) : undefined;
+			if (!notes || this.state.availableVersion !== version) return;
+			const date = typeof release.published_at === 'string' ? release.published_at : undefined;
+			this.publish({ releaseNotes: notes, ...(date ? { releaseDate: date } : {}) });
+		} catch {
+			// Notes are optional decoration; update flows continue without them.
+		}
+	}
+
+	/** Downloads the previously found update (never automatic — user consent required). */
+	private async startDownload(): Promise<void> {
+		this.publish({ phase: 'downloading', progressPercent: 0, error: undefined });
+		try {
+			const updater = await this.getUpdater();
+			await updater.downloadUpdate();
+		} catch (error) {
+			this.reportCheckError(error, this.checkAttempt);
+		}
+	}
+
 	private async getUpdater(): Promise<Updater> {
 		if (!this.feedUrl) throw new Error('Update source is not configured.');
 		this.updaterPromise ??= import('electron-updater').then((module) => {
@@ -139,7 +175,9 @@ class UpdateService {
 			updater.setFeedURL({ provider: 'generic', url: this.feedUrl!,
 				...(isGitHubReleaseFeedUrl(this.feedUrl!) ? { useMultipleRangeRequest: false } : {}),
 			});
-			updater.autoDownload = true;
+			// Updates are never fetched silently: the state only records availability
+			// (plus release notes) and the download starts when the user consents.
+			updater.autoDownload = false;
 			updater.autoInstallOnAppQuit = false;
 			updater.allowDowngrade = false;
 			updater.allowPrerelease = false;
@@ -147,8 +185,11 @@ class UpdateService {
 				if (this.acceptsUpdateEvents() && this.state.phase === 'checking') this.publish({ error: undefined, progressPercent: undefined });
 			});
 			updater.on('update-available', (info) => {
-				if (this.acceptsUpdateEvents() && ['checking', 'downloading'].includes(this.state.phase)) {
-					this.publish({ phase: 'downloading', availableVersion: info.version, progressPercent: 0 });
+				if (this.acceptsUpdateEvents() && ['checking', 'available', 'downloading'].includes(this.state.phase)) {
+					// downloadUpdate() re-emits this event mid-download; keep that phase.
+					if (this.state.phase !== 'downloading') this.publish({ phase: 'available', availableVersion: info.version, progressPercent: undefined });
+					else this.publish({ availableVersion: info.version });
+					void this.fetchReleaseNotes(info.version);
 				}
 			});
 			updater.on('download-progress', (progress) => {
@@ -158,7 +199,7 @@ class UpdateService {
 			});
 			updater.on('update-not-available', () => {
 				if (this.acceptsUpdateEvents() && this.state.phase === 'checking') {
-					this.publish({ phase: 'up-to-date', availableVersion: undefined, progressPercent: undefined, installRequested: false, error: undefined });
+					this.publish({ phase: 'up-to-date', availableVersion: undefined, progressPercent: undefined, installRequested: false, error: undefined, releaseNotes: undefined, releaseDate: undefined });
 				}
 			});
 			updater.on('update-downloaded', (info) => {
@@ -179,19 +220,24 @@ class UpdateService {
 		return this.updaterPromise;
 	}
 
-	async check(): Promise<UiUpdateState> {
+	async check(autoInstall = false): Promise<UiUpdateState> {
 		if (!this.feedUrl || this.installing || this.servicesClosedForInstall || this.state.phase === 'ready' || this.state.phase === 'downloading') return this.getState();
 		if (this.checkPromise) return this.checkPromise;
 		const attempt: CheckAttempt = { failed: false };
 		this.checkAttempt = attempt;
 		this.checkPromise = (async () => {
-			this.publish({ phase: 'checking', error: undefined, progressPercent: undefined });
+			this.publish({ phase: 'checking', error: undefined, progressPercent: undefined, ...(autoInstall ? { installRequested: true } : {}) });
 			try {
 				const updater = await this.getUpdater();
 				const result = await updater.checkForUpdates();
 				// Metadata checking resolves before the automatic download. Its separate promise
 				// still rejects after the updater emits "error", so it needs its own handler.
 				void result?.downloadPromise?.catch((error: unknown) => this.reportCheckError(error, attempt));
+				// With autoDownload off, a consented check (Settings "check and install")
+				// must chain into the download itself.
+				if (!attempt.failed && attempt === this.checkAttempt && this.state.installRequested && this.state.phase === 'available') {
+					await this.startDownload();
+				}
 			} catch (error) {
 				this.reportCheckError(error, attempt);
 			} finally {
@@ -207,11 +253,13 @@ class UpdateService {
 		if (this.servicesClosedForInstall) throw new Error(this.state.error || 'Restart the app before retrying.');
 		if (!this.beforeInstall) throw new Error('Update installation is unavailable.');
 		const phase = this.state.phase;
-		if (phase !== 'ready' && phase !== 'downloading' && !(['checking', 'error'].includes(phase) && this.state.availableVersion)) {
+		if (phase !== 'ready' && phase !== 'downloading' && phase !== 'available' && !(['checking', 'error'].includes(phase) && this.state.availableVersion)) {
 			throw new Error('No available update is ready to install.');
 		}
 		this.publish({ installRequested: true });
+		this.publish({ installRequested: true });
 		if (phase === 'ready') await this.installReadyUpdate();
+		else if (phase === 'available') await this.startDownload();
 		else if (phase === 'error') {
 			// An error event can arrive before the metadata promise settles. Let that
 			// attempt finish first so retrying cannot accidentally reuse its promise.

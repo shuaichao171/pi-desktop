@@ -6,12 +6,13 @@
  */
 
 import { app, BrowserWindow, dialog, ipcMain, type IpcMainInvokeEvent } from 'electron';
-import { statSync } from 'node:fs';
+import { mkdirSync, statSync } from 'node:fs';
 import { stat } from 'node:fs/promises';
 import { basename, dirname, join, resolve } from 'node:path';
 import { IPC_CHANNELS, type AgentEventEnvelope, type AppLocale, type UiAttachment, type UiExtensionDialogRequest, type UiSessionMetaPatch, type UiSidebarGroupChange, type UiSlashCommandRequest, type UiThinkingLevel } from '@pidesktop/shared';
 import { createIsolatedAgentService } from './agentClient';
 import { getAppLocale, setAppLocale } from './appLocale';
+import { updateAppTrayMenu } from './tray';
 import { updateService } from './updateService';
 export { updateService } from './updateService';
 import { registerWorkbenchIpc } from './workbenchIpc';
@@ -524,9 +525,12 @@ export function registerIpc(options: {
 		electronVersion: process.versions.electron ?? 'unknown',
 		platform: process.platform,
 	}));
-	ipcMain.handle(IPC_CHANNELS.appSetLocale, (_event, locale: AppLocale) => setAppLocale(locale));
+	ipcMain.handle(IPC_CHANNELS.appSetLocale, (_event, locale: AppLocale) => {
+		setAppLocale(locale);
+		updateAppTrayMenu();
+	});
 	ipcMain.handle(IPC_CHANNELS.updateState, () => updateService.getState());
-	ipcMain.handle(IPC_CHANNELS.updateCheck, () => updateService.check());
+	ipcMain.handle(IPC_CHANNELS.updateCheck, (_event, autoInstall?: unknown) => updateService.check(autoInstall === true));
 	ipcMain.handle(IPC_CHANNELS.updateInstall, () => updateService.install());
 	ipcMain.handle(IPC_CHANNELS.windowChromeState, (event) => ({
 		isMaximized: invokingWindow(event).isMaximized(),
@@ -564,6 +568,13 @@ export function registerIpc(options: {
 	ipcMain.handle(IPC_CHANNELS.agentListSessionGroups, () => groups.list());
 	ipcMain.handle(IPC_CHANNELS.agentUpdateSessionGroups, (_event, change: UiSidebarGroupChange) => groups.update(change));
 	ipcMain.handle(IPC_CHANNELS.workspaceSwitch, (_event, cwd: string) => activateWorkspace(cwd, false));
+	ipcMain.handle(IPC_CHANNELS.workspaceDefault, () => {
+		// The detach target is always the home workspace, not the last-saved cwd
+		// that defaultWorkspace() restores.
+		const home = join(app.getPath('home'), 'PiDesktopWorkspace');
+		mkdirSync(home, { recursive: true });
+		return home;
+	});
 	ipcMain.handle(IPC_CHANNELS.agentInit, (_event, cwd: string) => activateWorkspace(cwd, true));
 	ipcMain.handle(IPC_CHANNELS.agentSnapshot, () => agentService.getSnapshot());
 	ipcMain.handle(IPC_CHANNELS.agentListSessions, async (_event, cwd?: string) => {
@@ -671,6 +682,11 @@ export function registerIpc(options: {
 
 	ipcMain.handle(IPC_CHANNELS.agentEditMessage, async (_event, entryId: string, text: string, attachments?: UiAttachment[]) => {
 		await agentService.editUserMessage(entryId, text, attachments);
+	});
+
+	ipcMain.handle(IPC_CHANNELS.agentForkMessage, async (_event, entryId: string) => {
+		if (typeof entryId !== 'string' || !entryId.trim() || entryId.length > 512 || entryId.includes('\0')) throw new Error('消息标识无效');
+		await agentService.forkAssistantMessage(entryId);
 	});
 
 	ipcMain.handle(IPC_CHANNELS.agentGenerateCommitMessage, (_event, context: string) => {

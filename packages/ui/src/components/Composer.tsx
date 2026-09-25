@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, type ChangeEvent, type ClipboardEvent, type DragEvent, type KeyboardEvent } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type ChangeEvent, type ClipboardEvent, type DragEvent, type KeyboardEvent, type ReactNode } from 'react';
 import type { UiAttachment, UiContextRequest, UiSlashCommand } from '@pidesktop/shared';
 import { inspectAttachmentFile, MAX_ATTACHMENTS } from '../attachmentPolicy';
 import { appendFileAttachments, clearSubmittedDraft, type ComposerDraft } from '../composerDrafts';
@@ -57,7 +57,7 @@ function attachmentLabel(attachment: UiAttachment, t: Translate): string {
 	return t(attachment.kind === 'image' ? 'composer.image' : 'composer.text');
 }
 
-export function Composer({ onOpenModelManagement }: { onOpenModelManagement(target: ModelManagementTarget): void }) {
+export function Composer({ header, onOpenModelManagement }: { header?: ReactNode; onOpenModelManagement(target: ModelManagementTarget): void }) {
 	const { t } = useT();
 	const bridge = useChatStore((s) => s.bridge);
 	const status = useChatStore((s) => s.status);
@@ -357,6 +357,7 @@ export function Composer({ onOpenModelManagement }: { onOpenModelManagement(targ
 				{fileChanges.length > 0 && <ComposerChanges key={`changes:${cwd}\0${sessionId}`} items={fileChanges} />}
 				<ComposerQueue key={`queue:${cwd}\0${sessionId}`} items={queuedMessages} />
 				<div ref={shellRef} className={`pd-composer-shell${queuedMessages.length ? ' has-queue' : ''}`} data-composer-layout="multiline" onDragOver={(event) => { if (event.dataTransfer.types.includes('Files')) event.preventDefault(); }} onDrop={onDrop}>
+					{header ? <div className="pd-composer-header">{header}</div> : null}
 					{attachments.length > 0 && <div className="pd-composer-attachments" aria-label={t('composer.pendingAttachments')}>{attachments.map((attachment, index) => <div className={`pd-composer-attachment${attachment.kind === 'text' && attachment.source ? ' is-context' : ''}`} key={`${attachment.name}-${index}`}>
 						{attachment.kind === 'image' ? <img src={`data:${attachment.mimeType};base64,${attachment.data}`} alt="" /> : <span className="pd-composer-attachment-type">{attachment.source ? <Icon name={attachment.source.kind === 'session' ? 'message' : attachment.source.kind === 'directory' ? 'folder' : 'file'} width="16" height="16" /> : 'TXT'}</span>}
 						<HoverTooltip title={attachment.name} description={attachment.kind === 'text' && attachment.source ? `${attachment.source.workspace}\n${attachment.source.path}${attachment.source.truncated ? `\n${t('composer.contextTruncated')}` : ''}` : attachmentLabel(attachment, t)}><span className="pd-composer-attachment-name" tabIndex={0}>{attachment.name}<small>{attachmentLabel(attachment, t)}{attachment.kind === 'text' && attachment.source?.truncated ? ` · ${t('composer.contextTruncatedShort')}` : ''}</small></span></HoverTooltip>

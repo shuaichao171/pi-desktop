@@ -9,6 +9,9 @@ import { test } from 'node:test';
 const stubs = {
   electron: `
     export const app = { getPath: () => globalThis.__ipcUserData };
+    export const Menu = { buildFromTemplate: () => ({}) };
+    export const nativeImage = { createFromPath: () => ({ isEmpty: () => true }) };
+    export const Tray = class {};
     export const BrowserWindow = {
       getAllWindows: () => globalThis.__ipcWindows ?? [],
       fromWebContents: (sender) => globalThis.__ipcWindows?.find((win) => win.webContents === sender),
