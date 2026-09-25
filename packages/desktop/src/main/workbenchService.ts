@@ -52,6 +52,39 @@ export class WorkbenchService {
 		if (error) throw new Error(`无法打开工作区文件夹：${error}`);
 	}
 
+	/**
+	 * Open the workspace root in VS Code (zcode-style editor launch).
+	 * Probes common Code.exe install locations first, then falls back to the
+	 * `code` CLI on PATH.
+	 */
+	async openWorkspaceInVsCode(cwd: string): Promise<void> {
+		if (typeof cwd !== 'string' || !cwd || cwd.includes('\0') || !isAbsolute(cwd)) throw new Error('工作区路径无效');
+		if (cwd !== this.getWorkspace()) throw new Error('工作区已切换，请重试');
+		const generation = this.commandGeneration;
+		const root = await this.workspaceRoot(cwd);
+		if (generation !== this.commandGeneration || cwd !== this.getWorkspace()) throw new Error('工作区已切换，请重试');
+		const candidates: string[] = [];
+		if (process.env.LOCALAPPDATA) candidates.push(join(process.env.LOCALAPPDATA, 'Programs', 'Microsoft VS Code', 'Code.exe'));
+		candidates.push('C:\\Program Files\\Microsoft VS Code\\Code.exe', 'C:\\Program Files (x86)\\Microsoft VS Code\\Code.exe');
+		let executable: string | null = null;
+		for (const candidate of candidates) {
+			try { if ((await stat(candidate)).isFile()) { executable = candidate; break; } } catch { /* keep probing */ }
+		}
+		// Detached spawn so closing pi never kills the editor window.
+		if (executable) {
+			const child = spawn(executable, [root], { detached: true, stdio: 'ignore', windowsHide: true });
+			child.on('error', () => { /* launch errors surface below via exit check */ });
+			await new Promise<void>((resolve) => { child.once('spawn', () => resolve()); child.once('error', () => { executable = null; resolve(); }); });
+			if (executable) return;
+		}
+		// Fallback: the `code` CLI must live on PATH.
+		try {
+			await execFileAsync(process.platform === 'win32' ? 'code.cmd' : 'code', [root], { timeout: 15000, windowsHide: true });
+		} catch (error) {
+			throw new Error(`未找到 VS Code，请安装后重试：${error instanceof Error ? error.message : String(error)}`);
+		}
+	}
+
 	private async resolveEntry(relativePath: string, root?: string): Promise<{ root: string; path: string; relativePath: string }> {
 		if (typeof relativePath !== 'string' || relativePath.includes('\0') || isAbsolute(relativePath)) {
 			throw new Error('文件路径无效');
@@ -131,6 +164,64 @@ export class WorkbenchService {
 			entries.push({ path: relative(root, candidate).split(sep).join('/'), status });
 		}
 		return { isRepository: true, branch: branchResult.stdout.trim() || null, entries };
+	}
+
+	/**
+	 * Assemble the textual context the LLM sees when generating a commit
+	 * message: porcelain status, a diffstat plus a capped full diff versus HEAD,
+	 * untracked file names, and recent commit subjects for style matching.
+	 */
+	async gitCommitContext(): Promise<string> {
+		const root = await this.workspaceRoot();
+		const prefix = this.gitPrefix(root);
+		try {
+			await execFileAsync('git', [...prefix, 'rev-parse', '--show-toplevel'], { timeout: 8000, maxBuffer: 1024 * 1024, env: SAFE_GIT_ENV });
+		} catch {
+			throw new Error('当前工作区不是 git 仓库');
+		}
+		const [statusResult, statResult, logResult] = await Promise.all([
+			execFileAsync('git', [...prefix, 'status', '--porcelain=v1', '--untracked-files=all'], { timeout: 8000, maxBuffer: 1024 * 1024, env: SAFE_GIT_ENV }),
+			execFileAsync('git', [...prefix, 'diff', 'HEAD', '--stat', '--no-color'], { timeout: 8000, maxBuffer: 512 * 1024, env: SAFE_GIT_ENV }).catch(() => ({ stdout: '' })),
+			execFileAsync('git', [...prefix, 'log', '--oneline', '-n', '8', '--no-color'], { timeout: 8000, maxBuffer: 64 * 1024, env: SAFE_GIT_ENV }).catch(() => ({ stdout: '' })),
+		]);
+		if (!statusResult.stdout.trim()) throw new Error('没有可提交的更改');
+		// diff vs HEAD covers staged and unstaged tracked changes; a missing HEAD
+		// (unborn branch) degrades to the file list only.
+		const diff = await this.gitDiffPreview([...prefix, 'diff', 'HEAD', '--no-color', '--no-ext-diff', '--no-textconv'], 24 * 1024).catch(() => '');
+		const sections = [
+			`# git status --porcelain\n${statusResult.stdout.trim()}`,
+			statResult.stdout.trim() ? `# git diff HEAD --stat\n${statResult.stdout.trim()}` : '',
+			diff ? `# git diff HEAD\n${diff}` : '',
+			logResult.stdout.trim() ? `# recent commits (style reference)\n${logResult.stdout.trim()}` : '',
+		];
+		return sections.filter(Boolean).join('\n\n');
+	}
+
+	/**
+	 * Stage everything and create one commit for the current workspace state.
+	 */
+	async gitCommit(message: string, approvedCwd = this.getWorkspace()): Promise<string> {
+		if (typeof message !== 'string') throw new Error('提交消息无效');
+		const trimmed = message.trim();
+		if (!trimmed) throw new Error('提交消息不能为空');
+		if (trimmed.length > 4000) throw new Error('提交消息过长');
+		if (message.includes('\0')) throw new Error('提交消息包含无效字符');
+		const generation = this.commandGeneration;
+		const root = await this.workspaceRoot();
+		if (this.commandGeneration !== generation || this.getWorkspace() !== approvedCwd) {
+			throw new Error('工作区已切换，请重新提交');
+		}
+		const prefix = this.gitPrefix(root);
+		try {
+			await execFileAsync('git', [...prefix, 'add', '-A'], { timeout: 30000, maxBuffer: 1024 * 1024, env: SAFE_GIT_ENV });
+			const commit = await execFileAsync('git', [...prefix, 'commit', '-m', trimmed], { timeout: 30000, maxBuffer: 1024 * 1024, env: SAFE_GIT_ENV });
+			const hash = await execFileAsync('git', [...prefix, 'rev-parse', '--short', 'HEAD'], { timeout: 8000, maxBuffer: 256, env: SAFE_GIT_ENV });
+			return hash.stdout.trim() || commit.stdout.trim().slice(0, 200);
+		} catch (error) {
+			const detail = error instanceof Error ? error.message : String(error);
+			// Re-wrap so stderr from git stays actionable (identity missing, hooks, ...).
+			throw new Error(`提交失败：${detail}`);
+		}
 	}
 
 	async gitDiff(relativePath: string): Promise<string> {

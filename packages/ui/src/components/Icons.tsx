@@ -39,6 +39,8 @@ type IconName =
 	| 'expandAll'
 	| 'collapseAll'
 	| 'check'
+	| 'copy'
+	| 'pencil'
 	| 'pin';
 
 const paths: Record<IconName, ReactNode> = {
@@ -47,6 +49,8 @@ const paths: Record<IconName, ReactNode> = {
 	expandAll: <><path d="M8 3H3v5M3 3l6 6M16 21h5v-5M21 21l-6-6" /></>,
 	collapseAll: <><path d="M3 9h6V3M9 9 3 3M21 15h-6v6M15 15l6 6" /></>,
 	check: <path d="m5 12 4 4L19 6" />,
+	copy: <><rect x="9" y="9" width="12" height="12" rx="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" /></>,
+	pencil: <><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3Z" /></>,
 	pin: <><path d="m15 3 6 6-3 1-4 4v3l-2 2-7-7 2-2h3l4-4 1-3ZM8 16l-5 5" /></>,
 	panel: <><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M9 4v16" /></>,
 	folder: <path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z" />,

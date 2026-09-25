@@ -4,7 +4,9 @@ import { useChatStore } from '../store';
 import type { ModelManagementTarget } from '../modelManagement';
 import { buildTimelineLayout, type TimelineEntry } from '../timeline';
 import { Composer } from './Composer';
-import { ChatTitle } from './ChatTitle';
+import { ChatTitle, type ChatTitleHandle } from './ChatTitle';
+import { ChatHeaderMenu } from './ChatHeaderMenu';
+import { ChatCommitDialog } from './ChatCommitDialog';
 import { WorkspaceFolderButton } from './WorkspaceFolderButton';
 import { Icon } from './Icons';
 import { HoverTooltip } from './HoverTooltip';
@@ -163,12 +165,15 @@ export function ChatView({ onToggleSidebar, onOpenModelManagement, searchTarget,
 		scrollAnimationRef.current = requestAnimationFrame(tick);
 	}
 
+	const titleRef = useRef<ChatTitleHandle>(null);
+	const [commitOpen, setCommitOpen] = useState(false);
+
 	return (
 		<main className={`pd-main${isEmpty ? ' is-empty' : ''}`}>
 			<header className="pd-chat-header">
 				{historyControls}
 				<HoverTooltip title={t('chat.toggleSidebar')}><button type="button" className="pd-icon-button pd-header-sidebar-toggle" onClick={onToggleSidebar} aria-label={t('chat.toggleSidebar')}><Icon name="panel" /></button></HoverTooltip>
-				<div className="pd-chat-heading"><WorkspaceFolderButton key={`folder:${cwd}\0${sessionId}`} cwd={cwd} /><ChatTitle key={`${cwd}\0${sessionId}`} title={title} sessionPath={sessionPath} /></div>
+				<div className="pd-chat-heading"><WorkspaceFolderButton key={`folder:${cwd}\0${sessionId}`} cwd={cwd} /><ChatTitle key={`${cwd}\0${sessionId}`} ref={titleRef} title={title} sessionPath={sessionPath} /><ChatHeaderMenu title={title} sessionPath={sessionPath} cwd={cwd} onRename={() => titleRef.current?.beginRename()} onOpenCommit={() => setCommitOpen(true)} /></div>
 			</header>
 
 			<div ref={bodyRef} className={`pd-conversation-body${isEmpty ? ' is-empty' : ''}`}>
@@ -194,6 +199,7 @@ export function ChatView({ onToggleSidebar, onOpenModelManagement, searchTarget,
 				</div>
 				<Composer onOpenModelManagement={onOpenModelManagement} />
 			</div>
+			{commitOpen && <ChatCommitDialog onClose={() => setCommitOpen(false)} />}
 		</main>
 	);
 }

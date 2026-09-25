@@ -247,7 +247,8 @@ type SessionMeta = Omit<UiSessionMetaPatch, 'name'>;
 function sessionMetaPath(): string { return join(app.getPath('userData'), 'sessions-meta.json'); }
 function isSessionMeta(value: unknown): value is Record<string, SessionMeta> {
 	return isRecord(value) && Object.values(value).every((entry) => isRecord(entry)
-		&& ['pinned', 'archived', 'unread'].every((key) => entry[key] === undefined || typeof entry[key] === 'boolean'));
+		&& ['pinned', 'archived', 'unread'].every((key) => entry[key] === undefined || typeof entry[key] === 'boolean')
+		&& (entry.order === undefined || (typeof entry.order === 'number' && Number.isInteger(entry.order) && Math.abs(entry.order) <= 1e9)));
 }
 async function readSessionMeta(): Promise<Record<string, SessionMeta>> {
 	try {
@@ -601,9 +602,10 @@ export function registerIpc(options: {
 		for (const key of metaKeys) {
 			if (patch[key] !== undefined && typeof patch[key] !== 'boolean') throw new Error('会话状态无效');
 		}
+		if (patch.order !== undefined && patch.order !== null && !Number.isInteger(patch.order)) throw new Error('会话顺序无效');
 		const owner = await requireSessionOwner(path, patch.name !== undefined);
 		if (patch.name !== undefined) await agentService.renameSession(path, patch.name, owner);
-		if (!metaKeys.some((key) => patch[key] !== undefined)) return;
+		if (!metaKeys.some((key) => patch[key] !== undefined) && patch.order === undefined) return;
 		await withSessionMeta(async (meta) => {
 			const next: SessionMeta = { ...meta[path] };
 			for (const key of metaKeys) {
@@ -611,7 +613,28 @@ export function registerIpc(options: {
 					next[key] = patch[key];
 				}
 			}
+			if (patch.order === null) delete next.order;
+			else if (patch.order !== undefined) next.order = patch.order;
 			meta[path] = next;
+			await saveSessionMeta(meta);
+		});
+	});
+	ipcMain.handle(IPC_CHANNELS.agentUpdateSessionOrders, async (_event, entries: { path: string; order: number | null }[]) => {
+		if (!Array.isArray(entries) || entries.length === 0 || entries.length > 500
+			|| !entries.every((entry) => isRecord(entry) && typeof entry.path === 'string' && entry.path.length > 0 && entry.path.length <= 32768 && !entry.path.includes('\0')
+				&& (entry.order === null || (typeof entry.order === 'number' && Number.isInteger(entry.order) && Math.abs(entry.order) <= 1e9)))) throw new Error('会话顺序参数无效');
+		for (const entry of entries) await requireSessionOwner(entry.path);
+		await withSessionMeta(async (meta) => {
+			for (const entry of entries) {
+				if (entry.order === null) {
+					if (meta[entry.path] === undefined) continue;
+					const next = { ...meta[entry.path] };
+					delete next.order;
+					meta[entry.path] = next;
+				} else {
+					meta[entry.path] = { ...meta[entry.path], order: entry.order };
+				}
+			}
 			await saveSessionMeta(meta);
 		});
 	});
@@ -644,6 +667,15 @@ export function registerIpc(options: {
 
 	ipcMain.handle(IPC_CHANNELS.agentPrompt, async (_event, text: string, behavior?: 'steer' | 'followUp', attachments?: UiAttachment[]) => {
 		await agentService.prompt(text, behavior, attachments);
+	});
+
+	ipcMain.handle(IPC_CHANNELS.agentEditMessage, async (_event, entryId: string, text: string, attachments?: UiAttachment[]) => {
+		await agentService.editUserMessage(entryId, text, attachments);
+	});
+
+	ipcMain.handle(IPC_CHANNELS.agentGenerateCommitMessage, (_event, context: string) => {
+		if (typeof context !== 'string' || !context.trim() || context.length > 256 * 1024) throw new Error('提交上下文无效或过长');
+		return agentService.generateCommitMessage(context);
 	});
 
 	ipcMain.handle(IPC_CHANNELS.agentAbort, () => agentService.abort());

@@ -31,6 +31,8 @@ export const AGENT_HOST_METHODS = [
 	'mutatePlugin',
 	'previewPluginResource',
 	'prompt',
+	'editUserMessage',
+	'generateCommitMessage',
 	'abort',
 	'newSession',
 	'dispose',

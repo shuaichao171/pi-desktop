@@ -3,38 +3,38 @@
 
 :root {
   color-scheme: dark;
-  --pd-bg: #111216;
-  --pd-sidebar: #18191d;
-  --pd-header: #141518;
-  --pd-surface: #1d1f24;
-  --pd-surface-hover: #272a30;
-  --pd-selected: #2a2d34;
-  --pd-border: #303238;
-  --pd-border-soft: #27292e;
-  --pd-text: #ececef;
-  --pd-text-subtle: #a8a9b1;
-  --pd-text-weak: #777a84;
-  --pd-brand: #aebaff;
-  --pd-brand-hover: #c1cbff;
-  --pd-brand-ink: #161b37;
+  --pd-bg: #171717;
+  --pd-sidebar: #0a0a0a;
+  --pd-header: #171717;
+  --pd-surface: #232323;
+  --pd-surface-hover: #2e2e2e;
+  --pd-selected: #2e2e2e;
+  --pd-border: #2e2e2e;
+  --pd-border-soft: #272727;
+  --pd-text: #e5e5e5;
+  --pd-text-subtle: #939393;
+  --pd-text-weak: #555555;
+  --pd-brand: #0ea5e9;
+  --pd-brand-hover: #38bdf8;
+  --pd-brand-ink: #ffffff;
   --pd-send-bg: #0ea5e9;
   --pd-send-ink: #ffffff;
-  --pd-selection-bg: #6575ba80;
+  --pd-selection-bg: #0ea5e955;
   --pd-selection-ink: #ffffff;
-  --pd-mark-border: #7783c152;
-  --pd-assistant-mark-bg: #6f7fbd24;
-  --pd-brand-mark-bg: #6f7fbd20;
-  --pd-danger: #f2a6a6;
-  --pd-warning: #e8c18a;
-  --pd-success: #93cdb5;
-  --pd-chrome-border: #25272d;
-  --pd-surface-raised: #23252b;
-  --pd-surface-muted: #17191e;
-  --pd-border-strong: #444852;
-  --pd-user-surface: #25282f;
-  --pd-code-surface: #22252c;
-  --pd-code-text: #d7dcff;
-  --pd-overlay: #07090d80;
+  --pd-mark-border: #38bdf852;
+  --pd-assistant-mark-bg: #0ea5e924;
+  --pd-brand-mark-bg: #0ea5e920;
+  --pd-danger: #f87171;
+  --pd-warning: #fbbf24;
+  --pd-success: #4ade80;
+  --pd-chrome-border: #2a2a2a;
+  --pd-surface-raised: #262626;
+  --pd-surface-muted: #121212;
+  --pd-border-strong: #3d3d3d;
+  --pd-user-surface: #242424;
+  --pd-code-surface: #131313;
+  --pd-code-text: #e5e5e5;
+  --pd-overlay: #0a0a0a80;
   --pd-focus-border: color-mix(in srgb, var(--pd-brand) 65%, var(--pd-border));
   --pd-danger-surface: color-mix(in srgb, var(--pd-danger) 6%, transparent);
   --pd-danger-border: color-mix(in srgb, var(--pd-danger) 32%, transparent);
@@ -170,9 +170,21 @@ button:focus-visible, textarea:focus-visible, input:focus-visible { outline: 2px
 .pd-message-row.is-search-match .pd-user-bubble,
 .pd-message-row.is-search-match .pd-markdown { outline: 2px solid var(--pd-brand); outline-offset: 5px; border-radius: 6px; }
 .pd-message-column, .pd-transcript-end { width: min(100%, 780px); margin: 0 auto; }
-.pd-message-row.is-user .pd-message-column { display: flex; justify-content: flex-end; }
+.pd-message-row.is-user .pd-message-column { display: flex; flex-direction: column; align-items: flex-end; }
 .pd-user-bubble { max-width: min(90%, 620px); padding: 11px 15px; border: 1px solid var(--pd-border-soft); border-radius: var(--pd-radius-lg); background: var(--pd-user-surface); color: var(--pd-text); line-height: 1.6; }
 .pd-user-bubble p { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+/* Hover actions on sent messages (zcode pattern): revealed by row hover or keyboard focus. */
+.pd-message-actions { display: flex; align-items: center; gap: 2px; margin-top: 4px; opacity: 0; transition: opacity var(--pd-motion-fast) var(--pd-ease-enter); }
+.pd-message-row.is-user:hover .pd-message-actions, .pd-message-actions:focus-within { opacity: 1; }
+.pd-message-action { display: flex; align-items: center; justify-content: center; width: 26px; height: 26px; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--pd-text-weak); }
+.pd-message-action:hover:not(:disabled) { background: var(--pd-surface-hover); color: var(--pd-text); }
+.pd-message-edit { display: flex; flex-direction: column; gap: 8px; width: min(100%, 620px); padding: 10px 12px; border: 1px solid var(--pd-border); border-radius: var(--pd-radius-lg); background: var(--pd-user-surface); }
+.pd-message-edit textarea { width: 100%; min-height: 64px; max-height: 320px; padding: 0; border: 0; background: transparent; color: var(--pd-text); font: inherit; line-height: 1.6; resize: none; outline: none; }
+.pd-message-edit-actions { display: flex; align-items: center; gap: 6px; }
+.pd-message-edit-hint { margin-right: auto; color: var(--pd-text-weak); font-size: 11px; }
+.pd-message-edit-cancel { min-height: 26px; padding: 0 10px; border: 1px solid var(--pd-border); border-radius: 6px; background: transparent; color: var(--pd-text-subtle); font-size: 12px; }
+.pd-message-edit-cancel:hover:not(:disabled) { background: var(--pd-surface-hover); color: var(--pd-text); }
+.pd-message-edit-submit { min-height: 26px; padding: 0 12px; border: 0; border-radius: 6px; background: var(--pd-send-bg); color: var(--pd-send-ink); font-size: 12px; font-weight: 600; }
 .pd-assistant-heading { display: flex; align-items: center; gap: 7px; margin-bottom: 9px; color: var(--pd-text-subtle); font-size: 12px; font-weight: 600; }
 .pd-assistant-mark { display: grid; place-items: center; width: 21px; height: 21px; border: 1px solid var(--pd-mark-border); border-radius: 6px; background: var(--pd-assistant-mark-bg); color: var(--pd-brand); font: 16px Georgia, serif; }
 .pd-stream-cursor { display: inline-block; color: var(--pd-brand); animation: pd-pulse 1s ease-in-out infinite; }
@@ -527,7 +539,37 @@ button:focus-visible, textarea:focus-visible, input:focus-visible { outline: 2px
 .is-frameless .pd-chat-header { padding-right: 120px; }
 .is-frameless .pd-sidebar-toolbar button, .is-frameless .pd-chat-header button { -webkit-app-region: no-drag; }
 .pd-chat-title { position: relative; flex: 0 1 auto; min-width: 0; max-width: 100%; -webkit-app-region: no-drag; }
-.pd-chat-title.is-editing { flex: 1; width: 320px; }
+.pd-chat-title.is-editing { flex: 0 1 auto; }
+.pd-chat-heading:has(.pd-chat-title.is-editing) { max-width: min(520px, 80%); }
+.pd-chat-title-edit { display: inline-grid; overflow: hidden; min-width: 140px; max-width: min(480px, 100%); -webkit-app-region: no-drag; }
+.pd-chat-title-edit > * { grid-area: 1 / 1; }
+.pd-chat-title-measure { visibility: hidden; white-space: pre; padding: 0 6px; border: 1px solid transparent; font: inherit; pointer-events: none; }
+.pd-chat-header-more { flex: 0 0 auto; width: 24px; height: 24px; border-radius: 6px; }
+
+/* Commit dialog (zcode-style) */
+.pd-commit-backdrop { position: fixed; inset: 0; z-index: 120; display: flex; align-items: center; justify-content: center; padding: 32px; background: color-mix(in srgb, var(--pd-bg) 55%, transparent); backdrop-filter: blur(2px); }
+.pd-commit-dialog { display: flex; flex-direction: column; gap: 10px; width: min(560px, 100%); max-height: min(560px, calc(100vh - 64px)); overflow: auto; padding: 18px; border: 1px solid var(--pd-border); border-radius: 12px; background: var(--pd-surface-raised); box-shadow: 0 18px 48px rgb(0 0 0 / 0.35); }
+.pd-commit-header h2 { margin: 0; font-size: 15px; font-weight: 600; }
+.pd-commit-header p { margin: 4px 0 0; color: var(--pd-subtle); font-size: 12px; }
+.pd-commit-meta { display: flex; gap: 24px; margin: 0; }
+.pd-commit-meta dt { color: var(--pd-subtle); font-size: 11px; }
+.pd-commit-meta dd { margin: 2px 0 0; font-size: 13px; font-family: var(--pd-mono, ui-monospace, monospace); }
+.pd-commit-files { display: flex; flex-direction: column; gap: 2px; max-height: 168px; overflow: auto; margin: 0; padding: 8px; list-style: none; border: 1px solid var(--pd-border-soft); border-radius: 8px; background: var(--pd-bg); }
+.pd-commit-files li { display: flex; align-items: baseline; gap: 8px; font-size: 12px; }
+.pd-commit-files code { flex: 0 0 auto; min-width: 2ch; color: var(--pd-warning); font-family: var(--pd-mono, ui-monospace, monospace); font-size: 11px; }
+.pd-commit-files span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left; }
+.pd-commit-label { color: var(--pd-subtle); font-size: 11px; }
+.pd-commit-dialog textarea { width: 100%; min-height: 88px; padding: 8px 10px; border: 1px solid var(--pd-border); border-radius: 8px; background: var(--pd-bg); color: var(--pd-text); font: inherit; font-size: 13px; resize: vertical; }
+.pd-commit-dialog textarea:focus-visible { outline: none; border-color: var(--pd-brand); }
+.pd-commit-status { margin: 0; color: var(--pd-subtle); font-size: 12px; }
+.pd-commit-warning { color: var(--pd-danger); }
+.pd-commit-ok { color: var(--pd-success); }
+.pd-commit-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 2px; }
+.pd-commit-secondary { padding: 6px 12px; border: 1px solid var(--pd-border); border-radius: 7px; background: transparent; color: var(--pd-text); font: inherit; font-size: 12px; }
+.pd-commit-secondary:hover { background: var(--pd-hover); }
+.pd-commit-secondary:disabled { opacity: 0.5; }
+.pd-commit-primary { padding: 6px 14px; border: none; border-radius: 7px; background: var(--pd-send-bg); color: var(--pd-send-ink); font: inherit; font-size: 12px; }
+.pd-commit-primary:disabled { opacity: 0.5; }
 .pd-chat-title h1 { overflow: visible; }
 .pd-chat-title-button, .pd-chat-title-input { display: block; width: 100%; min-width: 0; height: 30px; padding: 0 6px; border: 1px solid transparent; border-radius: 6px; background: transparent; color: var(--pd-text); font: inherit; text-align: left; -webkit-app-region: no-drag; user-select: text; }
 .pd-chat-title-button { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: text; }

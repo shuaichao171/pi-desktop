@@ -51,3 +51,13 @@
 .pd-sidebar-form-actions button { justify-content: center; width: auto; min-width: 52px; text-align: center; }
 .pd-sidebar-form-actions button[type='submit'] { background: var(--pd-brand); color: var(--pd-brand-ink); }
 .pd-sidebar-form-actions button[type='submit']:hover:not(:disabled) { background: var(--pd-brand-hover); color: var(--pd-brand-ink); }
+
+/* --- Drag reordering (zcode-style live preview) --- */
+body.pd-sidebar-dragging { cursor: grabbing; user-select: none; -webkit-user-select: none; }
+body.pd-sidebar-dragging * { cursor: grabbing !important; }
+.pd-session-item.is-drag-source { opacity: 0.35; }
+.pd-sidebar-drag-ghost { position: fixed; z-index: 90; display: flex; align-items: center; gap: 6px; max-width: 280px; padding: 6px 10px; border: 1px solid var(--pd-border); border-radius: 6px; background: var(--pd-surface-raised); color: var(--pd-text); box-shadow: var(--pd-shadow-popover); font-size: 12px; pointer-events: none; transform: translate(6px, -50%); }
+.pd-sidebar-drag-ghost span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pd-session-drop-zone { min-height: 12px; margin: 0 0 2px; border-radius: 5px; }
+.pd-session-drop-zone:hover { background: var(--pd-selected); }
+.pd-organized-sessions .pd-sidebar-group-heading[data-drag-container] { border-radius: 6px; }

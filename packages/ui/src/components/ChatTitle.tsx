@@ -1,9 +1,11 @@
-import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
+import { forwardRef, useCallback, useEffect, useId, useImperativeHandle, useLayoutEffect, useRef, useState } from 'react';
 import { useT } from '../i18n';
 import { useChatStore } from '../store';
 
 /** Keyed by conversation so a pending rename never edits the next title. */
-export function ChatTitle({ title, sessionPath }: { title: string; sessionPath: string | null }) {
+export interface ChatTitleHandle { beginRename(): void }
+
+export const ChatTitle = forwardRef<ChatTitleHandle, { title: string; sessionPath: string | null }>(function ChatTitle({ title, sessionPath }, ref) {
 	const { t } = useT();
 	const enabled = useChatStore((state) => Boolean(state.bridge && state.sessionId && !state.navigationPending && (state.status === 'idle' || state.status === 'busy')));
 	const updateSessionMeta = useChatStore((state) => state.updateSessionMeta);
@@ -41,6 +43,9 @@ export function ChatTitle({ title, sessionPath }: { title: string; sessionPath: 
 		if (shouldRestoreFocus) requestAnimationFrame(() => { if (mountedRef.current && document.activeElement === document.body) buttonRef.current?.focus(); });
 	}, []);
 
+	useImperativeHandle(ref, () => ({ beginRename: () => startEditing() }));
+
+
 	useEffect(() => {
 		if (!editing) return;
 		// Blank header/body areas do not necessarily move focus. Cancel on the
@@ -75,7 +80,7 @@ export function ChatTitle({ title, sessionPath }: { title: string; sessionPath: 
 
 	return <div className={`pd-chat-title${editing ? ' is-editing' : ''}`} aria-busy={saving}>
 		<h1>
-			{editing ? <input
+			{editing ? <span className="pd-chat-title-edit"><input
 				ref={inputRef}
 				className="pd-chat-title-input"
 				value={draft}
@@ -93,7 +98,7 @@ export function ChatTitle({ title, sessionPath }: { title: string; sessionPath: 
 					if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); if (!savingRef.current) finishEditing(true); }
 				}}
 				onBlur={() => finishEditing(false)}
-			/> : <button
+			/><span className="pd-chat-title-measure" aria-hidden="true">{draft}</span></span> : <button
 				ref={buttonRef}
 				type="button"
 				className="pd-chat-title-button"
@@ -106,4 +111,4 @@ export function ChatTitle({ title, sessionPath }: { title: string; sessionPath: 
 		{saving && <span className="pd-chat-title-sr-only" role="status">{t('chat.titleSaving')}</span>}
 		{error && <span id={errorId} className="pd-chat-title-error" role="alert">{error}</span>}
 	</div>;
-}
+});

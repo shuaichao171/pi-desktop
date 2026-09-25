@@ -12,7 +12,7 @@ type NamedPreset = Exclude<ColorPresetId, 'custom'>;
 const PRESETS: Record<NamedPreset, Record<ColorMode, ThemeColors>> = {
 	default: {
 		light: { accent: '#445ca8', surface: '#ffffff', ink: '#20232b', contrast: 50 },
-		dark: { accent: '#aebaff', surface: '#111216', ink: '#ececef', contrast: 50 },
+		dark: { accent: '#0ea5e9', surface: '#171717', ink: '#e5e5e5', contrast: 50 },
 	},
 	codex: {
 		light: { accent: '#171717', surface: '#ffffff', ink: '#171717', contrast: 50 },
@@ -32,20 +32,28 @@ const PRESETS: Record<NamedPreset, Record<ColorMode, ThemeColors>> = {
 	},
 };
 
+// Saved-by-default palettes from earlier versions of the built-in look.
+// They must migrate to the current default instead of being pinned as a
+// stale "custom" choice (the dark default moved to the zcode neutral/sky look).
+const LEGACY_DEFAULTS: Record<ColorMode, ThemeColors> = {
+	light: { accent: '#445ca8', surface: '#ffffff', ink: '#20232b', contrast: 50 },
+	dark: { accent: '#aebaff', surface: '#111216', ink: '#ececef', contrast: 50 },
+};
+
 // Keep the built-in appearance exactly aligned with styles.css. Reset removes
 // inline overrides, while these values also support an accurate default preview.
 const DEFAULT_TOKENS: Record<ColorMode, Record<string, string>> = {
 	dark: {
-		'--pd-bg': '#111216', '--pd-sidebar': '#18191d', '--pd-header': '#141518', '--pd-surface': '#1d1f24',
-		'--pd-surface-hover': '#272a30', '--pd-selected': '#2a2d34', '--pd-border': '#303238', '--pd-border-soft': '#27292e',
-		'--pd-text': '#ececef', '--pd-text-subtle': '#a8a9b1', '--pd-text-weak': '#777a84',
-		'--pd-brand': '#aebaff', '--pd-brand-hover': '#c1cbff', '--pd-brand-ink': '#161b37',
-		'--pd-danger': '#f2a6a6', '--pd-warning': '#e8c18a', '--pd-success': '#93cdb5',
-		'--pd-chrome-border': '#25272d', '--pd-surface-raised': '#23252b', '--pd-surface-muted': '#17191e',
-		'--pd-border-strong': '#444852', '--pd-user-surface': '#25282f', '--pd-code-surface': '#22252c',
-		'--pd-code-text': '#d7dcff', '--pd-overlay': '#07090d80',
-		'--pd-selection-bg': '#6575ba80', '--pd-selection-ink': '#ffffff', '--pd-mark-border': '#7783c152',
-		'--pd-assistant-mark-bg': '#6f7fbd24', '--pd-brand-mark-bg': '#6f7fbd20',
+		'--pd-bg': '#171717', '--pd-sidebar': '#0a0a0a', '--pd-header': '#171717', '--pd-surface': '#232323',
+		'--pd-surface-hover': '#2e2e2e', '--pd-selected': '#2e2e2e', '--pd-border': '#2e2e2e', '--pd-border-soft': '#272727',
+		'--pd-text': '#e5e5e5', '--pd-text-subtle': '#939393', '--pd-text-weak': '#555555',
+		'--pd-brand': '#0ea5e9', '--pd-brand-hover': '#38bdf8', '--pd-brand-ink': '#ffffff',
+		'--pd-danger': '#f87171', '--pd-warning': '#fbbf24', '--pd-success': '#4ade80',
+		'--pd-chrome-border': '#2a2a2a', '--pd-surface-raised': '#262626', '--pd-surface-muted': '#121212',
+		'--pd-border-strong': '#3d3d3d', '--pd-user-surface': '#242424', '--pd-code-surface': '#131313',
+		'--pd-code-text': '#e5e5e5', '--pd-overlay': '#0a0a0a80',
+		'--pd-selection-bg': '#0ea5e955', '--pd-selection-ink': '#ffffff', '--pd-mark-border': '#38bdf852',
+		'--pd-assistant-mark-bg': '#0ea5e924', '--pd-brand-mark-bg': '#0ea5e920',
 	},
 	light: {
 		'--pd-bg': '#ffffff', '--pd-sidebar': '#f6f7f9', '--pd-header': '#ffffff', '--pd-surface': '#ffffff',
@@ -56,7 +64,7 @@ const DEFAULT_TOKENS: Record<ColorMode, Record<string, string>> = {
 		'--pd-chrome-border': '#dfe2e8', '--pd-surface-raised': '#ffffff', '--pd-surface-muted': '#f7f8fa',
 		'--pd-border-strong': '#c8cdd8', '--pd-user-surface': '#eef1f6', '--pd-code-surface': '#f1f3f8',
 		'--pd-code-text': '#344b91', '--pd-overlay': '#15203c40',
-		'--pd-selection-bg': '#6575ba80', '--pd-selection-ink': '#ffffff', '--pd-mark-border': '#b8c3e8',
+		'--pd-selection-bg': '#0ea5e955', '--pd-selection-ink': '#ffffff', '--pd-mark-border': '#b8c3e8',
 		'--pd-assistant-mark-bg': '#e7ecfc', '--pd-brand-mark-bg': '#e7ecfc',
 	},
 };
@@ -100,6 +108,8 @@ function normalizeChoice(input: unknown, mode: ColorMode): ThemeColorChoice {
 		ink: normalizeHexColor(value.ink as string) ?? fallback.ink,
 		contrast: typeof value.contrast === 'number' && Number.isFinite(value.contrast) ? Math.round(Math.max(0, Math.min(100, value.contrast))) : fallback.contrast,
 	};
+	const legacy = LEGACY_DEFAULTS[mode];
+	if ((['accent', 'surface', 'ink'] as const).every((key) => choice[key] === legacy[key]) && choice.contrast === legacy.contrast) return getPresetColors('default', mode);
 	// A changed preset is a custom choice; its values must not disappear when
 	// applying the default preset's intentional "remove inline styles" behavior.
 	if (['accent', 'surface', 'ink', 'contrast'].some((key) => choice[key as keyof ThemeColors] !== fallback[key as keyof ThemeColors])) choice.preset = 'custom';

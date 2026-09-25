@@ -72,6 +72,7 @@ interface ChatState {
 	refreshWorkspaceSessions(cwd: string): Promise<void>;
 	switchWorkspace(cwd: string): Promise<void>;
 	updateSessionMeta(path: string, patch: UiSessionMetaPatch): Promise<void>;
+	updateSessionOrders(entries: { path: string; order: number | null }[]): Promise<void>;
 	refreshModels(): Promise<void>;
 	refreshModelProviders(): Promise<void>;
 	saveCustomProvider(request: UiSaveCustomProviderRequest): Promise<void>;
@@ -84,6 +85,8 @@ interface ChatState {
 	switchSession(path: string): Promise<void>;
 	selectSession(cwd: string, path: string): Promise<boolean>;
 	send(text: string, behavior?: 'steer' | 'followUp', attachments?: UiAttachment[]): Promise<void>;
+	/** Rewind to a sent user message and resend the edited text (zcode-style edit). */
+	editMessage(entryId: string, text: string, attachments?: UiAttachment[]): Promise<void>;
 	abort(): Promise<void>;
 	newSession(): Promise<void>;
 	pickWorkspace(): Promise<void>;
@@ -489,6 +492,21 @@ export const useChatStore = create<ChatState>((set, get) => ({
 		if (workspace) await refreshSessionCache(workspace, isCurrent());
 	},
 
+	async updateSessionOrders(entries) {
+		const { bridge, navigationRequestId } = get();
+		if (!bridge || !entries.length) return;
+		const byWorkspace = new Map<string, string[]>();
+		for (const entry of entries) {
+			const workspace = Object.entries(get().sessionsByWorkspace).find(([, sessions]) => sessions.some((session) => session.path === entry.path))?.[0];
+			if (!workspace) continue;
+			byWorkspace.set(workspace, [...(byWorkspace.get(workspace) ?? []), entry.path]);
+		}
+		const isCurrent = () => currentSessionNavigation(bridge, navigationRequestId);
+		await bridge.updateSessionOrders(entries);
+		if (get().bridge !== bridge) return;
+		await Promise.all([...byWorkspace.keys()].map((workspace) => refreshSessionCache(workspace, isCurrent())));
+	},
+
 	async refreshModels() {
 		const bridge = get().bridge;
 		if (!bridge) return;
@@ -664,6 +682,24 @@ export const useChatStore = create<ChatState>((set, get) => ({
 				&& (navigationRequest === undefined || currentSessionNavigation(bridge, navigationRequest))) set({ error: errorMessage(error) });
 			throw error;
 		} finally { if (navigationRequest !== undefined) finishSessionNavigation(bridge, navigationRequest); }
+	},
+
+	async editMessage(entryId, text, attachments) {
+		const { bridge, status, cwd, sessionId } = get();
+		const trimmed = text.trim();
+		if (!bridge || !trimmed) return;
+		if (status !== 'idle') {
+			const error = new Error(translate('store.sessionBusy'));
+			set({ error: error.message });
+			throw error;
+		}
+		set({ error: null });
+		try {
+			await bridge.editMessage(entryId, trimmed, attachments);
+		} catch (error) {
+			if (get().bridge === bridge && get().cwd === cwd && get().sessionId === sessionId) set({ error: errorMessage(error) });
+			throw error;
+		}
 	},
 
 	async abort() {

@@ -34,6 +34,8 @@ export const IPC_CHANNELS = {
   updateInstall: 'update:install',
   agentInit: 'agent:init',
   agentPrompt: 'agent:prompt',
+  agentEditMessage: 'agent:edit-message',
+  agentGenerateCommitMessage: 'agent:generate-commit-message',
   agentAbort: 'agent:abort',
   agentNewSession: 'agent:new-session',
   agentSnapshot: 'agent:snapshot',
@@ -44,6 +46,7 @@ export const IPC_CHANNELS = {
   agentUpdateSessionMeta: 'agent:update-session-meta',
   agentListSessionGroups: 'agent:list-session-groups',
   agentUpdateSessionGroups: 'agent:update-session-groups',
+  agentUpdateSessionOrders: 'agent:update-session-orders',
   agentExtensionDialog: 'agent:extension-dialog',
   agentExtensionDialogClosed: 'agent:extension-dialog-closed',
   agentExtensionDialogPending: 'agent:extension-dialog-pending',
@@ -71,6 +74,9 @@ export const IPC_CHANNELS = {
   contextRead: 'context:read',
   workspaceGitStatus: 'workspace:git-status',
   workspaceGitDiff: 'workspace:git-diff',
+  workspaceOpenInVsCode: 'workspace:open-in-vscode',
+  workspaceCommitContext: 'workspace:commit-context',
+  workspaceCommit: 'workspace:commit',
   workspaceCommandStart: 'workspace:command-start',
   workspaceCommandStop: 'workspace:command-stop',
   workspaceCommandEvent: 'workspace:command-event',
@@ -465,6 +471,8 @@ export interface UiSessionSummary {
   pinned?: boolean;
   archived?: boolean;
   unread?: boolean;
+  /** Manual sidebar position. Undefined entries keep their time-based sort. */
+  order?: number;
 }
 
 export interface UiSessionMetaPatch {
@@ -472,6 +480,8 @@ export interface UiSessionMetaPatch {
   pinned?: boolean;
   archived?: boolean;
   unread?: boolean;
+  /** Manual sidebar position; null clears it back to time-based sorting. */
+  order?: number | null;
 }
 
 /** Custom sidebar groups. Deleting a group never deletes its sessions. */
@@ -485,7 +495,8 @@ export type UiSidebarGroupChange =
   | { type: 'create'; name: string }
   | { type: 'rename'; id: string; name: string }
   | { type: 'delete'; id: string }
-  | { type: 'move-session'; sessionPath: string; groupId: string | null };
+  | { type: 'move-session'; sessionPath: string; groupId: string | null; index?: number }
+  | { type: 'reorder-groups'; ids: string[] };
 
 export interface UiSessionSearchResult extends UiSessionSummary {
   cwd: string;
@@ -620,6 +631,14 @@ export interface AgentBridge {
   readWorkspaceFile(relativePath: string): Promise<string>;
   getWorkspaceGitStatus(): Promise<WorkspaceGitStatus>;
   getWorkspaceGitDiff(relativePath: string): Promise<string>;
+  /** Opens the workspace folder in VS Code (zcode-style editor launch). */
+  openWorkspaceInVsCode(cwd: string): Promise<void>;
+  /** Assembles the diff/status context used to generate a commit message. */
+  getWorkspaceCommitContext(): Promise<string>;
+  /** Stages all changes and commits them; returns the short commit hash. */
+  commitWorkspace(message: string): Promise<string>;
+  /** Asks the current model to write a commit message for the given context. */
+  generateCommitMessage(context: string): Promise<string>;
   startWorkspaceCommand(command: string): Promise<string>;
   stopWorkspaceCommand(id: string): Promise<void>;
   onWorkspaceCommandEvent(listener: (event: WorkspaceCommandEvent) => void): () => void;
@@ -634,6 +653,8 @@ export interface AgentBridge {
   updateSessionMeta(path: string, patch: UiSessionMetaPatch): Promise<void>;
   listSessionGroups(): Promise<UiSessionGroup[]>;
   updateSessionGroups(change: UiSidebarGroupChange): Promise<UiSessionGroup[]>;
+  /** Persist manual sidebar positions for many sessions in one write. */
+  updateSessionOrders(entries: { path: string; order: number | null }[]): Promise<void>;
   listModels(): Promise<UiModelSummary[]>;
   listModelProviders(): Promise<UiModelProvider[]>;
   discoverProviderModels(request: UiDiscoverProviderModelsRequest): Promise<UiProviderModelDiscovery>;
@@ -648,6 +669,8 @@ export interface AgentBridge {
   listExtensions(): Promise<UiExtensionSummary[]>;
   setExtensionEnabled(path: string, enabled: boolean): Promise<void>;
   prompt(text: string, behavior?: 'steer' | 'followUp', attachments?: UiAttachment[]): Promise<void>;
+  /** Rewind to a sent user message and resend the edited text (zcode-style edit). */
+  editMessage(entryId: string, text: string, attachments?: UiAttachment[]): Promise<void>;
   abort(): Promise<void>;
   newSession(): Promise<void>;
   onExtensionDialog(listener: (request: UiExtensionDialogRequest) => void): () => void;

@@ -1,0 +1,82 @@
+import { useState } from 'react';
+import type { UiSessionMetaPatch } from '@pidesktop/shared';
+import { useT } from '../i18n';
+import { useChatStore } from '../store';
+import { Icon } from './Icons';
+import { SidebarPopover } from './SidebarPopover';
+
+/**
+ * zcode-style ellipsis menu behind the chat title: rename plus the same
+ * session toggles the sidebar offers, copy actions, and folder access.
+ */
+export function ChatHeaderMenu({ title, sessionPath, cwd, onRename, onOpenCommit }: { title: string; sessionPath: string | null; cwd: string; onRename(): void; onOpenCommit(): void }) {
+	const { t } = useT();
+	const session = useChatStore((s) => (sessionPath ? s.sessions.find((item) => item.path === sessionPath) : undefined));
+	const updateSessionMeta = useChatStore((s) => s.updateSessionMeta);
+	const [anchor, setAnchor] = useState<HTMLElement | null>(null);
+	const [notice, setNotice] = useState<string | null>(null);
+	const saved = Boolean(sessionPath);
+
+	function close() {
+		setAnchor(null);
+		setNotice(null);
+	}
+
+	function perform(patch: UiSessionMetaPatch) {
+		if (!sessionPath) return;
+		setNotice(null);
+		void updateSessionMeta(sessionPath, patch).catch((cause: unknown) => {
+			setNotice(t('chat.menuActionFailed', { message: cause instanceof Error ? cause.message : String(cause) }));
+		});
+	}
+
+	async function copyText(text: string) {
+		setNotice(null);
+		try {
+			await navigator.clipboard.writeText(text);
+			setNotice(t('chat.menuCopied'));
+		} catch {
+			setNotice(t('chat.menuCopyFailed'));
+		}
+	}
+
+	function openFolder() {
+		const bridge = useChatStore.getState().bridge;
+		if (!bridge || !cwd) return;
+		setNotice(null);
+		void bridge.openWorkspaceFolder(cwd).catch((cause: unknown) => {
+			setNotice(t('chat.openWorkspaceFolderError', { message: cause instanceof Error ? cause.message : String(cause) }));
+		});
+	}
+
+	function openInVsCode() {
+		const bridge = useChatStore.getState().bridge;
+		if (!bridge || !cwd) return;
+		setNotice(null);
+		void bridge.openWorkspaceInVsCode(cwd).catch((cause: unknown) => {
+			setNotice(t('chat.openInVsCodeError', { message: cause instanceof Error ? cause.message : String(cause) }));
+		});
+	}
+
+	const item = (label: string, action: () => void, disabled = false) => (
+		<button type="button" role="menuitem" disabled={disabled} onClick={() => { if (disabled) return; action(); }}>{label}</button>
+	);
+
+	return <>
+		<button type="button" className="pd-icon-button pd-chat-header-more" aria-label={t('chat.menuLabel')} aria-haspopup="menu" aria-expanded={Boolean(anchor)} onClick={(event) => { setNotice(null); setAnchor(event.currentTarget); }}><Icon name="more" width="15" height="15" /></button>
+		{anchor && <SidebarPopover anchor={anchor} label={t('chat.menuLabel')} onClose={close}>
+			{item(t('sidebar.rename'), () => { close(); onRename(); }, !saved)}
+			{item(t(session?.pinned ? 'sidebar.unpin' : 'sidebar.pin'), () => perform({ pinned: !session?.pinned }), !saved)}
+			{item(t(session?.unread ? 'sidebar.markRead' : 'sidebar.markUnread'), () => perform({ unread: !session?.unread }), !saved)}
+			{item(t(session?.archived ? 'sidebar.unarchive' : 'sidebar.archive'), () => perform({ archived: !session?.archived }), !saved)}
+			<hr />
+			{item(t('chat.menuCopyTitle'), () => { void copyText(title); })}
+			{item(t('chat.menuCopyPath'), () => { if (sessionPath) void copyText(sessionPath); }, !saved)}
+			<hr />
+			{item(t('chat.menuOpenWorkspace'), () => { close(); openFolder(); }, !cwd)}
+			{item(t('chat.menuOpenInVsCode'), () => { close(); openInVsCode(); }, !cwd)}
+			{item(t('chat.menuCommit'), () => { close(); onOpenCommit(); }, !cwd)}
+			{notice && <p className="pd-sidebar-menu-note">{notice}</p>}
+		</SidebarPopover>}
+	</>;
+}

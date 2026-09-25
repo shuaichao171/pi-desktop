@@ -1,8 +1,9 @@
 import type { UiAttachment, UiMessage } from '@pidesktop/shared';
-import { memo } from 'react';
+import { memo, useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { useT } from '../i18n';
+import { useChatStore } from '../store';
 import { HoverTooltip } from './HoverTooltip';
 import { Icon } from './Icons';
 import { ThinkingActivity } from './ThinkingActivity';
@@ -27,15 +28,102 @@ function AttachmentPreview({ attachment }: { attachment: UiAttachment }) {
 	return <details className="pd-message-attachment pd-message-text-file"><summary>{attachment.name} <span>{t('message.textFile')}</span></summary><pre className="pd-message-text-preview">{attachment.text.slice(0, previewLength)}{attachment.text.length > previewLength ? `\n${t('message.previewTruncated')}` : ''}</pre></details>;
 }
 
-export const MessageItem = memo(function MessageItem({ message, highlighted = false }: { message: UiMessage; highlighted?: boolean }) {
+/** Sent messages reveal copy and edit actions on hover, zcode-style. */
+const UserMessageItem = memo(function UserMessageItem({ message, highlighted }: { message: UiMessage; highlighted: boolean }) {
 	const { t } = useT();
-	if (message.role === 'user') {
+	const [copied, setCopied] = useState(false);
+	const [editing, setEditing] = useState(false);
+	const [submitting, setSubmitting] = useState(false);
+	const [draft, setDraft] = useState(message.text);
+	const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+
+	useEffect(() => {
+		if (!editing) return;
+		const textarea = textareaRef.current;
+		if (!textarea) return;
+		textarea.focus();
+		textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+		textarea.style.height = 'auto';
+		textarea.style.height = `${textarea.scrollHeight}px`;
+	}, [editing]);
+
+	const syncHeight = () => {
+		const textarea = textareaRef.current;
+		if (!textarea) return;
+		textarea.style.height = 'auto';
+		textarea.style.height = `${textarea.scrollHeight}px`;
+	};
+
+	const copy = async () => {
+		if (!message.text || !navigator.clipboard) return;
+		try { await navigator.clipboard.writeText(message.text); } catch { return; }
+		setCopied(true);
+		window.setTimeout(() => setCopied(false), 1200);
+	};
+
+	const submitEdit = async () => {
+		if (submitting || !draft.trim()) return;
+		setSubmitting(true);
+		try {
+			await useChatStore.getState().editMessage(message.id, draft, message.attachments);
+			setEditing(false);
+		} catch {
+			// The store surfaces the failure; keep the draft for corrections.
+		} finally {
+			setSubmitting(false);
+		}
+	};
+
+	const startEdit = () => {
+		setDraft(message.text);
+		setEditing(true);
+	};
+
+	const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+		if (event.nativeEvent.isComposing) return;
+		if (event.key === 'Enter' && !event.shiftKey) {
+			event.preventDefault();
+			void submitEdit();
+		} else if (event.key === 'Escape') {
+			event.preventDefault();
+			setEditing(false);
+		}
+	};
+
+	if (editing) {
 		return (
-			<div className={`pd-message-row is-user${highlighted ? ' is-search-match' : ''}`} data-message-id={message.id}>
-				<div className="pd-message-column"><div className="pd-user-bubble">{message.text && <p>{message.text}</p>}{Boolean(message.attachments?.length) && <div className="pd-message-attachments">{message.attachments?.map((attachment, index) => <AttachmentPreview key={`${attachment.name}-${index}`} attachment={attachment} />)}</div>}</div></div>
+			<div className="pd-message-row is-user" data-message-id={message.id}>
+				<div className="pd-message-column">
+					<div className="pd-message-edit">
+						<textarea ref={textareaRef} value={draft} rows={2} onChange={(event) => { setDraft(event.target.value); syncHeight(); }} onKeyDown={onKeyDown} aria-label={t('message.editLabel')} disabled={submitting} />
+						{Boolean(message.attachments?.length) && <div className="pd-message-attachments">{message.attachments?.map((attachment, index) => <AttachmentPreview key={`${attachment.name}-${index}`} attachment={attachment} />)}</div>}
+						<div className="pd-message-edit-actions">
+							<span className="pd-message-edit-hint">{t('message.editHint')}</span>
+							<button type="button" className="pd-message-edit-cancel" onClick={() => setEditing(false)} disabled={submitting}>{t('message.editCancel')}</button>
+							<button type="button" className="pd-message-edit-submit" onClick={() => void submitEdit()} disabled={submitting || !draft.trim()}>{t(submitting ? 'message.editSubmitting' : 'message.editSubmit')}</button>
+						</div>
+					</div>
+				</div>
 			</div>
 		);
 	}
+
+	return (
+		<div className={`pd-message-row is-user${highlighted ? ' is-search-match' : ''}`} data-message-id={message.id}>
+			<div className="pd-message-column">
+				<div className="pd-user-bubble">{message.text && <p>{message.text}</p>}{Boolean(message.attachments?.length) && <div className="pd-message-attachments">{message.attachments?.map((attachment, index) => <AttachmentPreview key={`${attachment.name}-${index}`} attachment={attachment} />)}</div>}</div>
+				<div className="pd-message-actions">
+					<button type="button" className="pd-message-action" onClick={() => void copy()} disabled={!message.text} aria-label={t(copied ? 'message.copied' : 'message.copy')}><Icon name={copied ? 'check' : 'copy'} width="14" height="14" /></button>
+					<button type="button" className="pd-message-action" onClick={startEdit} aria-label={t('message.edit')}><Icon name="pencil" width="14" height="14" /></button>
+				</div>
+			</div>
+		</div>
+	);
+});
+
+export const MessageItem = memo(function MessageItem({ message, highlighted = false }: { message: UiMessage; highlighted?: boolean }) {
+	const { t } = useT();
+	if (message.role === 'user') return <UserMessageItem message={message} highlighted={highlighted} />;
 
 	const hasThinking = Boolean(message.thinking || message.thinkingStatus);
 	if (!message.text && !hasThinking && message.status === 'done') return null;

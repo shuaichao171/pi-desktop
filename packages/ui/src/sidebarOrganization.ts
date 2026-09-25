@@ -116,7 +116,22 @@ export function buildSidebarGroups(sessions: SidebarSession[], groups: UiSession
     const group = groupId === undefined ? undefined : groupById.get(groupId);
     (group ? group.sessions : ungrouped).push(session);
   }
-  return { pinned, groups: [...groupById.values()], ungrouped };
+  for (const bucket of groupById.values()) bucket.sessions = orderSessions(bucket.sessions);
+  return { pinned, groups: [...groupById.values()], ungrouped: orderSessions(ungrouped) };
+}
+
+/**
+ * Manual sidebar positions: sessions without an explicit order keep their
+ * time-based sort and stay above the manually arranged block below.
+ */
+export function orderSessions(sessions: SidebarSession[]): SidebarSession[] {
+  if (!sessions.some((session) => Number.isFinite(session.order))) return sessions;
+  const unordered = sessions.filter((session) => !Number.isFinite(session.order));
+  const ordered = sessions
+    .filter((session) => Number.isFinite(session.order))
+    .sort((left, right) => (left.order ?? 0) - (right.order ?? 0)
+      || Date.parse(right.modified) - Date.parse(left.modified));
+  return [...unordered, ...ordered];
 }
 
 export function groupSessionsByDate(sessions: SidebarSession[], now = new Date()): {

@@ -734,6 +734,52 @@ class SingleAgentService {
 		});
 	}
 
+	/** Rewind the visible branch to just before a sent user message and resend the edited text. */
+	async editUserMessage(entryId: string, text: string, attachments: UiAttachment[] = []): Promise<void> {
+		const runtime = this.runtime;
+		if (!runtime) throw new Error('Agent is not initialized');
+		this.requireIdleSession();
+		const result = await this.runExtensionSessionAction(runtime, () => runtime.session.navigateTree(entryId));
+		if (result.cancelled) return;
+		await this.prompt(text, undefined, attachments);
+	}
+
+	/**
+	 * Ask the current model for a commit message covering the given git context.
+	 * Standalone LLM call: never touches the session transcript, so it is safe
+	 * even while a conversation turn is streaming.
+	 */
+	async generateCommitMessage(context: string): Promise<string> {
+		const runtime = this.runtime;
+		if (!runtime) throw new Error('Agent is not initialized');
+		const model = runtime.session.model;
+		if (!model) throw new Error('未选择模型，无法生成提交消息');
+		if (typeof context !== 'string' || !context.trim()) throw new Error('提交上下文为空');
+		const systemPrompt = [
+			'你是提交消息生成器。根据给定的 git 状态与差异生成一条提交消息。',
+			'规则：',
+			'- 使用 Conventional Commits 格式：type(scope?): subject，必要时可附空行 + 正文说明细节。',
+			'- type 从 feat/fix/refactor/docs/style/test/chore/perf/build/ci 中选择。',
+			'- subject 不超过 72 字符，祈使语气，结尾不加句号。',
+			'- 语言：优先与提供的近期提交风格一致；无参考时使用中文。',
+			'- 只输出提交消息本身，不要输出任何解释、引用块或代码围栏。',
+		].join('\n');
+		const message = await runtime.session.modelRuntime.completeSimple(model, {
+			systemPrompt,
+			messages: [{ role: 'user', content: context, timestamp: Date.now() }],
+		});
+		const text = message.content
+			.filter((block): block is { type: 'text'; text: string } => block.type === 'text')
+			.map((block) => block.text)
+			.join('')
+			.trim()
+			// Models occasionally wrap the answer in a code fence; strip one layer.
+			.replace(/^```[a-z]*\n?/i, '')
+			.replace(/\n?```$/, '');
+		if (!text) throw new Error('模型未返回提交消息');
+		return text;
+	}
+
 	/** Abort the active run. */
 	async abort(): Promise<void> {
 		await this.runtime?.session.abort();
@@ -1662,6 +1708,15 @@ export class AgentService {
 	prompt(text: string, behavior?: 'steer' | 'followUp', attachments?: UiAttachment[]): Promise<void> {
 		if (this.pluginOperation) return Promise.reject(new Error('插件设置正在更新，请稍后发送消息'));
 		return this.requireActive().prompt(text, behavior, attachments).finally(() => { void this.trimContexts(); });
+	}
+	editUserMessage(entryId: string, text: string, attachments?: UiAttachment[]): Promise<void> {
+		if (this.pluginOperation) return Promise.reject(new Error('插件设置正在更新，请稍后发送消息'));
+		return this.requireActive().editUserMessage(entryId, text, attachments).finally(() => { void this.trimContexts(); });
+	}
+
+	generateCommitMessage(context: string): Promise<string> {
+		if (this.pluginOperation) return Promise.reject(new Error('插件设置正在更新，请稍后再试'));
+		return this.requireActive().generateCommitMessage(context);
 	}
 	abort(): Promise<void> { return this.active?.abort() ?? Promise.resolve(); }
 

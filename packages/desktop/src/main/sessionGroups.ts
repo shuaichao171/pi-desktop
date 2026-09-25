@@ -54,7 +54,13 @@ function normalizeChange(value: unknown): UiSidebarGroupChange {
 	if (value.type === 'move-session') {
 		if (!isSessionPath(value.sessionPath)) throw new Error('会话路径无效');
 		if (value.groupId !== null && !isId(value.groupId)) throw new Error('分组编号无效');
-		return { type: 'move-session', sessionPath: value.sessionPath, groupId: value.groupId };
+		const index = value.index;
+		if (index !== undefined && index !== null && (typeof index !== 'number' || !Number.isInteger(index) || index < 0)) throw new Error('分组位置无效');
+		return { type: 'move-session', sessionPath: value.sessionPath, groupId: value.groupId, index: typeof index === 'number' ? index : undefined };
+	}
+	if (value.type === 'reorder-groups') {
+		if (!Array.isArray(value.ids) || value.ids.length === 0 || !value.ids.every((id: unknown) => isId(id))) throw new Error('分组顺序无效');
+		return { type: 'reorder-groups', ids: value.ids };
 	}
 	throw new Error('分组更新类型无效');
 }
@@ -108,13 +114,21 @@ export class SessionGroupService {
 				if (index < 0) throw new Error('未找到分组');
 				if (change.type === 'rename') groups[index]!.name = change.name;
 				else groups.splice(index, 1);
-			} else {
-				const target = change.groupId === null ? undefined : groups.find((group) => group.id === change.groupId);
-				if (change.groupId !== null && !target) throw new Error('未找到分组');
-				await this.validateSessionPath(change.sessionPath);
-				for (const group of groups) group.sessionPaths = group.sessionPaths.filter((path) => path !== change.sessionPath);
-				target?.sessionPaths.push(change.sessionPath);
+		} else if (change.type === 'reorder-groups') {
+			const byId = new Map(groups.map((group) => [group.id, group]));
+			const reordered = change.ids.map((id) => byId.get(id)).filter((group) => group !== undefined);
+			if (reordered.length !== new Set(change.ids).size) throw new Error('分组顺序无效');
+			groups.splice(0, groups.length, ...change.ids.map((id) => byId.get(id)!));
+		} else {
+			const target = change.groupId === null ? undefined : groups.find((group) => group.id === change.groupId);
+			if (change.groupId !== null && !target) throw new Error('未找到分组');
+			await this.validateSessionPath(change.sessionPath);
+			for (const group of groups) group.sessionPaths = group.sessionPaths.filter((path) => path !== change.sessionPath);
+			if (target) {
+				const insertAt = change.index === undefined ? target.sessionPaths.length : Math.min(change.index, target.sessionPaths.length);
+				target.sessionPaths.splice(insertAt, 0, change.sessionPath);
 			}
+		}
 			await writeStateFileAsync(this.path, groups);
 			return groups;
 		});

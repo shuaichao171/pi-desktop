@@ -323,6 +323,8 @@ export function createIsolatedAgentService(ui: AgentHostUiHandlers) {
 		prompt: (...args: unknown[]) => client.call('prompt', ...args),
 		abort: (...args: unknown[]) => client.call('abort', ...args),
 		newSession: (...args: unknown[]) => client.call('newSession', ...args),
+		editUserMessage: (...args: unknown[]) => client.call('editUserMessage', ...args),
+		generateCommitMessage: (...args: unknown[]) => client.call('generateCommitMessage', ...args),
 		dispose: () => client.dispose(),
 	};
 }

@@ -22,6 +22,15 @@ export function registerWorkbenchIpc(getWorkspace: () => string): WorkbenchServi
 			return shell.openPath(path);
 		});
 	});
+	ipcMain.handle(IPC_CHANNELS.workspaceOpenInVsCode, async (event, cwd: string) => {
+		const win = BrowserWindow.fromWebContents(event.sender);
+		if (!win || win.isDestroyed() || event.sender.isDestroyed() || win.webContents !== event.sender || event.senderFrame !== win.webContents.mainFrame) {
+			throw new Error('无法确认编辑器打开请求来源');
+		}
+		await service.openWorkspaceInVsCode(cwd);
+	});
+	ipcMain.handle(IPC_CHANNELS.workspaceCommitContext, () => service.gitCommitContext());
+	ipcMain.handle(IPC_CHANNELS.workspaceCommit, (_event, message: string) => service.gitCommit(message));
 	ipcMain.handle(IPC_CHANNELS.workspaceListEntries, (_event, relativePath?: string) => service.listEntries(relativePath));
 	ipcMain.handle(IPC_CHANNELS.workspaceReadFile, (_event, relativePath: string) => service.readFile(relativePath));
 	ipcMain.handle(IPC_CHANNELS.workspaceGitStatus, () => service.gitStatus());
