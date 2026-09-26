@@ -1,0 +1,10 @@
+import { useT } from './i18n';
+const copy = {
+	locating: ['正在定位消息…', 'Locating message…'], missing: ['当前分支未找到该消息。可切换分支后重试。', 'Message not found on this branch. Switch branches and try again.'], retry: ['重试', 'Retry'],
+	quote: ['引用到输入框', 'Quote in composer'], quoteSource: ['回答片段', 'Answer excerpt'], removeQuote: ['移除此引用', 'Remove this quote'],
+	copyFailed: ['复制失败，请选择正文后手动复制。', 'Copy failed. Select the text and copy manually.'], forkHint: ['从这条回答创建分支，保留原路径。', 'Branch from this answer, preserving the original path.'], regenerateHint: ['重新发送本轮原始提问及附件，保留原回答分支。', 'Resend the original prompt and attachments, preserving the previous answer branch.'], forking: ['正在创建分支…', 'Creating branch…'], regenerating: ['正在重新生成…', 'Regenerating…'], forked: ['已创建分支', 'Branch created'], reconnect: ['重新连接 agent', 'Reconnect agent'],
+	preview: ['查看图片', 'Preview image'], fit: ['适应窗口', 'Fit window'], zoomIn: ['放大', 'Zoom in'], zoomOut: ['缩小', 'Zoom out'], close: ['关闭', 'Close'], previous: ['上一张', 'Previous image'], next: ['下一张', 'Next image'], loading: ['正在读取图片…', 'Loading image…'], loadFailed: ['图片加载失败', 'Image failed to load'],
+	currentPath: ['当前路径', 'Current path'], currentNode: ['当前节点', 'Current node'], locateLeaf: ['定位当前节点', 'Locate current node'], switchNode: ['切换到所选节点', 'Switch to selected node'], treeHint: ['选择节点查看摘要；确认后才切换分支。方向键导航，左右键展开和折叠。', 'Select a node to inspect its summary, then confirm to switch. Arrow keys navigate and expand or collapse.'], summaryOnly: ['这里显示已有摘要，不会读取或切换其他分支正文。', 'This is the available summary; previewing does not switch branches.'], noSelection: ['选择一个节点查看摘要。', 'Select a node to inspect its summary.'],
+	treeUser: ['用户消息', 'User message'], treeAssistant: ['助手回答', 'Assistant reply'], treeTool: ['工具调用', 'Tool call'], treeCompaction: ['上下文整理', 'Context compaction'], treeBranchSummary: ['分支摘要', 'Branch summary'], treeCustom: ['自定义节点', 'Custom node'], treeOther: ['其他节点', 'Other node'],
+} as const;
+export function useConversationCopy() { const { locale } = useT(); return (key: keyof typeof copy) => copy[key][locale === 'zh-CN' ? 0 : 1]; }

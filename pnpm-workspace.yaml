@@ -3,6 +3,7 @@ packages:
 
 # pnpm 11 build-script policy (replaces onlyBuiltDependencies).
 allowBuilds:
+  node-pty: true
   electron: true
   electron-winstaller: true
   esbuild: true

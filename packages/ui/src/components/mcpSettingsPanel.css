@@ -1,0 +1,29 @@
+.pd-mcp-panel { display: flex; flex-direction: column; gap: 16px; min-width: 0; padding: 24px; color: var(--pd-text); }
+.pd-mcp-panel h2, .pd-mcp-panel h3 { margin: 0; }
+.pd-mcp-panel h2 { font-size: 21px; }
+.pd-mcp-panel h3 { font-size: 15px; }
+.pd-mcp-panel p { margin: 6px 0; color: var(--pd-text-subtle); font-size: var(--pd-font-sm); line-height: 1.6; overflow-wrap: anywhere; }
+.pd-mcp-toolbar { display: flex; flex-wrap: wrap; gap: 8px; }
+.pd-mcp-panel button, .pd-mcp-panel select, .pd-mcp-panel input:not([type='checkbox']), .pd-mcp-panel textarea { min-height: 32px; max-width: 100%; padding: 6px 10px; border: 1px solid var(--pd-border); border-radius: 7px; background: var(--pd-surface); color: var(--pd-text); font: inherit; }
+.pd-mcp-panel button { cursor: pointer; }
+.pd-mcp-panel button:disabled { opacity: .5; cursor: default; }
+.pd-mcp-panel textarea { resize: vertical; font-family: var(--pd-font-mono, monospace); }
+.pd-mcp-form, .pd-mcp-server { padding: 16px; border: 1px solid var(--pd-border); border-radius: 12px; }
+.pd-mcp-form fieldset { display: flex; flex-direction: column; gap: 12px; min-width: 0; padding: 0; margin: 12px 0 0; border: 0; }
+.pd-mcp-form label { display: flex; flex-direction: column; gap: 6px; min-width: 0; font-size: var(--pd-font-sm); }
+.pd-mcp-form-row { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.pd-mcp-form .pd-mcp-checkbox { flex-direction: row; align-items: center; }
+.pd-mcp-servers { display: flex; flex-direction: column; gap: 12px; }
+.pd-mcp-server { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.pd-mcp-server header { display: flex; align-items: center; gap: 10px; }
+.pd-mcp-server code { display: block; color: var(--pd-text-weak); overflow-wrap: anywhere; font-size: var(--pd-font-xs); }
+.pd-mcp-status { margin-left: auto; font-size: var(--pd-font-xs); color: var(--pd-text-weak); }
+.pd-mcp-status.is-error, .pd-mcp-panel .pd-mcp-error { color: var(--pd-danger); }
+.pd-mcp-server details { padding-top: 6px; font-size: var(--pd-font-sm); }
+.pd-mcp-server summary { cursor: pointer; }
+.pd-mcp-server ul { display: flex; flex-direction: column; gap: 12px; padding-left: 18px; }
+.pd-mcp-panel .pd-mcp-notice { padding: 10px; border: 1px solid var(--pd-border); border-radius: 8px; }
+.pd-mcp-owner { font-size: var(--pd-font-xs); }
+.pd-mcp-remove { width: min(480px, calc(100vw - 32px)); padding: 22px; border: 1px solid var(--pd-border); border-radius: 14px; background: var(--pd-surface); color: var(--pd-text); }
+.pd-mcp-remove::backdrop { background: #0008; }
+@media (max-width: 640px) { .pd-mcp-panel { padding: 14px; } .pd-mcp-form-row { grid-template-columns: 1fr; } }

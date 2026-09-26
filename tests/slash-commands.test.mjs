@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve, sep } from 'node:path';
 import { test } from 'node:test';
@@ -296,9 +296,14 @@ test('desktop slash commands use current SDK resources, enforce session ownershi
       const savedContext = service.active;
       const savedPath = service.getSnapshot().sessionPath;
       await run('new');
-      await run('desktop-session', 'fail-setup');
+      const failedContext = service.active, runtime = failedContext.runtime, unsavedPath = service.getSnapshot().sessionPath;
+      assert.equal(existsSync(unsavedPath), false, 'this recovery case must begin with a genuinely unpersisted session');
+      // Exercise the real SDK replacement failure without first submitting a
+      // user command, which now intentionally persists its lifecycle start.
+      await assert.rejects(failedContext.runExtensionSessionAction(runtime, () => runtime.newSession({ setup: () => { throw new Error('replacement setup failed'); } })), /replacement setup failed/);
       await settle();
       assert.equal(service.hasSession, false);
+      assert.equal(existsSync(unsavedPath), false, 'no request was started, so there is no newer persisted run to restore');
       assert.equal((await service.listSessions(workspace))[0].path, savedPath);
       await service.init({ cwd: workspace });
       assert.equal(service.getSnapshot().sessionPath, savedPath);
@@ -307,6 +312,27 @@ test('desktop slash commands use current SDK resources, enforce session ownershi
       await run('desktop-probe', 'reused');
       await settle();
       assert.equal(JSON.parse(readFileSync(marker, 'utf8')).args, 'reused');
+    });
+
+    await t.test('retry preserves the newest failed command run and keeps one writer for its recorded session', async () => {
+      await run('new');
+      const failedContext = service.active, failedPath = service.getSnapshot().sessionPath, failedSessionId = service.getSnapshot().sessionId;
+      assert.equal(existsSync(failedPath), false);
+      await run('desktop-session', 'fail-setup'); await settle();
+      assert.equal(service.hasSession, false);
+      assert.equal(existsSync(failedPath), true, 'request start must survive even before the first assistant message');
+      const records = readFileSync(failedPath, 'utf8').trim().split('\n').map(line => JSON.parse(line)).filter(entry => entry.customType === 'pi-desktop:conversation-run-v1');
+      assert.equal(records.length, 2); assert.equal(records[0].data.run.status, 'running'); assert.equal(records[1].data.run.status, 'failed');
+      assert.equal(records[0].data.run.id, records[1].data.run.id);
+      assert.equal((await service.listSessions(workspace))[0].path, failedPath);
+      await service.init({ cwd: workspace });
+      const recovered = service.getSnapshot();
+      assert.equal(recovered.sessionPath, failedPath); assert.equal(recovered.sessionId, failedSessionId);
+      assert.deepEqual(recovered.runs, [records[1].data.run]);
+      assert.equal(service.active, failedContext, 'the failed cached slot is rebound to its own persisted session');
+      assert.equal([...service.contexts.values()].filter(context => context.hasSession && context.getSnapshot().sessionPath === failedPath).length, 1);
+      await run('desktop-probe', 'recorded run recovered'); await settle();
+      assert.equal(JSON.parse(readFileSync(marker, 'utf8')).args, 'recorded run recovered');
     });
   } finally {
     await service?.dispose();

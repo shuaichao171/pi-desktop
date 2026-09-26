@@ -1,13 +1,20 @@
 import { createRequire } from 'node:module';
 import { parseArgs } from 'node:util';
 import { prepareUpdateConfig } from './prepare-update-config.mjs';
+import { WINDOWS_PTY_PREBUILD_CONFIG, verifyWindowsPtyPrebuilds } from './windows-pty-prebuild.mjs';
 
 const require = createRequire(new URL('../packages/desktop/package.json', import.meta.url));
 const { Arch, Platform, build } = require('electron-builder');
 const { publish } = prepareUpdateConfig();
 const { values } = parseArgs({ options: { output: { type: 'string' }, dir: { type: 'boolean', default: false } } });
+// node-pty ships Windows N-API binaries and ConPTY helpers. Rebuilding them
+// unnecessarily requires Visual Studio, even though they are ABI independent.
+// Verify the target artifacts before opting out of native rebuilds for Windows;
+// macOS/Linux keep their own native build policies.
+verifyWindowsPtyPrebuilds(require);
 const config = {
   publish,
+  ...WINDOWS_PTY_PREBUILD_CONFIG,
   ...(values.output ? { directories: { output: values.output } } : {}),
 };
 

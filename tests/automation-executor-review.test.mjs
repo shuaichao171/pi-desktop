@@ -9,6 +9,7 @@ registerHooks({ resolve(specifier, context, nextResolve) {
     shortCircuit: true,
   };
   if (specifier === './agentClient') return nextResolve('./agentClient.ts', context);
+  if (specifier.startsWith('./') && context.parentURL && new URL(context.parentURL).pathname.endsWith('.ts') && !/\.[cm]?[jt]s$/.test(specifier)) return nextResolve(`${specifier}.ts`, context);
   return nextResolve(specifier, context);
 } });
 const { createAutomationExecutor } = await import('../packages/desktop/src/main/automationExecutor.ts');
@@ -30,6 +31,30 @@ function fixture() {
   };
   return { snapshot, calls, emit: (event) => listener({ event }), executor: createAutomationExecutor({ createAgent: () => agent }) };
 }
+
+test('only failures before real prompt dispatch are retryable, including accepted-receipt persistence failure', async () => {
+  for (const phase of ['init', 'prompt', 'accepted-write', 'uncertain-shutdown']) {
+    let prompts = 0, disposed = 0; const phases = [];
+    const transportError = () => Object.assign(new Error('injected connection reset'), { code: 'ECONNRESET' });
+    const agent = {
+      onEvent() {},
+      async init() { if (phase === 'init' || phase === 'uncertain-shutdown') throw transportError(); },
+      async getSnapshot() { return { sessionId: 'fixture', sessionPath: '/fixture.jsonl' }; },
+      async prompt() { prompts++; if (phase === 'prompt') throw transportError(); },
+      async dispose() { disposed++; if (phase === 'uncertain-shutdown') throw Object.assign(new Error('worker may still be alive'), { workerStillRunning: true }); },
+    };
+    const executor = createAutomationExecutor({ createAgent: () => agent });
+    const error = await executor.execute(task, new AbortController().signal, async marker => {
+      phases.push(marker); if (marker === 'accepted') throw Object.assign(new Error('accepted record cannot be persisted'), { code: 'EPIPE' });
+    }).then(() => null, error => error);
+    assert.ok(error); assert.equal(disposed, 1);
+    assert.equal(error.retryableDispatch, phase === 'init', phase);
+    assert.equal(error.executionStarted, phase === 'prompt' || phase === 'accepted-write', phase);
+    assert.equal(prompts, phase === 'prompt' || phase === 'accepted-write' ? 1 : 0);
+    assert.deepEqual(phases, phase === 'accepted-write' ? ['dispatching', 'accepted'] : phase === 'prompt' ? ['dispatching'] : []);
+    assert.equal(executor.hasUnreleasedWorkers(), phase === 'uncertain-shutdown');
+  }
+});
 
 test('a successful SDK retry clears the failed attempt before reporting the automation result', async () => {
   const f = fixture();
@@ -183,12 +208,12 @@ test('automation IPC accepts only its current main renderer and starts schedulin
       return Object.fromEntries(['snapshot','save','setEnabled','delete','run','cancelRun','start','dispose'].map(method=>[method,(...args)=>{calls.push([method,...args]);return Promise.resolve({});}]));
     }`,
     './workbenchIpc': `export const registerWorkbenchIpc=()=>({async reset(){},async dispose(){}});`,
-    './updateService': `export const updateService={};`,
-    './tray': `export const createAppTray=()=>null;export const destroyAppTray=()=>{};export const updateAppTrayMenu=()=>{};`,
+    './updateService': `export const updateService={stop(){}};`,
+    './tray': `export const createAppTray=()=>null;export const destroyAppTray=()=>{};export const updateAppTrayMenu=()=>{};export const invalidateAppTrayData=()=>{};`,
     './notifications': `export const createDesktopNotifier=()=>({handleAgentEvent(){},handleAutomationRun(){}});`,
   };
   const hook = registerHooks({ resolve(specifier, context, nextResolve) {
-    if (context.parentURL?.includes('/main/ipc.ts?automation-sender-review') && stubSources[specifier]) {
+    if (context.parentURL?.includes('/main/') && stubSources[specifier]) {
       return { url: `data:text/javascript,${encodeURIComponent(stubSources[specifier])}`, shortCircuit: true };
     }
     if (specifier.startsWith('./') && context.parentURL && new URL(context.parentURL).pathname.endsWith('.ts') && !/\.[cm]?[jt]s$/.test(specifier)) {
@@ -204,8 +229,8 @@ test('automation IPC accepts only its current main renderer and starts schedulin
     const event = { sender: owner.webContents, senderFrame: owner.webContents.mainFrame };
     for (const channel of [IPC_CHANNELS.automationSnapshot, IPC_CHANNELS.automationSave, IPC_CHANNELS.automationSetEnabled,
       IPC_CHANNELS.automationDelete, IPC_CHANNELS.automationRun, IPC_CHANNELS.automationCancelRun]) {
-      assert.throws(() => handlers.get(channel)({ ...event, senderFrame: {} }, 'task'), /Invalid automation sender/);
-      assert.throws(() => handlers.get(channel)({ ...event, sender: {} }, 'task'), /Invalid automation sender/);
+      assert.throws(() => handlers.get(channel)({ ...event, senderFrame: {} }, 'task'), /Invalid renderer sender/);
+      assert.throws(() => handlers.get(channel)({ ...event, sender: {} }, 'task'), /no longer available/);
     }
     assert.deepEqual(calls, []);
     await handlers.get(IPC_CHANNELS.automationSnapshot)(event);

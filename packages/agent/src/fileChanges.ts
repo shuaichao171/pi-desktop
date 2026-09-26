@@ -5,6 +5,7 @@ import { isAbsolute, relative, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
 import type { ExtensionFactory, SessionManager } from '@earendil-works/pi-coding-agent';
 import type { UiFileChange } from '@pidesktop/shared';
+import { FileCheckpoint } from './fileCheckpoint.ts';
 
 const execFileAsync = promisify(execFile);
 const ENTRY_TYPE = 'pi-desktop:file-changes-v1';
@@ -18,7 +19,7 @@ const MAX_SAVED_FILES = 1000;
 const MAX_SAVED_TEXT = 2 * 1024 * 1024;
 const SKIP_DIRECTORIES = new Set(['.git', 'node_modules', '.pnpm', 'out', 'dist', 'release', '.cache', '.next', 'coverage', '__pycache__']);
 
-type FileState = { exists: boolean; fingerprint: string; text: string | null; preview?: UiFileChange['preview'] };
+type FileState = { exists: boolean; fingerprint: string; text: string | null; mode?: number; preview?: UiFileChange['preview'] };
 type SavedFile = { path: string; before: FileState; after: FileState };
 type ToolBaseline = { sessionId: string; broad: boolean; complete: boolean; candidates: Set<string>; files: Map<string, FileState> };
 const missing = (): FileState => ({ exists: false, fingerprint: 'missing', text: '' });
@@ -49,20 +50,26 @@ export class SessionFileChanges {
 	private workspaceReal: string | null = null;
 	private savedText = 0;
 	private previews = new Map<string, UiFileChange>();
+	private readonly checkpoint: FileCheckpoint;
 
 	constructor(cwd: string, manager: SessionManager, changed: (items: UiFileChange[]) => void) {
 		this.cwd = cwd;
 		this.manager = manager;
 		this.changed = changed;
+		this.checkpoint = new FileCheckpoint(cwd, manager);
 		this.restore();
 	}
 
 	readonly extension: ExtensionFactory = (pi) => {
+		pi.on('agent_start', async () => { await this.checkpoint.begin(); });
+		pi.on('agent_end', async () => { await this.checkpoint.complete(); });
 		// Inline extensions follow user extensions. The awaited tool_call hook
 		// sees validated arguments after their mutations, before actual execution.
 		pi.on('tool_call', async (event) => { await this.beforeTool(event.toolCallId, event.toolName, event.input); });
 		pi.on('tool_execution_end', async (event) => { await this.afterTool(event.toolCallId); });
 	};
+	getCheckpoint() { return this.checkpoint.preview(); }
+	rewindCheckpoint(request: { id: string; version: string }) { return this.checkpoint.rewind(request); }
 
 	restore(): UiFileChange[] {
 		this.pending.clear();
@@ -99,6 +106,7 @@ export class SessionFileChanges {
 			const path = !broad && args && typeof args === 'object' ? relativeFilePath(this.cwd, (args as { path?: unknown }).path) : null;
 			if (!broad && !path) return;
 			const listing = broad ? await this.listFiles() : { paths: [path!], complete: true };
+			if (broad && !listing.complete) this.checkpoint.uncovered('Shell 文件扫描未覆盖整个项目，未列出的改动不在撤销范围内。');
 			const files = await this.capture(listing.paths);
 			if (sessionId !== this.manager.getSessionId()) return;
 			this.pending.set(id, { sessionId, broad, complete: listing.complete, candidates: new Set(listing.paths), files });
@@ -121,6 +129,7 @@ export class SessionFileChanges {
 				const current = after.get(path);
 				// An inaccessible/symlink replacement does not authorize reading its target.
 				if (!current || before.fingerprint === current.fingerprint) continue;
+				this.checkpoint.record(path, before, current, baseline.broad && (!baseline.complete || this.pending.size > 0) ? '并发或不完整 Shell 扫描，无法准确归因' : undefined);
 				const previous = this.files.get(path);
 				if (!previous && this.files.size >= MAX_SAVED_FILES) continue;
 				// Preserve the first baseline across contiguous tool edits. If another
@@ -214,7 +223,7 @@ export class SessionFileChanges {
 			if (bytes.includes(0)) return { exists: true, fingerprint, text: null, preview: 'binary' };
 			try {
 				const text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
-				return { exists: true, fingerprint, text: includeText ? text : null, ...(includeText ? {} : { preview: 'too-large' as const }) };
+				return { exists: true, fingerprint, text: includeText ? text : null, mode: info.mode, ...(includeText ? {} : { preview: 'too-large' as const }) };
 			} catch { return { exists: true, fingerprint, text: null, preview: 'binary' }; }
 		} catch { return null; }
 		finally { await handle?.close().catch(() => {}); }

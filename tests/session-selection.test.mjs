@@ -4,6 +4,8 @@ import { createRequire } from 'node:module';
 import { beforeEach, test } from 'node:test';
 import vm from 'node:vm';
 import { useChatStore } from '../packages/ui/src/store.ts';
+import { clampWorkbenchWidth } from '../packages/ui/src/workbenchReading.ts';
+import * as shortcutBindings from '../packages/ui/src/shortcuts/bindings.ts';
 
 const desktopRequire = createRequire(new URL('../packages/desktop/package.json', import.meta.url));
 const typescript = desktopRequire('typescript');
@@ -26,7 +28,7 @@ function mountSearch() {
   const jsx = (type, props) => { const node = { type, props }; nodes.push(node); return node; };
   const context = {
     exports: {}, navigator: { userAgent: 'Windows' }, localStorage: { getItem: () => null },
-    window: { matchMedia: () => ({ matches: false }) },
+    window: { innerWidth: 1440, matchMedia: () => ({ matches: false }) },
     require: (specifier) => {
       if (specifier === 'react') return {
         useEffect() {}, useLayoutEffect() {}, useRef: (value) => ({ current: value }),
@@ -40,6 +42,8 @@ function mountSearch() {
       if (specifier === '../store') return { useChatStore: Object.assign((select) => select(useChatStore.getState()), { getState: useChatStore.getState }) };
       if (specifier === '../i18n') return { useT: () => ({ t: (value) => value }) };
       if (specifier === '../useSessionNavigation') return { useSessionNavigation: () => ({}) };
+      if (specifier === '../workbenchReading') return { clampWorkbenchWidth };
+      if (specifier === '../shortcuts/bindings') return shortcutBindings;
       return new Proxy({}, { get: (_, name) => name });
     },
   };

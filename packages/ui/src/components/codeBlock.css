@@ -7,7 +7,7 @@
 .pd-code-block-actions button:focus-visible, .pd-code-block-toggle:focus-visible { outline: 2px solid var(--pd-focus-border); outline-offset: 1px; }
 .pd-markdown pre.pd-code-block-body { margin: 0; padding: 0; border: 0; border-radius: 0; background: transparent; }
 .pd-code-block-body { max-height: 560px; margin: 0; padding: 10px 0; overflow: auto; scrollbar-width: thin; overscroll-behavior: contain; }
-.pd-code-block-body code { display: block; width: max-content; min-width: 100%; padding: 0 12px; border: 0; border-radius: 0; background: transparent; color: var(--pd-code-text); font: 12px/1.65 ui-monospace, SFMono-Regular, Consolas, 'Liberation Mono', monospace; white-space: pre; tab-size: 2; }
+.pd-code-block-body code { display: block; width: max-content; min-width: 100%; padding: 0 12px; border: 0; border-radius: 0; background: transparent; color: var(--pd-code-text); font: var(--pd-code-font-size, 12px)/1.65 ui-monospace, SFMono-Regular, Consolas, 'Liberation Mono', monospace; white-space: pre; tab-size: 2; }
 .pd-code-block-toggle { display: block; width: 100%; padding: 6px; border-top: 1px solid var(--pd-border-soft); text-align: center; }
 
 /* Highlight tokens follow the active theme through semantic variables. */

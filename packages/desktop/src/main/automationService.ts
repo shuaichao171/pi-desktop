@@ -18,7 +18,7 @@ export interface AutomationExecutionResult {
 
 export interface AutomationServiceOptions {
   filePath: string;
-  execute: (automation: UiAutomation, signal: AbortSignal) => Promise<AutomationExecutionResult>;
+  execute: (automation: UiAutomation, signal: AbortSignal, dispatch?: (phase: 'dispatching' | 'accepted') => Promise<void>) => Promise<AutomationExecutionResult>;
   validateWorkspace?: (cwd: string) => Promise<void>;
   onChanged?: (snapshot: UiAutomationSnapshot) => void;
   /** Fired once a run settles (succeeded/failed/cancelled); used for OS notifications (4.1). */
@@ -31,7 +31,7 @@ export interface AutomationServiceOptions {
 }
 
 interface StoredState extends UiAutomationSnapshot { version: 1 }
-interface ActiveRun { controller: AbortController; done: Promise<void> }
+interface ActiveRun { controller: AbortController; done: Promise<void>; retryAllowed: boolean }
 interface PendingRunCompletion {
   run: UiAutomationRun;
   restoreSchedule?: {
@@ -67,12 +67,19 @@ function normalizeInput(value: unknown): UiAutomationInput {
   }
   if (value.thinkingLevel !== null && !THINKING_LEVELS.includes(value.thinkingLevel as UiThinkingLevel)) throw new Error('思考强度无效');
   if (typeof value.enabled !== 'boolean') throw new Error('任务启用状态无效');
+  for (const [key, maximum] of [['misfireGraceMinutes', 525600], ['maxScheduledRuns', 100000], ['dispatchRetryLimit', 5]] as const) {
+    const number = value[key];
+    if (number !== undefined && number !== null && (!Number.isInteger(number) || (number as number) < (key === 'dispatchRetryLimit' ? 0 : 1) || (number as number) > maximum)) throw new Error(`${key}无效`);
+  }
   return {
     ...(value.id === undefined ? {} : { id: id(value.id) }),
     name: boundedString(value.name, '任务名称', 120),
     prompt: boundedString(value.prompt, '任务指令', 32_000), cwd, model,
     thinkingLevel: value.thinkingLevel as UiThinkingLevel | null,
     schedule: validateAutomationSchedule(value.schedule), timeZone: validateAutomationTimeZone(value.timeZone), enabled: value.enabled,
+    ...(value.misfireGraceMinutes === undefined ? {} : { misfireGraceMinutes: value.misfireGraceMinutes as number | null }),
+    ...(value.maxScheduledRuns === undefined ? {} : { maxScheduledRuns: value.maxScheduledRuns as number | null }),
+    ...(value.dispatchRetryLimit === undefined ? {} : { dispatchRetryLimit: value.dispatchRetryLimit as number }),
   };
 }
 
@@ -87,6 +94,8 @@ function validState(value: unknown): value is StoredState {
       normalizeInput(task);
       const taskId = id(task.id);
       if (taskIds.has(taskId) || !timestamp(task.createdAt) || !timestamp(task.updatedAt)
+        || (task.scheduledRunCount !== undefined && (!Number.isSafeInteger(task.scheduledRunCount) || (task.scheduledRunCount as number) < 0))
+        || (task.completedAt !== undefined && !nullableTimestamp(task.completedAt))
         || !nullableTimestamp(task.nextRunAt) || !nullableTimestamp(task.lastRunAt)
         || (task.enabled && !task.nextRunAt) || (!task.enabled && task.nextRunAt !== null)) return false;
       taskIds.add(taskId);
@@ -100,11 +109,17 @@ function validState(value: unknown): value is StoredState {
       id(run.automationId);
       boundedString(run.name, '任务名称', 120);
       if (!isAbsolute(boundedString(run.cwd, '项目目录', 32_768)) || !['manual', 'schedule'].includes(run.trigger as string)
-        || !['running', 'succeeded', 'failed', 'cancelled', 'interrupted'].includes(run.status as string)
+        || !['running', 'retrying', 'skipped', 'succeeded', 'failed', 'cancelled', 'interrupted'].includes(run.status as string)
         || !timestamp(run.startedAt) || !nullableTimestamp(run.finishedAt)
         || !nullableString(run.sessionId, 512) || !nullableString(run.sessionPath, 32_768)
         || typeof run.summary !== 'string' || run.summary.length > 4_000 || !nullableString(run.error, 4_000)
-        || (run.status === 'running' ? run.finishedAt !== null : run.finishedAt === null)) return false;
+        || (run.status === 'running' || run.status === 'retrying' ? run.finishedAt !== null : run.finishedAt === null)
+        || (run.attempts !== undefined && (!Number.isSafeInteger(run.attempts) || (run.attempts as number) < 1 || (run.attempts as number) > 6))
+        || (run.retryAt !== undefined && !nullableTimestamp(run.retryAt))) return false;
+      if (run.status === 'retrying' && (!timestamp(run.retryAt) || run.dispatchState !== 'not-started')) return false;
+      if (run.dispatchState !== undefined && !['not-started', 'dispatching', 'accepted'].includes(run.dispatchState as string)) return false;
+      if (run.counted !== undefined && typeof run.counted !== 'boolean') return false;
+      if (run.scheduledAt !== undefined && !timestamp(run.scheduledAt)) return false;
     }
   } catch { return false; }
   return true;
@@ -150,7 +165,11 @@ export class AutomationService {
     // Until then the durable snapshot retains "running" and exposes the write error.
     for (const [runId, completion] of this.pendingFinished) {
       const index = next.runs.findIndex((run) => run.id === runId);
-      if (index >= 0) next.runs[index] = structuredClone(completion.run);
+      if (index >= 0) {
+        const needsCount = completion.run.counted && !next.runs[index].counted;
+        next.runs[index] = structuredClone(completion.run);
+        if (needsCount) { next.runs[index].counted = false; this.countScheduled(next, next.runs[index]); }
+      }
       const restore = completion.restoreSchedule;
       if (restore) {
         const task = next.automations.find((item) => item.id === restore.expected.id);
@@ -183,6 +202,7 @@ export class AutomationService {
         if (loaded.runs.some((run) => run.status === 'running')) {
           const next = structuredClone(loaded);
           for (const run of next.runs) if (run.status === 'running') {
+            if (run.dispatchState !== 'not-started') this.countScheduled(next, run);
             run.status = 'interrupted'; run.finishedAt = new Date(this.now()).toISOString();
             run.error = '应用退出时任务尚未完成，请手动重新运行';
           }
@@ -242,12 +262,17 @@ export class AutomationService {
       const task: UiAutomation = {
         ...input, id: previous?.id ?? randomUUID(), createdAt: previous?.createdAt ?? new Date(now).toISOString(),
         updatedAt: new Date(now).toISOString(), lastRunAt: previous?.lastRunAt ?? null,
+        ...(previous?.scheduledRunCount !== undefined ? { scheduledRunCount: previous.scheduledRunCount } : {}),
         nextRunAt: input.enabled ? (sameSchedule ? previous.nextRunAt : nextAutomationRun(input.schedule, input.timeZone, now)) : null,
       };
+      if (task.maxScheduledRuns && (task.scheduledRunCount ?? 0) >= task.maxScheduledRuns) { task.enabled = false; task.nextRunAt = null; task.completedAt = previous?.completedAt ?? new Date(now).toISOString(); }
+      else if (task.enabled && !task.nextRunAt) task.nextRunAt = nextAutomationRun(input.schedule, input.timeZone, now);
       const next = structuredClone(this.state);
       if (previous) next.automations[next.automations.findIndex((item) => item.id === task.id)] = task;
       else next.automations.push(task);
+      if (!task.enabled) this.cancelDeferred(next, task.id);
       await this.commit(next);
+      if (!task.enabled) this.suppressActiveRetries(task.id);
       return this.copy();
     });
   }
@@ -260,6 +285,8 @@ export class AutomationService {
       const next = structuredClone(this.state);
       const task = next.automations.find((item) => item.id === taskId);
       if (!task) throw new Error('自动化任务不存在');
+      const cancelledRetry = !enabled && this.cancelDeferred(next, taskId);
+      if (enabled && task.maxScheduledRuns && (task.scheduledRunCount ?? 0) >= task.maxScheduledRuns) throw new Error('执行次数已用完，请先提高次数上限');
       if (task.enabled === enabled) {
         let cancelledRecovery = false;
         for (const completion of this.pendingFinished.values()) {
@@ -270,7 +297,8 @@ export class AutomationService {
         }
         // An explicit disable still matters when a one-shot claim already set
         // enabled=false but its unwritten completion would otherwise re-enable it.
-        if (cancelledRecovery) await this.commit(next);
+        if (cancelledRecovery || cancelledRetry) await this.commit(next);
+        if (!enabled) this.suppressActiveRetries(taskId);
         return this.copy();
       }
       if (enabled) await this.options.validateWorkspace?.(task.cwd);
@@ -278,6 +306,7 @@ export class AutomationService {
       if (enabled && !task.nextRunAt) throw new Error('执行日期已过，请先编辑任务');
       task.enabled = enabled; task.updatedAt = new Date(this.now()).toISOString();
       await this.commit(next);
+      if (!enabled) this.suppressActiveRetries(taskId);
       return this.copy();
     });
   }
@@ -286,7 +315,7 @@ export class AutomationService {
     await this.initialize();
     return this.serialize(async () => {
       this.ensureOpen(); id(taskId);
-      if (this.state.runs.some((run) => run.automationId === taskId && run.status === 'running')) throw new Error('请先停止正在运行的任务');
+      if (this.state.runs.some((run) => run.automationId === taskId && (run.status === 'running' || run.status === 'retrying'))) throw new Error('请先停止正在运行或等待重试的任务');
       if (!this.state.automations.some((task) => task.id === taskId)) throw new Error('自动化任务不存在');
       const next = structuredClone(this.state);
       next.automations = next.automations.filter((task) => task.id !== taskId);
@@ -314,25 +343,56 @@ export class AutomationService {
     return permission === false ? '插件正在更新，请完成后再运行自动化' : null;
   }
 
-  private async claim(task: UiAutomation, trigger: UiAutomationRun['trigger']): Promise<void> {
+  private countScheduled(state: StoredState, run: UiAutomationRun): void {
+    if (run.trigger !== 'schedule' || run.counted) return;
+    run.counted = true;
+    const task = state.automations.find(item => item.id === run.automationId);
+    if (!task) return;
+    task.scheduledRunCount = (task.scheduledRunCount ?? 0) + 1;
+    if (task.maxScheduledRuns && task.scheduledRunCount >= task.maxScheduledRuns) {
+      task.enabled = false; task.nextRunAt = null; task.completedAt = new Date(this.now()).toISOString();
+    }
+  }
+
+  private cancelDeferred(state: StoredState, taskId: string): boolean {
+    let changed = false;
+    const pending = [...this.pendingFinished.values()].map(item => item.run);
+    for (const run of [...state.runs, ...pending]) if (run.automationId === taskId && run.status === 'retrying') {
+      run.status = 'cancelled'; run.finishedAt = new Date(this.now()).toISOString(); run.retryAt = null;
+      run.error = '任务已停用，派发重试已取消'; changed = true;
+    }
+    return changed;
+  }
+
+  private suppressActiveRetries(taskId: string): void {
+    // Pausing must not abort work already sent to the model, but it must also
+    // prevent a still-running setup phase from scheduling a later retry.
+    for (const run of this.state.runs) if (run.automationId === taskId) {
+      const active = this.active.get(run.id); if (active) active.retryAllowed = false;
+    }
+  }
+
+  private async claim(task: UiAutomation, trigger: UiAutomationRun['trigger'], retry?: UiAutomationRun): Promise<void> {
     if (this.active.size >= MAX_CONCURRENT) throw new Error('已有 2 个自动化正在运行，请稍后重试');
-    if (this.state.runs.some((run) => run.automationId === task.id && run.status === 'running')) throw new Error('此自动化已在运行');
+    if (this.state.runs.some((run) => run.automationId === task.id && (run.status === 'running' || run.status === 'retrying') && run.id !== retry?.id)) throw new Error('此自动化已在运行');
     const now = this.now();
     const next = structuredClone(this.state);
     const storedTask = next.automations.find((item) => item.id === task.id)!;
     storedTask.lastRunAt = new Date(now).toISOString();
-    if (trigger === 'schedule') {
+    if (trigger === 'schedule' && !retry) {
       storedTask.nextRunAt = nextAutomationRun(task.schedule, task.timeZone, now);
       if (task.schedule.kind === 'once') { storedTask.enabled = false; storedTask.nextRunAt = null; }
     }
-    const run: UiAutomationRun = {
+    const run: UiAutomationRun = retry ? { ...retry, status: 'running', retryAt: null, attempts: (retry.attempts ?? 1) + 1, error: null } : {
       id: randomUUID(), automationId: task.id, name: task.name, cwd: task.cwd, trigger, status: 'running',
       startedAt: new Date(now).toISOString(), finishedAt: null, sessionId: null, sessionPath: null, summary: '', error: null,
+      attempts: 1, dispatchState: 'not-started', ...(trigger === 'schedule' && task.nextRunAt ? { scheduledAt: task.nextRunAt } : {}),
     };
-    next.runs.unshift(run);
+    if (retry) next.runs[next.runs.findIndex(item => item.id === retry.id)] = run;
+    else next.runs.unshift(run);
     // The newest running entries are always retained; only completed old history is evicted.
     while (next.runs.length > MAX_RUNS) {
-      const lastFinished = next.runs.findLastIndex((entry) => entry.status !== 'running');
+      const lastFinished = next.runs.findLastIndex((entry) => entry.status !== 'running' && entry.status !== 'retrying');
       if (lastFinished < 0) throw new Error('运行历史已满');
       next.runs.splice(lastFinished, 1);
     }
@@ -343,6 +403,7 @@ export class AutomationService {
       let result: Partial<AutomationExecutionResult> = {};
       let error: string | null = null;
       let dispatchDeferred = false;
+      let retryable = false;
       try {
         await this.options.validateWorkspace?.(task.cwd);
         const blocker = this.dispatchBlocker();
@@ -350,16 +411,30 @@ export class AutomationService {
           dispatchDeferred = true;
           throw new Error(blocker);
         }
-        if (!controller.signal.aborted) result = await this.options.execute(structuredClone(task), controller.signal);
+        if (!controller.signal.aborted) result = await this.options.execute(structuredClone(task), controller.signal, phase => this.serialize(async () => {
+          const next = structuredClone(this.state), entry = next.runs.find(item => item.id === run.id)!;
+          entry.dispatchState = phase;
+          if (phase === 'accepted') this.countScheduled(next, entry);
+          await this.commit(next);
+        }));
         if (result.error) error = result.error.slice(0, 4_000);
       } catch (caught) {
         error = message(caught);
+        retryable = object(caught) && caught.retryableDispatch === true && caught.executionStarted === false;
         if (object(caught)) result = caught as Partial<AutomationExecutionResult>;
       }
       let finishedEntry: UiAutomationRun | null = null;
       await this.serialize(async () => {
         const finished = structuredClone(this.state);
         const entry = finished.runs.find((item) => item.id === run.id)!;
+        const shouldRetry = retryable && this.active.get(run.id)?.retryAllowed !== false && entry.dispatchState === 'not-started' && !controller.signal.aborted && (entry.attempts ?? 1) <= (task.dispatchRetryLimit ?? 2);
+        if (shouldRetry) {
+          entry.status = 'retrying'; entry.error = error; entry.retryAt = new Date(this.now() + Math.min(300000, 5000 * 2 ** ((entry.attempts ?? 1) - 1))).toISOString();
+          this.pendingFinished.set(entry.id, { run: structuredClone(entry) });
+          await this.commit(finished); return;
+        }
+        if (entry.dispatchState === 'dispatching' || entry.dispatchState === 'accepted'
+          || (!dispatchDeferred && !retryable && !controller.signal.aborted && !error)) this.countScheduled(finished, entry);
         entry.status = controller.signal.aborted ? 'cancelled' : error ? 'failed' : 'succeeded';
         entry.finishedAt = new Date(this.now()).toISOString();
         entry.error = error;
@@ -380,7 +455,7 @@ export class AutomationService {
       });
       if (finishedEntry) { try { this.options.onRunFinished?.(finishedEntry, task); } catch { /* notifications must never break runs */ } }
     }).finally(() => { this.active.delete(run.id); });
-    this.active.set(run.id, { controller, done });
+    this.active.set(run.id, { controller, done, retryAllowed: true });
     void done.catch((error) => this.report(error));
   }
 
@@ -391,6 +466,15 @@ export class AutomationService {
       const run = this.state.runs.find((item) => item.id === runId);
       if (!run) throw new Error('运行记录不存在');
       const running = this.active.get(runId);
+      const pendingRetry = this.pendingFinished.get(runId)?.run;
+      if (run.status === 'retrying' || pendingRetry?.status === 'retrying') {
+        const next = structuredClone(this.state), entry = structuredClone(pendingRetry ?? run);
+        entry.status = 'cancelled'; entry.finishedAt = new Date(this.now()).toISOString(); entry.retryAt = null;
+        next.runs[next.runs.findIndex(item => item.id === runId)] = entry;
+        this.pendingFinished.set(runId, { run: structuredClone(entry) });
+        await this.commit(next);
+        return undefined;
+      }
       if (run.status === 'running' && !running) throw new Error('任务运行状态异常，请重启应用后重试');
       running?.controller.abort();
       return running;
@@ -406,12 +490,29 @@ export class AutomationService {
       // Never launch another worker while the previous completion is still unwritten.
       if (this.pendingFinished.size || this.storageError) await this.commit(structuredClone(this.state));
       if (this.dispatchBlocker()) return;
+      for (const run of this.state.runs.filter(item => item.status === 'retrying' && item.retryAt && Date.parse(item.retryAt) <= this.now())) {
+        if (this.active.size >= MAX_CONCURRENT) break;
+        const task = this.state.automations.find(item => item.id === run.automationId);
+        if (task) await this.claim(task, run.trigger, run);
+      }
       const due = this.state.automations.filter((task) => task.enabled && task.nextRunAt && Date.parse(task.nextRunAt) <= this.now())
         .sort((a, b) => Date.parse(a.nextRunAt!) - Date.parse(b.nextRunAt!));
       for (const task of due) {
         if (this.dispatchBlocker()) break;
         if (this.active.size >= MAX_CONCURRENT) break;
-        if (this.state.runs.some((run) => run.automationId === task.id && run.status === 'running')) continue;
+        if (this.state.runs.some((run) => run.automationId === task.id && (run.status === 'running' || run.status === 'retrying'))) continue;
+        if (task.misfireGraceMinutes && this.now() - Date.parse(task.nextRunAt!) > task.misfireGraceMinutes * 60000) {
+          const next = structuredClone(this.state), stored = next.automations.find(item => item.id === task.id)!;
+          const timestamp = new Date(this.now()).toISOString();
+          next.runs.unshift({ id: randomUUID(), automationId: task.id, name: task.name, cwd: task.cwd, trigger: 'schedule', status: 'skipped', startedAt: timestamp, finishedAt: timestamp, scheduledAt: task.nextRunAt!, sessionId: null, sessionPath: null, summary: '超过补跑宽限，已跳过', error: null });
+          while (next.runs.length > MAX_RUNS) {
+            const lastFinished = next.runs.findLastIndex(entry => entry.status !== 'running' && entry.status !== 'retrying');
+            next.runs.splice(lastFinished, 1);
+          }
+          stored.nextRunAt = nextAutomationRun(task.schedule, task.timeZone, this.now());
+          if (task.schedule.kind === 'once') { stored.enabled = false; stored.completedAt = timestamp; }
+          await this.commit(next); continue;
+        }
         await this.claim(task, 'schedule');
       }
     });

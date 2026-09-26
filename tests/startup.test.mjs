@@ -5,13 +5,14 @@ import { test } from 'node:test';
 
 let harnessId = 0;
 const stubs = {
+  './diagnostics.ts': `export const initializeDiagnostics=()=>({}); export const recordDiagnostic=()=>{};`,
   electron: `
     const env = globalThis.__startupTest;
     export const { app, BrowserWindow, dialog, ipcMain, Menu, session, shell } = env;
   `,
   './ipc': `
     const env = globalThis.__startupTest;
-    export const { agentService, updateService, registerIpc, defaultWorkspace, disposeServices } = env;
+    export const { agentService, updateService, registerIpc, defaultWorkspace, disposeServices, readCurrentDesktopSettings, isAgentWorkActive, saveCloseBehavior } = env;
   `,
   './appLocale': `export const getAppLocale = () => 'en-US';`,
   './tray': `export const createAppTray = () => null; export const destroyAppTray = () => {};`,
@@ -43,7 +44,7 @@ async function settle() {
   await new Promise((resolve) => setImmediate(resolve));
 }
 
-async function createStartupHarness(t, { workspaceError, initialization = deferred(), shutdown = async () => {} } = {}) {
+async function createStartupHarness(t, { workspaceError, initialization = deferred(), shutdown = async () => {}, closeBehavior = 'quit', busy = false, closeChoice = 1 } = {}) {
   t.mock.timers.enable({ apis: ['setTimeout'] });
   const windows = [];
   const calls = { init: [], startUpdates: 0, dispose: 0, quit: 0, errors: [], logs: [], registered: 0 };
@@ -86,6 +87,7 @@ async function createStartupHarness(t, { workspaceError, initialization = deferr
     reload() {}
   }
   const app = Object.assign(new EventEmitter(), {
+    getPath: () => 'test-user-data',
     isPackaged: true,
     requestSingleInstanceLock: () => true,
     whenReady: () => Promise.resolve(),
@@ -103,7 +105,7 @@ async function createStartupHarness(t, { workspaceError, initialization = deferr
     ipcMain,
     dialog: {
       showErrorBox: (...args) => calls.errors.push(args),
-      showMessageBox: (...args) => { calls.errors.push(args); return Promise.resolve({ response: 0 }); },
+      showMessageBox: (...args) => { calls.errors.push(args); return Promise.resolve({ response: closeChoice }); },
     },
     Menu: { setApplicationMenu: () => {} },
     session: { defaultSession: { setPermissionRequestHandler: () => {} } },
@@ -115,6 +117,9 @@ async function createStartupHarness(t, { workspaceError, initialization = deferr
     },
     defaultWorkspace: () => { if (workspaceError) throw workspaceError; return process.cwd(); },
     disposeServices: async () => { calls.dispose += 1; await shutdown(); },
+    readCurrentDesktopSettings: () => ({ notificationsEnabled: true, closeBehavior }),
+    isAgentWorkActive: async () => busy,
+    saveCloseBehavior: async () => {},
     agentService: { init: (...args) => { calls.init.push(args); return initialization.promise; } },
     updateService: {
       setBeforeInstall: (callback) => { beforeInstall = callback; },
@@ -262,3 +267,28 @@ test('update preparation propagates shutdown failures instead of allowing instal
   assert.equal(prevented, true, 'failed preparation must not set the ready-to-quit flag');
   await settle();
 });
+
+for (const { closeBehavior, busy } of [{ closeBehavior: 'quit', busy: false }, { closeBehavior: 'quit', busy: true }, { closeBehavior: 'tray', busy: true }]) {
+  test(`Windows close (${closeBehavior}, busy=${busy}) waits for service disposal before quitting`, { skip: process.platform !== 'win32' }, async (t) => {
+    const cleanup = deferred();
+    const harness = await createStartupHarness(t, { closeBehavior, busy, shutdown: () => cleanup.promise });
+    const main = await harness.start();
+    main.load.resolve();
+    main.emit('ready-to-show');
+    harness.initialization.resolve();
+    await harness.rendererReady(main);
+    let closePrevented = false;
+    main.emit('close', { preventDefault() { closePrevented = true; } });
+    await settle();
+    assert.equal(closePrevented, true);
+    assert.equal(harness.calls.quit, 1);
+    let quitPrevented = false;
+    harness.app.emit('before-quit', { preventDefault() { quitPrevented = true; } });
+    assert.equal(quitPrevented, true, 'choosing quit must not mark cleanup complete early');
+    assert.equal(harness.calls.dispose, 1);
+    assert.equal(harness.calls.quit, 1);
+    cleanup.resolve();
+    await settle();
+    assert.equal(harness.calls.quit, 2);
+  });
+}

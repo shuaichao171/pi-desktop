@@ -6,7 +6,7 @@ import { Icon } from './Icons';
  * In-conversation find bar (Ctrl+F): counts matches across visible messages,
  * steps through them with Enter/Shift+Enter and returns focus on Escape.
  */
-export function TranscriptFind({ query, onQueryChange, index, total, onStep, onClose }: {
+export function TranscriptFind({ query, onQueryChange, index, total, onStep, onClose, loadedMessages, hasOlder = false, loadingOlder = false, onLoadOlder }: {
 	query: string;
 	onQueryChange(query: string): void;
 	/** Zero-based active match; null when there is no active match. */
@@ -14,6 +14,10 @@ export function TranscriptFind({ query, onQueryChange, index, total, onStep, onC
 	total: number;
 	onStep(delta: 1 | -1): void;
 	onClose(): void;
+	loadedMessages?: number;
+	hasOlder?: boolean;
+	loadingOlder?: boolean;
+	onLoadOlder?(): void;
 }) {
 	const { t } = useT();
 	const inputRef = useRef<HTMLInputElement>(null);
@@ -45,6 +49,10 @@ export function TranscriptFind({ query, onQueryChange, index, total, onStep, onC
 			<button type="button" className="pd-transcript-find-step" onClick={() => onStep(-1)} disabled={total === 0} aria-label={t('chat.find.previous')}><Icon name="chevronUp" width="14" height="14" /></button>
 			<button type="button" className="pd-transcript-find-step" onClick={() => onStep(1)} disabled={total === 0} aria-label={t('chat.find.next')}><Icon name="chevronDown" width="14" height="14" /></button>
 			<button type="button" className="pd-transcript-find-close" onClick={onClose} aria-label={t('chat.find.close')}><Icon name="close" width="14" height="14" /></button>
+			{hasOlder && <div className="pd-transcript-find-scope" role="status">
+				<span>{t('chat.find.loadedOnly', { count: String(loadedMessages ?? 0) })}</span>
+				{onLoadOlder && <button type="button" className="pd-transcript-find-load" disabled={loadingOlder} onClick={onLoadOlder}>{t(loadingOlder ? 'chat.loadingOlder' : 'chat.find.loadOlder')}</button>}
+			</div>}
 		</div>
 	);
 }

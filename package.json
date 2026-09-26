@@ -1,7 +1,7 @@
 {
   "name": "pi-desktop",
   "private": true,
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "Desktop workbench for the Pi coding agent (Electron + React), inspired by ZCode's architecture",
   "license": "MIT",
   "type": "module",
@@ -16,9 +16,10 @@
     "dist:win": "pnpm --filter @pidesktop/desktop dist:win",
     "dist:mac": "pnpm --filter @pidesktop/desktop dist:mac",
     "dist:linux": "pnpm --filter @pidesktop/desktop dist:linux",
-    "test": "node --test tests/*.test.mjs",
+    "test": "node --test --test-concurrency=4 tests/*.test.mjs",
     "typecheck": "pnpm -r --if-present typecheck",
-    "clean": "pnpm -r --if-present clean"
+    "clean": "pnpm -r --if-present clean",
+    "test:model-settings-ui": "pnpm build && node tests/fixtures/model-settings/preflight.mjs && node tests/fixtures/model-settings/run.mjs --run"
   },
   "devDependencies": {
     "@earendil-works/pi-coding-agent": "0.87.1",

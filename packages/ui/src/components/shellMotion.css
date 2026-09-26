@@ -8,7 +8,8 @@
 .pd-sidebar.is-collapsed .pd-sidebar-session-content { visibility: hidden; pointer-events: none; }
 
 .pd-app-shell > .pd-workbench {
-  --pd-workbench-size: 360px;
+  --pd-workbench-size: var(--pd-workbench-width, 420px);
+  position: relative;
   display: flex;
   flex: 0 0 0;
   overflow: hidden;
@@ -35,6 +36,8 @@
   width: var(--pd-workbench-size, 360px);
   min-height: 0;
 }
+.pd-app-shell.is-workbench-resizing > .pd-workbench { transition: none; }
+.pd-app-shell.is-workbench-resizing { cursor: col-resize; user-select: none; }
 .pd-app-shell > :is(.pd-sidebar-scrim, .pd-workbench-scrim) {
   background: var(--pd-overlay);
   opacity: 0;
@@ -69,7 +72,7 @@
 
 @media (max-width: 1100px) {
   .pd-app-shell > .pd-workbench {
-    --pd-workbench-size: min(420px, calc(100vw - 56px));
+    --pd-workbench-size: min(var(--pd-workbench-width, 420px), calc(100vw - 24px));
     position: absolute;
     top: 56px;
     bottom: 0;
@@ -95,7 +98,7 @@
   .pd-app-shell > .pd-sidebar.is-open { visibility: visible; pointer-events: auto; transition-delay: 0s; }
 }
 @media (max-width: 650px) {
-  .pd-app-shell > .pd-workbench { --pd-workbench-size: min(100vw, 420px); }
+  .pd-app-shell > .pd-workbench { --pd-workbench-size: min(100vw, var(--pd-workbench-width, 420px)); }
 }
 @media (prefers-reduced-motion: reduce) {
   .pd-app-shell > :is(.pd-sidebar, .pd-workbench, .pd-sidebar-scrim, .pd-workbench-scrim),

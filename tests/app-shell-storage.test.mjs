@@ -4,6 +4,8 @@ import { createRequire } from 'node:module';
 import { test } from 'node:test';
 import vm from 'node:vm';
 import * as themeColors from '../packages/ui/src/themeColors.ts';
+import * as workbenchReading from '../packages/ui/src/workbenchReading.ts';
+import * as shortcutBindings from '../packages/ui/src/shortcuts/bindings.ts';
 
 const desktopRequire = createRequire(new URL('../packages/desktop/package.json', import.meta.url));
 const typescript = desktopRequire('typescript');
@@ -11,7 +13,7 @@ const source = typescript.transpileModule(readFileSync(new URL('../packages/ui/s
   compilerOptions: { module: typescript.ModuleKind.CommonJS, jsx: typescript.JsxEmit.ReactJSX, target: typescript.ScriptTarget.ES2022 },
 }).outputText;
 
-function mountShell(storage) {
+function mountShell(storage, chatState = { appInfo: { platform: 'win32' } }) {
   const effects = [];
   const state = [];
   const styles = new Map();
@@ -32,9 +34,11 @@ function mountShell(storage) {
         },
       };
       if (specifier === 'react/jsx-runtime') return { jsx() {}, jsxs() {} };
-      if (specifier === '../store') return { useChatStore: (select) => select({ appInfo: { platform: 'win32' } }) };
+      if (specifier === '../store') return { useChatStore: Object.assign((select) => select(chatState), { getState: () => chatState }) };
       if (specifier === '../i18n') return { useT: () => ({ t: (value) => value }) };
       if (specifier === '../useSessionNavigation') return { useSessionNavigation: () => ({}) };
+      if (specifier === '../workbenchReading') return workbenchReading;
+      if (specifier === '../shortcuts/bindings') return shortcutBindings;
       // The real module runs outside this VM realm. Inject its supported storage
       // dependency so it observes this mount's browser storage, including errors.
       if (specifier === '../themeColors') return {
@@ -76,4 +80,18 @@ test('AppShell applies the saved palette for the active mode while preserving th
   const recovered = mountShell({ getItem: key => stored.get(key) ?? null, setItem: (key, value) => stored.set(key, value) });
   assert.equal(recovered.theme, 'dark');
   assert.equal(recovered.styles.size, 0, 'invalid palette data returns to the default CSS without residual color overrides');
+});
+
+test('notification commands can select an uncached session from another workspace', () => {
+  let onCommand;
+  const selections = [];
+  mountShell({ getItem: () => null, setItem() {} }, {
+    appInfo: { platform: 'win32' },
+    bridge: { onAppCommand(callback) { onCommand = callback; return () => {}; } },
+    sessionsByWorkspace: { 'C:/current': [{ path: 'cached.jsonl' }] },
+    async selectSession(cwd, path) { selections.push([cwd, path]); },
+  });
+  onCommand({ type: 'switch-session', cwd: 'D:/automation', path: 'unlisted.jsonl' });
+  onCommand({ type: 'switch-session', path: 'cached.jsonl' });
+  assert.deepEqual(selections, [['D:/automation', 'unlisted.jsonl'], ['C:/current', 'cached.jsonl']]);
 });

@@ -10,7 +10,7 @@ registerHooks({
 });
 
 test('shortcut registry parsing, matching and conflicts (4.3)', async (t) => {
-  const { parseKeys, matchesShortcut, bindingKeysFor, SHORTCUT_BINDINGS } = await import('../packages/ui/src/shortcuts/bindings.ts');
+  const { parseKeys, matchesShortcut, bindingKeysFor, readShortcutOverrides, writeShortcutOverrides, SHORTCUT_BINDINGS } = await import('../packages/ui/src/shortcuts/bindings.ts');
   const { findShortcutConflicts, isShortcutTaken } = await import('../packages/ui/src/shortcuts/conflicts.ts');
 
   await t.test('parseKeys handles modifiers, aliases and rejects empty specs', () => {
@@ -37,6 +37,35 @@ test('shortcut registry parsing, matching and conflicts (4.3)', async (t) => {
 
   await t.test('registry defaults are conflict-free', () => {
     assert.deepEqual(findShortcutConflicts({}), []);
+  });
+
+  await t.test('unassigned shortcuts do not conflict with each other', () => {
+    const overrides = { search: '', historyBack: '', historyForward: '   ' };
+    assert.deepEqual(findShortcutConflicts(overrides), []);
+		assert.equal(isShortcutTaken('historyBack', '', overrides), false);
+    assert.equal(isShortcutTaken('search', '   ', overrides), false);
+  });
+
+	await t.test('shortcut overrides persist and resetting restores the default binding', () => {
+    const previous = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
+    const values = new Map();
+    Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: {
+      getItem: (key) => values.get(key) ?? null,
+      setItem: (key, value) => values.set(key, value),
+    } });
+    try {
+			writeShortcutOverrides({ historyBack: 'Ctrl+Shift+U', search: 'Ctrl+G' });
+			const overrides = readShortcutOverrides();
+			assert.equal(bindingKeysFor('historyBack'), 'Ctrl+Shift+U');
+			delete overrides.historyBack;
+			writeShortcutOverrides(overrides);
+			assert.equal(bindingKeysFor('historyBack'), 'Ctrl+[');
+      assert.equal(bindingKeysFor('search'), 'Ctrl+G');
+      assert.deepEqual(findShortcutConflicts(readShortcutOverrides()), []);
+    } finally {
+      if (previous) Object.defineProperty(globalThis, 'localStorage', previous);
+      else delete globalThis.localStorage;
+    }
   });
 
   await t.test('overrides take effect and conflicts are detected within the window namespace', () => {

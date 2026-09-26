@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { UiUpdateState } from '@pidesktop/shared';
@@ -9,6 +9,7 @@ import { HoverTooltip } from './HoverTooltip';
 import { SidebarSessionPanel } from './SidebarSessionPanel';
 import { HistoryNavigation, type HistoryNavigationProps } from './HistoryNavigation';
 import { SearchButton } from './SearchButton';
+import { operationFeedback, runWithFeedback } from '../operationFeedback';
 
 interface SidebarProps {
 	open: boolean;
@@ -34,6 +35,10 @@ export function Sidebar({ open, narrow, onToggle, onNavigate, onOpenSettings, on
 	const pickWorkspace = useChatStore((s) => s.pickWorkspace);
 	const newSession = useChatStore((s) => s.newSession);
 	const [actionError, setActionError] = useState<string | null>(null);
+	const reportActionError = useCallback((message: string | null) => {
+		setActionError(message);
+		if (message) operationFeedback.show({ id: `sidebar:${message}`, kind: 'error', title: message });
+	}, []);
 	const [updateActionError, setUpdateActionError] = useState<string | null>(null);
 	const [updatePending, setUpdatePending] = useState(false);
 	const updateActionLock = useRef(false);
@@ -84,18 +89,23 @@ export function Sidebar({ open, narrow, onToggle, onNavigate, onOpenSettings, on
 
 	async function startSession() {
 		setActionError(null);
-		try { await (cwd ? newSession() : pickWorkspace()); onNavigate(); }
-		catch (error) { setActionError(error instanceof Error ? error.message : String(error)); }
+		const origin = cwd;
+		await runWithFeedback({ id: `new-session:${origin}`, title: t('sidebar.newSession'), run: async () => {
+			if (useChatStore.getState().cwd !== origin) throw new Error(locale === 'zh-CN' ? '请返回原工作区后重试。' : 'Return to the original workspace before retrying.');
+			await (origin ? newSession() : pickWorkspace()); onNavigate();
+		} });
 	}
 
 	async function updateNow() {
 		if (!bridge || !updateAvailable || updateBusy || updateActionLock.current) return;
-		updateActionLock.current = true;
-		setUpdatePending(true);
-		setUpdateActionError(null);
-		try { await bridge.installUpdate(); }
-		catch (error) { setUpdateActionError(error instanceof Error ? error.message : String(error)); }
-		finally { updateActionLock.current = false; setUpdatePending(false); }
+		await runWithFeedback({ id: 'install-update', title: t('sidebar.update'), run: async () => {
+			updateActionLock.current = true;
+			setUpdatePending(true);
+			setUpdateActionError(null);
+			try { await bridge.installUpdate(); }
+			catch (error) { setUpdateActionError(error instanceof Error ? error.message : String(error)); throw error; }
+			finally { updateActionLock.current = false; setUpdatePending(false); }
+		} });
 	}
 
 	return <aside className={`pd-sidebar${collapsed ? ' is-collapsed' : ''}${open ? ' is-open' : ''}`} aria-label={t('sidebar.main')} aria-hidden={narrow && !open} inert={narrow && !open}>
@@ -112,7 +122,7 @@ export function Sidebar({ open, narrow, onToggle, onNavigate, onOpenSettings, on
 			<button type="button" className={`pd-sidebar-plugins pd-nav-row${pluginsOpen ? ' is-active' : ''}`} aria-label={t('sidebar.plugins')} aria-current={pluginsOpen ? 'page' : undefined} onClick={onOpenPlugins}><Icon name="plugins" /><span className="pd-sidebar-detail">{t('sidebar.plugins')}</span></button>
 		</div>
 		<div className="pd-sidebar-session-content" aria-hidden={!open} inert={!open}>
-			<SidebarSessionPanel visible={open} onNavigate={onNavigate} onError={setActionError} />
+			<SidebarSessionPanel visible={open} onNavigate={onNavigate} onError={reportActionError} />
 		</div>
 		<div className="pd-sidebar-footer">
 			{actionError && <div className="pd-sidebar-error pd-sidebar-detail" role="alert">{actionError}</div>}

@@ -31,6 +31,7 @@ const VIEWPORT_PADDING = 8;
 const TRIGGER_GAP = 6;
 const TOOLTIP_OPEN_EVENT = 'pd:hover-tooltip-open';
 const CLOSE_DELAY = 180;
+const interactivePopoverOpen = () => [...document.querySelectorAll<HTMLElement>('.pd-sidebar-popover, .pd-composer-config-popover, .pd-search-dialog')].some(element => element.getClientRects().length > 0 && getComputedStyle(element).visibility !== 'hidden');
 
 /** A layout-neutral hint for a native button, including aria-disabled buttons. */
 export function HoverTooltip({ children, title, description, shortcut, disabled = false, align = 'center', side: preferredSide = 'top' }: HoverTooltipProps) {
@@ -90,7 +91,7 @@ export function HoverTooltip({ children, title, description, shortcut, disabled 
 
 	const show = useCallback(() => {
 		clearCloseTimer();
-		if (disabled) return;
+		if (disabled || interactivePopoverOpen()) return;
 		// Match a shared tooltip provider: moving between controls never stacks hints.
 		// A hint being drag-selected may veto replacement until selection finishes.
 		if (!window.dispatchEvent(new CustomEvent(TOOLTIP_OPEN_EVENT, { detail: tooltipId, cancelable: true }))) return;
@@ -99,6 +100,12 @@ export function HoverTooltip({ children, title, description, shortcut, disabled 
 
 	useEffect(() => clearCloseTimer, [clearCloseTimer]);
 	useEffect(() => { if (disabled) close(); }, [disabled, close]);
+	useEffect(() => {
+		if (!visible) return;
+		const observer = new MutationObserver(() => { if (interactivePopoverOpen()) close(); });
+		observer.observe(document.body, { childList: true, subtree: true });
+		return () => observer.disconnect();
+	}, [visible, close]);
 
 	useLayoutEffect(() => {
 		if (!visible) return;

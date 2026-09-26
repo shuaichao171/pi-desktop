@@ -1,3 +1,4 @@
+import { initializeDiagnostics, recordDiagnostic } from './diagnostics.ts';
 import { app, BrowserWindow, dialog, Menu, session, shell } from 'electron';
 import { mkdirSync } from 'node:fs';
 import { basename, join } from 'node:path';
@@ -95,6 +96,7 @@ function createWindow(onReady?: () => void, onLoadError?: (error: unknown) => vo
 	let recoveryDialogVisible = false;
 	let unresponsiveTimer: ReturnType<typeof setTimeout> | null = null;
 	const reportStartupFailure = (error: unknown): void => {
+		recordDiagnostic({ stage: 'startup', action: 'renderer-start', outcome: 'failure' });
 		if (startupFailureReported || win.isDestroyed()) return;
 		startupFailureReported = true;
 		if (onLoadError) onLoadError(error);
@@ -159,7 +161,7 @@ function createWindow(onReady?: () => void, onLoadError?: (error: unknown) => vo
 				const busy = ipc ? await ipc.isAgentWorkActive() : false;
 				const english = getAppLocale() === 'en-US';
 				if (!busy) {
-					if (settings.closeBehavior === 'quit') { readyToQuit = true; app.quit(); } else win.hide();
+					if (settings.closeBehavior === 'quit') app.quit(); else win.hide();
 					return;
 				}
 				if (settings.closeBehavior === 'quit') {
@@ -171,7 +173,7 @@ function createWindow(onReady?: () => void, onLoadError?: (error: unknown) => vo
 						defaultId: 0,
 						cancelId: 0,
 					});
-					if (choice.response === 1) { readyToQuit = true; app.quit(); }
+					if (choice.response === 1) app.quit();
 					return;
 				}
 				const choice = await dialog.showMessageBox(win, {
@@ -184,16 +186,15 @@ function createWindow(onReady?: () => void, onLoadError?: (error: unknown) => vo
 					cancelId: 0,
 				});
 				if (choice.response === 1) {
-					if (choice.checkboxChecked) void ipc?.saveCloseBehavior('quit');
-					readyToQuit = true;
+					if (choice.checkboxChecked) await ipc?.saveCloseBehavior('quit');
 					app.quit();
 				} else {
-					if (choice.checkboxChecked) void ipc?.saveCloseBehavior('tray');
+					if (choice.checkboxChecked) await ipc?.saveCloseBehavior('tray');
 					win.hide();
 				}
 			} catch (error) {
-			console.error('Close handling failed:', error);
-				win.hide();
+				console.error('Close handling failed:', error);
+				if (!win.isDestroyed()) dialog.showErrorBox('Pi Desktop', error instanceof Error ? error.message : String(error));
 			} finally {
 				closeDialogOpen = false;
 			}
@@ -272,18 +273,19 @@ async function bootstrap(splash: BrowserWindow): Promise<void> {
 		});
 		const workspace = module.defaultWorkspace();
 		mkdirSync(workspace, { recursive: true });
+		module.updateService.setBeforeInstall(async () => {
+			if (ipc) await ipc.disposeServices();
+			readyToQuit = true;
+		});
+		module.updateService.start();
 		const mainWindow = createWindow(() => {
 			mainRevealed = true;
 			if (!splash.isDestroyed()) splash.close();
-			module.updateService.setBeforeInstall(async () => {
-				if (ipc) await ipc.disposeServices();
-				readyToQuit = true;
-			});
-			module.updateService.start();
 		}, (error) => showStartupError(splash, error));
 		// Load the UI and Pi history concurrently, keeping the logo until React
 		// acknowledges a committed conversation (or a required extension dialog).
 		void module.agentService.init({ cwd: workspace }).catch((error: unknown) => {
+			recordDiagnostic({ stage: 'startup', action: 'agent-init', outcome: 'failure' });
 			console.error('Pi agent failed to initialize:', error);
 			if (startupCancelled || mainRevealed) return;
 			mainWindow.destroy();
@@ -291,6 +293,7 @@ async function bootstrap(splash: BrowserWindow): Promise<void> {
 		});
 	} catch (error) {
 		if (!startupCancelled) showStartupError(splash, error);
+		recordDiagnostic({ stage: 'startup', action: 'bootstrap', outcome: 'failure' });
 	}
 }
 
@@ -304,6 +307,8 @@ if (!hasSingleInstanceLock) {
 	});
 
 	void app.whenReady().then(() => {
+		initializeDiagnostics(join(app.getPath('userData'), 'diagnostics'));
+		recordDiagnostic({ stage: 'startup', action: 'app-ready', outcome: 'success' });
 	if (process.platform === 'win32') {
 		app.setAppUserModelId('dev.pidesktop.app');
 		Menu.setApplicationMenu(null);

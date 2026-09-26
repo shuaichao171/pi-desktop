@@ -50,12 +50,12 @@ test('workbench command requires main-frame native confirmation and checks the w
   assert.deepEqual(started, []);
 
   globalThis.__testDialog = async () => { cwd = 'C:\\other-workspace'; return { response: 1 }; };
-  await assert.rejects(handler(event, 'Write-Output safe'), /工作区已切换/);
+  await assert.rejects(async () => handler(event, 'Write-Output safe'), /工作区已切换/);
   assert.deepEqual(started, []);
 
   cwd = 'C:\\trusted-workspace';
   globalThis.__testDialog = async () => ({ response: 1 });
-  await assert.rejects(handler({ sender: webContents, senderFrame: {} }, 'Write-Output safe'), /无法确认命令来源/);
+  await assert.rejects(async () => handler({ sender: webContents, senderFrame: {} }, 'Write-Output safe'), /renderer sender/);
   assert.equal(await handler(event, 'Write-Output safe'), 'command-1');
   assert.deepEqual(started, [['Write-Output safe', cwd]]);
 });
@@ -73,17 +73,33 @@ test('opening the workspace folder rejects foreign frames and rechecks the sende
   globalThis.__testOpenPath = async path => { opened.push(path); return ''; };
   service.openWorkspaceFolder = async (cwd, openPath) => { assert.equal(cwd, 'C:\\project'); await openPath('C:\\resolved-project'); };
 
-  await assert.rejects(handler({ sender: webContents, senderFrame: {} }, 'C:\\project'), /无法确认/);
-  await assert.rejects(handler({ sender: { isDestroyed: () => false }, senderFrame: mainFrame }, 'C:\\project'), /无法确认/);
+  await assert.rejects(async () => handler({ sender: webContents, senderFrame: {} }, 'C:\\project'), /requesting window|renderer sender/);
+  await assert.rejects(async () => handler({ sender: { isDestroyed: () => false }, senderFrame: mainFrame }, 'C:\\project'), /requesting window|renderer sender/);
   globalThis.__testWindow = null;
-  await assert.rejects(handler(event, 'C:\\project'), /无法确认/);
+  await assert.rejects(async () => handler(event, 'C:\\project'), /requesting window|renderer sender/);
   assert.deepEqual(opened, []);
   globalThis.__testWindow = win;
   await handler(event, 'C:\\project');
   assert.deepEqual(opened, ['C:\\resolved-project']);
 
   service.openWorkspaceFolder = async (_cwd, openPath) => { destroyed = true; await openPath('C:\\resolved-project'); };
-  await assert.rejects(handler(event, 'C:\\project'), /无法确认/);
+  await assert.rejects(async () => handler(event, 'C:\\project'), /requesting window|renderer sender/);
   assert.equal(opened.length, 1, 'destroyed renderers cannot open Explorer after path resolution');
+  await service.dispose();
+});
+
+test('every workbench IPC rejects child frames, foreign senders and destroyed windows', async () => {
+  const mainFrame = {};
+  const webContents = { mainFrame, isDestroyed: () => false };
+  globalThis.__testWindow = { webContents, isDestroyed: () => false };
+  const service = registerWorkbenchIpc(() => 'C:\\project');
+  for (const [channel, handler] of globalThis.__testHandlers) {
+    await assert.rejects(async () => handler({ sender: webContents, senderFrame: {} }), /renderer sender/, channel);
+    await assert.rejects(async () => handler({ sender: { isDestroyed: () => false }, senderFrame: mainFrame }), /requesting window/, channel);
+  }
+  globalThis.__testWindow = { webContents, isDestroyed: () => true };
+  for (const [channel, handler] of globalThis.__testHandlers) {
+    await assert.rejects(async () => handler({ sender: webContents, senderFrame: mainFrame }), /requesting window/, channel);
+  }
   await service.dispose();
 });

@@ -170,6 +170,8 @@ test('workspace restoration reuses a busy cached runtime after its remembered un
     for (let index = 0; index < 12; index += 1) await service.newSession();
     assert.equal(service.lastContextByCwd.has(workspace), false);
     assert.ok([...service.contexts.values()].includes(original));
+    await assert.rejects(service.prepareSessionDeletion(path, workspace), /后台运行/);
+    assert.ok([...service.contexts.values()].includes(original), 'deletion must not dispose a background writer');
     await service.switchWorkspace(workspace);
     assert.equal(service.active, original);
     assert.equal(service.getSnapshot().status, 'busy');
@@ -220,6 +222,10 @@ test('Pi extension dialogs reach the desktop callback and a background session k
         description: 'Failing command for error reporting test',
         handler: async () => { throw new Error('desktop-command-failed'); },
       });
+      pi.registerCommand('desktop-wait', {
+        description: 'Wait for background authorization',
+        handler: async (_args, ctx) => { await ctx.ui.confirm('Background authorization', 'Continue?'); },
+      });
     }
   `);
 
@@ -230,9 +236,17 @@ test('Pi extension dialogs reach the desktop callback and a background session k
   try {
     const { AgentService } = await import('../packages/agent/src/index.ts');
     const seen = [];
+    const runtimeEvents = [];
+    let releaseAuthorization;
+    let authorizationStarted;
+    const requestedAuthorization = new Promise(resolve => { authorizationStarted = resolve; });
     service = new AgentService(
       async () => ({ trusted: true, remember: false }),
       async (request) => {
+        if (request.title === 'Background authorization') {
+          authorizationStarted();
+          return new Promise(resolve => { releaseAuthorization = resolve; });
+        }
         seen.push(request.kind);
         if (request.kind === 'select') return 'B';
         if (request.kind === 'input') return 'Alice';
@@ -241,22 +255,39 @@ test('Pi extension dialogs reach the desktop callback and a background session k
         return null;
       },
     );
+    service.onEvent(({ event }) => { if (event.type === 'session-runtime') runtimeEvents.push(event); });
     await service.init({ cwd: workspace });
     assert.deepEqual(seen, ['select', 'input', 'confirm', 'editor']);
     assert.deepEqual(JSON.parse(readFileSync(dialogMarker, 'utf8')),
       { selected: 'B', input: 'Alice', confirmed: true, edited: 'initial changed' });
 
     const firstSessionId = service.getSnapshot().sessionId;
+    const firstPath = service.getSnapshot().sessionPath;
     const pending = service.prompt('/desktop-delay');
+    assert.equal(service.getSnapshot().sessionRuntimes.find(entry => entry.path === firstPath).runtime.phase, 'running');
     await service.newSession();
     const secondSessionId = service.getSnapshot().sessionId;
     assert.notEqual(secondSessionId, firstSessionId);
     await pending;
     assert.equal(existsSync(commandMarker), true, 'the background Pi runtime must finish its command');
     assert.equal(service.getSnapshot().sessionId, secondSessionId);
+    assert.equal(runtimeEvents.filter(event => event.path === firstPath).at(-1).runtime.phase, 'idle');
+    const waitingPath = service.getSnapshot().sessionPath;
+    const waiting = service.prompt('/desktop-wait');
+    await requestedAuthorization;
+    assert.equal(service.getSnapshot().sessionRuntimes.find(entry => entry.path === waitingPath).runtime.phase, 'waiting-approval');
+    assert.equal((await service.listSessions(workspace)).find(entry => entry.path === waitingPath).runtime.phase, 'waiting-approval', 'unpersisted waiting runtimes remain reachable');
+    await service.newSession();
+    assert.equal(service.getSnapshot().sessionRuntimes.find(entry => entry.path === waitingPath).runtime.phase, 'waiting-approval');
+    releaseAuthorization(true);
+    await waiting;
+    assert.equal(runtimeEvents.filter(event => event.path === waitingPath).at(-1).runtime.phase, 'idle');
     await service.prompt('/desktop-fail');
     assert.match(service.getSnapshot().error ?? '', /desktop-command-failed/,
       'Pi reports extension failures through its error listener rather than rejecting prompt()');
+    assert.equal(service.getSnapshot().sessionRuntimes.find(entry => entry.path === service.getSnapshot().sessionPath).runtime.phase, 'failed');
+    await service.prompt('/desktop-delay');
+    assert.equal(service.getSnapshot().sessionRuntimes.find(entry => entry.path === service.getSnapshot().sessionPath).runtime.phase, 'idle', 'a subsequent successful run clears the failure marker');
   } finally {
     await service?.dispose();
     for (const [key, value] of previous) {

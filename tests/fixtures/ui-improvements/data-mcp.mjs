@@ -1,0 +1,55 @@
+// Prepared renderer scenarios. The parent runner owns browser launch and teardown.
+export default async function dataMcpScenarios(review) {
+  await review.waitFor('window.__modelReview?.ready === true');
+  await review.viewport(1440, 1000);
+  await review.evaluate(`(() => {
+    const fixture=window.__modelReview,bridge=window.piDesktop,clone=value=>structuredClone(value),cwd=fixture.snapshot.cwd;
+    const state={calls:[],entries:[{id:'deleted.jsonl',deletedAt:'2026-09-20T08:00:00Z',bytes:2048,cwd,originalPath:cwd+'/deleted.jsonl',name:'待恢复的完整分支会话',legacy:false,metadata:{archived:true}}],retentionDays:7,rules:{ignoredDirectories:['.git','node_modules'],include:[],exclude:[],maxFileBytes:2097152},mcp:{cwd,sessionId:fixture.snapshot.sessionId,projectTrusted:true,servers:[{id:'review-mcp',scope:'user',name:'本地审查工具',enabled:true,transport:'stdio',command:'node',args:['fixture.mjs'],requestTimeoutMs:30000,status:'disconnected',tools:[]}]}};
+    bridge.listSessionTrash=async()=>clone({entries:state.entries,retentionDays:state.retentionDays});
+    bridge.setSessionTrashRetention=async days=>{state.retentionDays=days;state.calls.push(['retention',days]);};
+    bridge.restoreSessionTrash=async request=>{state.calls.push(['restore',clone(request)]);state.entries=state.entries.filter(entry=>entry.id!==request.id);return {path:cwd+'/restored.jsonl',cwd,warnings:[]};};
+    bridge.cleanupSessionTrash=async request=>{state.calls.push(['cleanup',clone(request)]);state.entries=[];return {removed:request.entries.map(entry=>entry.id),skipped:[]};};
+    bridge.getProjectSearchRules=async()=>clone(state.rules);bridge.setProjectSearchRules=async value=>{state.rules=clone(value);state.calls.push(['rules',clone(value)]);};
+    bridge.rebuildSearchIndex=async()=>({indexed:160});bridge.exportSessionsBackup=async()=>cwd+'/complete.pibackup';bridge.importSessions=async(format,target)=>{state.calls.push(['import',format,target]);return {paths:[cwd+'/imported.jsonl'],cwd,duplicate:false,warnings:[]};};
+    bridge.getMcpSnapshot=async()=>clone(state.mcp);
+    bridge.connectMcpServer=async request=>{state.calls.push(['connect',clone(request)]);state.mcp.servers[0].status='connected';state.mcp.servers[0].tools=[{name:'echo',registeredName:'mcp_review_echo',description:'审查工具说明'}];return clone(state.mcp);};
+    bridge.disconnectMcpServer=async request=>{state.calls.push(['disconnect',clone(request)]);state.mcp.servers[0].status='disconnected';state.mcp.servers[0].tools=[];return clone(state.mcp);};
+    bridge.testMcpServer=async request=>{state.calls.push(['test',clone(request)]);return {tools:[{name:'echo'}],elapsedMs:18};};
+    bridge.saveMcpServer=async request=>{state.calls.push(['saveMcp',clone(request)]);const row={...request.config,scope:request.scope,status:'disconnected',tools:[]};const index=state.mcp.servers.findIndex(item=>item.id===row.id);if(index<0)state.mcp.servers.push(row);else state.mcp.servers[index]=row;return clone(state.mcp);};
+    bridge.removeMcpServer=async request=>{state.calls.push(['removeMcp',clone(request)]);state.mcp.servers=state.mcp.servers.filter(item=>item.id!==request.id);return clone(state.mcp);};
+    window.__dataMcpReview=state;
+  })()`);
+  await review.click('.pd-settings-entry');
+  await review.clickText('.pd-settings-nav button', '数据管理');
+  await review.waitFor("document.querySelector('.pd-data-trash-list')?.textContent.includes('待恢复的完整分支会话')");
+  await review.assert("document.querySelector('.pd-data-page').textContent.includes('不会自动删除')", 'Retention explicitly requires manual cleanup');
+  await review.screenshot('data-mcp-01-recovery');
+  await review.click('.pd-data-trash-select input');
+  await review.clickText('.pd-data-page button', '永久清理所选 (1)');
+  await review.waitFor("Boolean(document.querySelector('.pd-data-confirm[open]'))");
+  await review.key('Escape');
+  await review.assert("!window.__dataMcpReview.calls.some(call=>call[0]==='cleanup')", 'Esc cancels permanent cleanup without deleting');
+  await review.clickText('.pd-data-trash-list button', '恢复');
+  await review.waitFor("document.querySelector('.pd-data-page').textContent.includes('回收站为空')");
+  await review.assert("window.__dataMcpReview.calls.find(call=>call[0]==='restore')[1].id==='deleted.jsonl'", 'Restore targets the exact selected entry');
+  await review.clickText('.pd-data-page button', '导入 Pi JSONL');
+  await review.waitFor("window.__dataMcpReview.calls.some(call=>call[0]==='import')");
+  await review.clickText('.pd-settings-nav button', 'MCP');
+  await review.waitFor("Boolean(document.querySelector('.pd-mcp-server'))");
+  await review.assert("!window.__dataMcpReview.calls.some(call=>call[0]==='connect')", 'Opening MCP settings does not launch a server');
+  await review.clickText('.pd-mcp-server button', '测试连接');
+  await review.waitFor("document.querySelector('.pd-mcp-notice')?.textContent.includes('测试连接已关闭')");
+  await review.assert("!document.querySelector('.pd-mcp-server details')", 'A test connection does not register tools');
+  await review.clickText('.pd-mcp-server button', '连接到当前会话');
+  await review.waitFor("document.querySelector('.pd-mcp-status')?.textContent==='已连接'");
+  await review.click('.pd-mcp-server summary');
+  await review.assert("document.querySelector('.pd-mcp-server details').textContent.includes('mcp_review_echo')", 'Connected tool identities are inspectable');
+  await review.screenshot('data-mcp-02-connected');
+  await review.clickText('.pd-mcp-server button', '断开');
+  await review.waitFor("document.querySelector('.pd-mcp-status')?.textContent==='未连接'");
+  await review.assert("!document.querySelector('.pd-mcp-server details')", 'Disconnect removes tool availability from the panel');
+  await review.clickText('.pd-mcp-toolbar button', '添加服务器');
+  await review.viewport(680, 900);
+  await review.screenshot('data-mcp-03-narrow-form');
+  await review.assert("document.querySelector('.pd-mcp-panel').scrollWidth<=document.querySelector('.pd-mcp-panel').clientWidth+1", 'MCP form fits the narrow settings panel');
+}

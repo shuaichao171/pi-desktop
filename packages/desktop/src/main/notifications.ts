@@ -7,7 +7,7 @@ export interface DesktopNotifierOptions {
 	settingsPath: () => string;
 	getMainWindow: () => BrowserWindow | null;
 	/** Brings the conversation back on click (window is shown and focused first). */
-	revealSession: (sessionPath: string) => void;
+	revealSession: (sessionPath: string, cwd?: string) => void;
 }
 
 /**
@@ -18,6 +18,7 @@ export interface DesktopNotifierOptions {
 export function createDesktopNotifier(options: DesktopNotifierOptions) {
 	let turnActive = false;
 	let turnError: string | null = null;
+	let turnSessionPath: string | null = null;
 
 	const english = (): boolean => getAppLocale() === 'en-US';
 
@@ -26,10 +27,10 @@ export function createDesktopNotifier(options: DesktopNotifierOptions) {
 		return !!win && !win.isDestroyed() && win.isVisible() && win.isFocused();
 	};
 
-	const notify = (title: string, body: string, sessionPath: string | null): void => {
-		if (!readDesktopSettings(options.settingsPath()).notificationsEnabled) return;
-		if (!Notification.isSupported()) return;
+	const notify = (title: string, body: string, sessionPath: string | null, cwd?: string): void => {
 		try {
+			if (!readDesktopSettings(options.settingsPath()).notificationsEnabled) return;
+			if (!Notification.isSupported()) return;
 			const notification = new Notification({ title, body: body.slice(0, 200), silent: false });
 			notification.on('click', () => {
 				const win = options.getMainWindow();
@@ -37,7 +38,7 @@ export function createDesktopNotifier(options: DesktopNotifierOptions) {
 					win.show();
 					win.focus();
 				}
-				if (sessionPath) options.revealSession(sessionPath);
+				if (sessionPath) options.revealSession(sessionPath, cwd);
 			});
 			notification.show();
 		} catch (error) {
@@ -47,7 +48,12 @@ export function createDesktopNotifier(options: DesktopNotifierOptions) {
 
 	return {
 		/** Tracks foreground turns via the active session's status events. */
-		handleAgentEvent(envelope: AgentEventEnvelope, activeSessionPath: string | null): void {
+		handleAgentEvent(envelope: AgentEventEnvelope, activeSessionPath: string | null, cwd?: string): void {
+			if (activeSessionPath !== turnSessionPath) {
+				turnSessionPath = activeSessionPath;
+				turnActive = false;
+				turnError = null;
+			}
 			const event = envelope.event;
 			if (event.type === 'status') {
 				if (event.status === 'busy') {
@@ -56,10 +62,10 @@ export function createDesktopNotifier(options: DesktopNotifierOptions) {
 				} else if ((event.status === 'idle' || event.status === 'error') && turnActive) {
 					turnActive = false;
 					if (!windowActive()) {
-						if (event.status === 'error') {
-							notify(english() ? 'Pi Desktop' : 'Pi Desktop', english() ? `Task failed: ${event.message ?? 'unknown error'}` : `任务失败：${event.message ?? '未知错误'}`, activeSessionPath);
+						if (event.status === 'error' || turnError) {
+							notify(english() ? 'Task failed · Pi Desktop' : '任务失败 · Pi Desktop', turnError ?? event.message ?? (english() ? 'Unknown error' : '未知错误'), activeSessionPath, cwd);
 						} else {
-							notify(english() ? 'Pi Desktop' : 'Pi Desktop', english() ? 'Task finished' : '任务已完成', activeSessionPath);
+							notify(english() ? 'Task finished · Pi Desktop' : '任务完成 · Pi Desktop', english() ? 'Task finished' : '任务已完成', activeSessionPath, cwd);
 						}
 					}
 				}
@@ -68,13 +74,13 @@ export function createDesktopNotifier(options: DesktopNotifierOptions) {
 			}
 		},
 		/** Notifies about finished automation runs (cancelled runs stay silent). */
-		handleAutomationRun(entry: { status: string; summary: string; error: string | null; sessionPath: string | null }, taskName: string): void {
+		handleAutomationRun(entry: { status: string; summary: string; error: string | null; sessionPath: string | null }, taskName: string, cwd?: string): void {
 			if (entry.status !== 'succeeded' && entry.status !== 'failed') return;
 			if (windowActive()) return;
 			if (entry.status === 'failed') {
-				notify(english() ? `Automation failed: ${taskName}` : `自动化任务失败：${taskName}`, entry.error ?? '', entry.sessionPath);
+				notify(english() ? `Automation failed: ${taskName}` : `自动化任务失败：${taskName}`, entry.error ?? '', entry.sessionPath, cwd);
 			} else {
-				notify(english() ? `Automation finished: ${taskName}` : `自动化任务完成：${taskName}`, entry.summary ?? '', entry.sessionPath);
+				notify(english() ? `Automation finished: ${taskName}` : `自动化任务完成：${taskName}`, entry.summary ?? '', entry.sessionPath, cwd);
 			}
 		},
 	};

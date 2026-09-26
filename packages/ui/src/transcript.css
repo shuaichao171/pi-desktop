@@ -1,27 +1,31 @@
 /* Activity uses spacing and a single disclosure rail to stay secondary to the answer. */
 .pd-activity-group { min-width: 0; color: var(--pd-text-subtle); }
 .pd-activity-summary, .pd-thinking-summary, .pd-activity-head {
-  display: flex; align-items: center; gap: 8px; min-width: 0; min-height: 32px;
+  display: flex; align-items: center; gap: 7px; min-width: 0; min-height: 30px;
   border: 0; border-radius: 6px; background: transparent; color: var(--pd-text-subtle);
   font-size: var(--pd-font-caption); text-align: left;
 }
-.pd-activity-summary, .pd-thinking-summary { max-width: 100%; padding: 5px 3px; }
+.pd-activity-summary, .pd-thinking-summary { max-width: 100%; padding: 4px 2px; }
 .pd-activity-summary > svg, .pd-thinking-summary > svg, .pd-activity-head > svg { flex: 0 0 auto; }
 .pd-activity-summary:hover, button.pd-thinking-summary:hover, .pd-activity-head:hover { color: var(--pd-text); background: var(--pd-surface-hover); }
 .pd-activity-summary-count { min-width: 0; color: var(--pd-text-weak); font-size: var(--pd-font-sm); overflow-wrap: anywhere; }
 .pd-activity-summary-count.is-error { color: var(--pd-danger); }
 .pd-activity-summary-count.is-interrupted { color: var(--pd-warning); }
 .pd-activity-list { margin: 2px 0 4px 10px; padding-left: 12px; border-left: 1px solid var(--pd-border-soft); }
+.pd-activity-list.is-inline { margin: 0; padding: 0; border: 0; }
 .pd-activity-item { min-width: 0; }
-.pd-activity-head { width: 100%; padding: 6px; }
+.pd-activity-head { width: 100%; padding: 4px 2px; }
 .pd-activity-icon { display: flex; flex: 0 0 auto; color: var(--pd-text-weak); }
 .pd-activity-icon.is-error, .pd-activity-status.is-error { color: var(--pd-danger); }
 .pd-activity-icon.is-interrupted, .pd-activity-status.is-interrupted { color: var(--pd-warning); }
-.pd-activity-copy { display: flex; align-items: baseline; gap: 9px; min-width: 0; flex: 1; }
-.pd-activity-copy > .pd-activity-label { flex: 0 0 auto; }
-.pd-activity-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--pd-text-weak); font: 11px/1.5 ui-monospace, Consolas, monospace; }
-.pd-activity-status { flex: 0 0 auto; color: var(--pd-text-weak); font-size: var(--pd-font-sm); }
-.pd-activity-detail { padding: 2px 6px 10px 28px; }
+.pd-activity-copy { display: flex; align-items: baseline; gap: 6px; min-width: 0; flex: 1; }
+.pd-activity-kind { flex: 0 1 auto; min-width: 0; max-width: 50%; }
+.pd-activity-kind > .pd-activity-label { display: block; overflow: hidden; text-overflow: ellipsis; }
+.pd-activity-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--pd-text-weak); font-size: var(--pd-font-sm); line-height: 1.5; }
+.pd-activity-status { flex: 0 0 auto; color: var(--pd-text-weak); font-size: var(--pd-font-xs); white-space: nowrap; }
+.pd-activity-detail { padding: 4px 2px 10px 23px; }
+.pd-activity-command { margin-bottom: 10px; }
+.pd-activity-output.pd-activity-command-text { max-height: 180px; }
 .pd-activity-output-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 4px; color: var(--pd-text-weak); font-size: var(--pd-font-sm); }
 .pd-activity-output-actions { display: flex; flex: 0 0 auto; gap: 2px; }
 .pd-activity-output-actions button, .pd-activity-show-all { padding: 3px 6px; border: 0; border-radius: 5px; background: transparent; color: var(--pd-text-subtle); font-size: var(--pd-font-sm); }
@@ -54,9 +58,11 @@
 
 
 /* In-conversation find (Ctrl+F) floats over the transcript's top-right corner. */
-.pd-transcript-find-anchor { position: absolute; top: 10px; right: 18px; z-index: 6; display: flex; justify-content: flex-end; }
-.pd-transcript-find { display: flex; align-items: center; gap: 6px; padding: 4px 6px 4px 10px; border: 1px solid var(--pd-border); border-radius: 9px; background: var(--pd-surface-raised); box-shadow: var(--pd-shadow-popover); color: var(--pd-text-subtle); }
-.pd-transcript-find-input { width: 210px; min-width: 0; border: 0; background: transparent; color: var(--pd-text); font-size: var(--pd-font-caption); outline: none; }
+.pd-transcript-find-anchor { position: absolute; top: 10px; left: 18px; right: 18px; z-index: 6; display: flex; justify-content: flex-end; pointer-events: none; }
+.pd-transcript-find { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; width: 390px; max-width: 100%; padding: 4px 6px 4px 10px; border: 1px solid var(--pd-border); border-radius: 9px; background: var(--pd-surface-raised); box-shadow: var(--pd-shadow-popover); color: var(--pd-text-subtle); pointer-events: auto; }
+.pd-transcript-find-input { flex: 1; width: 210px; min-width: 40px; border: 0; background: transparent; color: var(--pd-text); font-size: var(--pd-font-caption); outline: none; }
+.pd-transcript-find-scope { flex-basis: 100%; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px; font-size: var(--pd-font-xs); }
+.pd-transcript-find-load { border: 0; border-radius: 5px; padding: 3px 6px; background: var(--pd-surface-hover); color: var(--pd-text); font-size: inherit; }
 .pd-transcript-find-count { flex: 0 0 auto; min-width: 54px; text-align: center; color: var(--pd-text-weak); font-size: var(--pd-font-xs); font-variant-numeric: tabular-nums; }
 .pd-transcript-find-count.is-empty { color: var(--pd-danger); }
 .pd-transcript-find-step, .pd-transcript-find-close { display: inline-flex; flex: 0 0 auto; align-items: center; justify-content: center; width: 24px; height: 24px; border: 0; border-radius: 5px; background: transparent; color: var(--pd-text-subtle); }
@@ -119,8 +125,8 @@
 }
 .pd-activity-disclosure.is-expanded { grid-template-rows: 1fr; opacity: 1; visibility: visible; pointer-events: auto; transition-delay: 0s; }
 .pd-activity-disclosure-inner { min-width: 0; min-height: 0; overflow: hidden; }
-.pd-thinking-activity { min-width: 0; margin-bottom: 8px; }
-.pd-thinking-content { margin: 3px 0 9px 10px; padding: 2px 0 2px 17px; border-left: 1px solid var(--pd-border-soft); }
+.pd-thinking-activity { min-width: 0; margin-bottom: 4px; }
+.pd-thinking-content { margin: 3px 0 8px 23px; padding: 1px 0; }
 .pd-thinking-content .pd-thinking-markdown { max-height: 260px; overflow: auto; overscroll-behavior: contain; color: var(--pd-text-subtle); font-size: var(--pd-font-caption); line-height: 1.8; }
 .pd-thinking-content .pd-thinking-markdown > :first-child { margin-top: 0; }
 .pd-thinking-content .pd-thinking-markdown > :last-child { margin-bottom: 0; }
@@ -137,7 +143,8 @@
 @keyframes pd-activity-shimmer { 0% { background-position: 160% 0; } 25%, 100% { background-position: -60% 0; } }
 @media (max-width: 600px) {
   .pd-activity-detail { padding-left: 6px; }
-  .pd-activity-copy { flex-direction: column; gap: 1px; }
+  .pd-activity-head { gap: 5px; }
+  .pd-activity-copy { gap: 5px; }
   .pd-activity-title { max-width: 100%; }
   .pd-activity-output-heading { flex-wrap: wrap; }
   .pd-activity-list { margin-left: 5px; padding-left: 6px; }

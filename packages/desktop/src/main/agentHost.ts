@@ -1,3 +1,4 @@
+import { UsageService } from './usageService';
 /**
  * Pi runs in an Electron utility process so SDK work cannot block the window's
  * main process. Only plain data crosses this internal RPC boundary.
@@ -5,11 +6,11 @@
 import { AgentService, configureProviderNetwork } from '@pidesktop/agent';
 import { getAgentDir } from '@earendil-works/pi-coding-agent';
 import { join } from 'node:path';
-import { readSessionContext, searchSessions, searchWorkspaceFiles } from './searchService';
+import { readSessionContext, searchSessions, searchWorkspaceFiles, searchSessionsPage, searchProjectFiles, rebuildSearchIndex, cancelDataSearch, getProjectSearchRules, setProjectSearchRules } from './searchService';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import type { ProjectTrustDecision } from '@pidesktop/agent';
 import type { UiExtensionDialogRequest } from '@pidesktop/shared';
-import { AGENT_HOST_METHODS, type AgentHostToMain, type MainToAgentHost } from './agentHostProtocol';
+import { createAgentHostMethods, invokeAgentHostMethod, type AgentHostToMain, type MainToAgentHost } from './agentHostProtocol';
 
 const parent = process.parentPort;
 if (!parent) throw new Error('Pi agent host requires an Electron parent port');
@@ -66,9 +67,20 @@ const agent = new AgentService(
 agent.onEvent((envelope) => post({ kind: 'event', envelope }));
 agent.onBackgroundActivity((cwd, path) => post({ kind: 'background-activity', cwd, path }));
 
-const allowedMethods = new Set<string>(AGENT_HOST_METHODS);
+const usage = new UsageService(join(getAgentDir(), 'sessions'), join(getAgentDir(), 'desktop-usage-index.json'));
+const methods = createAgentHostMethods(agent, {
+ getUsageReport: (query, workspaces, automatedPaths) => usage.report(query, workspaces, automatedPaths),
+ cancelUsageReport: id => usage.cancel(id),
+ searchSessionsPage: (workspaces, request, metadata, excludedPaths) => searchSessionsPage(join(getAgentDir(), 'sessions'), workspaces, request, metadata, agent.getSessionBranchHeads(), excludedPaths),
+ searchProjectFiles, cancelDataSearch, getProjectSearchRules, setProjectSearchRules,
+ rebuildSearchIndex: workspaces => rebuildSearchIndex(join(getAgentDir(), 'sessions'), workspaces),
+	searchSessions: (workspaces, query) => searchSessions(join(getAgentDir(), 'sessions'), workspaces, query),
+	searchWorkspaceFiles,
+	readSessionContext: (cwd, path) => readSessionContext(join(getAgentDir(), 'sessions'), cwd, path),
+});
 parent.on('message', (event) => {
 	const message = event.data as MainToAgentHost;
+	if (!message || typeof message !== 'object') return;
 	if (message.kind === 'ui-reply' || message.kind === 'ui-error') {
 		const pending = pendingUi.get(message.id);
 		if (!pending) return;
@@ -80,14 +92,7 @@ parent.on('message', (event) => {
 	if (message.kind !== 'call') return;
 	void callContext.run(message.id, async () => {
 		try {
-			if (!allowedMethods.has(message.method)) throw new Error(`Unknown Pi agent method: ${message.method}`);
-			const method = message.method === 'searchSessions'
-				? (workspaces: string[], query: string) => searchSessions(join(getAgentDir(), 'sessions'), workspaces, query)
-				: message.method === 'searchWorkspaceFiles' ? searchWorkspaceFiles
-				: message.method === 'readSessionContext' ? (cwd: string, path: string) => readSessionContext(join(getAgentDir(), 'sessions'), cwd, path)
-				: (agent as unknown as Record<string, (...args: unknown[]) => unknown>)[message.method];
-			if (typeof method !== 'function') throw new Error(`Pi agent method unavailable: ${message.method}`);
-			const value = await (method as (...args: unknown[]) => unknown).apply(agent, message.args);
+			const value = await invokeAgentHostMethod(methods, message);
 			post({ kind: 'reply', id: message.id, value });
 		} catch (error) {
 			post({ kind: 'error', id: message.id, message: error instanceof Error ? error.message : String(error) });

@@ -27,7 +27,9 @@ function RendererReady() {
 	return null;
 }
 
-createRoot(document.getElementById('root')!).render(
+const root = document.getElementById('root');
+if (!root) throw new Error('Pi Desktop renderer root element is missing');
+createRoot(root).render(
 	<StrictMode>
 		<AppShell />
 		<RendererReady />

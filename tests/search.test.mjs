@@ -90,7 +90,8 @@ test('attachments, auth-like files, nonregistered cwd and malformed records are 
   const result = await searchSessions(sessionsRoot, [first], 'visible prompt');
   assert.equal(result.sessions[0].snippet, 'Visible prompt');
   assert.equal(result.sessions[0].firstMessage, 'Visible prompt');
-  assert.equal(result.truncated, true, 'a malformed/unreadable candidate is reported as an incomplete search');
+  assert.equal(result.truncated, false, 'invalid files do not exhaust a search budget');
+  assert.equal(result.skipped, 1, 'malformed/unreadable candidates have a distinct warning');
 });
 
 test('recent results are bounded, sorted by conversation activity and flagged when capped', async (t) => {
@@ -125,7 +126,21 @@ test('file search finds relative paths literally, excludes large directories and
   assert.equal((await searchWorkspaceFiles(first, 'widgets\\Settings')).files.length, 1);
   assert.equal((await searchWorkspaceFiles(first, 'secret-body-only')).files.length, 0);
   assert.equal((await searchWorkspaceFiles(first, '../')).files.length, 0);
-  assert.equal((await searchWorkspaceFiles(first, '')).files.length, 3);
+  assert.equal((await searchWorkspaceFiles(first, '')).files.length, 4);
+  assert.ok(result.ignoredDirectories.includes('node_modules'));
+  assert.ok(!result.ignoredDirectories.includes('dist'));
+});
+
+test('source folders named like build outputs remain searchable', async (t) => {
+  const { first } = await fixture(t);
+  const names = ['build', 'out', 'dist', 'release', 'vendor', 'target'];
+  for (const name of names) {
+    await mkdir(join(first, name));
+    await writeFile(join(first, name, 'source.ts'), 'source');
+  }
+  const result = await searchWorkspaceFiles(first, 'source.ts');
+  assert.deepEqual(new Set(result.files.map((entry) => entry.path)), new Set(names.map((name) => `${name}/source.ts`)));
+  assert.equal(result.truncated, false);
 });
 
 test('file and session searches reject invalid query/path input and report missing roots', async (t) => {

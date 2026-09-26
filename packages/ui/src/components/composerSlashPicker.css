@@ -1,7 +1,7 @@
 .pd-slash-picker { position: fixed; z-index: 52; display: flex; flex-direction: column; min-height: 0; overflow: hidden; border: 1px solid var(--pd-border); border-radius: var(--pd-radius-lg); background: var(--pd-surface-raised); color: var(--pd-text); box-shadow: var(--pd-shadow-popover); -webkit-app-region: no-drag; }
 .pd-slash-picker * { -webkit-app-region: no-drag; }
 .pd-slash-header { display: flex; flex: 0 0 auto; align-items: center; gap: 9px; min-width: 0; min-height: 43px; padding: 7px 10px 7px 13px; border-bottom: 1px solid var(--pd-border-soft); }
-.pd-slash-mark { flex: 0 0 auto; color: var(--pd-brand); font-size: 16px; line-height: 1; }
+.pd-slash-mark { flex: 0 0 auto; color: var(--pd-brand); font-size: var(--pd-font-lg); line-height: 1; }
 .pd-slash-title { flex: 0 0 auto; color: var(--pd-text); font-size: var(--pd-font-caption); font-weight: 500; }
 .pd-slash-query { min-width: 0; overflow: hidden; margin-left: 2px; color: var(--pd-text-weak); font-size: var(--pd-font-sm); text-overflow: ellipsis; white-space: nowrap; }
 .pd-slash-close { display: grid; flex: 0 0 25px; place-items: center; height: 25px; margin-left: auto; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--pd-text-weak); }
@@ -17,13 +17,13 @@
 .pd-slash-option[aria-disabled='true'] { color: var(--pd-text-weak); cursor: default; }
 .pd-slash-option-name { flex: 0 1 auto; max-width: 42%; min-width: 0; overflow: hidden; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
 .pd-slash-option-description { flex: 1; min-width: 0; overflow: hidden; color: var(--pd-text-weak); font-size: var(--pd-font-sm); text-overflow: ellipsis; white-space: nowrap; }
-.pd-slash-arguments { flex: 0 0 auto; padding: 1px 4px; border-radius: 4px; background: var(--pd-sidebar); color: var(--pd-text-weak); font-size: 9px; line-height: 15px; }
+.pd-slash-arguments { flex: 0 0 auto; padding: 1px 4px; border-radius: 4px; background: var(--pd-sidebar); color: var(--pd-text-weak); font-size: var(--pd-font-xs); line-height: 1.4; }
 .pd-slash-status { padding: 12px 10px 15px; color: var(--pd-text-weak); font-size: var(--pd-font-sm); line-height: 1.5; }
 .pd-slash-error { display: flex; align-items: center; gap: 8px; padding: 10px; color: var(--pd-danger); font-size: var(--pd-font-sm); line-height: 1.5; }
 .pd-slash-error > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .pd-slash-error > button { flex: 0 0 auto; padding: 3px 6px; border: 1px solid var(--pd-border); border-radius: 5px; background: transparent; color: var(--pd-text-subtle); font-size: var(--pd-font-sm); }
 .pd-slash-footer { display: flex; flex: 0 0 auto; align-items: center; gap: 8px; min-height: 27px; padding: 5px 12px; border-top: 1px solid var(--pd-border-soft); color: var(--pd-text-weak); font-size: var(--pd-font-xs); }
 .pd-slash-footer > span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.pd-slash-footer kbd { padding: 0 4px; border: 1px solid var(--pd-border-soft); border-radius: 4px; font-family: inherit; font-size: var(--pd-font-xs); line-height: 15px; }
+.pd-slash-footer kbd { display: inline-flex; align-items: center; justify-content: center; min-height: 17px; padding: 0 4px; border: 1px solid var(--pd-border-soft); border-radius: 4px; font-family: inherit; font-size: var(--pd-font-xs); line-height: 1.25; vertical-align: middle; }
 @media (max-width: 480px) { .pd-slash-header { min-height: 38px; padding-top: 4px; padding-bottom: 4px; } .pd-slash-option { gap: 8px; } .pd-slash-arguments { display: none; } }
 @media (max-height: 440px) { .pd-slash-header { min-height: 35px; padding-top: 3px; padding-bottom: 3px; } .pd-slash-footer { display: none; } }

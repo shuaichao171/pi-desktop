@@ -1,0 +1,5 @@
+.pd-model-image-filter { display: flex; align-items: center; gap: 7px; padding: 0 5px 9px; color: var(--pd-text-subtle); font-size: var(--pd-font-caption); }
+.pd-model-capabilities { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.pd-model-capabilities > span { padding: 1px 5px; border: 1px solid var(--pd-border); border-radius: 4px; color: var(--pd-text-subtle); font-size: var(--pd-font-xs); line-height: 1.4; }
+.pd-model-image-notice.is-unsupported, .pd-model-image-notice.is-unknown { color: var(--pd-warning); }
+@container (max-width: 520px) { .pd-model-image-notice > span { display: none; } }

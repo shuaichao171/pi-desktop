@@ -1,0 +1,78 @@
+// Only the dedicated isolated renderer runner launches this scenario.
+export default async function inputScenarios(review) {
+  await review.waitFor('window.__modelReview?.ready === true');
+  await review.reducedMotion(true);
+  await review.evaluate(`(() => {
+    const fixture = window.__modelReview, bridge = window.piDesktop;
+    const canvas = document.createElement('canvas'); canvas.width = 96; canvas.height = 64;
+    const context = canvas.getContext('2d'); context.fillStyle = '#2aa99e'; context.fillRect(0,0,96,64);
+    const image = { kind:'image', name:'restored.png', mimeType:'image/png', data:canvas.toDataURL('image/png').split(',')[1] };
+    const ref = { id:'stored-image',version:1,kind:'image',name:image.name,mimeType:image.mimeType,size:100 };
+    const state = window.__inputReview = { sends:[], saves:[], mutations:[], failSend:true, queue:{version:0,paused:false,items:[]}, image, cwd:fixture.snapshot.cwd };
+    const drafts = new Map(['input-main','input-backup'].map(path => [path,{version:1,text:path==='input-main'?'Persisted draft':'Original draft with image',attachments:[ref],missing:[]}]));
+    drafts.set('input-missing',{version:1,text:'Keep me',attachments:[{...ref,id:'missing',name:'missing.png'}],missing:['missing']});
+    bridge.getInputDraft = async scope => structuredClone(drafts.get(scope.sessionPath) ?? {version:0,text:'',attachments:[],missing:[]});
+    bridge.readInputAttachment = async (_scope,id) => { if(id==='missing') throw new Error('Attachment missing'); return structuredClone(image); };
+    bridge.putInputAttachment = async () => structuredClone(ref);
+    bridge.saveInputDraft = async request => { state.saves.push(structuredClone(request)); const next={version:request.expectedVersion+1,text:request.text,attachments:request.attachmentIds.map(id=>({...ref,id})),missing:[]}; drafts.set(request.sessionPath,next); return next; };
+    bridge.submitInput = async request => { state.sends.push(structuredClone(request)); if(state.failSend) throw new Error('Acceptance reply unavailable'); return {id:request.id,state:'accepted'}; };
+    bridge.getInputQueue = async () => structuredClone(state.queue);
+    state.publishQueue = () => fixture.emitAgent({type:'queue',count:state.queue.items.length,items:state.queue.items});
+    bridge.mutateInputQueue = async request => {
+      state.mutations.push(structuredClone(request)); if(request.expectedVersion!==state.queue.version) throw new Error('Stale queue');
+      if(request.action==='pause'||request.action==='resume') state.queue.paused=request.action==='pause';
+      if(request.action==='confirm') state.queue.items.find(item=>item.id===request.id).state='accepted';
+      if(request.action==='move') { const moving=state.queue.items.find(item=>item.id===request.id); state.queue.items=state.queue.items.filter(item=>item!==moving); const before=state.queue.items.findIndex(item=>item.id===request.beforeId); state.queue.items.splice(before<0?state.queue.items.length:before,0,moving); }
+      state.queue.version++; state.publishQueue(); return structuredClone(state.queue);
+    };
+    bridge.processPdfInput = request => new Promise((resolve,reject)=>{state.pdf={request,resolve,reject};});
+    bridge.cancelPdfInput = async id => { if(state.pdf?.request.requestId===id){state.pdf.reject(new Error('PDF processing cancelled'));state.pdf=null;} };
+    state.ready = path => { Object.assign(fixture.snapshot,{sessionId:path,sessionPath:path,messages:[],activities:[],error:null,historyTotal:0,queuedCount:state.queue.items.length,queuedMessages:state.queue.items}); fixture.emitAgent({...fixture.snapshot,type:'ready'}); fixture.emitAgent({type:'status',status:'idle'}); };
+    state.uploadPdf = () => {const transfer=new DataTransfer();transfer.items.add(new File(['%PDF-1.4 fixture'],'sample.pdf',{type:'application/pdf'}));const input=document.querySelector('.pd-composer-file-input');input.files=transfer.files;input.dispatchEvent(new Event('change',{bubbles:true}));};
+    state.ready('input-main');
+  })()`);
+  await review.waitFor('document.querySelector(".pd-composer-shell textarea")?.value === "Persisted draft" && document.querySelectorAll(".pd-composer-attachment").length === 1');
+  await review.screenshot('inputs-restored-attachment');
+  await review.click('.pd-send-button');
+  await review.waitFor('document.querySelector(".pd-composer-error")?.textContent.includes("Acceptance reply unavailable")');
+  await review.assert('document.querySelector(".pd-composer-shell textarea").value === "Persisted draft" && document.querySelectorAll(".pd-composer-attachment").length === 1', 'Failed submission preserves draft and attachments');
+  await review.evaluate('window.__inputReview.failSend = false');
+  await review.click('.pd-send-button');
+  await review.waitFor('document.querySelector(".pd-composer-shell textarea").value === ""');
+  await review.assert('window.__inputReview.sends.length === 2 && window.__inputReview.sends[0].id === window.__inputReview.sends[1].id', 'Retry keeps the stable request ID');
+  await review.evaluate('window.__inputReview.ready("input-backup")');
+  await review.waitFor('document.querySelector(".pd-composer-shell textarea").value === "Original draft with image" && document.querySelectorAll(".pd-composer-attachment").length === 1');
+  await review.assert('!document.querySelector(".pd-composer-history-button, .pd-input-history") && document.querySelector(".pd-composer-shell textarea").value === "Original draft with image" && document.querySelectorAll(".pd-composer-attachment").length === 1 && window.__inputReview.sends.length === 2', 'The composer restores the independent draft and attachment without an input history entry');
+  await review.screenshot('inputs-independent-draft');
+  await review.evaluate('window.__inputReview.uploadPdf()');
+  await review.waitFor('Boolean(window.__inputReview.pdf)');
+  await review.clickText('.pd-composer-attachment-hint button', '取消PDF处理');
+  await review.waitFor('!window.__inputReview.pdf && !document.querySelector(".pd-composer-attachment-hint button")');
+  await review.assert('document.querySelector(".pd-composer-shell textarea").value === "Original draft with image" && document.querySelectorAll(".pd-composer-attachment").length === 1', 'Cancelling PDF extraction preserves the original draft');
+  await review.evaluate(`(() => {const state=window.__inputReview;state.queue.items=[{id:'queue-first',text:'Same text',behavior:'followUp',version:1,state:'accepted',attachments:[{kind:'image',name:'first.png',mimeType:'image/png'}]},{id:'queue-second',text:'Same text',behavior:'followUp',version:1,state:'recovered',message:'Confirm before sending',attachments:[{kind:'image',name:'second.png',mimeType:'image/png'}]}];state.publishQueue();})()`);
+  await review.waitFor('document.querySelectorAll(".pd-composer-queue-item").length === 2');
+  await review.click('[data-queue-id=queue-first] [aria-label="更多操作"]');
+  await review.clickText('.pd-queue-menu button', '暂停后续消息');
+  await review.waitFor('window.__inputReview.queue.paused === true');
+  await review.clickText('[data-queue-id=queue-second] button', '确认恢复');
+  await review.waitFor('document.querySelector("[data-queue-id=queue-second]")?.dataset.state === "accepted" && document.querySelector(".pd-composer-queue")?.getAttribute("aria-busy") === "false"');
+  await review.evaluate('document.querySelector("[data-queue-id=queue-second] .pd-queue-drag").focus()');
+  await review.key('ArrowUp');
+  await review.waitFor('window.__inputReview.queue.items[0].id === "queue-second"');
+  await review.assert('window.__inputReview.queue.items[0].id === "queue-second" && window.__inputReview.queue.items[0].attachments[0].name === "second.png" && window.__inputReview.queue.paused', 'Queue confirmation and sorting retain each image identity while paused');
+  await review.screenshot('inputs-queue-paused');
+  await review.clickText('.pd-queue-paused button', '继续发送');
+  await review.waitFor('window.__inputReview.queue.paused === false');
+  await review.assert('window.__inputReview.mutations.map(item=>item.action).join(",") === "pause,confirm,move,resume"', 'Queue actions use versioned backend mutations');
+  await review.evaluate('window.__inputReview.ready("input-missing")');
+  await review.waitFor('document.querySelector(".pd-composer-error")?.textContent.includes("missing.png")');
+  await review.assert('document.querySelector(".pd-send-button").disabled && document.querySelector(".pd-composer-shell textarea").value === "Keep me"', 'Missing persisted attachments block accidental partial submission');
+  await review.screenshot('inputs-missing-attachment');
+  await review.evaluate(`(() => {const state=window.__inputReview;const original=window.piDesktop.getInputDraft;window.piDesktop.getInputDraft=scope=>scope.sessionPath==='input-late'?new Promise(resolve=>{state.resolveLateDraft=resolve;}):original(scope);state.ready('input-late');})()`);
+  await review.waitFor('Boolean(window.__inputReview.resolveLateDraft)');
+  await review.fill('.pd-composer-shell textarea', 'User editing while the disk is loading');
+  await review.fill('.pd-composer-shell textarea', '');
+  await review.evaluate('window.__inputReview.resolveLateDraft({version:1,text:"Old stored text",attachments:[],missing:[]})');
+  await review.waitFor('!document.querySelector(".pd-composer-attachment-hint button")');
+  await review.assert('document.querySelector(".pd-composer-shell textarea").value === ""', 'Late restoration does not overwrite an intentionally cleared draft');
+}

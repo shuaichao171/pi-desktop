@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import type { WorkspaceGitStatus } from '@pidesktop/shared';
+import type { CommitScope, WorkbenchFeaturesBridge, WorkspaceCommitPreview } from '@pidesktop/shared/workbenchFeatures';
 import { useT } from '../i18n';
 import { useChatStore } from '../store';
 
@@ -8,13 +8,18 @@ function errorText(cause: unknown): string {
 }
 
 /**
- * zcode-style commit dialog: shows the branch and changed files of the active
- * workspace, lets the model draft the message, and commits everything in one
- * `git add -A && git commit`.
+ * Preview, generated description, and final commit share the same scoped tree.
  */
 export function ChatCommitDialog({ onClose }: { onClose(): void }) {
 	const { t } = useT();
-	const [status, setStatus] = useState<WorkspaceGitStatus | null>(null);
+	const cwd = useChatStore(state => state.cwd), bridge = useChatStore(state => state.bridge);
+	const api = bridge as (typeof bridge & WorkbenchFeaturesBridge);
+	const [preview, setPreview] = useState<WorkspaceCommitPreview | null>(null);
+	const [scope, setScope] = useState<CommitScope>('all');
+	const [revision, setRevision] = useState(0);
+	const status = preview ? { isRepository: true, branch: preview.branch, entries: preview.files } : null;
+	const actionLock = useRef(false);
+	const generation = useRef(0), closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 	const [loading, setLoading] = useState(true);
 	const [working, setWorking] = useState<'generate' | 'commit' | null>(null);
 	const [done, setDone] = useState(false);
@@ -24,11 +29,13 @@ export function ChatCommitDialog({ onClose }: { onClose(): void }) {
 
 	useEffect(() => {
 		let alive = true;
-		const bridge = useChatStore.getState().bridge;
-		if (!bridge) return;
-		void bridge.getWorkspaceGitStatus().then((snapshot) => {
+		generation.current++; actionLock.current = false; setWorking(null); setDone(false);
+		if (closeTimer.current) clearTimeout(closeTimer.current);
+		if (!api) return;
+		setLoading(true); setPreview(null); setNotice(null);
+		void api.getWorkspaceCommitPreview({ cwd, scope }).then((snapshot) => {
 			if (alive) {
-				setStatus(snapshot);
+				setPreview(snapshot);
 				setLoading(false);
 			}
 		}).catch((cause: unknown) => {
@@ -37,8 +44,8 @@ export function ChatCommitDialog({ onClose }: { onClose(): void }) {
 				setNotice({ tone: 'error', text: errorText(cause) });
 			}
 		});
-		return () => { alive = false; };
-	}, []);
+		return () => { alive = false; generation.current++; if (closeTimer.current) clearTimeout(closeTimer.current); };
+	}, [api, cwd, scope, revision]);
 
 	const busy = working !== null || done;
 	const entries = status?.entries ?? [];
@@ -53,36 +60,39 @@ export function ChatCommitDialog({ onClose }: { onClose(): void }) {
 	}, [busy, onClose]);
 
 	async function generate() {
-		const bridge = useChatStore.getState().bridge;
-		if (!bridge || busy) return;
+		if (!api || busy || actionLock.current || !preview) return;
+		const token = generation.current, current = () => token === generation.current && useChatStore.getState().cwd === cwd && useChatStore.getState().bridge === bridge;
+		actionLock.current = true;
 		setWorking('generate');
 		setNotice(null);
 		try {
-			const context = await bridge.getWorkspaceCommitContext();
-			const draft = await bridge.generateCommitMessage(context);
+			const draft = await api.generateCommitMessage(preview.context);
+			if (!current()) return;
 			setMessage(draft);
 			textareaRef.current?.focus();
 		} catch (cause: unknown) {
-			setNotice({ tone: 'error', text: t('chat.commitGenerateFailed', { message: errorText(cause) }) });
+			if (current()) setNotice({ tone: 'error', text: t('chat.commitGenerateFailed', { message: errorText(cause) }) });
 		} finally {
-			setWorking(null);
+			if (current()) { actionLock.current = false; setWorking(null); }
 		}
 	}
 
 	async function submit() {
-		const bridge = useChatStore.getState().bridge;
-		if (!bridge || !canCommit) return;
+		if (!api || !canCommit || !preview || actionLock.current) return;
+		const token = generation.current, current = () => token === generation.current && useChatStore.getState().cwd === cwd && useChatStore.getState().bridge === bridge;
+		actionLock.current = true;
 		setWorking('commit');
 		setNotice(null);
 		try {
-			const hash = await bridge.commitWorkspace(message);
+			const hash = await api.commitWorkspacePreview({ id: preview.id, message });
+			if (!current()) return;
 			setNotice({ tone: 'info', text: t('chat.commitDone', { hash }) });
 			setDone(true);
-			window.setTimeout(onClose, 1400);
+			closeTimer.current = setTimeout(() => { if (current()) onClose(); }, 1400);
 		} catch (cause: unknown) {
-			setNotice({ tone: 'error', text: t('chat.commitFailed', { message: errorText(cause) }) });
+			if (current()) setNotice({ tone: 'error', text: t('chat.commitFailed', { message: errorText(cause) }) });
 		} finally {
-			setWorking(null);
+			if (current()) { actionLock.current = false; setWorking(null); }
 		}
 	}
 
@@ -99,6 +109,9 @@ export function ChatCommitDialog({ onClose }: { onClose(): void }) {
 					<h2>{t('chat.commitTitle')}</h2>
 					<p>{t('chat.commitDescription')}</p>
 				</header>
+				<label className="pd-commit-label">提交范围<select disabled={busy} value={scope} onChange={event => { setScope(event.target.value as CommitScope); setMessage(''); }}><option value="all">当前工作区全部更改</option><option value="stagedOnly">仅已暂存（保留未暂存内容）</option></select></label>
+				<button type="button" className="pd-commit-secondary" disabled={busy || loading} onClick={() => setRevision(value => value + 1)}>刷新范围预览</button>
+				{preview?.truncated && <p role="status">差异说明上下文已截断，实际提交范围以下列文件和已确认索引为准。</p>}
 				{loading && <p className="pd-commit-status">{t('chat.commitLoading')}</p>}
 				{status && !status.isRepository && <p className="pd-commit-status pd-commit-warning">{t('chat.commitNoRepo')}</p>}
 				{status?.isRepository && <>

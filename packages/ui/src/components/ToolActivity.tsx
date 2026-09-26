@@ -1,6 +1,8 @@
 import { memo, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import type { UiToolActivity } from '@pidesktop/shared';
 import { useT } from '../i18n';
+import { activityCopy, activityPresentation } from '../activityCopy';
+import { useDisclosureChoice } from '../conversationDisclosure';
 import { ActivityDisclosure, ActivityLabel } from './ActivityDisclosure';
 import { Icon } from './Icons';
 import { ToolDiffView } from './toolRenderers/ToolDiffView';
@@ -58,14 +60,18 @@ export function ToolActivityItem({ activity, onInteract }: { activity: UiToolAct
 	const { t, locale } = useT();
 	const detailId = useId();
 	// null follows the default. Either user choice wins over every later update.
-	const [userExpanded, setUserExpanded] = useState<boolean | null>(null);
+	const [userExpanded, setUserExpanded] = useDisclosureChoice(`tool:${activity.id}`);
 	const expanded = userExpanded ?? (activity.status === 'error' || activity.status === 'interrupted');
 	const [showAll, setShowAll] = useState(false);
 	const [wrapLines, setWrapLines] = useState(true);
 	const [copyStatus, setCopyStatus] = useState('');
+	const [commandCopyStatus, setCommandCopyStatus] = useState('');
 	const outputRef = useRef<HTMLPreElement>(null);
 	const followsOutput = useRef(true);
 	const detail = activity.detail ?? '';
+	const command = activity.command?.trim();
+	const copy = activityCopy(locale);
+	const presentation = activityPresentation(activity, locale);
 	const previewLength = 12000;
 	const isLong = detail.length > previewLength;
 	const duration = useDurationLabel(activity);
@@ -86,13 +92,18 @@ export function ToolActivityItem({ activity, onInteract }: { activity: UiToolAct
 			setCopyStatus(t('chat.tool.copyFailed'));
 		}
 	}
+	async function copyCommand() {
+		if (!command) return;
+		try { await navigator.clipboard.writeText(command); setCommandCopyStatus(t('chat.tool.copied')); }
+		catch { setCommandCopyStatus(t('chat.tool.copyFailed')); }
+	}
 
 	const files = activity.files ?? [];
 	return (
 		<div className={'pd-activity-item is-' + activity.status}>
 			<button type="button" className="pd-activity-head" onClick={() => { setUserExpanded(!expanded); onInteract?.(); }} aria-expanded={expanded} aria-controls={detailId}>
 				<span className={'pd-activity-icon is-' + activity.status} aria-hidden="true"><Icon name={activity.status === 'done' ? 'check' : activity.status === 'error' ? 'close' : activity.status === 'interrupted' ? 'square' : activity.tool === 'bash' ? 'terminal' : 'file'} width="14" height="14" /></span>
-				<span className="pd-activity-copy"><ActivityLabel active={activity.status === 'running'}>{activity.tool}</ActivityLabel><span className="pd-activity-title" title={activity.title}>{activity.title}</span></span>
+				<span className="pd-activity-copy"><span className="pd-activity-kind" title={activity.tool}><ActivityLabel active={activity.status === 'running'}>{presentation.label}</ActivityLabel></span>{presentation.summary && <span className="pd-activity-title" title={presentation.summary}>{presentation.summary}</span>}</span>
 				{activity.exitCode != null && activity.exitCode !== 0 && <span className="pd-activity-exit is-error">{t('chat.tool.exitCode', { code: activity.exitCode })}</span>}
 				{duration && <span className="pd-activity-duration">{duration}</span>}
 				<span className={'pd-activity-status is-' + activity.status}>{t('chat.tool.' + activity.status)}</span>
@@ -100,6 +111,11 @@ export function ToolActivityItem({ activity, onInteract }: { activity: UiToolAct
 			</button>
 			<ActivityDisclosure id={detailId} expanded={expanded}>
 				<div className="pd-activity-detail">
+					{command && <div className="pd-activity-command">
+						<div className="pd-activity-output-heading"><span>{copy.command}</span><div className="pd-activity-output-actions"><button type="button" onClick={() => setWrapLines(value => !value)} aria-label={copy.wrapCommand} aria-pressed={wrapLines}>{t(wrapLines ? 'chat.tool.unwrap' : 'chat.tool.wrap')}</button><button type="button" onClick={() => void copyCommand()} aria-label={copy.copyCommand}>{t('chat.tool.copy')}</button></div></div>
+						<pre className={'pd-activity-output pd-activity-command-text' + (wrapLines ? ' is-wrapped' : '')}>{command}</pre>
+						{commandCopyStatus && <span className="pd-activity-copy-status" role="status">{commandCopyStatus}</span>}
+					</div>}
 					{files.length > 0 && <ActivityFiles files={files} />}
 					{activity.diff ? <>
 						<div className="pd-activity-output-heading">
@@ -133,7 +149,7 @@ export function ToolActivityItem({ activity, onInteract }: { activity: UiToolAct
 	);
 }
 
-export const ToolActivityPanel = memo(function ToolActivityPanel({ sourceActivities, indices }: { sourceActivities: UiToolActivity[]; indices: number[] }) {
+export const ToolActivityPanel = memo(function ToolActivityPanel({ sourceActivities, indices, inline = false }: { sourceActivities: UiToolActivity[]; indices: number[]; inline?: boolean }) {
 	const { t } = useT();
 	const detailId = useId();
 	const activities = indices.map((index) => sourceActivities[index]).filter((activity): activity is UiToolActivity => Boolean(activity));
@@ -149,6 +165,7 @@ export const ToolActivityPanel = memo(function ToolActivityPanel({ sourceActivit
 		interruptedCount > 0 ? t('chat.tool.interruptedCount', { count: interruptedCount }) : null,
 	].filter(Boolean).join(' · ');
 	if (activities.length === 0) return null;
+	if (inline) return <div className="pd-activity-list is-inline" aria-label={t('chat.tool.activity')}>{activities.map(activity => <ToolActivityItem key={activity.id} activity={activity} />)}</div>;
 	return (
 		<section className="pd-activity-group" aria-label={t('chat.tool.activity')}>
 			<button type="button" className="pd-activity-summary" onClick={() => setUserExpanded(!expanded)} aria-expanded={expanded} aria-controls={detailId}>

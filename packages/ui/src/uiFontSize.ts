@@ -30,14 +30,13 @@ function storage(): Storage | null {
 
 /** Saved preference, or the default when absent, blocked or invalid. */
 export function readUiFontSize(): number {
-	const raw = storage()?.getItem(STORAGE_KEY);
-	if (raw == null) return DEFAULT_UI_FONT_SIZE;
-	return normalizeUiFontSize(raw) ?? DEFAULT_UI_FONT_SIZE;
+	try { const raw = storage()?.getItem(STORAGE_KEY); return raw == null ? DEFAULT_UI_FONT_SIZE : normalizeUiFontSize(raw) ?? DEFAULT_UI_FONT_SIZE; }
+	catch { return DEFAULT_UI_FONT_SIZE; }
 }
 
 /** Persist the preference; failures keep the in-memory value usable. */
 export function saveUiFontSize(size: number): void {
-	storage()?.setItem(STORAGE_KEY, String(size));
+	try { storage()?.setItem(STORAGE_KEY, String(size)); } catch { /* Keep the applied in-memory preference. */ }
 }
 
 /** Write the CSS property only. Called on startup and whenever the slider moves. */

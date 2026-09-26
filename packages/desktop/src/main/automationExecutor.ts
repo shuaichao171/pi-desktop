@@ -8,6 +8,8 @@ export interface AutomationExecutionResult {
 }
 
 export class AutomationExecutionError extends Error implements AutomationExecutionResult {
+	retryableDispatch = false;
+	executionStarted = true;
 	sessionId: string | null;
 	sessionPath: string | null;
 	summary: string;
@@ -25,6 +27,7 @@ export function createAutomationExecutor(options: {
 	createAgent?: typeof createIsolatedAgentService;
 	withSessionSetup?: (action: () => Promise<void>) => Promise<void>;
 	executionTimeoutMs?: number;
+	onSessionCreated?: (path: string, task: UiAutomation) => Promise<void>;
 } = {}) {
 	const sessions = new Map<string, string>();
 	const workers = new Set<symbol>();
@@ -36,18 +39,20 @@ export function createAutomationExecutor(options: {
 		hasUnreleasedWorkers: () => unreleasedWorkers.size > 0,
 		isSessionRunning: (path: string) => sessions.has(path),
 		sessionPaths: (cwd: string) => [...sessions].filter(([, owner]) => owner === cwd).map(([path]) => path),
-		async execute(task: UiAutomation, signal: AbortSignal): Promise<AutomationExecutionResult> {
+		async execute(task: UiAutomation, signal: AbortSignal, dispatch?: (phase: 'dispatching' | 'accepted') => Promise<void>): Promise<AutomationExecutionResult> {
 			const result: AutomationExecutionResult = { sessionId: null, sessionPath: null, summary: '' };
 			const ownedPaths = new Set<string>();
 			let started = false;
 			let failure: string | null = null;
+			let transientSetupFailure = false;
 			let stopReason: Error | null = null;
 			let finish!: () => void;
 			let stop!: () => void;
 			const finished = new Promise<void>((resolve) => { finish = resolve; });
 			const stopped = new Promise<void>((resolve) => { stop = resolve; });
 			const requestStop = (error: Error) => { stopReason ??= error; stop(); };
-			const agent = createAgent({
+			let agent: ReturnType<typeof createAgent>;
+			try { agent = createAgent({
 				// Previously persisted trust still applies inside Pi. Unattended runs
 				// cannot grant fresh project trust or approve an extension dialog.
 				requestProjectTrust: async () => ({ trusted: false, remember: false }),
@@ -58,7 +63,12 @@ export function createAutomationExecutor(options: {
 					throw error;
 				},
 				onHostCrash: () => requestStop(new Error('自动化执行进程意外退出')),
-			});
+			}); } catch (cause) {
+				const error = new AutomationExecutionError(cause instanceof Error ? cause.message : String(cause), result);
+				error.executionStarted = false;
+				error.retryableDispatch = isTransientSetupError(cause);
+				throw error;
+			}
 			const worker = Symbol(task.id);
 			workers.add(worker);
 			const remember = (snapshot: Pick<AgentSnapshot, 'sessionId' | 'sessionPath'>) => {
@@ -97,13 +107,17 @@ export function createAutomationExecutor(options: {
 				const setup = async () => {
 					await step(() => agent.init({ cwd: task.cwd, fresh: true }));
 					remember(await step(() => agent.getSnapshot()));
+					if (result.sessionPath) await options.onSessionCreated?.(result.sessionPath, task);
 				};
 				await step(() => options.withSessionSetup ? options.withSessionSetup(setup) : setup());
 				if (task.model) await step(() => agent.setModel(task.model!.provider, task.model!.id, false));
-				if (task.thinkingLevel) await step(() => agent.setThinkingLevel(task.thinkingLevel, false));
+				const thinkingLevel = task.thinkingLevel;
+				if (thinkingLevel) await step(() => agent.setThinkingLevel(thinkingLevel, false));
 				if (failure) throw new Error(failure);
+				await dispatch?.('dispatching');
 				started = true;
 				await step(() => agent.prompt(task.prompt));
+				await dispatch?.('accepted');
 				// prompt() only acknowledges preflight acceptance. Idle/error events
 				// represent the actual run finishing, even if they preceded the RPC reply.
 				await step(() => finished);
@@ -114,6 +128,7 @@ export function createAutomationExecutor(options: {
 				if (failure || snapshot.error || last?.status === 'error') throw new Error(failure ?? snapshot.error ?? last?.errorMessage ?? '自动化执行失败');
 				if (result.sessionPath) await step(() => agent.renameSession(result.sessionPath!, task.name, task.cwd));
 			} catch (error) {
+				transientSetupFailure = !started && isTransientSetupError(error);
 				failure = error instanceof Error ? error.message : String(error);
 			} finally {
 				clearTimeout(timer);
@@ -125,6 +140,7 @@ export function createAutomationExecutor(options: {
 				catch (error) {
 					failure ??= error instanceof Error ? error.message : String(error);
 					workerStillRunning = error instanceof Error && 'workerStillRunning' in error && error.workerStillRunning === true;
+					transientSetupFailure = false;
 				}
 				// Keep paths locked until the worker has exited, including shutdown errors.
 				if (workerStillRunning) {
@@ -136,8 +152,18 @@ export function createAutomationExecutor(options: {
 					for (const path of ownedPaths) sessions.delete(path);
 				}
 			}
-			if (failure) throw new AutomationExecutionError(failure, result);
+			if (failure) {
+				const error = new AutomationExecutionError(failure, result);
+				error.executionStarted = started;
+				error.retryableDispatch = transientSetupFailure;
+				throw error;
+			}
 			return result;
 		},
 	};
+}
+
+/** Only explicit transport/startup codes before prompt dispatch are safe to retry. */
+function isTransientSetupError(error: unknown): boolean {
+	return error instanceof Error && 'code' in error && ['ECONNRESET', 'ECONNREFUSED', 'EPIPE', 'ETIMEDOUT', 'ERR_WORKER_INIT_FAILED'].includes(String(error.code));
 }

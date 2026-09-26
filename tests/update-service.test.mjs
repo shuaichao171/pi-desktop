@@ -151,6 +151,49 @@ test('download errors cancel the pending installation and require another explic
   } finally { service.stop(); }
 });
 
+test('a late downloadUpdate rejection cannot cancel a newer installation retry', async () => {
+  const service = createService();
+  const firstDownload = deferred();
+  let firstInstallation;
+  let downloads = 0;
+  let shutdowns = 0;
+  let installs = 0;
+  service.setBeforeInstall(async () => { shutdowns += 1; });
+  updater.quitAndInstall = () => { installs += 1; };
+  updater.checkForUpdates = async () => { updater.emit('update-available', { version: '0.2.0' }); return {}; };
+  updater.downloadUpdate = () => ++downloads === 1 ? firstDownload.promise : Promise.resolve();
+  try {
+    await service.check(false);
+    firstInstallation = service.install();
+    await flush();
+    updater.emit('error', new Error('First download connection lost'));
+    assert.equal(service.getState().phase, 'error');
+    assert.equal(service.getState().installRequested, false);
+
+    await service.install();
+    assert.equal(downloads, 2);
+    assert.equal(service.getState().phase, 'downloading');
+    assert.equal(service.getState().installRequested, true);
+
+    firstDownload.reject(new Error('Late rejection from the first download'));
+    await firstInstallation;
+    assert.equal(service.getState().phase, 'downloading', 'the old promise belongs to the failed attempt');
+    assert.equal(service.getState().installRequested, true);
+    assert.equal(service.getState().error, undefined);
+    updater.emit('download-progress', { percent: 75 });
+    assert.equal(service.getState().progressPercent, 75);
+    updater.emit('update-downloaded', { version: '0.2.0' });
+    await flush();
+    assert.equal(service.getState().phase, 'installing');
+    assert.equal(shutdowns, 1);
+    assert.equal(installs, 1);
+  } finally {
+    firstDownload.resolve();
+    await firstInstallation;
+    service.stop();
+  }
+});
+
 test('retry waits for the failed metadata check and old download rejection cannot cancel it', async () => {
   const service = createService();
   const metadata = deferred();

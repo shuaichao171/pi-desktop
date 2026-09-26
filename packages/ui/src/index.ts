@@ -17,3 +17,5 @@ export {
 
 // Apply the saved interface font size before the first render; blocked storage falls back.
 initUiFontSize();
+import { initContentFontSizes } from './contentFontSize';
+initContentFontSizes();

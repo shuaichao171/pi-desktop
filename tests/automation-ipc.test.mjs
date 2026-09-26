@@ -11,13 +11,13 @@ const stubs = {
     export const Menu = { buildFromTemplate: () => ({}) };
     export const nativeImage = { createFromPath: () => ({ isEmpty: () => true }) };
     export const Tray = class {};
-    export const BrowserWindow = { getAllWindows: () => [] };
+    export const BrowserWindow = { getAllWindows: () => [], fromWebContents: (sender) => globalThis.__reviewWindow?.webContents === sender ? globalThis.__reviewWindow : null };
     export const dialog = { showErrorBox: () => {} };
     export const Notification = class { static isSupported() { return false; } on() { return this; } show() {} };
     export const ipcMain = { handle: (channel, handler) => globalThis.__automationHandlers.set(channel, handler) };
   `,
   './agentClient': 'export const createIsolatedAgentService = () => ({ onEvent() {}, onBackgroundActivity() {}, async dispose() {} });',
-  './updateService': 'export const updateService = {};',
+  './updateService': 'export const updateService = { stop() {} };',
   './workbenchIpc': 'export const registerWorkbenchIpc = () => ({ async dispose() {} });',
 };
 registerHooks({ resolve(specifier, context, nextResolve) {
@@ -38,13 +38,14 @@ test('automation IPC authenticates every sender and only saves validated registe
   const sent = [];
   const owner = { isDestroyed: () => false, webContents: { mainFrame: {}, isDestroyed: () => false, send: (...args) => sent.push(args) } };
   const valid = { sender: owner.webContents, senderFrame: owner.webContents.mainFrame };
+  globalThis.__reviewWindow = owner;
   ipc.registerIpc({ getDialogWindow: () => owner });
   const call = (channel, ...args) => globalThis.__automationHandlers.get(channel)(valid, ...args);
   try {
     for (const channel of [channels.automationSnapshot, channels.automationSave, channels.automationSetEnabled, channels.automationDelete, channels.automationRun, channels.automationCancelRun]) {
       const handler = globalThis.__automationHandlers.get(channel);
-      assert.throws(() => handler({ sender: {}, senderFrame: owner.webContents.mainFrame }), /Invalid automation sender/);
-      assert.throws(() => handler({ sender: owner.webContents, senderFrame: {} }), /Invalid automation sender/);
+      assert.throws(() => handler({ sender: {}, senderFrame: owner.webContents.mainFrame }), /Invalid (automation|renderer) sender|no longer available/);
+      assert.throws(() => handler({ sender: owner.webContents, senderFrame: {} }), /Invalid (automation|renderer) sender|no longer available/);
     }
     const input = { name: 'Daily review', prompt: 'Review changes.', cwd, model: null, thinkingLevel: null, schedule: { kind: 'weekly', days: [1, 2, 3, 4, 5], time: '09:00' }, timeZone: 'Asia/Shanghai', enabled: false };
     assert.equal((await call(channels.automationSnapshot)).automations.length, 0);
@@ -61,7 +62,7 @@ test('automation IPC authenticates every sender and only saves validated registe
     assert.equal((await call(channels.automationDelete, saved.automations[0].id)).automations.length, 0);
   } finally {
     await ipc.disposeServices();
-    assert.throws(() => call(channels.automationSnapshot), /Invalid automation sender/);
+    assert.throws(() => call(channels.automationSnapshot), /Invalid (automation|renderer) sender|no longer available/);
     await rm(root, { recursive: true, force: true });
   }
 });

@@ -1,79 +1,58 @@
-import { BrowserWindow, dialog, ipcMain, shell } from 'electron';
+import { dialog, shell } from 'electron';
 import { IPC_CHANNELS } from '@pidesktop/shared';
 import { getAppLocale } from './appLocale';
 import { WorkbenchService } from './workbenchService';
+import { broadcastToRenderers, handleRendererInvoke, requireRendererSender } from './rendererIpc';
 
 export function registerWorkbenchIpc(getWorkspace: () => string): WorkbenchService {
 	const service = new WorkbenchService(getWorkspace, (event) => {
-		for (const win of BrowserWindow.getAllWindows()) {
-			win.webContents.send(IPC_CHANNELS.workspaceCommandEvent, event);
-		}
+		broadcastToRenderers(IPC_CHANNELS.workspaceCommandEvent, event);
 	});
-	ipcMain.handle(IPC_CHANNELS.workspaceOpenFolder, async (event, cwd: string) => {
-		const requireSender = () => {
-			const win = BrowserWindow.fromWebContents(event.sender);
-			if (!win || win.isDestroyed() || event.sender.isDestroyed() || win.webContents !== event.sender || event.senderFrame !== win.webContents.mainFrame) {
-				throw new Error('无法确认文件夹打开请求来源');
-			}
-		};
-		requireSender();
+	handleRendererInvoke(IPC_CHANNELS.workspaceOpenFolder, async (event, cwd: string) => {
 		await service.openWorkspaceFolder(cwd, (path) => {
-			requireSender();
+			requireRendererSender(event);
 			return shell.openPath(path);
 		});
 	});
-	ipcMain.handle(IPC_CHANNELS.workspaceOpenInVsCode, async (event, cwd: string) => {
-		const win = BrowserWindow.fromWebContents(event.sender);
-		if (!win || win.isDestroyed() || event.sender.isDestroyed() || win.webContents !== event.sender || event.senderFrame !== win.webContents.mainFrame) {
-			throw new Error('无法确认编辑器打开请求来源');
-		}
+	handleRendererInvoke(IPC_CHANNELS.workspaceOpenInVsCode, async (_event, cwd: string) => {
 		await service.openWorkspaceInVsCode(cwd);
 	});
-	ipcMain.handle(IPC_CHANNELS.workspaceOpenPathInEditor, async (event, relativePath: unknown, line: unknown) => {
-		const win = BrowserWindow.fromWebContents(event.sender);
-		if (!win || win.isDestroyed() || event.sender.isDestroyed() || win.webContents !== event.sender || event.senderFrame !== win.webContents.mainFrame) {
-			throw new Error('无法确认编辑器打开请求来源');
-		}
+	handleRendererInvoke(IPC_CHANNELS.workspaceOpenPathInEditor, async (_event, relativePath: unknown, line: unknown, column: unknown) => {
 		if (typeof relativePath !== 'string') throw new Error('文件路径无效');
-		await service.openPathInEditor(relativePath, typeof line === 'number' ? line : undefined);
+		await service.openPathInEditor(relativePath, typeof line === 'number' ? line : undefined, typeof column === 'number' ? column : undefined);
 	});
-	ipcMain.handle(IPC_CHANNELS.workspaceRevealPath, async (event, relativePath: unknown) => {
-		const win = BrowserWindow.fromWebContents(event.sender);
-		if (!win || win.isDestroyed() || event.sender.isDestroyed() || win.webContents !== event.sender || event.senderFrame !== win.webContents.mainFrame) {
-			throw new Error('无法确认文件定位请求来源');
-		}
+	handleRendererInvoke(IPC_CHANNELS.workspaceRevealPath, async (_event, relativePath: unknown) => {
 		if (typeof relativePath !== 'string') throw new Error('文件路径无效');
 		await service.revealPathInFolder(relativePath, (path) => shell.showItemInFolder(path));
 	});
-	ipcMain.handle(IPC_CHANNELS.workspaceOpeners, () => service.listWorkspaceOpeners());
-	ipcMain.handle(IPC_CHANNELS.workspaceCommitContext, () => service.gitCommitContext());
-	ipcMain.handle(IPC_CHANNELS.workspaceCommit, (_event, message: string) => service.gitCommit(message));
-	ipcMain.handle(IPC_CHANNELS.workspaceListEntries, (_event, relativePath?: string) => service.listEntries(relativePath));
-	ipcMain.handle(IPC_CHANNELS.workspaceReadFile, (_event, relativePath: string) => service.readFile(relativePath));
-	ipcMain.handle(IPC_CHANNELS.workspaceGitStatus, () => service.gitStatus());
-	ipcMain.handle(IPC_CHANNELS.workspaceGitDiff, (_event, relativePath: string) => service.gitDiff(relativePath));
-	ipcMain.handle(IPC_CHANNELS.workspaceBranches, () => service.gitBranches());
-	ipcMain.handle(IPC_CHANNELS.workspaceCheckoutBranch, (_event, branch: string) => service.gitCheckout(branch));
-	ipcMain.handle(IPC_CHANNELS.workspaceGitSetStaged, (_event, paths: unknown, staged: unknown) => {
+	handleRendererInvoke(IPC_CHANNELS.workspaceOpeners, () => service.listWorkspaceOpeners());
+	handleRendererInvoke(IPC_CHANNELS.workspaceCommitContext, () => service.gitCommitContext());
+	handleRendererInvoke(IPC_CHANNELS.workspaceCommit, (_event, message: string) => service.gitCommit(message));
+	handleRendererInvoke(IPC_CHANNELS.workspaceListEntries, (_event, relativePath?: string) => service.listEntries(relativePath));
+	handleRendererInvoke(IPC_CHANNELS.workspaceReadFile, (_event, relativePath: string) => service.readFile(relativePath));
+	handleRendererInvoke(IPC_CHANNELS.workspaceGitStatus, () => service.gitStatus());
+	handleRendererInvoke(IPC_CHANNELS.workspaceGitDiff, (_event, relativePath: string, source?: 'staged' | 'unstaged' | 'all') => service.gitDiff(relativePath, source));
+	handleRendererInvoke(IPC_CHANNELS.workspaceBranches, () => service.gitBranches());
+	handleRendererInvoke(IPC_CHANNELS.workspaceCheckoutBranch, (_event, branch: string) => service.gitCheckout(branch));
+	handleRendererInvoke(IPC_CHANNELS.workspaceGitSetStaged, (_event, paths: unknown, staged: unknown) => {
 		if (!Array.isArray(paths) || typeof staged !== 'boolean') throw new Error('暂存参数无效');
 		return service.gitSetStaged(paths, staged);
 	});
-	ipcMain.handle(IPC_CHANNELS.workspaceGitDiscard, (_event, paths: unknown) => {
+	handleRendererInvoke(IPC_CHANNELS.workspaceGitDiscard, (_event, paths: unknown) => {
 		if (!Array.isArray(paths)) throw new Error('丢弃参数无效');
 		return service.gitDiscard(paths);
 	});
-	ipcMain.handle(IPC_CHANNELS.workspaceGitLog, (_event, limit: unknown) => {
+	handleRendererInvoke(IPC_CHANNELS.workspaceGitLog, (_event, limit: unknown) => {
 		const count = typeof limit === 'number' ? limit : 30;
 		return service.gitLog(count);
 	});
-	ipcMain.handle(IPC_CHANNELS.workspaceGitCreateBranch, (_event, name: unknown, checkout: unknown) => {
+	handleRendererInvoke(IPC_CHANNELS.workspaceGitCreateBranch, (_event, name: unknown, checkout: unknown) => {
 		if (typeof name !== 'string' || typeof checkout !== 'boolean') throw new Error('分支参数无效');
 		return service.gitCreateBranch(name, checkout);
 	});
-	ipcMain.handle(IPC_CHANNELS.workspaceCommandStart, async (event, command: string) => {
+	handleRendererInvoke(IPC_CHANNELS.workspaceCommandStart, async (event, command: string) => {
 		if (typeof command !== 'string' || !command.trim() || command.length > 4000) throw new Error('命令无效或过长');
-		const win = BrowserWindow.fromWebContents(event.sender);
-		if (!win || win.isDestroyed() || event.senderFrame !== win.webContents.mainFrame) throw new Error('无法确认命令来源');
+		const win = requireRendererSender(event);
 		const cwd = getWorkspace();
 		if (!cwd) throw new Error('请先打开工作区');
 		const english = getAppLocale() === 'en-US';
@@ -92,6 +71,6 @@ export function registerWorkbenchIpc(getWorkspace: () => string): WorkbenchServi
 		if (getWorkspace() !== cwd) throw new Error(english ? 'Workspace changed; run the command again.' : '工作区已切换，请重新运行命令');
 		return service.startCommand(command, cwd);
 	});
-	ipcMain.handle(IPC_CHANNELS.workspaceCommandStop, (_event, id: string) => service.stopCommand(id));
+	handleRendererInvoke(IPC_CHANNELS.workspaceCommandStop, (_event, id: string) => service.stopCommand(id));
 	return service;
 }

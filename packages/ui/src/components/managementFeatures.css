@@ -1,0 +1,20 @@
+.pd-management-feature { display:flex; flex-direction:column; gap:12px; min-width:0; margin-block:8px 24px; }
+.pd-management-feature h2,.pd-management-feature h3,.pd-management-feature p { margin:0; }
+.pd-management-feature>p { color:var(--pd-text-subtle); font-size:13px; overflow-wrap:anywhere; }
+.pd-management-feature code { overflow-wrap:anywhere; font-size:12px; }
+.pd-management-actions { display:flex; align-items:flex-end; flex-wrap:wrap; gap:8px; }
+.pd-management-feature button,.pd-management-feature select,.pd-management-feature input { min-height:34px; border:1px solid var(--pd-border); background:var(--pd-surface); color:var(--pd-text); border-radius:7px; padding:6px 10px; font:inherit; max-width:100%; }
+.pd-management-feature button:disabled { opacity:.5; }
+.pd-management-feature label { display:flex; flex-direction:column; gap:6px; font-size:13px; min-width:0; }
+.pd-management-table { overflow:auto; border:1px solid var(--pd-border); border-radius:8px; }
+.pd-management-table table { width:100%; border-collapse:collapse; font-size:12px; }
+.pd-management-table th,.pd-management-table td { padding:10px; text-align:start; vertical-align:middle; border-bottom:1px solid var(--pd-border); overflow-wrap:anywhere; }
+.pd-management-table td small { display:block; color:var(--pd-text-subtle); margin-top:4px; }
+.pd-model-test { border-top:1px solid var(--pd-border); padding-top:20px; }
+.pd-management-subnav { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:18px; }
+.pd-management-subnav button { padding:8px 12px; border:1px solid var(--pd-border); border-radius:7px; background:var(--pd-surface); color:var(--pd-text); }
+.pd-management-subnav button[aria-pressed=true] { background:var(--pd-selected); border-color:var(--pd-brand); }
+.pd-management-plan { max-height:260px; overflow:auto; font-size:12px; overflow-wrap:anywhere; }
+
+.pd-management-feature input[type=checkbox] { min-height:14px; width:14px; height:14px; padding:0; margin:0 5px 0 0; vertical-align:middle; }
+.pd-management-actions>label>span { display:flex; align-items:center; min-height:34px; }

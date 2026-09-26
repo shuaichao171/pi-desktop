@@ -1,91 +1,88 @@
-import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import { useEffect, useId, useLayoutEffect, useRef, useState, type FocusEvent, type MouseEvent } from 'react';
 import { createPortal } from 'react-dom';
 import type { UiFileChange } from '@pidesktop/shared';
 import { useT } from '../i18n';
-import { parseUnifiedDiff } from '../unifiedDiff';
 import { Icon } from './Icons';
+import { ChangeStats, FileLabel } from './FileChangePresentation';
+import { ChangesDialog } from './ChangesDialog';
 import './composerChanges.css';
 
-function ChangeStats({ items }: { items: UiFileChange[] }) {
-	const { t } = useT();
-	const additions = items.reduce((sum, item) => sum + (item.additions ?? 0), 0);
-	const deletions = items.reduce((sum, item) => sum + (item.deletions ?? 0), 0);
-	const partial = items.some((item) => item.additions === null || item.deletions === null);
-	if (items.every((item) => item.additions === null && item.deletions === null)) return null;
-	return <span className="pd-change-stats" aria-label={t(partial ? 'changes.partialStats' : 'changes.stats', { additions, deletions })}>
-		<span className="pd-change-added" aria-hidden="true">+{additions}</span><span className="pd-change-deleted" aria-hidden="true">−{deletions}</span>{partial && <span aria-hidden="true">*</span>}
-	</span>;
-}
+const INITIAL_FILES = 3;
 
-function FileLabel({ item }: { item: UiFileChange }) {
-	const { t } = useT();
-	const parts = item.path.split('/');
-	const name = parts.pop();
-	return <><span className={`pd-change-kind is-${item.kind}`} aria-label={t(`changes.${item.kind}`)}>{item.kind === 'added' ? 'A' : item.kind === 'deleted' ? 'D' : 'M'}</span><span className="pd-change-filename"><span>{name}</span>{parts.length > 0 && <small>{parts.join('/')}</small>}</span></>;
-}
-
-function DiffPreview({ item }: { item: UiFileChange }) {
-	const { t } = useT();
-	const lines = useMemo(() => parseUnifiedDiff(item.diff ?? ''), [item.diff]);
-	return <>
-		{item.preview && <p className="pd-changes-notice" role="status">{t(`changes.preview.${item.preview}`)}</p>}
-		{lines.length > 0 ? <div className="pd-changes-code" tabIndex={0} role="region" aria-label={t('changes.diffFor', { path: item.path })}>
-			<pre>{lines.map((line, index) => <span className={`pd-diff-line is-${line.kind}`} key={index}>
-				<span className="pd-diff-number" aria-hidden="true">{line.oldLine}</span><span className="pd-diff-number" aria-hidden="true">{line.newLine}</span><span className="pd-diff-text">{line.text || ' '}</span>
-			</span>)}</pre>
-		</div> : !item.preview && <p className="pd-changes-notice">{t('changes.emptyFile')}</p>}
-	</>;
-}
-
-function ChangesDialog({ items, initialPath, returnFocus, onClose }: { items: UiFileChange[]; initialPath: string; returnFocus: HTMLElement | null; onClose(): void }) {
-	const { t } = useT();
-	const ref = useRef<HTMLDialogElement>(null);
-	const titleId = useId();
-	const [path, setPath] = useState(initialPath);
-	const selected = items.find((item) => item.path === path) ?? items[0];
-	useEffect(() => {
-		const dialog = ref.current;
-		const trigger = returnFocus;
-		dialog?.showModal();
-		return () => {
-			dialog?.close();
-			const anotherDialog = Array.from(document.querySelectorAll('[role="dialog"][aria-modal="true"]')).some((element) => element !== dialog);
-			if (!anotherDialog && trigger?.isConnected && trigger.getClientRects().length > 0 && !trigger.closest('[inert]')) trigger.focus({ preventScroll: true });
-		};
-	}, [returnFocus]);
-	return createPortal(<dialog ref={ref} className="pd-changes-dialog" role="dialog" aria-modal="true" aria-labelledby={titleId} onCancel={(event) => { event.preventDefault(); onClose(); }} onKeyDown={(event) => event.stopPropagation()}>
-		<header className="pd-changes-dialog-header"><div><h2 id={titleId}>{t('changes.title')}</h2><span>{t('changes.count', { count: items.length })}</span><ChangeStats items={items} /></div><button type="button" className="pd-icon-button" aria-label={t('changes.close')} onClick={onClose} autoFocus><Icon name="close" width="18" height="18" /></button></header>
-		<p className="pd-changes-description">{t('changes.description')}</p>
-		<div className="pd-changes-review">
-			<nav className="pd-changes-file-list" aria-label={t('changes.files')}>
-				{items.map((item) => <button type="button" key={item.path} className={`pd-changes-file${selected?.path === item.path ? ' is-selected' : ''}`} title={item.path} aria-current={selected?.path === item.path ? 'true' : undefined} onClick={() => setPath(item.path)}><FileLabel item={item} /><ChangeStats items={[item]} /></button>)}
-			</nav>
-			{selected && <section className="pd-changes-diff" aria-label={t('changes.diffFor', { path: selected.path })}>
-				<div className="pd-changes-diff-header"><span title={selected.path}>{selected.path}</span><ChangeStats items={[selected]} /></div>
-				<DiffPreview key={selected.path} item={selected} />
-			</section>}
-		</div>
-	</dialog>, document.body);
-}
-
-/** Conversation-scoped tool snapshots, never the workspace's unrelated Git status. */
-export function ComposerChanges({ items }: { items: UiFileChange[] }) {
-	const { t } = useT();
-	const [expanded, setExpanded] = useState(false);
-	const [reviewPath, setReviewPath] = useState<string | null>(null);
-	const reviewTrigger = useRef<HTMLButtonElement | null>(null);
-	const listId = useId();
-	if (items.length === 0) return null;
-	return <section className="pd-composer-changes" aria-label={t('changes.title')}>
-		<div className="pd-composer-changes-summary">
-			<button type="button" className="pd-composer-changes-toggle" aria-expanded={expanded} aria-controls={listId} onClick={() => setExpanded((value) => !value)}>
-				<Icon name="chevronRight" className={expanded ? 'is-expanded' : ''} width="14" height="14" /><span role="status">{t('changes.count', { count: items.length })}</span><ChangeStats items={items} />
-			</button>
-			<button type="button" className="pd-composer-changes-review" aria-haspopup="dialog" onClick={(event) => { reviewTrigger.current = event.currentTarget; setReviewPath(items[0]!.path); }}>{t('changes.review')}<Icon name="panelRight" width="14" height="14" /></button>
-		</div>
-		<div id={listId} className="pd-composer-changes-files" hidden={!expanded}>
-			{items.map((item) => <button key={item.path} type="button" className="pd-composer-changes-file" title={item.path} aria-haspopup="dialog" onClick={(event) => { reviewTrigger.current = event.currentTarget; setReviewPath(item.path); }}><FileLabel item={item} /><ChangeStats items={[item]} /><Icon name="chevronRight" width="12" height="12" /></button>)}
-		</div>
-		{reviewPath !== null && <ChangesDialog items={items} initialPath={reviewPath} returnFocus={reviewTrigger.current} onClose={() => setReviewPath(null)} />}
-	</section>;
+/** Conversation snapshots: live summary above the input, settled card below the transcript. */
+export function ComposerChanges({ items, running = false, liveTarget }: { items: UiFileChange[]; running?: boolean; liveTarget?: HTMLElement | null }) {
+  const { t, locale } = useT(), zh = locale === 'zh-CN';
+  const [showAll, setShowAll] = useState(false);
+  const [liveFilesOpen, setLiveFilesOpen] = useState(false);
+  const [reviewPath, setReviewPath] = useState<string | null>(null);
+  const reviewTrigger = useRef<HTMLElement | null>(null);
+  const primary = useRef<HTMLButtonElement | null>(null);
+  const popupToggle = useRef<HTMLButtonElement | null>(null);
+  const liveRoot = useRef<HTMLElement | null>(null);
+  const entryHasFocus = useRef(false);
+  const listId = useId();
+  const trackBlur = (event: FocusEvent<HTMLElement>) => {
+    entryHasFocus.current = event.relatedTarget instanceof Node && event.currentTarget.contains(event.relatedTarget);
+  };
+  useLayoutEffect(() => {
+    // Switching entries or removing a file from a snapshot can remove its focused control.
+    // Restore only focus we owned; an open review dialog or editor must keep its focus.
+    if (entryHasFocus.current && document.activeElement === document.body) {
+      entryHasFocus.current = false;
+      (primary.current ?? document.querySelector<HTMLTextAreaElement>('.pd-composer-shell textarea'))?.focus({ preventScroll: true });
+    }
+  }, [running, items]);
+  const openReview = (path: string, event: MouseEvent<HTMLButtonElement>) => {
+    reviewTrigger.current = event.currentTarget;
+    setReviewPath(path); setLiveFilesOpen(false);
+  };
+  useEffect(() => {
+    if (!running) setLiveFilesOpen(false);
+  }, [running]);
+  useEffect(() => {
+    if (items.length === 0) { setReviewPath(null); setLiveFilesOpen(false); setShowAll(false); }
+  }, [items.length]);
+  useEffect(() => {
+    if (!liveFilesOpen) return;
+    const outside = (event: PointerEvent) => { if (event.target instanceof Node && !liveRoot.current?.contains(event.target)) setLiveFilesOpen(false); };
+    const key = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      event.preventDefault(); event.stopPropagation(); setLiveFilesOpen(false); popupToggle.current?.focus();
+    };
+    document.addEventListener('pointerdown', outside);
+    document.addEventListener('keydown', key, true);
+    return () => { document.removeEventListener('pointerdown', outside); document.removeEventListener('keydown', key, true); };
+  }, [liveFilesOpen]);
+  if (!items.length) return null;
+  const single = items.length === 1 ? items[0]! : null;
+  const title = single ? (zh ? `已修改 ${single.path.split(/[\\/]/).at(-1)}` : `Edited ${single.path.split(/[\\/]/).at(-1)}`) : t('changes.count', { count: items.length });
+  const visible = showAll ? items : items.slice(0, INITIAL_FILES);
+  const fileRows = (files: UiFileChange[]) => files.map(item => <button key={item.path} type="button" className="pd-composer-changes-file" data-change-path={item.path} title={item.path} aria-label={t('changes.diffFor', { path: item.path })} aria-haspopup="dialog" onClick={event => openReview(item.path, event)}>
+    <FileLabel item={item} /><ChangeStats items={[item]} /><Icon name="chevronRight" width="12" height="12" />
+  </button>);
+  const liveSummary = <section ref={liveRoot} className="pd-composer-changes is-running" aria-label={t('changes.files')} onFocusCapture={() => { entryHasFocus.current = true; }} onBlurCapture={trackBlur}>
+    <div className="pd-composer-changes-summary">
+      <button ref={primary} type="button" className="pd-composer-changes-review pd-changes-live-main" aria-haspopup="dialog" title={t('changes.files')} onClick={event => openReview(items[0]!.path, event)}>
+        <Icon name="file" width="15" height="15" /><span>{t('changes.count', { count: items.length })}</span><ChangeStats items={items} />
+      </button>
+      <button ref={popupToggle} type="button" className="pd-composer-changes-toggle" aria-expanded={liveFilesOpen} aria-controls={listId} aria-label={zh ? '查看已修改的文件列表' : 'Show changed files'} onClick={() => setLiveFilesOpen(value => !value)}><Icon name="chevronDown" width="14" height="14" /></button>
+    </div>
+    {liveFilesOpen && <div id={listId} className="pd-changes-live-popover" role="region" aria-label={t('changes.files')}><div className="pd-changes-live-scope">{zh ? '本次对话' : 'This conversation'}</div>{fileRows(items)}</div>}
+  </section>;
+  const completed = <section className="pd-composer-changes pd-conversation-changes" aria-label={t('changes.files')} onFocusCapture={() => { entryHasFocus.current = true; }} onBlurCapture={trackBlur}>
+    <div className="pd-changes-card-header">
+      <button ref={primary} type="button" className="pd-changes-card-main" aria-haspopup="dialog" onClick={event => openReview(items[0]!.path, event)}>
+        <span className="pd-changes-card-icon"><Icon name="file" width="21" height="21" /></span>
+        <span className="pd-changes-card-copy"><strong title={single?.path}>{title}</strong><span className="pd-changes-card-subtitle"><span>{zh ? '本次对话' : 'This conversation'}</span><ChangeStats items={items} /></span></span>
+      </button>
+      <button type="button" className="pd-composer-changes-review" aria-haspopup="dialog" onClick={event => openReview(items[0]!.path, event)}>{t('changes.review')}<Icon name="arrowRight" width="13" height="13" /></button>
+    </div>
+    {!single && <div id={listId} className="pd-composer-changes-files">{fileRows(visible)}
+      {items.length > INITIAL_FILES && <button type="button" className="pd-changes-show-more" aria-expanded={showAll} aria-controls={listId} onClick={() => setShowAll(value => !value)}>{showAll ? (zh ? '收起文件列表' : 'Collapse files') : (zh ? `显示其余 ${items.length - INITIAL_FILES} 个文件` : `Show ${items.length - INITIAL_FILES} more files`)}<Icon name={showAll ? 'chevronUp' : 'chevronDown'} width="13" height="13" /></button>}
+    </div>}
+  </section>;
+  return <>
+    {running && liveTarget ? createPortal(liveSummary, liveTarget) : completed}
+    {reviewPath !== null && <ChangesDialog items={items} initialPath={reviewPath} returnFocus={reviewTrigger.current} getReturnFocus={() => primary.current ?? document.querySelector<HTMLTextAreaElement>('.pd-composer-shell textarea')} onClose={() => setReviewPath(null)} />}
+  </>;
 }

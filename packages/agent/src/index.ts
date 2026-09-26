@@ -48,6 +48,7 @@ import type {
 	UiExtensionSummary,
 	UiFileChange,
 	UiMessage,
+	UiConversationRun,
 	UiModelSummary,
 	UiModelProvider,
 	UiDiscoverProviderModelsRequest,
@@ -65,6 +66,8 @@ import type {
 	UiSessionTreeNode,
 	UiQueuedAttachment,
 	UiSessionSummary,
+	UiSessionRuntimeState,
+	UiSessionRuntimeSummary,
 	UiSlashCommand,
 	UiSlashCommandRequest,
 	UiThinkingLevel,
@@ -82,6 +85,17 @@ import { applyPluginMutation, readPluginCatalog, readPluginResourcePreview } fro
 import { cloneQueuedMessage, reconcileQueuedMessages, type QueuedMessageRecord, type SdkQueueSnapshot } from './queuedMessages.ts';
 import { SessionFileChanges } from './fileChanges.ts';
 import { createPersonalizationService } from './personalization.ts';
+import { AttachmentStore } from './attachmentStore.ts';
+import { DurableInputQueue } from './inputQueue.ts';
+import { ConversationRunTracker, isConversationRunEntry, latestUnassociatedRunId, readConversationRuns, selectConversationRuns } from './conversationRuns.ts';
+import { requireInputQueueScope, type UiInputQueue, type UiInputQueueScope, type UiInputQueueMutation, type UiInputReceipt, type UiSubmitInput } from '../../shared/src/inputFeatures.ts';
+import type { ModelTestRequest, ProjectDefaultsWrite } from '../../shared/src/managementFeatures.ts';
+import { ModelTestService } from './modelTest.ts';
+import { ProjectDefaultsService } from './projectDefaults.ts';
+import { McpManager } from './mcpManager.ts';
+import type { UiMcpSaveRequest, UiMcpTarget } from '../../shared/src/mcpFeatures.ts';
+import type { PluginUpdateCheck } from '../../shared/src/pluginUpdates.ts';
+import { checkPluginUpdate } from './pluginUpdates.ts';
 
 export interface AgentInitOptions {
 	cwd: string;
@@ -108,6 +122,8 @@ const MAX_THINKING_CHARS = 48000;
 const THINKING_UPDATE_INTERVAL_MS = 80;
 /** Timeline entries sent in the ready payload; older history loads page-by-page. */
 const READY_HISTORY_LIMIT = 400;
+/** Bound attachment data in every history/snapshot payload, prioritizing recent messages. */
+export const HISTORY_ATTACHMENT_BUDGET = 8 * 1024 * 1024;
 const HISTORY_PAGE_MAX = 500;
 const MAX_LOADED_CONTEXTS = 12;
 const TEXT_ATTACHMENT_MARKER = '\n\n<!-- pi-desktop:attachments-v1 -->\n';
@@ -124,24 +140,36 @@ function createRuntimeFactory(
 	projectTrustByCwd: Map<string, boolean>,
 	trackFileChanges: (session: PiRuntime['session'], tracker: SessionFileChanges) => void,
 	publishFileChanges: (sessionId: string, changes: UiFileChange[]) => void,
+	mcp: McpManager,
 ): CreateAgentSessionRuntimeFactory {
 	return async ({ cwd, agentDir, sessionManager, sessionStartEvent }) => {
-		const needsTrust = hasTrustRequiringProjectResources(cwd);
+		const nativeNeedsTrust = hasTrustRequiringProjectResources(cwd);
+		const needsTrust = nativeNeedsTrust || existsSync(join(cwd, '.pi', 'mcp-servers.json'));
 		const trustStore = new ProjectTrustStore(agentDir);
 		const savedTrust = needsTrust ? trustStore.get(cwd) : null;
 		const cachedTrust = projectTrustByCwd.get(cwd);
 		const bootstrapSettings = SettingsManager.create(cwd, agentDir, { projectTrusted: false });
 		const defaultTrust = bootstrapSettings.getDefaultProjectTrust();
 		const shouldPrompt = needsTrust && cachedTrust === undefined && savedTrust === null && defaultTrust === 'ask';
-		const projectTrusted = !needsTrust || (cachedTrust ?? savedTrust ?? (defaultTrust === 'always'));
+		let projectTrusted = !needsTrust || (cachedTrust ?? savedTrust ?? (defaultTrust === 'always'));
+		// The SDK does not know our MCP-only resource file, so it would never invoke
+		// the resource loader's trust resolver for this case.
+		if (shouldPrompt && !nativeNeedsTrust) {
+			const decision = await requestProjectTrust(cwd);
+			projectTrusted = decision.trusted === true; projectTrustByCwd.set(cwd, projectTrusted);
+			if (decision.remember) trustStore.set(cwd, projectTrusted);
+		}
 		const settingsManager = SettingsManager.create(cwd, agentDir, { projectTrusted });
 		const fileChanges = new SessionFileChanges(cwd, sessionManager, (changes) => publishFileChanges(sessionManager.getSessionId(), changes));
 		const services = await createAgentSessionServices({
 			cwd,
 			agentDir,
 			settingsManager,
-			resourceLoaderOptions: { extensionFactories: [{ name: 'desktop-file-changes', hidden: true, factory: fileChanges.extension }] },
-			resourceLoaderReloadOptions: shouldPrompt ? {
+			resourceLoaderOptions: { extensionFactories: [
+				{ name: 'desktop-file-changes', hidden: true, factory: fileChanges.extension },
+				{ name: 'desktop-mcp', hidden: true, factory: mcp.extension(cwd, sessionManager.getSessionId()) },
+			] },
+			resourceLoaderReloadOptions: shouldPrompt && nativeNeedsTrust ? {
 				resolveProjectTrust: async () => {
 					const decision = await requestProjectTrust(cwd);
 					const trusted = decision.trusted === true;
@@ -179,6 +207,7 @@ class SingleAgentService {
 	private activeConfigurationCalls = 0;
 	private lifecycleOperation: Promise<unknown> | null = null;
 	private closing = false;
+	private runtimeModified = new Date().toISOString();
 	private pluginReloadError: string | null = null;
 	private pluginModelError: string | null = null;
 	private contextRefreshSession: PiRuntime['session'] | null = null;
@@ -193,7 +222,17 @@ class SingleAgentService {
 	private queueRefreshSession: PiRuntime['session'] | null = null;
 	private readonly queuedPreviewIds = new WeakMap<object, string>();
 	private deliveredEmptyQueued = { steer: 0, followUp: 0 };
+	private inputQueue: DurableInputQueue | null = null;
+	private inputQueueSession: PiRuntime['session'] | null = null;
+	private readonly inputRequest = new AsyncLocalStorage<UiSubmitInput>();
+	private readonly inputPending = new Map<string, Promise<UiInputReceipt>>();
+	private queueResumePending = false;
+	private readonly modelTests = new ModelTestService();
+	private readonly projectDefaults = new ProjectDefaultsService();
+	private readonly mcp: McpManager;
+	private mcpOwnerId: string | null = null;
 	private readonly fileChangeTrackers = new WeakMap<PiRuntime['session'], SessionFileChanges>();
+	private conversationRuns: ConversationRunTracker | null = null;
 	private state: Omit<AgentSnapshot, 'sequence'> = {
 		status: 'uninitialized',
 		model: '',
@@ -207,6 +246,7 @@ class SingleAgentService {
 		sessionPath: null,
 		messages: [],
 		activities: [],
+		runs: [],
 		queuedCount: 0,
 		queuedMessages: [],
 		fileChanges: [],
@@ -220,11 +260,13 @@ class SingleAgentService {
 		requestExtensionDialog: RequestExtensionDialog,
 		projectTrustByCwd: Map<string, boolean>,
 		reserveSessionSwitch: (path: string) => () => void,
+		mcp: McpManager,
 	) {
+		this.mcp = mcp;
 		this.projectTrustByCwd = projectTrustByCwd;
 		this.createRuntime = createRuntimeFactory(requestProjectTrust, this.projectTrustByCwd,
 			(session, tracker) => { this.fileChangeTrackers.set(session, tracker); },
-			(sessionId, items) => { if (this.runtime?.session.sessionId === sessionId) this.fire({ type: 'file-changes', items }); });
+			(sessionId, items) => { if (this.runtime?.session.sessionId === sessionId) this.fire({ type: 'file-changes', items }); }, mcp);
 		this.requestExtensionDialog = requestExtensionDialog;
 		this.reserveSessionSwitch = reserveSessionSwitch;
 	}
@@ -243,30 +285,62 @@ class SingleAgentService {
 			this.state.queuedCount === 0 && (this.runtime?.session.isIdle ?? true);
 	}
 
+	/** Lightweight status projection; never copies transcript or attachment data. */
+	getRuntimeSummary(waiting?: UiSessionRuntimeState): UiSessionRuntimeSummary | null {
+		if (!this.state.sessionPath) return null;
+		const failure = this.state.error;
+		const runtime: UiSessionRuntimeState = waiting ?? (this.state.status === 'busy' || this.state.status === 'starting'
+			? { phase: 'running' } : failure || this.state.status === 'error'
+				? { phase: 'failed', message: failure || this.state.statusMessage } : { phase: 'idle' });
+		return { cwd: this.cwd, path: this.state.sessionPath, runtime };
+	}
+
+	getLiveSidebarEntry(runtime: UiSessionRuntimeState): UiSessionSummary | null {
+		if (!this.state.sessionPath || !this.state.sessionId || runtime.phase === 'idle') return null;
+		return { path: this.state.sessionPath, id: this.state.sessionId, firstMessage: this.state.messages.find((message) => message.role === 'user')?.text ?? '',
+			modified: this.runtimeModified, messageCount: this.state.messages.length, runtime };
+	}
+
 	getSnapshot(): AgentSnapshot {
 		return {
 			...this.state,
 			sequence: this.sequence,
 			availableThinkingLevels: [...this.state.availableThinkingLevels],
 			contextUsage: this.state.contextUsage ? { ...this.state.contextUsage } : null,
-			messages: this.state.messages.map((message) => ({ ...message })),
+			messages: limitHistoryAttachments(this.state.messages).map((message) => ({ ...message })),
 			activities: this.state.activities.map((activity) => ({ ...activity })),
+			runs: this.state.runs?.map(run => ({ ...run })),
 			queuedMessages: this.state.queuedMessages.map(cloneQueuedMessage),
 			fileChanges: this.state.fileChanges.map((file) => ({ ...file })),
 		};
 	}
+	getSessionBranchHead(): { path: string; leafId: string | null } | null { const manager = this.runtime?.session.sessionManager; const path = this.runtime?.session.sessionFile; return manager && path ? { path, leafId: manager.getLeafId() } : null; }
 
 	/** One oldest-first page of the loaded branch's timeline for long conversations. */
 	getHistoryPage(offset: number, limit: number): UiHistoryPage {
+		if (this.lifecycleOperation) throw new Error('会话正在切换，请稍后加载历史');
 		const session = this.runtime?.session;
 		if (!session) throw new Error('会话尚未初始化');
 		if (!Number.isInteger(offset) || !Number.isInteger(limit) || offset < 0 || limit < 1 || limit > HISTORY_PAGE_MAX) {
 			throw new Error('历史分页参数无效');
 		}
-		return historyPageSlice(historyTimeline(session.sessionManager.getBranch()), offset, limit);
+		return historyPageSlice(historyTimeline(session.sessionManager.getBranch(), this.conversationRuns?.active), offset, limit);
 	}
 
 	/** Aggregate usage of the loaded session, matching Pi CLI /session. */
+	getMessageAttachment(sessionPath: string, messageId: string, index: number): UiAttachment {
+		if (this.lifecycleOperation || this.state.sessionPath !== sessionPath) throw new Error('会话已切换，请重新打开图片');
+		if (!Number.isInteger(index) || index < 0 || index > 999) throw new Error('附件索引无效');
+		const entry = this.runtime?.session.sessionManager.getBranch().find((item) => item.id === messageId);
+		if (!entry || entry.type !== 'message' || entry.message.role !== 'user') throw new Error('当前分支未找到该附件');
+		const attachment = userAttachments(entry.message)?.[index];
+		if (!attachment) throw new Error('附件不存在');
+		const size = attachment.kind === 'image' ? attachment.data.length : Buffer.byteLength(attachment.text, 'utf8');
+		if (size > 20 * 1024 * 1024) throw new Error('图片超过单次预览的 20 MiB 限制');
+		if (attachment.kind === 'image' && !/^image\/(?:png|jpeg|webp|gif|avif|bmp)$/i.test(attachment.mimeType)) throw new Error('不支持的图片类型');
+		return { ...attachment };
+	}
+
 	getSessionStats(): UiSessionStats {
 		const session = this.runtime?.session;
 		if (!session) throw new Error('会话尚未初始化');
@@ -284,6 +358,14 @@ class SingleAgentService {
 			},
 			cost: stats.cost,
 		};
+	}
+
+	getFileCheckpoint() { const session = this.runtime?.session; return session ? this.fileChangeTrackers.get(session)?.getCheckpoint() ?? Promise.resolve(null) : Promise.resolve(null); }
+	async rewindFileCheckpoint(request: { id: string; version: string }) {
+		const session = this.requireIdleSession(), tracker = this.fileChangeTrackers.get(session);
+		if (!tracker) throw new Error('此会话没有可回退的文件检查点');
+		return this.runLifecycle(async () => { const result = await tracker.rewindCheckpoint(request);
+			this.fire({ type: 'file-changes', items: tracker.restore() }); return result; });
 	}
 
 	/** Writes the visible branch to disk in the requested format. */
@@ -319,19 +401,21 @@ class SingleAgentService {
 			if (message.role === 'toolResult') return { kind: 'tool', label: `tool: ${message.toolName}` };
 			return { kind: 'other', label: message.role };
 		};
-		const mapNode = (node: SessionTreeNode): UiSessionTreeNode => {
+		const mapNode = (node: SessionTreeNode): UiSessionTreeNode[] => {
+			const children = node.children.flatMap(mapNode);
+			if (isConversationRunEntry(node.entry)) return children;
 			const { kind, label } = describe(node.entry);
-			return {
+			return [{
 				id: node.entry.id,
 				kind,
 				label: node.label ?? label,
-				childCount: node.children.length,
-				children: node.children.map(mapNode),
+				childCount: children.length,
+				children,
 				active: activeIds.has(node.entry.id),
 				timestamp: node.entry.timestamp,
-			};
+			}];
 		};
-		return manager.getTree().map(mapNode);
+		return manager.getTree().flatMap(mapNode);
 	}
 
 	/** Move the visible branch leaf onto another entry (branch switch). */
@@ -370,7 +454,7 @@ class SingleAgentService {
 			const manager = session.sessionManager;
 			const header = manager.getHeader();
 			if (!header || !manager.isPersisted()) throw new Error('此会话无法保存名称');
-			writeFileSync(path, [header, ...manager.getEntries()].map((entry) => JSON.stringify(entry)).join('\n') + '\n', { flag: 'wx' });
+			writeFileSync(path, [header, ...manager.getEntries()].map((entry) => JSON.stringify(entry)).join('\n') + '\n', { flag: 'wx', mode: 0o600 });
 			manager.setSessionFile(path);
 		}
 	}
@@ -790,6 +874,47 @@ class SingleAgentService {
 		}
 	}
 
+	private inputQueueScope(requested?: UiInputQueueScope): UiInputQueueScope {
+		const session = this.runtime?.session;
+		if (!session || this.lifecycleOperation || this.closing) throw new Error('会话正在切换，请稍后访问队列');
+		const current = { cwd: this.cwd, sessionPath: session.sessionFile ?? null, sessionId: session.sessionId };
+		if (requested !== undefined) {
+			const scope = requireInputQueueScope(requested);
+			if (sessionPathKey(scope.cwd) !== sessionPathKey(current.cwd) || scope.sessionId !== current.sessionId
+				|| (scope.sessionPath === null ? current.sessionPath !== null : current.sessionPath === null || sessionPathKey(scope.sessionPath) !== sessionPathKey(current.sessionPath))) throw new Error('输入队列所属会话已变化，请返回原会话后重试');
+		}
+		return current;
+	}
+	getInputQueue(requested?: UiInputQueueScope): UiInputQueue {
+		const scope = this.inputQueueScope(requested);
+		return { ...(this.inputQueue?.snapshot() ?? { version: 0, paused: false, items: [] }), scope };
+	}
+	checkPluginUpdate(request: PluginUpdateCheck) { if (!this.runtime) throw new Error('会话尚未初始化'); return checkPluginUpdate(this.runtime.services, request); }
+	testProviderModel(request: ModelTestRequest) { if (!this.runtime) throw new Error('会话尚未初始化'); return this.modelTests.test(this.runtime.session.modelRuntime, request); }
+	cancelProviderModelTest(id: string): void { this.modelTests.cancel(id); }
+	getProjectDefaults() { if (!this.runtime) throw new Error('会话尚未初始化'); return this.projectDefaults.snapshot(this.cwd, this.agentDirectory, this.runtime.services.settingsManager.isProjectTrusted()); }
+	saveProjectDefaults(request: ProjectDefaultsWrite) { if (!this.runtime) throw new Error('会话尚未初始化'); return this.projectDefaults.save(this.cwd, this.agentDirectory, this.runtime.services.settingsManager.isProjectTrusted(), request); }
+
+	mutateInputQueue(request: UiInputQueueMutation): UiInputQueue {
+		if (this.lifecycleOperation || this.closing) throw new Error('会话正在切换，请稍后修改队列');
+		if (!this.inputQueue) throw new Error('输入队列尚未初始化');
+		const scope = this.inputQueueScope(request?.scope);
+		return { ...this.inputQueue.mutate(request), scope };
+	}
+
+	async submitInput(request: UiSubmitInput): Promise<UiInputReceipt> {
+		if (!request || request.sessionId !== this.runtime?.session.sessionId || typeof request.text !== 'string' || request.text.length > 200_000) throw new Error('输入所属会话已变化或文字无效');
+		const queue = this.inputQueue; if (!queue) throw new Error('输入队列尚未初始化');
+		const raw = withTextAttachments(request.text, request.attachments ?? []); imageAttachments(request.attachments ?? []);
+		const previous = queue.begin(request, raw);
+		const existing = this.inputPending.get(request.id); if (existing) return existing;
+		if (previous) { if (previous.state === 'failed') throw new Error(previous.message ?? '此输入之前未能接收'); return previous; }
+		const operation = this.inputRequest.run(request, () => this.prompt(request.text, request.behavior, request.attachments).then(() => {
+			queue.acknowledge(request.id); return queue.receipt(request.id)!;
+		}, (error: unknown) => { queue.fail(request.id, error); throw error; }).finally(() => { this.inputPending.delete(request.id); }));
+		this.inputPending.set(request.id, operation); return operation;
+	}
+
 	/** Acknowledge after pi accepts the prompt, while the run continues through events. */
 	async prompt(text: string, behavior?: 'steer' | 'followUp', attachments: UiAttachment[] = [], expandPromptTemplates = true): Promise<void> {
 		if (this.lifecycleOperation) throw new Error('会话正在切换，请稍后发送消息');
@@ -802,6 +927,8 @@ class SingleAgentService {
 		}
 		const promptText = withTextAttachments(text, attachments);
 		const images = imageAttachments(attachments);
+		const tracker = this.conversationRuns;
+		const startedRun = session.isIdle && !tracker?.active ? tracker?.begin() : undefined;
 		if (this.state.status === 'idle') this.fire({ type: 'status', status: 'busy' });
 		this.activePromptCalls += 1;
 		await new Promise<void>((resolve, reject) => {
@@ -814,13 +941,16 @@ class SingleAgentService {
 				streamingBehavior: behavior,
 				images,
 				preflightResult: (accepted) => {
+					// SDK abort only cancels an already-started agent loop. A request
+					// cancelled during auth/hooks must not start a fresh loop afterward.
+					if (accepted && startedRun && tracker?.wasCancelled(startedRun.id)) throw new Error('请求已取消');
 					if (accepted && !acknowledged) {
 						acknowledged = true;
 						resolve();
 					}
 				},
 			})).catch((error: unknown) => {
-				if (session.isIdle) this.finishInterruptedAssistant(errorMessage(error));
+				if (session.isIdle) { this.finishInterruptedAssistant(errorMessage(error)); tracker?.finish('failed'); }
 				this.fire({ type: 'error', message: errorMessage(error) });
 				if (!acknowledged) {
 					acknowledged = true;
@@ -828,6 +958,8 @@ class SingleAgentService {
 				}
 			}).finally(() => {
 				this.activePromptCalls -= 1;
+				// Handled extension/input commands may never emit agent_start/settled.
+				if (startedRun && tracker?.active?.id === startedRun.id && session.isIdle) tracker.finish(this.assistantId ? 'interrupted' : undefined);
 				if (this.activePromptCalls === 0 && (this.runtime?.session ?? session).isIdle && this.state.status === 'busy') {
 					this.finishInterruptedAssistant();
 					this.fire({ type: 'status', status: 'idle' });
@@ -837,13 +969,17 @@ class SingleAgentService {
 	}
 
 	/** Rewind the visible branch to just before a sent user message and resend the edited text. */
-	async editUserMessage(entryId: string, text: string, attachments: UiAttachment[] = []): Promise<void> {
+	async editUserMessage(entryId: string, text: string, attachments?: UiAttachment[]): Promise<void> {
 		const runtime = this.runtime;
 		if (!runtime) throw new Error('Agent is not initialized');
 		this.requireIdleSession();
+		// History previews may omit heavy attachments. Read the originals before
+		// rewinding so an edit/regenerate never silently loses those attachments.
+		const entry = runtime.session.sessionManager.getEntry(entryId);
+		const preserved = attachments ?? (entry?.type === 'message' && entry.message.role === 'user' ? userAttachments(entry.message) : undefined);
 		const result = await this.runExtensionSessionAction(runtime, () => runtime.session.navigateTree(entryId));
 		if (result.cancelled) return;
-		await this.prompt(text, undefined, attachments);
+		await this.prompt(text, undefined, preserved);
 	}
 
 	/** Fork the conversation in place: move the visible branch leaf to an assistant message so the next prompt grows a new branch. */
@@ -854,53 +990,10 @@ class SingleAgentService {
 		await this.runExtensionSessionAction(runtime, () => runtime.session.navigateTree(entryId));
 	}
 
-	/** Rebuild Pi's message queue so a queued instruction can be edited, removed, or steered early. */
+	/** Stable-ID transaction; never clears and asynchronously rebuilds SDK payloads. */
 	async updateQueuedMessage(id: string, action: 'edit' | 'remove' | 'steer', text?: string): Promise<void> {
-		if (this.lifecycleOperation) throw new Error('会话正在切换，请稍后发送消息');
-		const session = this.runtime?.session;
-		if (!session) throw new Error('Agent is not initialized');
-		const record = this.queuedMessages.find((entry) => entry.item.id === id);
-		if (!record) throw new Error('该排队消息已发送或不存在');
-		if (action === 'edit' && (typeof text !== 'string' || text.trim().length === 0)) throw new Error('排队消息内容不能为空');
-		// Images ride the SDK queue messages; key them by raw text so the rebuild can re-attach.
-		const imagesByRaw = new Map<string, { type: 'image'; data: string; mimeType: string }[][]>();
-		for (const message of session.agent.peekQueuedMessages()) {
-			if (message.role !== 'user') continue;
-			const raw = queuedMessageText(message);
-			const images = (Array.isArray(message.content) ? message.content : []).filter((part): part is { type: 'image'; data: string; mimeType: string } =>
-				part?.type === 'image' && typeof (part as { data?: unknown }).data === 'string' && typeof (part as { mimeType?: unknown }).mimeType === 'string');
-			if (!images.length) continue;
-			const pool = imagesByRaw.get(raw) ?? [];
-			pool.push(images);
-			imagesByRaw.set(raw, pool);
-		}
-		const takeImages = (raw: string) => imagesByRaw.get(raw)?.shift() ?? [];
-		const cleared = session.clearQueue();
-		const steering = [...cleared.steering];
-		const followUp = [...cleared.followUp];
-		const target = record.item.behavior === 'steer' ? steering : followUp;
-		const index = target.indexOf(record.raw);
-		if (index >= 0) target.splice(index, 1);
-		if (action === 'edit') {
-			const markerIndex = record.raw.indexOf(TEXT_ATTACHMENT_MARKER);
-			target.splice(Math.max(index, 0), 0, text + (markerIndex >= 0 ? record.raw.slice(markerIndex) : ''));
-		}
-		this.queueMutationDepth += 1;
-		let failure: unknown = null;
-		try {
-			for (const raw of steering) { try { await session.steer(raw, takeImages(raw)); } catch (error) { failure ??= error; } }
-			for (const raw of followUp) { try { await session.followUp(raw, takeImages(raw)); } catch (error) { failure ??= error; } }
-			if (action === 'steer') {
-				if (this.state.status === 'idle') this.fire({ type: 'status', status: 'busy' });
-				await session.steer(record.raw, takeImages(record.raw));
-			}
-		} finally {
-			this.queueMutationDepth -= 1;
-			this.publishQueue({ steering: session.getSteeringMessages(), followUp: session.getFollowUpMessages() });
-		}
-		if (failure) throw failure instanceof Error ? failure : new Error(String(failure));
+		this.mutateInputQueue({ requestId: randomUUID(), expectedVersion: this.getInputQueue().version, id, action, text });
 	}
-
 	/**
 	 * Ask the current model for a commit message covering the given git context.
 	 * Standalone LLM call: never touches the session transcript, so it is safe
@@ -939,8 +1032,10 @@ class SingleAgentService {
 
 	/** Abort the active run. */
 	async abort(): Promise<void> {
+		this.conversationRuns?.requestCancel();
 		await this.runtime?.session.abort();
 		this.finishInterruptedAssistant();
+		this.conversationRuns?.finish('cancelled');
 	}
 
 	/** Start a fresh conversation in the same working directory. */
@@ -1057,6 +1152,15 @@ class SingleAgentService {
 	private async bindSession(): Promise<void> {
 		const runtime = this.runtime;
 		if (!runtime) return;
+		if (this.conversationRuns?.manager !== runtime.session.sessionManager) {
+			this.conversationRuns?.finish('interrupted');
+			const manager = runtime.session.sessionManager;
+			this.conversationRuns = new ConversationRunTracker(manager,
+				run => { if (this.runtime?.session.sessionManager === manager) this.fire({ type: 'run', run }); },
+				error => this.fire({ type: 'error', message: `流程时间记录无法保存：${errorMessage(error)}` }));
+		}
+		if (this.mcpOwnerId && this.mcpOwnerId !== runtime.session.sessionId) await this.mcp.disposeOwner(this.mcpOwnerId);
+		this.mcpOwnerId = runtime.session.sessionId;
 		this.unsubscribe?.();
 		this.unsubscribe = null;
 		await runtime.session.bindExtensions({
@@ -1081,10 +1185,34 @@ class SingleAgentService {
 				const message = `Pi 扩展 ${extensionPath}：${error}`;
 				const execution = this.slashCommandExecution.getStore();
 				if (execution && event === 'command' && extensionPath === `command:${execution.name}`) execution.error = message;
+				if (event === 'command') this.conversationRuns?.assistantEnd('error');
 				this.fire({ type: 'error', message });
 			},
 		});
+		if (this.inputQueueSession !== runtime.session) {
+			this.inputQueue?.dispose();
+			this.inputQueueSession = runtime.session;
+			this.inputQueue = new DurableInputQueue(runtime.session, { cwd: this.cwd, sessionPath: runtime.session.sessionFile ?? null }, join(runtime.services.agentDir, 'desktop-inputs', 'queues'), new AttachmentStore(join(runtime.services.agentDir, 'desktop-inputs', 'attachments')), {
+				currentInput: () => this.inputRequest.getStore(),
+				preview: (message) => {
+					const names = this.inputRequest.getStore()?.attachments?.filter((item) => item.kind === 'image') ?? this.queuedPrompt.getStore()?.images ?? [];
+					let image = 0; return { text: userText(message as MessageLike), attachments: (userAttachments(message as MessageLike) ?? []).map(({ kind, name, mimeType }) => ({ kind, mimeType, name: kind === 'image' ? names[image++]?.name ?? name : name })) };
+				},
+				changed: () => { const snapshot = this.inputQueue?.snapshot(); if (snapshot) this.fire({ type: 'queue', count: snapshot.items.length, items: snapshot.items }); },
+				error: (message) => this.fire({ type: 'error', message }),
+				resume: () => this.scheduleQueueResume(),
+			});
+		}
 		this.unsubscribe = runtime.session.subscribe((event) => this.onSessionEvent(event));
+	}
+
+	private scheduleQueueResume(): void {
+		if (this.queueResumePending) return; this.queueResumePending = true;
+		queueMicrotask(() => {
+			this.queueResumePending = false;
+			if (this.closing || this.lifecycleOperation || this.activePromptCalls || !this.runtime?.session.isIdle) return;
+			void this.inputQueue?.resumeIdle().catch((error: unknown) => this.fire({ type: 'error', message: errorMessage(error) }));
+		});
 	}
 
 	/** SDK command-context actions otherwise default to successful no-ops. Keep
@@ -1113,6 +1241,7 @@ class SingleAgentService {
 				return result;
 			} catch (error) {
 				if (invalidated && !rebound) {
+					this.conversationRuns?.finish('failed');
 					this.runtime = null;
 					this.unsubscribe?.();
 					this.unsubscribe = null;
@@ -1176,6 +1305,11 @@ class SingleAgentService {
 	}
 
 	private async teardown(): Promise<void> {
+		this.conversationRuns?.finish('interrupted'); this.conversationRuns = null;
+		this.modelTests.dispose();
+		if (this.mcpOwnerId) await this.mcp.disposeOwner(this.mcpOwnerId);
+		this.mcpOwnerId = null;
+		this.inputQueue?.dispose(); this.inputQueue = null; this.inputQueueSession = null;
 		this.pluginReloadError = null;
 		this.pluginModelError = null;
 		this.clearPendingThinking();
@@ -1209,7 +1343,7 @@ class SingleAgentService {
 		this.assistantId = null;
 		this.toolTitles.clear();
 		this.toolUpdateAt.clear();
-		const timeline = historyTimeline(session.sessionManager.getBranch());
+		const timeline = historyTimeline(session.sessionManager.getBranch(), this.conversationRuns?.active);
 		// Long branches stream only the newest window; older entries load page-by-page.
 		const recent = trimRecentTimeline(timeline, READY_HISTORY_LIMIT);
 		this.timelineOrder = timeline.nextOrder;
@@ -1221,6 +1355,7 @@ class SingleAgentService {
 			sessionPath: session.sessionFile ?? null,
 			messages: recent.messages,
 			activities: recent.activities,
+			runs: recent.runs,
 			fileChanges: this.fileChangeTrackers.get(session)?.restore() ?? [],
 			historyTotal: recent.historyTotal,
 		});
@@ -1228,6 +1363,7 @@ class SingleAgentService {
 	}
 
 	private publishQueue(queue: SdkQueueSnapshot): void {
+		if (this.inputQueue) { const snapshot = this.inputQueue.snapshot(); this.fire({ type: 'queue', count: snapshot.items.length, items: snapshot.items }); return; }
 		// A queue rebuild re-emits every intermediate snapshot; publish the final state once instead.
 		if (this.queueMutationDepth > 0) return;
 		const submitted = this.queuedPrompt.getStore();
@@ -1325,6 +1461,7 @@ class SingleAgentService {
 					sessionPath: null,
 					messages: [],
 					activities: [],
+					runs: [],
 					queuedCount: 0,
 					queuedMessages: [],
 					fileChanges: [],
@@ -1333,6 +1470,8 @@ class SingleAgentService {
 				break;
 			case 'status':
 				this.state.status = event.status;
+				this.runtimeModified = new Date().toISOString();
+				if (event.status === 'busy') this.state.error = null;
 				this.state.statusMessage = event.message;
 				this.state.retryAttempt = event.attempt;
 				this.state.retryMaxAttempts = event.maxAttempts;
@@ -1351,6 +1490,7 @@ class SingleAgentService {
 					sessionPath: event.sessionPath,
 					messages: event.messages,
 					activities: event.activities,
+					runs: event.runs?.map(run => ({ ...run })) ?? [],
 					queuedCount: 0,
 					queuedMessages: [],
 					fileChanges: event.fileChanges.map((file) => ({ ...file })),
@@ -1373,14 +1513,20 @@ class SingleAgentService {
 				this.state.thinkingLevel = event.level;
 				break;
 			case 'user-message':
-				this.state.messages.push({ id: event.id, order: event.order, role: 'user', text: event.text, attachments: event.attachments, status: 'done' });
+				this.state.messages.push({ id: event.id, order: event.order, runId: event.runId, role: 'user', text: event.text, attachments: event.attachments, attachmentsOmitted: event.attachmentsOmitted, attachmentReferences: event.attachmentReferences, status: 'done' });
 				this.state.historyTotal = (this.state.historyTotal ?? this.state.messages.length - 1) + 1;
 				break;
 			case 'assistant-start':
-				this.state.messages.push({ id: event.id, order: event.order, role: 'assistant', text: '', status: 'streaming' });
+				this.state.messages.push({ id: event.id, order: event.order, runId: event.runId, role: 'assistant', text: '', status: 'streaming' });
 				this.state.historyTotal = (this.state.historyTotal ?? this.state.messages.length - 1) + 1;
 				this.state.error = null;
 				break;
+			case 'run': {
+				const runs = this.state.runs ??= [];
+				const index = runs.findIndex(run => run.id === event.run.id);
+				if (index < 0) runs.push({ ...event.run }); else runs[index] = { ...event.run };
+				break;
+			}
 			case 'assistant-delta': {
 				const message = this.state.messages.find((item) => item.id === event.id);
 				if (message) message.text += event.delta;
@@ -1484,12 +1630,14 @@ class SingleAgentService {
 		}
 		switch (event.type) {
 			case 'agent_start': {
+				this.conversationRuns?.begin();
 				this.fire({ type: 'status', status: 'busy' });
 				return;
 			}
 			case 'agent_settled': {
 				const hadPendingAssistant = this.assistantId !== null;
 				this.finishInterruptedAssistant();
+				this.conversationRuns?.finish(hadPendingAssistant ? 'interrupted' : undefined);
 				// After a completed turn, re-sync the visible timeline from the transcript so
 				// live-streamed messages carry real session entry ids (message edit/fork needs
 				// them). Interrupted turns have no transcript entry for the partial reply, so
@@ -1526,6 +1674,11 @@ class SingleAgentService {
 			case 'message_start': {
 				const message = event.message;
 				if (message.role === 'user') {
+					const input = this.inputQueue?.describeInput(message, this.inputRequest.getStore()?.id);
+					if (input?.queued && input.behavior === 'followUp' && this.conversationRuns?.active && this.conversationRuns.hasMessages) this.conversationRuns.finish();
+					const run = this.conversationRuns?.begin();
+					if (this.conversationRuns) this.conversationRuns.hasMessages = true;
+					try { this.inputQueue?.consumed(message, this.inputRequest.getStore()?.id); } catch (error) { this.fire({ type: 'error', message: `输入消费回执无法保存：${errorMessage(error)}。重启后需核对再恢复。` }); }
 					if (queuedMessageText(message) === '') {
 						const deliveredId = this.queuedPreviewIds.get(message);
 						const delivered = this.queuedMessages.find((record) => record.item.id === deliveredId);
@@ -1535,11 +1688,13 @@ class SingleAgentService {
 							this.publishQueue({ steering: session.getSteeringMessages(), followUp: session.getFollowUpMessages() });
 						}
 					}
-					this.fire({ type: 'user-message', id: this.nextId('user'), order: this.timelineOrder++, text: userText(message), attachments: userAttachments(message) });
+					const preview = limitHistoryAttachments([{ id: this.nextId('user'), order: this.timelineOrder++, role: 'user', status: 'done', text: userText(message), attachments: userAttachments(message) }])[0]!;
+					this.fire({ type: 'user-message', id: preview.id, order: preview.order, runId: run?.id, text: preview.text, attachments: preview.attachments, attachmentsOmitted: preview.attachmentsOmitted, attachmentReferences: preview.attachmentReferences });
 				} else if (message.role === 'assistant') {
 					this.finishInterruptedAssistant();
 					this.assistantId = this.nextId('assistant');
-					this.fire({ type: 'assistant-start', id: this.assistantId, order: this.timelineOrder++ });
+					this.fire({ type: 'assistant-start', id: this.assistantId, order: this.timelineOrder++, runId: this.conversationRuns?.begin().id });
+					if (this.conversationRuns) this.conversationRuns.hasMessages = true;
 				}
 				return;
 			}
@@ -1562,6 +1717,7 @@ class SingleAgentService {
 				return;
 			}
 			case 'message_end': {
+				if (event.message.role === 'assistant') this.conversationRuns?.assistantEnd(event.message.stopReason);
 				if (event.message.role === 'assistant' && this.assistantId) {
 					const id = this.assistantId;
 					const thinkingStatus = event.message.stopReason === 'error' ? 'error' : event.message.stopReason === 'aborted' ? 'interrupted' : 'done';
@@ -1594,7 +1750,7 @@ class SingleAgentService {
 				this.fire({
 					type: 'tool',
 					activity: {
-						id: event.toolCallId, order, tool: event.toolName, title, status: 'running',
+						id: event.toolCallId, order, runId: this.conversationRuns?.active?.id, tool: event.toolName, title, status: 'running',
 						startedAt: Date.now(),
 						...toolCallMeta(event.args),
 					},
@@ -1610,6 +1766,7 @@ class SingleAgentService {
 				const order = previous?.order ?? this.timelineOrder++;
 				this.fire({ type: 'tool', activity: {
 					id: event.toolCallId,
+					runId: previous?.runId ?? this.conversationRuns?.active?.id,
 					order,
 					tool: event.toolName,
 					title,
@@ -1632,6 +1789,7 @@ class SingleAgentService {
 					type: 'tool',
 					activity: {
 						id: event.toolCallId,
+						runId: previous?.runId ?? this.conversationRuns?.active?.id,
 						order,
 						tool: event.toolName,
 						title,
@@ -1656,7 +1814,10 @@ class SingleAgentService {
 export class AgentService {
 	private readonly personalization = createPersonalizationService({ userDirectory: homedir(), agentDirectory: getAgentDir() });
 	private readonly contexts = new Map<string, SingleAgentService>();
+	private readonly waitingContexts = new Map<SingleAgentService, Map<symbol, UiSessionRuntimeState>>();
 	private readonly reservedSessionPaths = new Map<string, SingleAgentService>();
+	/** Held across the main-process trash move, including cross-volume copies. */
+	private readonly deletingSessionPaths = new Map<string, string>();
 	private readonly projectTrustByCwd = new Map<string, boolean>();
 	private readonly lastContextByCwd = new Map<string, string>();
 	private active: SingleAgentService | null = null;
@@ -1670,6 +1831,7 @@ export class AgentService {
 	private providerOperation: Promise<void> | null = null;
 	private pluginOperation: Promise<UiPluginCatalog> | null = null;
 	private pluginWarnings: string[] = [];
+	private readonly mcp = new McpManager(getAgentDir());
 	private closing = false;
 	private readonly requestProjectTrust: RequestProjectTrust;
 	private readonly requestExtensionDialog: RequestExtensionDialog;
@@ -1686,13 +1848,25 @@ export class AgentService {
 	get hasSession(): boolean { return this.active?.hasSession ?? false; }
 	getPersonalization() { return this.personalization.list(); }
 	saveInstruction(request: UiSaveInstructionRequest) { return this.personalization.save(request); }
+	checkPluginUpdate(request: PluginUpdateCheck) { const service = this.requirePluginWorkspace(request.cwd); return service.checkPluginUpdate(request); }
+	getMcpSnapshot() { const service = this.requireActive(); const id = service.getSnapshot().sessionId; if (!id) throw new Error('会话尚未初始化'); return this.mcp.snapshot(id); }
+	saveMcpServer(request: UiMcpSaveRequest) { this.requireMcpTarget(request); return this.mcp.save(request); }
+	removeMcpServer(request: UiMcpTarget) { this.requireMcpTarget(request); return this.mcp.remove(request); }
+	connectMcpServer(request: UiMcpTarget) { this.requireMcpTarget(request); return this.mcp.connect(request); }
+	disconnectMcpServer(request: UiMcpTarget) { this.requireMcpTarget(request); return this.mcp.disconnect(request); }
+	testMcpServer(request: UiMcpTarget) { this.requireMcpTarget(request); return this.mcp.test(request); }
+	private requireMcpTarget(request: UiMcpTarget | UiMcpSaveRequest): void {
+		const service = this.requireActive();
+		if (!request || request.cwd !== service.cwd || request.sessionId !== service.getSnapshot().sessionId) throw new Error('MCP 所属会话已改变，请刷新后重试');
+	}
 
 	onEvent(fn: EventEmitter): void { this.emit = fn; }
 	onBackgroundActivity(fn: (cwd: string, path: string) => void): void { this.backgroundActivity = fn; }
 
 	getSnapshot(): AgentSnapshot {
 		const snapshot = this.active?.getSnapshot();
-		return snapshot ? { ...snapshot, sequence: this.sequence } : {
+		const sessionRuntimes = [...this.contexts.values()].flatMap((service) => this.runtimeSummary(service) ?? []);
+		return snapshot ? { ...snapshot, sequence: this.sequence, sessionRuntimes } : {
 			sequence: this.sequence, status: 'uninitialized', model: '', modelName: null, modelProvider: '',
 			thinkingLevel: 'off', availableThinkingLevels: ['off'], contextUsage: null, cwd: '', sessionId: null,
 			sessionPath: null, messages: [], activities: [], queuedCount: 0, queuedMessages: [], fileChanges: [], error: null,
@@ -1701,8 +1875,11 @@ export class AgentService {
 
 	/** Forwards to the active context; older timeline slices load on demand. */
 	getHistoryPage(offset: number, limit: number): UiHistoryPage {
-		if (!this.active) throw new Error('会话尚未初始化');
-		return this.active.getHistoryPage(offset, limit);
+		return this.requireActive().getHistoryPage(offset, limit);
+	}
+
+	getMessageAttachment(sessionPath: string, messageId: string, index: number): UiAttachment {
+		return this.requireActive().getMessageAttachment(sessionPath, messageId, index);
 	}
 
 	/** Forwards to the active context (3.1). */
@@ -1732,11 +1909,25 @@ export class AgentService {
 	async listSessions(cwd = this.cwd): Promise<UiSessionSummary[]> {
 		if (!cwd) return [];
 		const sessions = await listWorkspaceSessions(cwd);
-		return sessions.map((session) => ({
+		const runtimes = new Map([...this.contexts.values()].flatMap((service) => {
+			const summary = this.runtimeSummary(service);
+			return summary && summary.cwd === cwd ? [[summary.path, summary.runtime] as const] : [];
+		}));
+		const result: UiSessionSummary[] = sessions.map((session) => ({
 			path: session.path, id: session.id, name: session.name,
 			firstMessage: session.firstMessage, modified: session.modified.toISOString(),
 			messageCount: session.messageCount,
+			...(runtimes.has(session.path) ? { runtime: runtimes.get(session.path)! } : {}),
 		}));
+		// A runtime can run an extension command before Pi persists its first message.
+		// Keep that conversation reachable while it runs or waits for user input.
+		for (const service of this.contexts.values()) {
+			if (service.cwd !== cwd) continue;
+			const summary = this.runtimeSummary(service);
+			const live = summary && service.getLiveSidebarEntry(summary.runtime);
+			if (live && !result.some((entry) => entry.path === live.path)) result.push(live);
+		}
+		return result;
 	}
 
 	async init({ cwd, sessionPath, fresh, excludeSessionPaths }: AgentInitOptions): Promise<void> {
@@ -1745,7 +1936,7 @@ export class AgentService {
 		if (!sessionPath && !fresh) return this.switchWorkspace(cwd, excludeSessionPaths);
 		await this.runTransition(async () => {
 			if (sessionPath) {
-				if (this.reservedSessionPaths.has(sessionPath)) throw new Error('扩展正在切换此会话，请稍后重试');
+				if (this.isSessionReserved(sessionPath)) throw new Error(this.reservedSessionPaths.has(sessionPath) ? '扩展正在切换此会话，请稍后重试' : '会话正在删除，请稍后重试');
 				const sessions = await this.listSessions(cwd);
 				if (!sessions.some((session) => session.path === sessionPath)) throw new Error('会话不属于指定工作区');
 				const existing = [...this.contexts.entries()].find(([, service]) =>
@@ -1772,7 +1963,7 @@ export class AgentService {
 				return;
 			}
 			const sessionPath = (await this.listSessions(cwd)).find((session) => !excludeSessionPaths.includes(session.path))?.path;
-			if (sessionPath && this.reservedSessionPaths.has(sessionPath)) throw new Error('扩展正在切换此会话，请稍后重试');
+			if (sessionPath && this.isSessionReserved(sessionPath)) throw new Error('会话正在切换或删除，请稍后重试');
 			const loaded = sessionPath ? [...this.contexts.entries()].find(([, context]) =>
 				context.hasSession && context.cwd === cwd && context.getSnapshot().sessionPath === sessionPath) : undefined;
 			if (loaded) {
@@ -1811,7 +2002,8 @@ export class AgentService {
 			if (this.active && keyOf(this.active.cwd) === target) throw new Error('无法移除当前项目，请先切换到其他项目');
 			const entries = [...this.contexts.entries()].filter(([, service]) => keyOf(service.cwd) === target);
 			if (entries.some(([, service]) => !service.canEvict)
-				|| [...this.reservedSessionPaths.values()].some((service) => keyOf(service.cwd) === target)) {
+				|| [...this.reservedSessionPaths.values()].some((service) => keyOf(service.cwd) === target)
+				|| [...this.deletingSessionPaths.values()].some((deletingCwd) => keyOf(deletingCwd) === target)) {
 				throw new Error('项目中仍有会话或扩展正在运行，请结束后再移除');
 			}
 			const keys = new Set(entries.map(([key]) => key));
@@ -1830,7 +2022,7 @@ export class AgentService {
 		const cwd = this.cwd;
 		if (!cwd) throw new Error('请先打开工作区');
 		await this.runTransition(async () => {
-			if (this.reservedSessionPaths.has(path)) throw new Error('扩展正在切换此会话，请稍后重试');
+			if (this.isSessionReserved(path)) throw new Error('会话正在切换或删除，请稍后重试');
 			if (this.active?.getSnapshot().sessionPath === path) return;
 			const existing = [...this.contexts.entries()].find(([, service]) =>
 				service.cwd === cwd && service.getSnapshot().sessionPath === path);
@@ -1855,7 +2047,7 @@ export class AgentService {
 	async renameSession(path: string, name: string, cwd = this.cwd): Promise<void> {
 		if (typeof name !== 'string' || name.length > 200) throw new Error('会话名称无效');
 		const assertAvailable = () => {
-			if (this.closing || this.transition || this.reservedSessionPaths.has(path)) throw new Error('会话正在切换，请稍后重命名');
+			if (this.closing || this.transition || this.isSessionReserved(path)) throw new Error('会话正在切换或删除，请稍后重命名');
 		};
 		const findLoaded = () => [...this.contexts.values()].find((service) => service.cwd === cwd && service.getSnapshot().sessionPath === path);
 		assertAvailable();
@@ -1869,6 +2061,40 @@ export class AgentService {
 		if (loaded) loaded.renameSession(path, name);
 		else SessionManager.open(path, undefined, cwd).appendSessionInfo(name);
 		this.fire({ type: 'sessions-changed', cwd });
+	}
+
+	/** Release idle cached writers, then reserve the path until the desktop has moved the file. */
+	async prepareSessionDeletion(path: string, cwd: string): Promise<void> {
+		if (typeof path !== 'string' || !path || path.length > 32768 || /[\u0000-\u001f\u007f]/.test(path)) throw new Error('会话路径无效');
+		if (typeof cwd !== 'string' || !cwd.trim()) throw new Error('工作区路径无效');
+		if (this.trimOperation || this.credentialOperation) throw new Error('会话或设置正在更新，请稍后删除');
+		await this.runTransition(async () => {
+			if (this.isSessionReserved(path)) throw new Error('会话正在切换或删除，请稍后重试');
+			const key = sessionPathKey(path);
+			const sessions = await this.listSessions(cwd);
+			if (!sessions.some((session) => sessionPathKey(session.path) === key)) throw new Error('会话不属于指定工作区');
+			const entries = [...this.contexts.entries()].filter(([, context]) => {
+				const loadedPath = context.getSnapshot().sessionPath;
+				return loadedPath != null && sessionPathKey(loadedPath) === key;
+			});
+			if (entries.some(([, context]) => context === this.active)) throw new Error('请先切换到其他会话再删除');
+			if (entries.some(([, context]) => !context.canEvict)) throw new Error('会话仍在后台运行，请等待完成或停止后再删除');
+			this.deletingSessionPaths.set(key, cwd);
+			try {
+				for (const [contextKey, context] of entries) {
+					this.contexts.delete(contextKey);
+					if (this.lastContextByCwd.get(context.cwd) === contextKey) this.lastContextByCwd.delete(context.cwd);
+				}
+				await Promise.all(entries.map(([, context]) => context.dispose()));
+			} catch (error) {
+				this.deletingSessionPaths.delete(key);
+				throw error;
+			}
+		});
+	}
+
+	releaseSessionDeletion(path: string): void {
+		this.deletingSessionPaths.delete(sessionPathKey(path));
 	}
 
 	listModels(): UiModelSummary[] { return this.active?.listModels() ?? []; }
@@ -1986,6 +2212,16 @@ export class AgentService {
 		if (this.pluginOperation) return Promise.reject(new Error('插件设置正在更新，请稍后发送消息'));
 		return this.requireActive().prompt(text, behavior, attachments).finally(() => { void this.trimContexts(); });
 	}
+	submitInput(request: UiSubmitInput): Promise<UiInputReceipt> { return this.requireActive().submitInput(request).finally(() => { void this.trimContexts(); }); }
+	testProviderModel(request: ModelTestRequest) { return this.requireActive().testProviderModel(request); }
+	cancelProviderModelTest(id: string): void { for (const context of this.contexts.values()) context.cancelProviderModelTest(id); }
+	getProjectDefaults() { return this.requireActive().getProjectDefaults(); }
+	saveProjectDefaults(request: ProjectDefaultsWrite) { return this.requireActive().saveProjectDefaults(request); }
+	getInputQueue(scope?: UiInputQueueScope): UiInputQueue { return this.requireActive().getInputQueue(scope); }
+	getSessionBranchHeads(): Record<string, string | null> { return Object.fromEntries([...this.contexts.values()].flatMap((context) => { const head = context.getSessionBranchHead(); return head ? [[head.path, head.leafId]] : []; })); }
+	mutateInputQueue(request: UiInputQueueMutation): UiInputQueue { return this.requireActive().mutateInputQueue(request); }
+	getFileCheckpoint() { return this.requireActive().getFileCheckpoint(); }
+	rewindFileCheckpoint(request: { id: string; version: string }) { return this.requireActive().rewindFileCheckpoint(request); }
 	editUserMessage(entryId: string, text: string, attachments?: UiAttachment[]): Promise<void> {
 		if (this.pluginOperation) return Promise.reject(new Error('插件设置正在更新，请稍后发送消息'));
 		return this.requireActive().editUserMessage(entryId, text, attachments).finally(() => { void this.trimContexts(); });
@@ -2014,7 +2250,9 @@ export class AgentService {
 		try { await this.providerOperation; } catch { /* Provider errors are reported to the caller. */ }
 		try { await this.pluginOperation; } catch { /* Plugin errors are reported to the caller. */ }
 		await Promise.allSettled([...this.contexts.values()].map((service) => service.dispose()));
+		await this.mcp.dispose();
 		this.contexts.clear();
+		this.deletingSessionPaths.clear();
 		this.active = null;
 	}
 
@@ -2156,14 +2394,18 @@ export class AgentService {
 	}
 
 	private newContext(key: string): SingleAgentService {
-		const service: SingleAgentService = new SingleAgentService(this.requestProjectTrust, this.requestExtensionDialog, this.projectTrustByCwd, (path) => {
-			if (this.transition || this.reservedSessionPaths.has(path)) throw new Error('会话正在切换，请稍后重试');
+		const service: SingleAgentService = new SingleAgentService(
+			(cwd) => this.withRuntimeWait(service, { phase: 'waiting-approval' }, () => this.requestProjectTrust(cwd)),
+			(request, signal) => request.kind === 'notify' ? this.requestExtensionDialog(request, signal)
+				: this.withRuntimeWait(service, { phase: request.kind === 'confirm' ? 'waiting-approval' : 'waiting-input', message: request.title }, () => this.requestExtensionDialog(request, signal)),
+			this.projectTrustByCwd, (path) => {
+			if (this.transition || this.isSessionReserved(path)) throw new Error('会话正在切换或删除，请稍后重试');
 			if ([...this.contexts.values()].some((context) => context !== service && context.getSnapshot().sessionPath === path)) {
 				throw new Error('此会话已在桌面端加载，请通过侧栏切换，避免重复打开');
 			}
 			this.reservedSessionPaths.set(path, service);
 			return () => { if (this.reservedSessionPaths.get(path) === service) this.reservedSessionPaths.delete(path); };
-		});
+		}, this.mcp);
 		service.onEvent(({ event }) => {
 			if (this.active === service) this.fire(event);
 			else if (event.type === 'assistant-end' || (event.type === 'tool' && event.activity.status === 'done')) {
@@ -2173,9 +2415,32 @@ export class AgentService {
 					this.fire({ type: 'sessions-changed', cwd: service.cwd });
 				}
 			}
+			if (event.type === 'status' || event.type === 'ready' || event.type === 'error' || event.type === 'assistant-end') this.publishRuntime(service);
 		});
 		this.contexts.set(key, service);
 		return service;
+	}
+
+	private runtimeSummary(service: SingleAgentService): UiSessionRuntimeSummary | null {
+		const waits = this.waitingContexts.get(service);
+		return service.getRuntimeSummary(waits?.values().next().value);
+	}
+
+	private publishRuntime(service: SingleAgentService): void {
+		const summary = this.runtimeSummary(service);
+		if (summary) this.fire({ type: 'session-runtime', ...summary });
+	}
+
+	private async withRuntimeWait<T>(service: SingleAgentService, state: UiSessionRuntimeState, action: () => Promise<T>): Promise<T> {
+		const token = Symbol();
+		const waits = this.waitingContexts.get(service) ?? new Map<symbol, UiSessionRuntimeState>();
+		waits.set(token, state); this.waitingContexts.set(service, waits); this.publishRuntime(service);
+		try { return await action(); }
+		finally {
+			waits.delete(token);
+			if (!waits.size) this.waitingContexts.delete(service);
+			this.publishRuntime(service);
+		}
 	}
 
 	private async openContext(options: AgentInitOptions): Promise<void> {
@@ -2212,7 +2477,9 @@ export class AgentService {
 			contextUsage: snapshot.contextUsage,
 			cwd: snapshot.cwd, sessionId: snapshot.sessionId, sessionPath: snapshot.sessionPath,
 			messages: snapshot.messages, activities: snapshot.activities,
+			runs: snapshot.runs,
 			fileChanges: snapshot.fileChanges,
+			historyTotal: snapshot.historyTotal,
 		});
 		this.fire({ type: 'status', status: snapshot.status, message: snapshot.statusMessage });
 		this.fire({ type: 'queue', count: snapshot.queuedCount, items: snapshot.queuedMessages });
@@ -2220,6 +2487,10 @@ export class AgentService {
 	}
 
 	private fire(event: AgentUiEvent): void { this.emit({ sequence: ++this.sequence, event }); }
+
+	private isSessionReserved(path: string): boolean {
+		return this.reservedSessionPaths.has(path) || this.deletingSessionPaths.has(sessionPathKey(path));
+	}
 
 	private async trimContexts(): Promise<void> {
 		if (this.trimOperation) return this.trimOperation;
@@ -2287,6 +2558,11 @@ function queuedMessageText(message: MessageLike): string {
 	return typeof message.content === 'string' ? message.content : (Array.isArray(message.content) ? message.content : [])
 		.filter((part): part is { type: 'text'; text: string } => part?.type === 'text' && typeof part.text === 'string')
 		.map((part) => part.text).join('');
+}
+
+function sessionPathKey(path: string): string {
+	const value = resolve(path);
+	return process.platform === 'win32' ? value.toLowerCase() : value;
 }
 
 function userText(message: MessageLike): string {
@@ -2416,11 +2692,13 @@ function assistantThinking(message: MessageLike, thinkingStatus: UiThinkingStatu
 	return found ? { thinking, thinkingStatus, thinkingTruncated } : undefined;
 }
 
-function historyTimeline(entries: SessionEntry[]): { messages: UiMessage[]; activities: UiToolActivity[]; nextOrder: number } {
+function historyTimeline(entries: SessionEntry[], liveRun?: UiConversationRun | null): { messages: UiMessage[]; activities: UiToolActivity[]; nextOrder: number; runs: UiConversationRun[] } {
+	const { runs, entryRuns } = readConversationRuns(entries, liveRun);
 	const messages: UiMessage[] = [];
 	const activities = new Map<string, UiToolActivity>();
 	let nextOrder = 0;
 	for (const entry of entries) {
+		const runId = entryRuns.get(entry.id);
 		// Project compaction/branch summaries and visible extension notices into system rows (3.6).
 		if (entry.type === 'compaction' || entry.type === 'branch_summary' || (entry.type === 'custom_message' && entry.display)) {
 			const text = entry.type === 'custom_message'
@@ -2428,6 +2706,7 @@ function historyTimeline(entries: SessionEntry[]): { messages: UiMessage[]; acti
 				: entry.summary;
 			if (text.trim()) messages.push({
 				id: entry.id,
+				runId,
 				order: nextOrder++,
 				role: 'system',
 				systemKind: entry.type === 'compaction' ? 'compaction' : entry.type === 'branch_summary' ? 'branch-summary' : 'custom',
@@ -2439,7 +2718,7 @@ function historyTimeline(entries: SessionEntry[]): { messages: UiMessage[]; acti
 		if (entry.type !== 'message') continue;
 		const message = entry.message;
 		if (message.role === 'user') {
-			messages.push({ id: entry.id, order: nextOrder++, role: 'user', text: userText(message), attachments: userAttachments(message), status: 'done' });
+			messages.push({ id: entry.id, order: nextOrder++, runId, role: 'user', text: userText(message), attachments: userAttachments(message), status: 'done' });
 		} else if (message.role === 'assistant') {
 			const text = assistantText(message);
 			const errorMessage = message.stopReason === 'error' ? message.errorMessage || '模型调用失败' : undefined;
@@ -2447,6 +2726,7 @@ function historyTimeline(entries: SessionEntry[]): { messages: UiMessage[]; acti
 			if (text || thinking?.thinking || errorMessage) {
 				messages.push({
 					id: entry.id,
+					runId,
 					order: nextOrder++,
 					role: 'assistant',
 					text,
@@ -2460,6 +2740,7 @@ function historyTimeline(entries: SessionEntry[]): { messages: UiMessage[]; acti
 				if (part.type !== 'toolCall') continue;
 				activities.set(part.id, {
 					id: part.id,
+					runId,
 					order: nextOrder++,
 					tool: part.name,
 					title: describeToolUse(part.name, part.arguments),
@@ -2473,6 +2754,7 @@ function historyTimeline(entries: SessionEntry[]): { messages: UiMessage[]; acti
 			const rawText = toolResultRawText(message);
 			activities.set(message.toolCallId, {
 				id: message.toolCallId,
+				runId: previous?.runId ?? runId,
 				order: previous?.order ?? nextOrder++,
 				tool: message.toolName,
 				title: previous?.title ?? message.toolName,
@@ -2488,6 +2770,7 @@ function historyTimeline(entries: SessionEntry[]): { messages: UiMessage[]; acti
 	}
 	return {
 		messages,
+		runs,
 		activities: [...activities.values()].map((activity) =>
 			activity.status === 'running' ? { ...activity, status: 'interrupted' } : activity),
 		nextOrder,
@@ -2506,28 +2789,60 @@ function timelineEntries(timeline: { messages: UiMessage[]; activities: UiToolAc
  * Keep the newest `limit` timeline entries (by order) for the ready payload.
  * `historyTotal` reports the full count so the renderer can page older slices.
  */
-export function trimRecentTimeline(timeline: { messages: UiMessage[]; activities: UiToolActivity[] }, limit: number): { messages: UiMessage[]; activities: UiToolActivity[]; historyTotal: number } {
+export function trimRecentTimeline(timeline: { messages: UiMessage[]; activities: UiToolActivity[]; runs?: UiConversationRun[] }, limit: number): { messages: UiMessage[]; activities: UiToolActivity[]; historyTotal: number; runs?: UiConversationRun[] } {
 	const combined = timelineEntries(timeline);
-	if (combined.length <= limit) return { messages: timeline.messages, activities: timeline.activities, historyTotal: combined.length };
+	const unassociated = latestUnassociatedRunId(timeline);
+	if (combined.length <= limit) return { messages: limitHistoryAttachments(timeline.messages), activities: timeline.activities, historyTotal: combined.length,
+		...(timeline.runs ? { runs: selectConversationRuns(timeline.runs, timeline.messages, timeline.activities, unassociated) } : {}) };
 	const cutoff = combined[combined.length - limit]!.order;
+	const messages = limitHistoryAttachments(timeline.messages.filter((message) => message.order >= cutoff));
+	const activities = timeline.activities.filter((activity) => activity.order >= cutoff);
 	return {
-		messages: timeline.messages.filter((message) => message.order >= cutoff),
-		activities: timeline.activities.filter((activity) => activity.order >= cutoff),
+		messages,
+		activities,
+		...(timeline.runs ? { runs: selectConversationRuns(timeline.runs, messages, activities, unassociated) } : {}),
 		historyTotal: combined.length,
 	};
 }
 
 /** Slice one oldest-first page from a built timeline. */
-export function historyPageSlice(timeline: { messages: UiMessage[]; activities: UiToolActivity[] }, offset: number, limit: number): UiHistoryPage {
+export function historyPageSlice(timeline: { messages: UiMessage[]; activities: UiToolActivity[]; runs?: UiConversationRun[] }, offset: number, limit: number): UiHistoryPage {
 	const combined = timelineEntries(timeline);
 	const slice = combined.slice(offset, offset + limit);
+	const messages = limitHistoryAttachments(slice.flatMap((entry) => (entry.message ? [entry.message] : [])));
+	const activities = slice.flatMap((entry) => (entry.activity ? [entry.activity] : []));
+	const unassociated = offset + limit >= combined.length ? latestUnassociatedRunId(timeline) : undefined;
 	return {
 		offset,
 		limit,
 		total: combined.length,
-		messages: slice.flatMap((entry) => (entry.message ? [entry.message] : [])),
-		activities: slice.flatMap((entry) => (entry.activity ? [entry.activity] : [])),
+		messages,
+		activities,
+		...(timeline.runs ? { runs: selectConversationRuns(timeline.runs, messages, activities, unassociated) } : {}),
 	};
+}
+
+/** Omit whole attachments, keeping session data intact and previews visibly incomplete. */
+export function limitHistoryAttachments(messages: UiMessage[], budget = HISTORY_ATTACHMENT_BUDGET): UiMessage[] {
+	let remaining = budget;
+	const previews = new Map<UiMessage, UiMessage>();
+	for (const message of [...messages].sort((a, b) => b.order - a.order)) {
+		if (!message.attachments?.length) continue;
+		const references = [...(message.attachmentReferences ?? [])];
+		const omittedIndices = new Set(references.map((reference) => reference.index));
+		let originalIndex = 0;
+		const attachments = message.attachments.filter((attachment) => {
+			while (omittedIndices.has(originalIndex)) originalIndex++;
+			const index = originalIndex++;
+			const size = attachment.kind === 'image' ? attachment.data.length : Buffer.byteLength(attachment.text, 'utf8');
+			if (size > remaining) { references.push({ index, kind: attachment.kind, name: attachment.name.slice(0, 200), mimeType: attachment.mimeType, size }); return false; }
+			remaining -= size;
+			return true;
+		});
+		const omitted = message.attachments.length - attachments.length;
+		if (omitted) previews.set(message, { ...message, attachments, attachmentReferences: references, attachmentsOmitted: (message.attachmentsOmitted ?? 0) + omitted });
+	}
+	return messages.map((message) => previews.get(message) ?? message);
 }
 
 function toolResultRawText(value: unknown): string {

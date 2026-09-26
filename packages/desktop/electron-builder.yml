@@ -13,6 +13,10 @@ files:
 
 asar: true
 asarUnpack:
+  # ConPTY helpers and native output workers must execute outside the archive.
+  - '**/node-pty/**'
+  # PDF workers import their module by file URL, which Node cannot resolve inside ASAR.
+  - '**/pdfjs-dist/**'
   - '**/*.node'
   - '**/*.wasm'
   - '**/@esbuild/**'

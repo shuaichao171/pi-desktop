@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdtempSync, mkdirSync, realpathSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join, relative, sep } from 'node:path';
@@ -54,6 +54,157 @@ test('opening the workspace validates the directory, propagates native failures 
     await service.dispose();
     removeSafeTemp(tempRoot);
   }
+});
+
+test('file tree fills its visible limit after excluding symbolic links', async (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'pi-desktop-tree-links-'));
+  const workspace = join(root, 'workspace');
+  const outside = join(root, 'outside');
+  mkdirSync(workspace); mkdirSync(outside);
+  const { WorkbenchService } = await import('../packages/desktop/src/main/workbenchService.ts');
+  const service = new WorkbenchService(() => workspace, () => {});
+  try {
+    try {
+      for (let index = 0; index < 12; index++) symlinkSync(outside, join(workspace, `a-link-${index}`), process.platform === 'win32' ? 'junction' : 'dir');
+    } catch (error) {
+      if (error.code !== 'EPERM' && error.code !== 'EACCES') throw error;
+      t.skip('Creating symbolic links is unavailable on this host'); return;
+    }
+    for (let index = 0; index < 405; index++) writeFileSync(join(workspace, `z-file-${String(index).padStart(3, '0')}.txt`), 'content');
+    const entries = await service.listEntries();
+    assert.equal(entries.length, 400);
+    assert.ok(entries.every((entry) => entry.kind === 'file' && entry.name.startsWith('z-file-')));
+    assert.ok(entries.some((entry) => entry.name === 'z-file-399.txt'));
+  } finally { await service.dispose(); removeSafeTemp(root); }
+});
+
+test('Git output previews preserve complete status records while destructive reads reject truncation', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'pi-desktop-status-limit-'));
+  const { WorkbenchService } = await import('../packages/desktop/src/main/workbenchService.ts');
+  const service = new WorkbenchService(() => root, () => {});
+  try {
+    execFileSync('git', ['-C', root, 'init', '-q']);
+    writeFileSync(join(root, 'a.txt'), 'first');
+    writeFileSync(join(root, 'b-very-long-file-name.txt'), 'second');
+    const read = service.gitReadOutput.bind(service);
+    const args = ['-C', root, 'status', '--porcelain=v1', '-z', '--untracked-files=all'];
+    const preview = await read(args, 20);
+    assert.equal(preview.truncated, true);
+    assert.ok(Buffer.byteLength(preview.stdout) <= 20);
+    await assert.rejects(read(args, 20, false), /safe limit/);
+    service.gitReadOutput = (args, limit, allowTruncation, timeout) => read(args, args.includes('status') ? 20 : limit, allowTruncation, timeout);
+    const status = await service.gitStatus();
+    assert.equal(status.truncated, true);
+    assert.deepEqual(status.entries, [{ path: 'a.txt', status: '??' }]);
+    assert.match(await service.gitCommitContext(), /Output truncated/);
+    await assert.rejects(service.gitDiscard(['a.txt', 'b-very-long-file-name.txt']), /safe limit/);
+    assert.equal(readFileSync(join(root, 'a.txt'), 'utf8'), 'first');
+    assert.equal(readFileSync(join(root, 'b-very-long-file-name.txt'), 'utf8'), 'second');
+    assert.deepEqual(service.parseGitStatus('R  renamed.txt\0old-na', root, root), []);
+    assert.deepEqual(service.parseGitStatus('R  renamed.txt\0old-name.txt\0 M kept.txt\0', root, root), [
+      { path: 'renamed.txt', status: 'R ' }, { path: 'kept.txt', status: ' M' },
+    ]);
+  } finally { await service.dispose(); removeSafeTemp(root); }
+});
+
+test('discard resolves porcelain paths relative to the repository in a nested workspace', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'pi-desktop-nested-discard-'));
+  const workspace = join(root, 'project');
+  mkdirSync(workspace);
+  const { WorkbenchService } = await import('../packages/desktop/src/main/workbenchService.ts');
+  const service = new WorkbenchService(() => workspace, () => {});
+  try {
+    execFileSync('git', ['-C', root, 'init', '-q']);
+    execFileSync('git', ['-C', root, 'config', 'core.autocrlf', 'false']);
+    writeFileSync(join(workspace, 'tracked.txt'), 'original\n');
+    execFileSync('git', ['-C', root, 'add', '--', '.']);
+    execFileSync('git', ['-C', root, '-c', 'user.name=Test', '-c', 'user.email=test@example.com', 'commit', '-qm', 'base']);
+    writeFileSync(join(workspace, 'tracked.txt'), 'changed\n');
+    writeFileSync(join(workspace, 'untracked.txt'), 'remove me');
+    writeFileSync(join(root, 'outside.txt'), 'keep me');
+    await service.gitDiscard(['tracked.txt', 'untracked.txt']);
+    assert.equal(readFileSync(join(workspace, 'tracked.txt'), 'utf8'), 'original\n');
+    assert.equal(existsSync(join(workspace, 'untracked.txt')), false);
+    assert.equal(readFileSync(join(root, 'outside.txt'), 'utf8'), 'keep me');
+  } finally { await service.dispose(); removeSafeTemp(root); }
+});
+
+test('Git history bounds oversized commit subjects without losing the commit', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'pi-desktop-long-log-'));
+  const { WorkbenchService } = await import('../packages/desktop/src/main/workbenchService.ts');
+  const service = new WorkbenchService(() => root, () => {});
+  try {
+    execFileSync('git', ['-C', root, 'init', '-q']);
+    const tree = execFileSync('git', ['-C', root, 'mktree'], { input: '', encoding: 'utf8' }).trim();
+    const commit = `tree ${tree}\nauthor Test <test@example.com> 1700000000 +0000\ncommitter Test <test@example.com> 1700000000 +0000\n\n${'x'.repeat(2 * 1024 * 1024 + 100)}\n`;
+    const hash = execFileSync('git', ['-C', root, 'hash-object', '-t', 'commit', '-w', '--stdin'], { input: commit, encoding: 'utf8' }).trim();
+    execFileSync('git', ['-C', root, 'update-ref', 'HEAD', hash]);
+    const entries = await service.gitLog();
+    assert.equal(entries.length, 1);
+    assert.equal(entries[0].hash, hash);
+    assert.equal(entries[0].author, 'Test');
+    assert.ok(entries[0].subject.length <= 1000);
+    assert.ok(entries[0].subject.endsWith('..'));
+  } finally { await service.dispose(); removeSafeTemp(root); }
+});
+
+test('committing a nested workspace preserves staged and unstaged changes outside its directory', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'pi-desktop-nested-commit-'));
+  const workspace = join(root, 'project');
+  mkdirSync(workspace);
+  const { WorkbenchService } = await import('../packages/desktop/src/main/workbenchService.ts');
+  const service = new WorkbenchService(() => workspace, () => {});
+  const git = (...args) => execFileSync('git', ['-C', root, ...args], { encoding: 'utf8' });
+  try {
+    git('init', '-q');
+    git('config', 'core.autocrlf', 'false');
+    git('config', 'user.name', 'Test');
+    git('config', 'user.email', 'test@example.com');
+    writeFileSync(join(root, 'outside.txt'), 'outside original\n');
+    writeFileSync(join(workspace, 'inside.txt'), 'inside original\n');
+    git('add', '--', '.'); git('commit', '-qm', 'base');
+    writeFileSync(join(root, 'outside.txt'), 'outside staged\n');
+    git('add', '--', 'outside.txt');
+    writeFileSync(join(root, 'outside.txt'), 'outside unstaged\n');
+    writeFileSync(join(root, 'untracked.txt'), 'outside untracked\n');
+    writeFileSync(join(workspace, 'inside.txt'), 'inside changed\n');
+    writeFileSync(join(workspace, 'new.txt'), 'inside new\n');
+    const beforeOutside = git('diff', '--cached', '--', 'outside.txt');
+    const context = await service.gitCommitContext();
+    assert.match(context, /inside changed/);
+    assert.doesNotMatch(context, /outside\.txt|outside staged|outside unstaged|untracked\.txt/);
+    assert.match(await service.gitCommit('workspace change'), /^[a-f0-9]+$/);
+    assert.equal(git('show', 'HEAD:outside.txt'), 'outside original\n');
+    assert.equal(git('show', 'HEAD:project/inside.txt'), 'inside changed\n');
+    assert.equal(git('show', 'HEAD:project/new.txt'), 'inside new\n');
+    assert.equal(git('diff', '--cached', '--', 'outside.txt'), beforeOutside);
+    assert.equal(readFileSync(join(root, 'outside.txt'), 'utf8'), 'outside unstaged\n');
+    assert.equal(git('status', '--porcelain=v1', '--', 'outside.txt').trim(), 'MM outside.txt');
+    assert.equal(git('status', '--porcelain=v1', '--', 'untracked.txt').trim(), '?? untracked.txt');
+    await assert.rejects(service.gitCommitContext(), /没有可提交的更改/);
+  } finally { await service.dispose(); removeSafeTemp(root); }
+});
+
+test('a nested workspace can create an initial commit without including other staged files', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'pi-desktop-initial-commit-'));
+  const workspace = join(root, 'project');
+  mkdirSync(workspace);
+  const { WorkbenchService } = await import('../packages/desktop/src/main/workbenchService.ts');
+  const service = new WorkbenchService(() => workspace, () => {});
+  const git = (...args) => execFileSync('git', ['-C', root, ...args], { encoding: 'utf8' });
+  try {
+    git('init', '-q');
+    git('config', 'core.autocrlf', 'false');
+    git('config', 'user.name', 'Test');
+    git('config', 'user.email', 'test@example.com');
+    writeFileSync(join(root, 'outside.txt'), 'outside staged\n');
+    writeFileSync(join(workspace, 'inside.txt'), 'inside first\n');
+    git('add', '--', 'outside.txt');
+    assert.match(await service.gitCommit('initial workspace'), /^[a-f0-9]+$/);
+    assert.equal(git('ls-tree', '-r', '--name-only', 'HEAD').trim(), 'project/inside.txt');
+    assert.equal(git('show', ':outside.txt'), 'outside staged\n');
+    assert.equal(git('status', '--porcelain=v1', '--', 'outside.txt').trim(), 'A  outside.txt');
+  } finally { await service.dispose(); removeSafeTemp(root); }
 });
 
 test('workbench file access stays within the workspace and Git diff includes deleted files', async () => {
@@ -248,6 +399,13 @@ test('Git preview preserves staged changes even when worktree edits undo them', 
     assert.match(preview, /-staged change/);
     assert.match(preview, /Staged/);
     assert.match(preview, /Unstaged/);
+    const stagedPreview = await service.gitDiff('sample.txt', 'staged');
+    assert.match(stagedPreview, /\+staged change/);
+    assert.doesNotMatch(stagedPreview, /Unstaged|-staged change/);
+    const unstagedPreview = await service.gitDiff('sample.txt', 'unstaged');
+    assert.match(unstagedPreview, /-staged change/);
+    assert.doesNotMatch(unstagedPreview, /已暂存 \/ Staged|\+staged change/);
+    await assert.rejects(service.gitDiff('sample.txt', 'invalid'), /来源无效/);
     writeFileSync(join(tempRoot, 'sample.txt'), 'staged line\n'.repeat(150_000));
     git('add', '--', 'sample.txt');
     writeFileSync(join(tempRoot, 'sample.txt'), 'working line\n'.repeat(150_000));

@@ -13,6 +13,7 @@ const execFileAsync = promisify(execFile);
 const MAX_PREVIEW_BYTES = 1024 * 1024;
 const MAX_COMMAND_OUTPUT_BYTES = 1024 * 1024;
 const MAX_ENTRIES = 400;
+const MAX_GIT_STATUS_BYTES = 2 * 1024 * 1024;
 const DIFF_TRUNCATED_NOTICE = '\n… 仅显示前 1 MB 的差异 / Diff preview limited to the first 1 MB.\n';
 const SAFE_GIT_ENV = { ...process.env, GIT_OPTIONAL_LOCKS: '0', GIT_LITERAL_PATHSPECS: '1' };
 
@@ -136,9 +137,9 @@ export class WorkbenchService {
 	 * Opens a specific file in VS Code, optionally at a line (4.7 file:line jumps
 	 * from diffs and tool activity).
 	 */
-	async openPathInEditor(relativePath: string, line?: number): Promise<void> {
+	async openPathInEditor(relativePath: string, line?: number, column?: number): Promise<void> {
 		const { path } = await this.resolveEntry(relativePath);
-		const target = typeof line === 'number' && Number.isInteger(line) && line > 0 ? `${path}:${line}` : path;
+		const target = typeof line === 'number' && Number.isSafeInteger(line) && line > 0 ? `${path}:${line}${column && Number.isSafeInteger(column) && column > 0 ? `:${column}` : ''}` : path;
 		let executable = await this.vsCodeExecutable();
 		if (executable) {
 			const child = spawn(executable, ['-g', target], { detached: true, stdio: 'ignore' });
@@ -184,17 +185,21 @@ export class WorkbenchService {
 		children.sort((a, b) => a.isDirectory() === b.isDirectory()
 			? a.name.localeCompare(b.name)
 			: a.isDirectory() ? -1 : 1);
-		for (const child of children.slice(0, MAX_ENTRIES)) {
-			if (child.isSymbolicLink() || (!child.isFile() && !child.isDirectory())) continue;
-			const childPath = join(path, child.name);
-			const details = await lstat(childPath);
-			if (details.isSymbolicLink()) continue;
-			entries.push({
-				name: child.name,
-				path: relative(root, childPath).split(sep).join('/'),
-				kind: child.isDirectory() ? 'directory' : 'file',
-				...(child.isFile() ? { size: details.size } : {}),
-			});
+		const candidates = children.filter((child) => !child.isSymbolicLink() && (child.isFile() || child.isDirectory()));
+		for (let offset = 0; offset < candidates.length && entries.length < MAX_ENTRIES; offset += 16) {
+			const batch = await Promise.all(candidates.slice(offset, offset + 16).map(async (child): Promise<WorkspaceEntry | null> => {
+				const childPath = join(path, child.name);
+				try {
+					const details = await lstat(childPath);
+					if (details.isSymbolicLink() || (!details.isFile() && !details.isDirectory())) return null;
+					return { name: child.name, path: relative(root, childPath).split(sep).join('/'),
+						kind: details.isDirectory() ? 'directory' : 'file', ...(details.isFile() ? { size: details.size } : {}) };
+				} catch (error) {
+					if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') return null;
+					throw error;
+				}
+			}));
+			entries.push(...batch.filter((entry): entry is WorkspaceEntry => entry !== null).slice(0, MAX_ENTRIES - entries.length));
 		}
 		return entries.sort((a, b) => a.kind === b.kind ? a.name.localeCompare(b.name) : a.kind === 'directory' ? -1 : 1);
 	}
@@ -222,22 +227,31 @@ export class WorkbenchService {
 		}
 		const [branchResult, statusResult] = await Promise.all([
 			execFileAsync('git', [...prefix, 'branch', '--show-current'], { timeout: 8000, maxBuffer: 1024 * 1024, env: SAFE_GIT_ENV }),
-			execFileAsync('git', [...prefix, 'status', '--porcelain=v1', '-z', '--untracked-files=all', '--', '.'], { timeout: 8000, maxBuffer: 2 * 1024 * 1024, env: SAFE_GIT_ENV }),
+			this.gitReadOutput([...prefix, 'status', '--porcelain=v1', '-z', '--untracked-files=all', '--', '.'], MAX_GIT_STATUS_BYTES),
 		]);
-		const records = statusResult.stdout.split('\0');
+		const entries = this.parseGitStatus(statusResult.stdout, root, repositoryRoot);
+		return { isRepository: true, branch: branchResult.stdout.trim() || null, entries, ...(statusResult.truncated ? { truncated: true } : {}) };
+	}
+
+	/** Parse only complete NUL-delimited entries, including the source record of renames. */
+	private parseGitStatus(output: string, root: string, repositoryRoot: string): WorkspaceGitStatus['entries'] {
+		const records = output.slice(0, output.lastIndexOf('\0') + 1).split('\0');
 		const entries: WorkspaceGitStatus['entries'] = [];
 		for (let index = 0; index < records.length; index += 1) {
 			const record = records[index];
 			if (!record || record.length < 4) continue;
 			// Keep both porcelain columns: "M " (staged) and " M" (worktree) differ.
 			const status = record.slice(0, 2);
-			if (status.includes('R') || status.includes('C')) index += 1; // porcelain -z adds the source path.
+			if (status.includes('R') || status.includes('C')) {
+				if (!records[index + 1]) break;
+				index += 1; // porcelain -z adds the source path.
+			}
 			// Porcelain paths are relative to the repository, even when -C selects a subdirectory.
 			const candidate = resolve(repositoryRoot, record.slice(3));
 			if (!isWithin(root, candidate)) continue;
 			entries.push({ path: relative(root, candidate).split(sep).join('/'), status });
 		}
-		return { isRepository: true, branch: branchResult.stdout.trim() || null, entries };
+		return entries;
 	}
 
 	/** Local branches plus the checked-out ref for the composer branch picker. */
@@ -309,27 +323,39 @@ export class WorkbenchService {
 	/** Discard worktree changes (tracked restore / untracked clean) — destructive, caller confirms with the real diff (4.5). */
 	async gitDiscard(paths: string[]): Promise<void> {
 		if (!Array.isArray(paths) || paths.length === 0 || paths.length > 200 || !paths.every((path) => typeof path === 'string')) throw new Error('文件列表无效');
+		const generation = this.commandGeneration;
+		const approvedCwd = this.getWorkspace();
 		const root = await this.workspaceRoot();
 		const relativePaths = paths.map((path) => this.validateGitPath(path, root));
 		const prefix = this.gitPrefix(root);
-		let statusOutput: string;
+		let changes: WorkspaceGitStatus['entries'];
 		try {
-			statusOutput = (await execFileAsync('git', [...prefix, 'status', '--porcelain=v1', '-z', '--untracked-files=all', '--', ...relativePaths], { timeout: 30000, maxBuffer: 2 * 1024 * 1024, env: SAFE_GIT_ENV })).stdout;
+			const repositoryRoot = (await execFileAsync('git', [...prefix, 'rev-parse', '--show-toplevel'], { timeout: 8000, env: SAFE_GIT_ENV })).stdout.replace(/\r?\n$/, '');
+			// Mutations must never act on a truncated status preview.
+			const status = await this.gitReadOutput([...prefix, 'status', '--porcelain=v1', '-z', '--untracked-files=all', '--', ...relativePaths], 32 * 1024 * 1024, false, 30000);
+			changes = this.parseGitStatus(status.stdout, root, repositoryRoot);
 		} catch (error) {
 			throw new Error(`丢弃更改失败：${WorkbenchService.execDetail(error)}`);
 		}
 		const tracked: string[] = [];
 		const untracked: string[] = [];
-		for (const record of statusOutput.split('\0')) {
-			if (!record || record.length < 4) continue;
-			const status = record.slice(0, 2);
-			const path = record.slice(3);
+		for (const { status, path } of changes) {
 			if (status.includes('?')) untracked.push(path);
 			else tracked.push(path);
 		}
+		if (generation !== this.commandGeneration || approvedCwd !== this.getWorkspace()) throw new Error('工作区已切换，请重试');
 		try {
-			if (tracked.length > 0) await execFileAsync('git', [...prefix, 'restore', '--worktree', '--', ...tracked], { timeout: 30000, maxBuffer: 1024 * 1024, env: SAFE_GIT_ENV });
-			if (untracked.length > 0) await execFileAsync('git', [...prefix, 'clean', '-f', '--', ...untracked], { timeout: 30000, maxBuffer: 1024 * 1024, env: SAFE_GIT_ENV });
+			for (const [args, changedPaths] of [[['restore', '--worktree'], tracked], [['clean', '-f'], untracked]] as const) {
+				// Keep expanded directory selections below Windows' command-line limit.
+				let batch: string[] = [];
+				let length = 0;
+				const run = async () => { if (batch.length) await execFileAsync('git', [...prefix, ...args, '--', ...batch], { timeout: 30000, maxBuffer: 1024 * 1024, env: SAFE_GIT_ENV }); };
+				for (const path of changedPaths) {
+					if (length + path.length + 3 > 6000) { await run(); batch = []; length = 0; }
+					batch.push(path); length += path.length + 3;
+				}
+				await run();
+			}
 		} catch (error) {
 			throw new Error(`丢弃更改失败：${WorkbenchService.execDetail(error)}`);
 		}
@@ -341,10 +367,12 @@ export class WorkbenchService {
 		const root = await this.workspaceRoot();
 		const prefix = this.gitPrefix(root);
 		try {
-			const output = (await execFileAsync('git', [...prefix, 'log', `-n${capped}`, '--pretty=format:%H%x1f%h%x1f%an%x1f%aI%x1f%s'], { timeout: 15000, maxBuffer: 2 * 1024 * 1024, env: SAFE_GIT_ENV })).stdout;
+			// Git bounds individual fields before emitting them, so oversized commit
+			// subjects cannot overflow the complete (at most 100 entry) history.
+			const output = (await execFileAsync('git', [...prefix, 'log', `-n${capped}`, '--pretty=format:%H%x1f%h%x1f%<(200,trunc)%an%x1f%aI%x1f%<(1000,trunc)%s'], { timeout: 15000, maxBuffer: 2 * 1024 * 1024, env: SAFE_GIT_ENV })).stdout;
 			return output.split('\n').filter((line) => line.trim()).map((line) => {
 				const [hash, shortHash, author, date, ...subject] = line.split('\x1f');
-				return { hash: hash ?? '', shortHash: shortHash ?? '', author: author ?? '', date: date ?? '', subject: subject.join('\x1f') };
+				return { hash: hash ?? '', shortHash: shortHash ?? '', author: author?.trimEnd() ?? '', date: date ?? '', subject: subject.join('\x1f').trimEnd() };
 			});
 		} catch {
 			return []; // not a repository or no commits yet
@@ -383,14 +411,14 @@ export class WorkbenchService {
 			throw new Error('当前工作区不是 git 仓库');
 		}
 		const [statusResult, statResult, logResult] = await Promise.all([
-			execFileAsync('git', [...prefix, 'status', '--porcelain=v1', '--untracked-files=all'], { timeout: 8000, maxBuffer: 1024 * 1024, env: SAFE_GIT_ENV }),
-			execFileAsync('git', [...prefix, 'diff', 'HEAD', '--stat', '--no-color'], { timeout: 8000, maxBuffer: 512 * 1024, env: SAFE_GIT_ENV }).catch(() => ({ stdout: '' })),
-			execFileAsync('git', [...prefix, 'log', '--oneline', '-n', '8', '--no-color'], { timeout: 8000, maxBuffer: 64 * 1024, env: SAFE_GIT_ENV }).catch(() => ({ stdout: '' })),
+			this.gitTextPreview([...prefix, 'status', '--porcelain=v1', '--untracked-files=all', '--', '.'], 64 * 1024),
+			this.gitTextPreview([...prefix, 'diff', 'HEAD', '--stat', '--no-color', '--no-ext-diff', '--no-textconv', '--', '.'], 32 * 1024).catch(() => ({ stdout: '' })),
+			this.gitTextPreview([...prefix, 'log', '--oneline', '-n', '8', '--no-color', '--', '.'], 16 * 1024).catch(() => ({ stdout: '' })),
 		]);
 		if (!statusResult.stdout.trim()) throw new Error('没有可提交的更改');
 		// diff vs HEAD covers staged and unstaged tracked changes; a missing HEAD
 		// (unborn branch) degrades to the file list only.
-		const diff = await this.gitDiffPreview([...prefix, 'diff', 'HEAD', '--no-color', '--no-ext-diff', '--no-textconv'], 24 * 1024).catch(() => '');
+		const diff = await this.gitDiffPreview([...prefix, 'diff', 'HEAD', '--no-color', '--no-ext-diff', '--no-textconv', '--', '.'], 24 * 1024).catch(() => '');
 		const sections = [
 			`# git status --porcelain\n${statusResult.stdout.trim()}`,
 			statResult.stdout.trim() ? `# git diff HEAD --stat\n${statResult.stdout.trim()}` : '',
@@ -416,8 +444,14 @@ export class WorkbenchService {
 		}
 		const prefix = this.gitPrefix(root);
 		try {
-			await execFileAsync('git', [...prefix, 'add', '-A'], { timeout: 30000, maxBuffer: 1024 * 1024, env: SAFE_GIT_ENV });
-			const commit = await execFileAsync('git', [...prefix, 'commit', '-m', trimmed], { timeout: 30000, maxBuffer: 1024 * 1024, env: SAFE_GIT_ENV });
+			const repositoryRoot = (await execFileAsync('git', [...prefix, 'rev-parse', '--show-toplevel'], { timeout: 8000, env: SAFE_GIT_ENV })).stdout.replace(/\r?\n$/, '');
+			if (this.commandGeneration !== generation || this.getWorkspace() !== approvedCwd) throw new Error('工作区已切换，请重新提交');
+			await execFileAsync('git', [...prefix, 'add', '-A', '--', '.'], { timeout: 30000, maxBuffer: 1024 * 1024, env: SAFE_GIT_ENV });
+			// A nested workspace must not commit or unstage changes elsewhere in the
+			// repository. --only preserves those index entries for a later commit.
+			// Keep full-repository commits compatible with merge/cherry-pick commits.
+			const scope = relative(root, resolve(repositoryRoot)) ? ['--only', '--', '.'] : [];
+			const commit = await execFileAsync('git', [...prefix, 'commit', '--quiet', '-m', trimmed, ...scope], { timeout: 30000, maxBuffer: 1024 * 1024, env: SAFE_GIT_ENV });
 			const hash = await execFileAsync('git', [...prefix, 'rev-parse', '--short', 'HEAD'], { timeout: 8000, maxBuffer: 256, env: SAFE_GIT_ENV });
 			return hash.stdout.trim() || commit.stdout.trim().slice(0, 200);
 		} catch (error) {
@@ -427,7 +461,8 @@ export class WorkbenchService {
 		}
 	}
 
-	async gitDiff(relativePath: string): Promise<string> {
+	async gitDiff(relativePath: string, source: 'staged' | 'unstaged' | 'all' = 'all'): Promise<string> {
+		if (!['staged', 'unstaged', 'all'].includes(source)) throw new Error('差异来源无效');
 		if (typeof relativePath !== 'string' || relativePath.includes('\0') || isAbsolute(relativePath)) throw new Error('文件路径无效');
 		const root = await this.workspaceRoot();
 		const prefix = this.gitPrefix(root);
@@ -440,6 +475,7 @@ export class WorkbenchService {
 		});
 		if (!status.stdout) return '';
 		if (status.stdout.startsWith('?? ')) {
+			if (source === 'staged') return '';
 			// The selection may change while Git runs. Resolve against the root
 			// captured for this diff, including the same symlink boundary checks.
 			const { path } = await this.resolveEntry(safePath, root);
@@ -489,8 +525,8 @@ export class WorkbenchService {
 		}
 		const sections: { title: string; args: string[] }[] = [];
 		const diffArgs = [...prefix, 'diff', '--no-ext-diff', '--no-textconv'];
-		if (status.stdout[0] !== ' ') sections.push({ title: '已暂存 / Staged', args: [...diffArgs, '--cached', base, '--', safePath] });
-		if (status.stdout[1] !== ' ') sections.push({ title: '未暂存 / Unstaged', args: [...diffArgs, '--', safePath] });
+		if (source !== 'unstaged' && status.stdout[0] !== ' ') sections.push({ title: '已暂存 / Staged', args: [...diffArgs, '--cached', base, '--', safePath] });
+		if (source !== 'staged' && status.stdout[1] !== ' ') sections.push({ title: '未暂存 / Unstaged', args: [...diffArgs, '--', safePath] });
 		const maximumBytes = Math.floor(MAX_PREVIEW_BYTES / Math.max(1, sections.length));
 		const previews = await Promise.all(sections.map(async ({ title, args }) => {
 			const preview = await this.gitDiffPreview(args, maximumBytes);
@@ -499,7 +535,19 @@ export class WorkbenchService {
 		return previews.filter(Boolean).join('\n');
 	}
 
-	private gitDiffPreview(args: string[], maximumBytes = MAX_PREVIEW_BYTES): Promise<string> {
+	private async gitTextPreview(args: string[], maximumBytes: number): Promise<{ stdout: string }> {
+		const result = await this.gitReadOutput(args, maximumBytes);
+		return { stdout: result.stdout + (result.truncated ? '\n… 输出已截断 / Output truncated.\n' : '') };
+	}
+
+	private async gitDiffPreview(args: string[], maximumBytes = MAX_PREVIEW_BYTES): Promise<string> {
+		const result = await this.gitReadOutput(args, maximumBytes);
+		const notice = maximumBytes === MAX_PREVIEW_BYTES ? DIFF_TRUNCATED_NOTICE
+			: DIFF_TRUNCATED_NOTICE.replaceAll('1 MB', `${maximumBytes / 1024} KB`);
+		return result.stdout + (result.truncated ? notice : '');
+	}
+
+	private gitReadOutput(args: string[], maximumBytes: number, allowTruncation = true, timeout = 8000): Promise<{ stdout: string; truncated: boolean }> {
 		return new Promise((resolve, reject) => {
 			const child = spawn('git', args, { env: SAFE_GIT_ENV, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
 			const chunks: Buffer[] = [];
@@ -508,13 +556,13 @@ export class WorkbenchService {
 			let truncated = false;
 			let timedOut = false;
 			let settled = false;
-			const timer = setTimeout(() => { timedOut = true; child.kill(); }, 8000);
+			const timer = setTimeout(() => { timedOut = true; child.kill(); }, timeout);
 			const finish = (error?: Error, text?: string): void => {
 				if (settled) return;
 				settled = true;
 				clearTimeout(timer);
 				if (error) reject(error);
-				else resolve(text ?? '');
+				else resolve({ stdout: text ?? '', truncated });
 			};
 			child.stdout.on('data', (value: Buffer) => {
 				if (truncated) return;
@@ -532,12 +580,11 @@ export class WorkbenchService {
 			child.stderr.on('data', (value: Buffer) => { stderr = (stderr + value.toString('utf8')).slice(-4096); });
 			child.on('error', (error) => finish(error));
 			child.on('close', (code) => {
-				if (timedOut) return finish(new Error('Git 差异读取超时'));
-				if (!truncated && code !== 0) return finish(new Error(stderr.trim() || `Git diff exited with code ${code}`));
+				if (timedOut) return finish(new Error('Git 输出读取超时'));
+				if (truncated && !allowTruncation) return finish(new Error('Git 状态超出安全读取限制，请缩小文件选择范围后重试 / Git status exceeds the safe limit; select fewer files.'));
+				if (!truncated && code !== 0) return finish(new Error(stderr.trim() || `Git exited with code ${code}`));
 				const output = new TextDecoder().decode(Buffer.concat(chunks, size), { stream: truncated });
-				const notice = maximumBytes === MAX_PREVIEW_BYTES ? DIFF_TRUNCATED_NOTICE
-					: DIFF_TRUNCATED_NOTICE.replaceAll('1 MB', `${maximumBytes / 1024} KB`);
-				finish(undefined, truncated ? output + notice : output);
+				finish(undefined, output);
 			});
 		});
 	}

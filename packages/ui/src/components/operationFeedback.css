@@ -1,0 +1,8 @@
+.pd-operation-feedback { position: fixed; right: 18px; bottom: 18px; z-index: 180; display: flex; flex-direction: column; gap: 8px; width: min(380px, calc(100vw - 36px)); max-height: 45dvh; overflow-y: auto; pointer-events: none; }
+.pd-operation-notice { pointer-events: auto; padding: 12px; border: 1px solid var(--pd-border-strong); border-radius: 10px; background: var(--pd-surface-raised); color: var(--pd-text); box-shadow: var(--pd-shadow-dialog); font-size: var(--pd-font-caption); overflow-wrap: anywhere; }
+.pd-operation-notice.is-error { border-left: 3px solid var(--pd-danger); }
+.pd-operation-notice-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.pd-operation-notice-heading strong { font-weight: 600; }
+.pd-operation-notice button { display: inline-flex; align-items: center; justify-content: center; min-height: 28px; padding: 4px 8px; border: 1px solid var(--pd-border); border-radius: 6px; background: var(--pd-surface); color: var(--pd-text); }
+.pd-operation-notice summary { cursor: pointer; margin-block: 6px; color: var(--pd-text-subtle); }
+.pd-operation-notice p { margin: 6px 0 10px; white-space: pre-wrap; user-select: text; }

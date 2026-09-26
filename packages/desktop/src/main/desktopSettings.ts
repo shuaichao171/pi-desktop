@@ -1,4 +1,5 @@
-import { readStateFile, writeStateFile, writeStateFileAsync } from './stateFiles';
+import { dialog } from 'electron';
+import { backupCorruptStateFile, CorruptStateFileError, readStateFile, writeStateFile, writeStateFileAsync } from './stateFiles';
 
 export interface DesktopSettings {
 	/** OS notifications for background/automation completion while the window is unfocused or hidden (4.1). */
@@ -20,9 +21,12 @@ export const DEFAULT_DESKTOP_SETTINGS: DesktopSettings = { notificationsEnabled:
 export function readDesktopSettings(path: string): DesktopSettings {
 	try {
 		return readStateFile(path, () => ({ ...DEFAULT_DESKTOP_SETTINGS }), isValidDesktopSettings);
-	} catch {
-		// readStateFile already preserved the corrupt file as a backup; the close
-		// handler and notifier must keep working with defaults.
+	} catch (error) {
+		if (!(error instanceof CorruptStateFileError)) throw error;
+		// Do not allow a later settings write to overwrite bytes we could not preserve.
+		const backup = backupCorruptStateFile(path);
+		dialog.showErrorBox('Pi Desktop 桌面设置已恢复 / Desktop settings recovered',
+			`损坏的桌面设置已备份到 / Damaged settings were saved to:\n${backup}`);
 		return { ...DEFAULT_DESKTOP_SETTINGS };
 	}
 }

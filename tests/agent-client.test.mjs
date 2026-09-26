@@ -11,6 +11,7 @@ const electronStub = `
 registerHooks({
   resolve(specifier, context, nextResolve) {
     if (specifier === 'electron') return { url: `data:text/javascript,${encodeURIComponent(electronStub)}`, shortCircuit: true };
+    if (specifier.startsWith('./') && context.parentURL?.endsWith('.ts') && !/\.[cm]?[jt]s$/.test(specifier)) return nextResolve(`${specifier}.ts`, context);
     return nextResolve(specifier, context);
   },
 });

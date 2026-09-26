@@ -1,7 +1,7 @@
 {
   "name": "@pidesktop/desktop",
   "private": true,
-  "version": "0.1.5",
+  "version": "0.1.6",
   "license": "MIT",
   "description": "Desktop workbench for the Pi coding agent",
   "author": "Pi Desktop contributors",
@@ -23,7 +23,10 @@
     "@earendil-works/pi-coding-agent": "0.87.1",
     "@pidesktop/agent": "workspace:*",
     "@pidesktop/shared": "workspace:*",
-    "electron-updater": "6.8.9"
+    "electron-updater": "6.8.9",
+    "fflate": "^0.8.3",
+    "node-pty": "^1.1.0",
+    "pdfjs-dist": "^6.3.289"
   },
   "optionalDependencies": {
     "@esbuild/darwin-arm64": "0.28.2",
@@ -32,8 +35,8 @@
     "@esbuild/win32-x64": "0.28.2"
   },
   "devDependencies": {
-    "@pidesktop/ui": "workspace:*",
     "@electron/asar": "4.3.0",
+    "@pidesktop/ui": "workspace:*",
     "@tailwindcss/vite": "^4.3.3",
     "@types/node": "^26.6.2",
     "@types/react": "^19.3.0",

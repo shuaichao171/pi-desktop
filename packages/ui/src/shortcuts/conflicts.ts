@@ -13,7 +13,8 @@ export interface ShortcutConflict {
 export function findShortcutConflicts(overrides: Record<string, string> = {}): ShortcutConflict[] {
 	const groups = new Map<string, string[]>();
 	for (const binding of SHORTCUT_BINDINGS) {
-		const keys = bindingKeysFor(binding.id, overrides).toLowerCase();
+		const keys = bindingKeysFor(binding.id, overrides).trim().toLowerCase();
+		if (!keys) continue;
 		const namespace = binding.scope === 'composer' ? 'composer' : 'window';
 		const groupKey = `${namespace}::${keys}`;
 		groups.set(groupKey, [...(groups.get(groupKey) ?? []), binding.id]);
@@ -28,8 +29,9 @@ export function isShortcutTaken(id: string, keys: string, overrides: Record<stri
 	const target = SHORTCUT_BINDINGS.find((binding) => binding.id === id);
 	if (!target) return false;
 	const namespace = target.scope === 'composer' ? 'composer' : 'window';
-	const normalized = keys.toLowerCase();
+	const normalized = keys.trim().toLowerCase();
+	if (!normalized) return false;
 	return SHORTCUT_BINDINGS.some((binding) => binding.id !== id
 		&& (binding.scope === 'composer' ? 'composer' : 'window') === namespace
-		&& bindingKeysFor(binding.id, overrides).toLowerCase() === normalized);
+		&& bindingKeysFor(binding.id, overrides).trim().toLowerCase() === normalized);
 }

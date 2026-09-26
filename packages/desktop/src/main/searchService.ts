@@ -16,7 +16,7 @@ const SESSION_CONTEXT_LIMIT = 100_000;
 const TEXT_ATTACHMENT_MARKER = '\n\n<!-- pi-desktop:attachments-v1 -->\n';
 const IGNORED_DIRECTORIES = new Set([
 	'.git', '.hg', '.svn', 'node_modules', '.pnpm', '.yarn', '.next', '.nuxt',
-	'.cache', '__pycache__', '.venv', 'venv', 'vendor', 'target', 'dist', 'build', 'out', 'release',
+	'.cache', '__pycache__', '.venv',
 ]);
 
 function termsFor(query: string): string[] {
@@ -38,9 +38,13 @@ function sessionDirectory(root: string, cwd: string): string {
 	return join(root, `--${resolve(cwd).replace(/^[/\\]/, '').replace(/[/\\:]/g, '-')}--`);
 }
 
-type SearchMessage = { id?: string; text: string; role: 'user' | 'assistant'; truncated?: boolean };
-type BranchEntry = { parentId: string | null; message?: SearchMessage };
-type ParsedSession = { summary: UiSessionSearchResult; messages: SearchMessage[]; truncated: boolean };
+export type SearchMessage = { id?: string; text: string; role: 'user' | 'assistant'; truncated?: boolean; branchLeafId?: string };
+export type BranchEntry = { parentId: string | null; message?: SearchMessage };
+export type ParsedSession = { summary: UiSessionSearchResult; messages: SearchMessage[]; otherMessages: SearchMessage[]; branchLeafId?: string; nodes: Array<[string, BranchEntry]>; truncated: boolean; incomplete: boolean };
+
+class SearchLimitError extends Error {
+	constructor() { super('会话超过搜索大小或时间限制'); }
+}
 
 function latestText(text: string, limit: number): string {
 	if (limit <= 0) return '';
@@ -57,11 +61,12 @@ function visibleText(message: Record<string, unknown>): string {
 	return message.role === 'user' ? text.split(TEXT_ATTACHMENT_MARKER, 1)[0] ?? '' : text;
 }
 
-async function readSession(path: string, cwd: string, cancelled: () => boolean, context = false): Promise<ParsedSession | null> {
+export async function readSessionForIndex(path: string, cwd: string, cancelled: () => boolean, context = false): Promise<ParsedSession | null> {
 	const file = await open(path, 'r');
 	try {
 		const details = await file.stat();
-		if (!details.isFile() || details.size > SESSION_BYTES_LIMIT) return null;
+		if (!details.isFile()) return null;
+		if (details.size > SESSION_BYTES_LIMIT) throw new SearchLimitError();
 		const input = file.createReadStream({ autoClose: false, end: SESSION_BYTES_LIMIT });
 		const lines = createInterface({ input, crlfDelay: Infinity });
 		let header: Record<string, unknown> | undefined;
@@ -70,13 +75,14 @@ async function readSession(path: string, cwd: string, cancelled: () => boolean, 
 		let modified = 0;
 		let messageCount = 0;
 		let truncated = false;
+		let incomplete = false;
 		let textLength = 0;
 		const entries = new Map<string, BranchEntry>();
 		try {
 			for await (const line of lines) {
-				if (cancelled() || entries.size > 100_000) return null;
+				if (cancelled() || entries.size > 100_000) throw new SearchLimitError();
 				let entry: Record<string, unknown>;
-				try { entry = JSON.parse(line); } catch { continue; }
+				try { entry = JSON.parse(line); } catch { incomplete = true; continue; }
 				if (!entry || typeof entry !== 'object') continue;
 				if (!header) {
 					if (entry.type !== 'session' || typeof entry.id !== 'string') return null;
@@ -115,10 +121,11 @@ async function readSession(path: string, cwd: string, cancelled: () => boolean, 
 			input.destroy();
 		}
 		if (!header) return null;
+		const branchLeafId = leaf ?? undefined;
 		const messages: SearchMessage[] = [];
 		const visited = new Set<string>();
 		while (leaf) {
-			if (visited.has(leaf)) { truncated = true; break; }
+			if (visited.has(leaf)) { incomplete = true; break; }
 			visited.add(leaf);
 			const node = entries.get(leaf);
 			if (!node) break;
@@ -129,11 +136,29 @@ async function readSession(path: string, cwd: string, cancelled: () => boolean, 
 			leaf = node.parentId;
 		}
 		messages.reverse();
+		const otherMessages: SearchMessage[] = [];
+		if (!context) {
+			const parents = new Set([...entries.values()].map((entry) => entry.parentId).filter(Boolean));
+			const assigned = new Set(visited);
+			for (const candidate of entries.keys()) {
+				if (parents.has(candidate)) continue;
+				let next: string | null = candidate;
+				while (next && !assigned.has(next)) {
+					assigned.add(next);
+					const node = entries.get(next);
+					if (!node) break;
+					if (node.message) otherMessages.push({ ...node.message, branchLeafId: candidate });
+					next = node.parentId;
+				}
+			}
+		}
 		const timestamp = modified || Date.parse(String(header.timestamp)) || details.mtimeMs;
 		return {
 			summary: { path, cwd, id: header.id as string, name, firstMessage: messages.find((message) => message.role === 'user')?.text.slice(0, 500) ?? '', modified: new Date(timestamp).toISOString(), messageCount },
 			messages,
+			otherMessages, branchLeafId, nodes: context ? [] : [...entries],
 			truncated,
+			incomplete,
 		};
 	} finally { await file.close(); }
 }
@@ -149,14 +174,14 @@ export async function readSessionContext(sessionsRoot: string, cwd: string, path
 		|| !within(resolve(directory), resolve(path)) || (await lstat(path)).isSymbolicLink()
 		|| !within(realDirectory, await realpath(path))) throw new Error('会话不属于此工作区');
 	const started = Date.now();
-	const parsed = await readSession(path, cwd, () => Date.now() - started > SEARCH_TIME_LIMIT, true);
+	const parsed = await readSessionForIndex(path, cwd, () => Date.now() - started > SEARCH_TIME_LIMIT, true);
 	if (!parsed) throw new Error('无法读取会话正文，历史文件无效、过大或读取超时');
 	const title = (parsed.summary.name || parsed.summary.firstMessage.split(/\r?\n/u)[0] || 'Conversation').slice(0, 180).replace(/[\uD800-\uDBFF]$/u, '');
 	const header = `Referenced conversation: ${JSON.stringify(title)}\nWorkspace: ${JSON.stringify(cwd)}\nSession: ${JSON.stringify(path)}\nThe following is quoted user/assistant conversation context.\n\n`;
 	const notice = '[Conversation truncated: only the most recent visible text is included.]\n\n';
 	// Build backwards within the limit instead of joining a potentially large tree.
 	let body = '';
-	let truncated = parsed.truncated;
+	let truncated = parsed.truncated || parsed.incomplete;
 	const bodyLimit = Math.max(0, SESSION_CONTEXT_LIMIT - header.length - notice.length);
 	for (let index = parsed.messages.length - 1; index >= 0; index -= 1) {
 		const message = parsed.messages[index]!;
@@ -188,7 +213,7 @@ function snippet(text: string, terms: string[]): string {
 
 let sessionSearchGeneration = 0;
 
-export async function searchSessions(sessionsRoot: string, workspaces: string[], query: string): Promise<{ sessions: UiSessionSearchResult[]; truncated: boolean }> {
+export async function searchSessionsUncached(sessionsRoot: string, workspaces: string[], query: string): Promise<{ sessions: UiSessionSearchResult[]; truncated: boolean; skipped?: number }> {
 	const terms = termsFor(query);
 	if (!Array.isArray(workspaces) || workspaces.some((cwd) => typeof cwd !== 'string' || !isAbsolute(cwd))) throw new Error('工作区路径无效');
 	const generation = ++sessionSearchGeneration;
@@ -198,6 +223,7 @@ export async function searchSessions(sessionsRoot: string, workspaces: string[],
 	try { root = await realpath(sessionsRoot); } catch (error) { if (missing(error)) return { sessions: [], truncated: false }; throw error; }
 	const candidates: { path: string; cwd: string; modified: number; size: number }[] = [];
 	let truncated = false;
+	let skipped = 0;
 	for (const cwd of [...new Set(workspaces)]) {
 		if (cancelled() || candidates.length >= SESSION_LIMIT) { truncated = true; break; }
 		// Preserve Pi's configured path spelling in results: switchSession checks
@@ -209,7 +235,7 @@ export async function searchSessions(sessionsRoot: string, workspaces: string[],
 			realDirectory = await realpath(directoryPath);
 			if ((await lstat(directoryPath)).isSymbolicLink() || !within(root, realDirectory)) continue;
 			directory = await opendir(directoryPath);
-		} catch (error) { if (!missing(error)) truncated = true; continue; }
+		} catch (error) { if (!missing(error)) skipped += 1; continue; }
 		for await (const entry of directory) {
 			if (cancelled() || candidates.length >= SESSION_LIMIT) { truncated = true; break; }
 			if (!entry.isFile() || !entry.name.endsWith('.jsonl')) continue;
@@ -218,7 +244,7 @@ export async function searchSessions(sessionsRoot: string, workspaces: string[],
 				const details = await lstat(path);
 				if (!details.isFile() || !within(realDirectory, await realpath(path))) continue;
 				candidates.push({ path, cwd, modified: details.mtimeMs, size: details.size });
-			} catch { truncated = true; }
+			} catch { skipped += 1; }
 		}
 	}
 	// Most recently changed files are scanned first when a large collection reaches a budget.
@@ -230,8 +256,10 @@ export async function searchSessions(sessionsRoot: string, workspaces: string[],
 		if (cancelled() || bytes + candidate.size > TOTAL_BYTES_LIMIT) { truncated = true; break; }
 		bytes += candidate.size;
 		let parsed: ParsedSession | null;
-		try { parsed = await readSession(candidate.path, candidate.cwd, cancelled); } catch { truncated = true; continue; }
-		if (!parsed) { truncated = true; continue; }
+		try { parsed = await readSessionForIndex(candidate.path, candidate.cwd, cancelled); }
+		catch (error) { if (error instanceof SearchLimitError) truncated = true; else skipped += 1; continue; }
+		if (!parsed) { skipped += 1; continue; }
+		if (parsed.incomplete) skipped += 1;
 		truncated ||= parsed.truncated;
 		const title = `${parsed.summary.name ?? ''}\n${parsed.summary.firstMessage}`.toLocaleLowerCase();
 		const body = parsed.messages.map((message) => ({ message, lower: message.text.toLocaleLowerCase() }));
@@ -241,12 +269,12 @@ export async function searchSessions(sessionsRoot: string, workspaces: string[],
 		sessions.push({ ...parsed.summary, ...(match ? { snippet: snippet(match.message.text, terms), messageId: match.message.id } : {}) });
 	}
 	sessions.sort((a, b) => Date.parse(b.modified) - Date.parse(a.modified) || a.path.localeCompare(b.path));
-	return { sessions: sessions.slice(0, RESULT_LIMIT), truncated: truncated || sessions.length > RESULT_LIMIT };
+	return { sessions: sessions.slice(0, RESULT_LIMIT), truncated: truncated || sessions.length > RESULT_LIMIT, ...(skipped ? { skipped } : {}) };
 }
 
 let fileSearchGeneration = 0;
 
-export async function searchWorkspaceFiles(cwd: string, query: string, options?: { includeDirectories?: boolean }): Promise<{ files: WorkspaceEntry[]; truncated: boolean }> {
+export async function searchWorkspaceFilesUncached(cwd: string, query: string, options?: { includeDirectories?: boolean }): Promise<{ files: WorkspaceEntry[]; truncated: boolean; skipped?: number; ignoredDirectories: string[] }> {
 	const terms = termsFor(query);
 	if (options !== undefined && (!options || typeof options !== 'object' || Array.isArray(options)
 		|| Object.keys(options).some((key) => key !== 'includeDirectories')
@@ -262,6 +290,7 @@ export async function searchWorkspaceFiles(cwd: string, query: string, options?:
 	const files: WorkspaceEntry[] = [];
 	let scanned = 0;
 	let truncated = false;
+	let skipped = 0;
 	while (pending.length) {
 		if (generation !== fileSearchGeneration || Date.now() - started > SEARCH_TIME_LIMIT) { truncated = true; break; }
 		const path = pending.shift()!;
@@ -271,7 +300,7 @@ export async function searchWorkspaceFiles(cwd: string, query: string, options?:
 			if (!within(root, resolved) || visited.has(resolved) || (await lstat(path)).isSymbolicLink()) continue;
 			visited.add(resolved);
 			directory = await opendir(path);
-		} catch { truncated = true; continue; }
+		} catch { skipped += 1; continue; }
 		for await (const entry of directory) {
 			if (++scanned > SCAN_LIMIT || generation !== fileSearchGeneration || Date.now() - started > SEARCH_TIME_LIMIT) { truncated = true; break; }
 			if (entry.isSymbolicLink() || (!entry.isFile() && !entry.isDirectory())) continue;
@@ -288,11 +317,14 @@ export async function searchWorkspaceFiles(cwd: string, query: string, options?:
 				const details = await lstat(child);
 				if (details.isSymbolicLink() || (entry.isDirectory() ? !details.isDirectory() : !details.isFile()) || !within(root, await realpath(child))) continue;
 				files.push({ name: entry.name, path: relativePath, kind: entry.isDirectory() ? 'directory' : 'file', ...(details.isFile() ? { size: details.size } : {}) });
-			} catch { truncated = true; }
+			} catch { skipped += 1; }
 			if (files.length > RESULT_LIMIT) { truncated = true; break; }
 		}
 		if (scanned > SCAN_LIMIT || files.length > RESULT_LIMIT) break;
 	}
 	files.sort((a, b) => a.path.localeCompare(b.path));
-	return { files: files.slice(0, RESULT_LIMIT), truncated };
+	return { files: files.slice(0, RESULT_LIMIT), truncated, ...(skipped ? { skipped } : {}), ignoredDirectories: [...IGNORED_DIRECTORIES] };
 }
+
+// Compatibility entrypoints share the same cache/rules as the richer search UI.
+export { searchSessions, searchWorkspaceFiles, searchSessionsPage, searchProjectFiles, rebuildSearchIndex, cancelDataSearch, setProjectSearchRules, getProjectSearchRules } from './indexedSearch.ts';

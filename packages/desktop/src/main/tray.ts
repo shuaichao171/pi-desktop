@@ -21,11 +21,17 @@ export interface AppTrayOptions {
 }
 
 let appTray: Tray | null = null;
+let trayMenu: Menu | null = null;
 let rebuildMenu: (() => void) | null = null;
 let refreshTimer: ReturnType<typeof setInterval> | null = null;
 let trayOptions: AppTrayOptions | null = null;
 let lastStatus: TrayStatus | null = null;
 let recentSessions: TraySession[] = [];
+let refreshInFlight: Promise<void> | null = null;
+let dataRevision = 0;
+let refreshedRevision = -1;
+let refreshedAt = 0;
+const REFRESH_INTERVAL_MS = 5 * 60 * 1_000;
 
 function trayIconPath(): string {
 	return app.isPackaged ? join(process.resourcesPath, 'icon.ico') : join(here, '../../build/icon.ico');
@@ -36,18 +42,33 @@ function truncate(value: string, max: number): string {
 	return plain.length > max ? `${plain.slice(0, max - 1)}…` : plain;
 }
 
-async function refreshTrayData(): Promise<void> {
-	if (!trayOptions) return;
-	try {
-		const [status, sessions] = await Promise.all([
-			trayOptions.getStatus?.() ?? Promise.resolve(null),
-			trayOptions.getRecentSessions?.() ?? Promise.resolve([]),
-		]);
-		if (status) lastStatus = status;
-		recentSessions = sessions;
-	} catch { /* keep the last known state */ }
-	rebuildMenu?.();
+function refreshTrayData(): Promise<void> {
+	if (refreshInFlight) return refreshInFlight;
+	const options = trayOptions;
+	if (!options || (dataRevision === refreshedRevision && Date.now() - refreshedAt < REFRESH_INTERVAL_MS)) return Promise.resolve();
+	const revision = dataRevision;
+	const pending = (async () => {
+		try {
+			const [status, sessions] = await Promise.all([
+				options.getStatus?.() ?? Promise.resolve(null),
+				options.getRecentSessions?.() ?? Promise.resolve([]),
+			]);
+			// Ignore a refresh that finished after destruction or replacement of the tray.
+			if (trayOptions !== options) return;
+			if (status) lastStatus = status;
+			recentSessions = sessions;
+			refreshedRevision = revision;
+			refreshedAt = Date.now();
+		} catch { /* keep the last known state and retry on the next menu open */ }
+		if (trayOptions === options) rebuildMenu?.();
+	})();
+	refreshInFlight = pending;
+	void pending.finally(() => { if (refreshInFlight === pending) refreshInFlight = null; });
+	return pending;
 }
+
+/** Session events invalidate the cache without reading session files in the background. */
+export function invalidateAppTrayData(): void { dataRevision += 1; }
 
 /**
  * Windows tray icon mirroring ZCode: closing the window hides it, so the tray
@@ -99,14 +120,19 @@ export function createAppTray(options: AppTrayOptions): Tray | null {
 			{ label: english ? 'Show Pi Desktop' : '显示 Pi Desktop', click: options.showMainWindow },
 			{ label: english ? 'Quit' : '退出', click: options.quitApp },
 		);
-		appTray.setContextMenu(Menu.buildFromTemplate(template));
+		trayMenu = Menu.buildFromTemplate(template);
 	};
 	appTray.on('click', () => { void refreshTrayData(); options.showMainWindow(); });
 	appTray.on('double-click', () => { void refreshTrayData(); options.showMainWindow(); });
+	// Always expose Show/Quit immediately, even if the agent is slow or unresponsive.
+	// Refresh the cache for the next menu open without a delayed popup stealing focus.
+	appTray.on('right-click', () => {
+		if (appTray && !appTray.isDestroyed() && trayMenu) appTray.popUpContextMenu(trayMenu);
+		void refreshTrayData();
+	});
 	rebuildMenu();
-	// Keep status/recent sessions fresh without new plumbing: poll while the
-	// tray exists (unref'd so it never holds the process open).
-	refreshTimer = setInterval(() => { void refreshTrayData(); }, 20_000);
+	// A bounded fallback also catches sessions changed outside the application.
+	refreshTimer = setInterval(() => { void refreshTrayData(); }, REFRESH_INTERVAL_MS);
 	refreshTimer.unref?.();
 	void refreshTrayData();
 	return appTray;
@@ -115,9 +141,13 @@ export function createAppTray(options: AppTrayOptions): Tray | null {
 /** Removes the tray icon so quitting never leaves a ghost entry behind. */
 export function destroyAppTray(): void {
 	rebuildMenu = null;
+	trayMenu = null;
 	trayOptions = null;
 	lastStatus = null;
 	recentSessions = [];
+	refreshInFlight = null;
+	refreshedRevision = -1;
+	refreshedAt = 0;
 	if (refreshTimer) { clearInterval(refreshTimer); refreshTimer = null; }
 	if (!appTray) return;
 	try { appTray.destroy(); } catch { /* already gone */ }

@@ -35,10 +35,10 @@ export function ShortcutSettings({ isMac }: { isMac: boolean }) {
 		return () => window.removeEventListener('keydown', onKeyDown, true);
 	}, [capturing, setOverride]);
 
-	const display = (keys: string): string => keys
+	const display = (keys: string): string => keys.trim() ? keys
 		.replace(/\bCtrl\b/g, isMac ? '⌘' : 'Ctrl')
 		.replace(/\bAlt\b/g, isMac ? '⌥' : 'Alt')
-		.replace(/\bShift\b/g, isMac ? '⇧' : 'Shift');
+		.replace(/\bShift\b/g, isMac ? '⇧' : 'Shift') : t('settings.shortcutUnassigned');
 
 	return (
 		<div className="pd-shortcut-settings">
@@ -52,7 +52,7 @@ export function ShortcutSettings({ isMac }: { isMac: boolean }) {
 							<span className="pd-shortcut-keys">
 								{binding.fixed
 									? <kbd>{display(keys)}</kbd>
-									: <button type="button" className={`pd-shortcut-capture${capturing === binding.id ? ' is-capturing' : ''}`} aria-keyshortcuts={keys}
+									: <button type="button" className={`pd-shortcut-capture${capturing === binding.id ? ' is-capturing' : ''}`} aria-keyshortcuts={keys || undefined}
 										onClick={() => setCapturing(capturing === binding.id ? null : binding.id)}>
 										{capturing === binding.id ? t('settings.shortcutCapturing') : display(keys)}
 									</button>}

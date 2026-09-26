@@ -42,3 +42,24 @@ test('history trimming keeps the newest window and pages load oldest-first', asy
     assert.equal(past.total, 4);
   });
 });
+
+test('history attachment budgets cover ready windows and pages without mutating originals', async () => {
+  const { trimRecentTimeline, historyPageSlice, limitHistoryAttachments, HISTORY_ATTACHMENT_BUDGET } = await import('../packages/agent/src/index.ts');
+  const image = { kind: 'image', name: 'large.png', mimeType: 'image/png', data: 'a'.repeat(5 * 1024 * 1024) };
+  const messages = [0, 1, 2].map((order) => ({ id: `m${order}`, order, role: 'user', text: 'inspect', status: 'done', attachments: [image] }));
+  const timeline = { messages, activities: [] };
+  for (const payload of [trimRecentTimeline(timeline, 400), historyPageSlice(timeline, 0, 3)]) {
+    const bytes = payload.messages.flatMap((message) => message.attachments ?? []).reduce((total, attachment) => total + attachment.data.length, 0);
+    assert.ok(bytes <= HISTORY_ATTACHMENT_BUDGET);
+    assert.equal(payload.messages[0].attachmentsOmitted, 1);
+    assert.equal(payload.messages[1].attachmentsOmitted, 1);
+    assert.equal(payload.messages[2].attachments[0].data, image.data, 'recent attachments are preferred');
+  }
+  assert.ok(messages.every((message) => message.attachments.length === 1 && message.attachmentsOmitted === undefined));
+  const unicode = [{ ...messages[0], attachments: [{ kind: 'text', name: 'utf8.txt', mimeType: 'text/plain', text: '你你' }] }];
+  assert.equal(limitHistoryAttachments(unicode, 5)[0].attachmentsOmitted, 1, 'text budgets count bytes, not code units');
+  const firstPass = limitHistoryAttachments([{ ...messages[0], attachments: [image, { ...image, name: 'small.png', data: 'tiny' }, image] }], 4)[0];
+  assert.deepEqual(firstPass.attachmentReferences.map(reference => reference.index), [0, 2]);
+  const secondPass = limitHistoryAttachments([firstPass], 0)[0];
+  assert.deepEqual(secondPass.attachmentReferences.map(reference => reference.index), [0, 2, 1], 're-budgeting preserves original persisted attachment indices');
+});

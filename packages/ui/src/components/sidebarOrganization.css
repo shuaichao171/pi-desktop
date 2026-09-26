@@ -1,4 +1,23 @@
 .pd-organized-sessions { padding-top: 0; border-top: 0; }
+.pd-session-runtime { display: block; font-size: var(--pd-font-sm); line-height: 1.5; color: var(--pd-text-subtle); }
+.pd-session-runtime.is-running, .pd-session-state-counts .is-running { color: var(--pd-brand); }
+.pd-session-runtime.is-waiting-input, .pd-session-runtime.is-waiting-approval, .pd-session-state-counts .is-waiting { color: var(--pd-warning); }
+.pd-session-runtime.is-failed, .pd-session-state-counts .is-failed { color: var(--pd-danger); }
+.pd-sidebar-group-toggle > .pd-session-state-counts { display: inline-flex; flex: 0 0 auto; gap: 5px; overflow: visible; font-size: var(--pd-font-sm); }
+.pd-session-state-counts b { font-weight: 500; white-space: nowrap; }
+.pd-workspace-list-error, .pd-workspace-list-refresh { margin: 8px; padding: 8px; font-size: var(--pd-font-sm); line-height: 1.5; color: var(--pd-text-subtle); overflow-wrap: anywhere; }
+.pd-workspace-list-error { border: 1px solid var(--pd-danger-border); border-radius: 7px; }
+.pd-workspace-list-error p { margin: 5px 0; color: var(--pd-danger); }
+.pd-workspace-list-error button { min-height: 28px; padding: 3px 9px; border: 1px solid var(--pd-border); border-radius: 5px; background: var(--pd-surface); }
+.pd-session-trash-dialog { width: min(460px, calc(100vw - 32px)); max-height: calc(100dvh - 48px); margin: auto; padding: 24px; overflow: auto; border: 1px solid var(--pd-border); border-radius: var(--pd-radius-lg); color: var(--pd-text); background: var(--pd-surface); font-size: var(--pd-font-base); line-height: 1.5; box-shadow: var(--pd-shadow-dialog); }
+.pd-session-trash-dialog::backdrop { background: var(--pd-overlay); }
+.pd-session-trash-dialog h2 { margin: 0 0 18px; font-size: var(--pd-font-lg); }
+.pd-session-trash-dialog > strong, .pd-session-trash-workspace { overflow-wrap: anywhere; }
+.pd-session-trash-workspace { font-size: var(--pd-font-sm); color: var(--pd-text-subtle); }
+.pd-session-trash-error { color: var(--pd-danger); overflow-wrap: anywhere; }
+.pd-session-trash-dialog footer { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-top: 22px; }
+.pd-session-trash-dialog button { display: inline-flex; align-items: center; justify-content: center; min-height: 34px; padding: 6px 12px; border: 1px solid var(--pd-border); border-radius: 7px; background: var(--pd-surface); color: var(--pd-text); }
+.pd-session-trash-dialog button.is-danger { color: var(--pd-danger); border-color: var(--pd-danger-border); background: var(--pd-danger-surface); }
 .pd-sidebar-organize-toolbar { display: flex; flex: 0 0 auto; flex-wrap: wrap; align-items: center; gap: 3px; padding: 0 9px 5px; }
 .pd-sidebar-mode { display: flex; flex: 0 0 auto; gap: 1px; padding: 2px; border-radius: 20px; background: var(--pd-sidebar-surface); }
 .pd-sidebar-mode button { display: flex; align-items: center; gap: 3px; height: 24px; padding: 0 6px; border: 0; border-radius: 20px; background: transparent; color: var(--pd-text); font-size: var(--pd-font-sm); white-space: nowrap; }
@@ -30,7 +49,6 @@
 .pd-organized-list .pd-session-actions { top: 50%; right: 1px; transform: translateY(-50%); }
 .pd-organized-list .pd-session-more { width: 25px; height: 26px; }
 .pd-session-pin { flex: 0 0 auto; color: var(--pd-text-weak); }
-.pd-sidebar-ungrouped-label { padding: 6px 7px 5px; color: var(--pd-text-weak); font-size: var(--pd-font-sm); }
 .pd-group-empty { padding: 8px; font-size: var(--pd-font-sm); }
 .pd-sidebar-filter-chip { display: flex; align-items: center; align-self: flex-start; gap: 6px; margin: 1px 15px 7px; padding: 4px 7px; border: 0; border-radius: 5px; background: var(--pd-sidebar-selected); color: var(--pd-brand); font-size: var(--pd-font-xs); }
 .pd-sidebar-filter-chip:hover { background: var(--pd-sidebar-hover); }

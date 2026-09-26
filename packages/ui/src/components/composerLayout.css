@@ -8,3 +8,5 @@
 .pd-composer-shell[data-composer-layout] .pd-composer-attachments { padding: 10px 10px 0; }
 .pd-composer-shell[data-composer-layout] .pd-composer-attachment { border-radius: calc(var(--pd-radius-xl, 16px) - 8px); background: var(--pd-surface-muted, var(--pd-sidebar)); border-color: var(--pd-border-soft); }
 @media (prefers-reduced-motion: reduce) { .pd-composer-shell[data-composer-layout] { transition: none; } }
+.pd-composer-error button { margin-inline-start: 10px; padding: 3px 8px; border: 1px solid currentColor; border-radius: 5px; color: inherit; white-space: nowrap; }
+.pd-composer-queue > p[role=status] { padding: 4px 13px 8px; color: var(--pd-text-subtle); font-size: var(--pd-font-caption); }

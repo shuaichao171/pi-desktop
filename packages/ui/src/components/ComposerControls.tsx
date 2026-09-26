@@ -7,6 +7,8 @@ import { groupModelsByProvider, selectModelProvider } from '../modelPicker';
 import type { ModelManagementTarget } from '../modelManagement';
 import { HoverTooltip } from './HoverTooltip';
 import { Icon } from './Icons';
+import { imageCapability } from '../modelCapabilities';
+import './modelCapabilities.css';
 
 type Picker = 'model' | 'thinking';
 
@@ -17,7 +19,7 @@ function tokenLabel(value: number): string {
 }
 
 /** Model, reasoning and context controls share one mutually exclusive picker. */
-export function ComposerControls({ onOpenModelManagement }: { onOpenModelManagement(target: ModelManagementTarget): void }) {
+export function ComposerControls({ onOpenModelManagement, hasImages = false }: { onOpenModelManagement(target: ModelManagementTarget): void; hasImages?: boolean }) {
 	const { t, locale } = useT();
 	const model = useChatStore((s) => s.model);
 	const modelName = useChatStore((s) => s.modelName);
@@ -40,6 +42,7 @@ export function ComposerControls({ onOpenModelManagement }: { onOpenModelManagem
 	const setThinkingLevel = useChatStore((s) => s.setThinkingLevel);
 	const [open, setOpen] = useState<Picker | null>(null);
 	const [search, setSearch] = useState('');
+	const [imagesOnly, setImagesOnly] = useState(false);
 	const [requestedProvider, setRequestedProvider] = useState<string | null>(null);
 	const [pending, setPending] = useState(false);
 	const [error, setError] = useState<string | null>(null);
@@ -71,7 +74,7 @@ export function ComposerControls({ onOpenModelManagement }: { onOpenModelManagem
 		for (const item of modelProviders) if (byProvider.get(item.provider) ?? item.configured) configured.add(item.provider);
 		return configured;
 	}, [modelProviders, providerAuth]);
-	const providerGroups = useMemo(() => groupModelsByProvider(models, search, locale, configuredProviders), [models, search, locale, configuredProviders]);
+	const providerGroups = useMemo(() => groupModelsByProvider(imagesOnly ? models.filter(item => imageCapability(item) === 'supported') : models, search, locale, configuredProviders), [models, search, locale, configuredProviders, imagesOnly]);
 	const activeProvider = selectModelProvider(providerGroups, requestedProvider, provider);
 	const visibleModels = providerGroups.find((group) => group.provider === activeProvider)?.models ?? [];
 	const providerTabId = (name: string) => `${pickerId}-provider-${encodeURIComponent(name)}`;
@@ -101,6 +104,7 @@ export function ComposerControls({ onOpenModelManagement }: { onOpenModelManagem
 		setPosition(null);
 		if (picker === 'model' && open !== 'model') {
 			setSearch('');
+			setImagesOnly(false);
 			setRequestedProvider(provider || null);
 			focusModelsAfterProviderChange.current = false;
 		}
@@ -202,8 +206,8 @@ export function ComposerControls({ onOpenModelManagement }: { onOpenModelManagem
 	}
 
 	function onPickerKeyDown(event: KeyboardEvent<HTMLDivElement>) {
-		if (event.key === 'Escape') { event.stopPropagation(); event.preventDefault(); close('trigger'); return; }
 		if (event.nativeEvent.isComposing || event.keyCode === 229) return;
+		if (event.key === 'Escape') { event.stopPropagation(); event.preventDefault(); close('trigger'); return; }
 		if (open === 'model') {
 			const target = event.target instanceof HTMLElement ? event.target : null;
 			const providerButton = target?.closest<HTMLButtonElement>('[data-provider]');
@@ -246,6 +250,7 @@ export function ComposerControls({ onOpenModelManagement }: { onOpenModelManagem
 	</span>;
 
 	return <div className="pd-composer-config">
+		{hasImages && <HoverTooltip title={locale === 'zh-CN' ? imageCapability(currentModel) === 'supported' ? '当前模型支持图片输入' : imageCapability(currentModel) === 'unsupported' ? '当前模型不支持图片输入，请选择兼容模型' : '当前模型的图片能力未知，请确认或选择兼容模型' : imageCapability(currentModel) === 'supported' ? 'This model supports image input' : imageCapability(currentModel) === 'unsupported' ? 'This model does not support images. Choose a compatible model.' : 'Image support is unknown. Confirm compatibility or choose another model.'} disabled={open !== null}><button type="button" className={`pd-composer-control pd-model-image-notice is-${imageCapability(currentModel)}`} onClick={() => { if (open !== 'model') toggle('model'); setImagesOnly(true); }} aria-haspopup="dialog"><Icon name="image" width="14" height="14" /><span>{locale === 'zh-CN' ? imageCapability(currentModel) === 'supported' ? '支持图片' : imageCapability(currentModel) === 'unsupported' ? '需图片模型' : '能力未知' : imageCapability(currentModel) === 'supported' ? 'Images' : imageCapability(currentModel) === 'unsupported' ? 'Image model needed' : 'Unknown support'}</span></button></HoverTooltip>}
 		<HoverTooltip title={t('composer.contextTitle')} description={contextDescription} disabled={open !== null}>
 			<button type="button" className={`pd-composer-control pd-context-trigger${percent !== null && percent >= 90 ? ' is-warning' : ''}`} aria-label={capacity ? t(percent === null ? 'composer.contextCapacityOnly' : 'composer.contextSummary', { capacity: capacityLabel, percent: percentLabel }) : t('composer.contextTitle')}>
 				<svg width="18" height="18" viewBox="0 0 20 20" aria-hidden="true"><circle className="pd-context-ring-track" cx="10" cy="10" r="7" /><circle className="pd-context-ring-value" cx="10" cy="10" r="7" pathLength="100" strokeDasharray={`${Math.max(0, Math.min(100, percent ?? 0))} 100`} transform="rotate(-90 10 10)" /></svg>
@@ -265,6 +270,7 @@ export function ComposerControls({ onOpenModelManagement }: { onOpenModelManagem
 			<div className="pd-composer-picker-head"><strong>{t(open === 'model' ? 'composer.pickerTitle' : 'composer.pickerThinking')}</strong><button type="button" onClick={() => close('trigger')} aria-label={t(open === 'model' ? 'composer.pickerClose' : 'composer.thinkingClose')}><Icon name="close" width="14" height="14" /></button></div>
 			{open === 'model' ? <>
 				<input ref={searchRef} className="pd-composer-picker-search" type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder={t('composer.pickerSearchPlaceholder')} aria-label={t('composer.pickerSearchLabel')} />
+				<label className="pd-model-image-filter"><input type="checkbox" checked={imagesOnly} onChange={event => setImagesOnly(event.target.checked)} />{locale === 'zh-CN' ? '仅显示支持图片的模型' : 'Show models that support images'}</label>
 				{activeProvider !== null ? <div className="pd-composer-provider-browser">
 					<div className="pd-composer-provider-column">
 						<div className="pd-composer-provider-heading">{t('composer.pickerProviders')}</div>
@@ -275,7 +281,7 @@ export function ComposerControls({ onOpenModelManagement }: { onOpenModelManagem
 					<section className="pd-composer-provider-models" id={`${pickerId}-models`} role="tabpanel" aria-labelledby={providerTabId(activeProvider)}>
 						<div className="pd-composer-provider-heading"><strong>{activeProvider}</strong><small>{t('composer.pickerModelCount', { count: visibleModels.length })}</small></div>
 						<div ref={modelListRef} className="pd-composer-picker-list" aria-label={t('composer.pickerList')}>
-							{visibleModels.map((item) => <HoverTooltip key={`${item.provider}/${item.id}`} title={item.name.trim() || item.id} description={`${item.provider}/${item.id}`} align="start"><button data-picker-option data-model-id={item.id} data-model-provider={item.provider} type="button" className={`pd-composer-picker-model${item.provider === provider && item.id === model ? ' is-selected' : ''}`} aria-pressed={item.provider === provider && item.id === model} disabled={!canChange} onClick={() => void choose(() => setModel(item.provider, item.id))}><span><strong>{item.name.trim() || item.id}</strong><small>{item.id}</small></span><small>{tokenLabel(item.contextWindow)}</small>{item.provider === provider && item.id === model && <em aria-label={t('composer.pickerCurrent')}>✓</em>}</button></HoverTooltip>)}
+							{visibleModels.map((item) => <HoverTooltip key={`${item.provider}/${item.id}`} title={item.name.trim() || item.id} description={`${item.provider}/${item.id}`} align="start"><button data-picker-option data-model-id={item.id} data-model-provider={item.provider} type="button" className={`pd-composer-picker-model${item.provider === provider && item.id === model ? ' is-selected' : ''}`} aria-pressed={item.provider === provider && item.id === model} disabled={!canChange} onClick={() => void choose(() => setModel(item.provider, item.id))}><span><strong>{item.name.trim() || item.id}</strong><small>{item.id}</small><span className="pd-model-capabilities"><span>{locale === 'zh-CN' ? imageCapability(item) === 'supported' ? '图片' : imageCapability(item) === 'unsupported' ? '仅文本' : '输入能力未知' : imageCapability(item) === 'supported' ? 'Images' : imageCapability(item) === 'unsupported' ? 'Text only' : 'Input unknown'}</span><span>{typeof item.reasoning !== 'boolean' ? locale === 'zh-CN' ? '推理能力未知' : 'Reasoning unknown' : item.reasoning ? locale === 'zh-CN' ? '推理' : 'Reasoning' : locale === 'zh-CN' ? '标准' : 'Standard'}</span></span></span><small>{tokenLabel(item.contextWindow)}</small>{item.provider === provider && item.id === model && <em aria-label={t('composer.pickerCurrent')}>✓</em>}</button></HoverTooltip>)}
 						</div>
 					</section>
 				</div> : <div className="pd-composer-picker-empty">{t(loading ? 'composer.pickerLoading' : search ? 'composer.pickerNoMatch' : 'composer.pickerEmpty')}</div>}

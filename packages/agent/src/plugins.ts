@@ -3,6 +3,7 @@ import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } 
 import { StringDecoder } from 'node:string_decoder';
 import { DefaultPackageManager, parseFrontmatter, type PackageManager, type PackageSource, type ResolvedResource, type ResourceLoader, type SettingsManager } from '@earendil-works/pi-coding-agent';
 import type { UiPluginCatalog, UiPluginMutation, UiPluginResource, UiPluginResourceKind, UiPluginResourcePreview, UiPluginScope } from '@pidesktop/shared';
+import { installPluginUpdate } from './pluginUpdates.ts';
 
 const KINDS: UiPluginResourceKind[] = ['extensions', 'skills', 'prompts', 'themes'];
 const TEXT_LIMIT = 65_536;
@@ -210,6 +211,11 @@ export async function applyPluginMutation(services: PluginServices, input: UiPlu
       packages[index] = { ...entry, [input.kind]: updatePatterns(entry[input.kind], pattern, input.enabled, entry) };
       input.scope === 'project' ? settings.setProjectPackages(packages) : settings.setPackages(packages);
     } else writePaths(services, input.kind, input.scope, updatePatterns(current[input.kind], pattern, input.enabled));
+    await flushSettings(services);
+    return;
+  }
+  if (input.action === 'update-target') {
+    await installPluginUpdate(services, input, dependencies);
     await flushSettings(services);
     return;
   }

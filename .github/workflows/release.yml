@@ -131,6 +131,27 @@ jobs:
           $esbuildVersion = & $esbuildBinary.FullName --version
           $expectedEsbuildVersion = (Get-Content packages/desktop/package.json | ConvertFrom-Json).optionalDependencies.'@esbuild/win32-x64'
           if ($LASTEXITCODE -ne 0 -or $esbuildVersion -ne $expectedEsbuildVersion) { throw 'Packaged Pi Chord esbuild binary cannot run' }
+      - name: Smoke test packaged Windows runtime
+        shell: pwsh
+        timeout-minutes: 3
+        run: |
+          $smokeExe = (Resolve-Path -LiteralPath 'release/win-unpacked/Pi Desktop.exe').Path
+          $smokeScript = (Resolve-Path -LiteralPath 'tests/fixtures/function-improvements/packaged-smoke.cjs').Path
+          $smokeResources = (Resolve-Path -LiteralPath 'release/win-unpacked/resources').Path
+          $smokeStdout = Join-Path $env:RUNNER_TEMP 'pi-packaged-smoke.stdout.log'
+          $smokeStderr = Join-Path $env:RUNNER_TEMP 'pi-packaged-smoke.stderr.log'
+          $hadRunAsNode = Test-Path Env:ELECTRON_RUN_AS_NODE
+          $previousRunAsNode = $env:ELECTRON_RUN_AS_NODE
+          try {
+            $env:ELECTRON_RUN_AS_NODE = '1'
+            $smokeArguments = '"' + $smokeScript + '" "' + $smokeResources + '"'
+            $smokeProcess = Start-Process -FilePath $smokeExe -ArgumentList $smokeArguments -WindowStyle Hidden -Wait -PassThru -RedirectStandardOutput $smokeStdout -RedirectStandardError $smokeStderr
+            if ($smokeProcess.ExitCode -ne 0) { throw "Packaged Windows runtime smoke test failed with exit code $($smokeProcess.ExitCode)" }
+          } finally {
+            if ($hadRunAsNode) { $env:ELECTRON_RUN_AS_NODE = $previousRunAsNode } else { Remove-Item Env:ELECTRON_RUN_AS_NODE -ErrorAction SilentlyContinue }
+            if (Test-Path -LiteralPath $smokeStdout) { Get-Content -LiteralPath $smokeStdout }
+            if (Test-Path -LiteralPath $smokeStderr) { Get-Content -LiteralPath $smokeStderr }
+          }
       - uses: actions/upload-artifact@v4
         with:
           name: pi-desktop-windows

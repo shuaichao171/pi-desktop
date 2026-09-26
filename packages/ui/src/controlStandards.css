@@ -1,0 +1,8 @@
+/* Shared controls preserve each component's layout and use the same focus and spacing rhythm. */
+:root { --pd-control-height: 32px; --pd-menu-row-height: 32px; --pd-control-radius: 6px; }
+:is(.pd-sidebar-popover, .pd-composer-config-popover) button[role^='menuitem'] { min-height: var(--pd-menu-row-height); display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-radius: var(--pd-control-radius); line-height: 1.4; white-space: normal; overflow-wrap: anywhere; }
+:is(.pd-settings-dialog, .pd-automation-dialog, .pd-sidebar-popover) :is(input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='color']), select) { min-height: var(--pd-control-height); border-radius: var(--pd-control-radius); }
+:is(button, input, select, textarea, summary, [role='separator'], [role='treeitem']):focus-visible { outline: 2px solid var(--pd-focus-border); outline-offset: 2px; }
+:is(.pd-sidebar-popover, .pd-composer-config-popover) button:disabled { cursor: not-allowed; opacity: .55; }
+.pd-sidebar-popover [role='menuitemcheckbox'][aria-checked='true'] { background: var(--pd-selected); color: var(--pd-text); }
+.pd-settings-dialog :is(.pd-settings-error, .pd-settings-feedback) { font-size: var(--pd-font-caption); line-height: 1.5; overflow-wrap: anywhere; }

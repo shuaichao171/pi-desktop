@@ -1,0 +1,19 @@
+.pd-conversation-turn { width:100%; min-width:0; }
+.pd-turn-summary { display:flex; align-items:center; flex-wrap:wrap; gap:8px; min-height:30px; max-width:100%; padding:4px 2px; border:0; border-radius:5px; background:transparent; color:var(--pd-text-subtle); font:inherit; font-size:var(--pd-font-sm); text-align:start; }
+button.pd-turn-summary { cursor:pointer; }
+button.pd-turn-summary:hover { color:var(--pd-text); background:var(--pd-surface-hover); }
+.pd-turn-summary>svg { flex:0 0 auto; }
+.pd-turn-summary .pd-chevron { margin-inline-start:1px; }
+.pd-turn-duration { font-variant-numeric:tabular-nums; white-space:nowrap; }
+.pd-turn-count { color:var(--pd-text-weak); }
+.pd-turn-failures,.is-failed>.pd-message-column>.pd-turn-summary { color:var(--pd-danger); }
+.is-cancelled>.pd-message-column>.pd-turn-summary,.is-interrupted>.pd-message-column>.pd-turn-summary { color:var(--pd-warning); }
+.pd-turn-steps { display:flex; flex-direction:column; gap:10px; padding:10px 0 12px 15px; margin-left:7px; border-left:1px solid var(--pd-border-soft); }
+.pd-turn-steps .pd-assistant-heading { display:none; }
+.pd-turn-steps .pd-message-column { width:100%; }
+.pd-turn-steps .pd-thinking-activity { margin-bottom:0; }
+.pd-turn-steps .is-process-message>.pd-message-column>.pd-markdown { color:var(--pd-text-subtle); }
+.pd-turn-answer { margin-top:12px; }
+.pd-conversation-turn:not(:has(.pd-turn-summary)) .pd-turn-answer { margin-top:0; }
+.pd-turn-answer>.pd-message-row>.pd-message-column { width:100%; }
+@media(max-width:700px) { .pd-turn-summary { column-gap:6px; row-gap:4px; } .pd-turn-steps { padding-left:10px; margin-left:5px; } }

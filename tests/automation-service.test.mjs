@@ -17,11 +17,149 @@ registerHooks({
 const { createAutomationService } = await import('../packages/desktop/src/main/automationService.ts');
 const { nextAutomationRun, validateAutomationSchedule } = await import('../packages/desktop/src/main/automationSchedule.ts');
 
+test('grace expiry skips one occurrence, preserves quota and completes expired one-shots', async t => {
+  const f = await fixture(t);
+  await f.service.save(f.input({ misfireGraceMinutes: 10, maxScheduledRuns: 3 }));
+  await f.service.save(f.input({ name: 'one shot', schedule: { kind: 'once', at: new Date(f.now() + 60000).toISOString() }, misfireGraceMinutes: 1 }));
+  f.advance(86400000);
+  await Promise.all([f.service.tick(), f.service.tick()]);
+  const state = await f.service.snapshot();
+  assert.equal(f.calls.length, 0);
+  assert.equal(state.runs.length, 2);
+  assert.ok(state.runs.every(r => r.status === 'skipped' && r.scheduledAt));
+  assert.equal(state.automations[0].scheduledRunCount ?? 0, 0);
+  assert.ok(Date.parse(state.automations[0].nextRunAt) > f.now());
+  assert.equal(state.automations[1].enabled, false);
+  assert.ok(state.automations[1].completedAt);
+});
+
+test('pre-dispatch retry keeps occurrence identity and durable backoff across restart', async t => {
+  let attempts = 0;
+  const f = await fixture(t, { execute: async (_task, _signal, dispatch) => {
+    if (++attempts === 1) throw Object.assign(new Error('temporary worker startup failure'), { retryableDispatch: true, executionStarted: false });
+    await dispatch('dispatching'); await dispatch('accepted');
+    return { sessionId: 's', sessionPath: '/s', summary: 'ok' };
+  } });
+  await f.service.save(f.input({ maxScheduledRuns: 1, dispatchRetryLimit: 2 }));
+  f.advance(3600000); await f.service.tick();
+  const deferred = await f.waitFor(s => s.runs[0]?.status === 'retrying');
+  const runId = deferred.runs[0].id;
+  assert.equal(deferred.automations[0].scheduledRunCount ?? 0, 0);
+  await f.service.dispose();
+  const restarted = f.create(); await restarted.initialize();
+  await restarted.tick(); assert.equal(attempts, 1);
+  f.advance(5001); await Promise.all([restarted.tick(), restarted.tick()]);
+  for (let n = 0; n < 50 && (await restarted.snapshot()).runs[0].status === 'running'; n++) await new Promise(r => setTimeout(r, 5));
+  const final = await restarted.snapshot();
+  assert.equal(attempts, 2); assert.equal(final.runs[0].id, runId);
+  assert.equal(final.runs[0].status, 'succeeded'); assert.equal(final.runs[0].attempts, 2);
+  assert.equal(final.automations[0].scheduledRunCount, 1); assert.equal(final.automations[0].enabled, false);
+  assert.ok(final.automations[0].completedAt);
+});
+
+test('three accepted scheduled runs exhaust quota; manual runs do not consume it', async t => {
+  const f = await fixture(t, { execute: async (_task, _signal, dispatch) => {
+    await dispatch('dispatching'); await dispatch('accepted');
+    return { sessionId: null, sessionPath: null, summary: 'ok' };
+  } });
+  const initial = await f.service.save(f.input({ maxScheduledRuns: 3 }));
+  const id = initial.automations[0].id;
+  await f.service.run(id); await f.waitFor(s => s.runs[0]?.status === 'succeeded');
+  assert.equal((await f.service.snapshot()).automations[0].scheduledRunCount ?? 0, 0);
+  for (let count = 1; count <= 3; count++) {
+    f.advance(3600000); await Promise.all([f.service.tick(), f.service.tick()]);
+    await f.waitFor(s => s.runs[0]?.status === 'succeeded' && s.automations[0].scheduledRunCount === count);
+  }
+  const done = await f.service.snapshot(); assert.equal(done.automations[0].enabled, false);
+  await assert.rejects(f.service.setEnabled(id, true), /上限/);
+  await f.service.save({ ...done.automations[0], maxScheduledRuns: 4, enabled: true });
+  assert.equal((await f.service.snapshot()).automations[0].completedAt, undefined);
+});
+
+test('an uncertain dispatch never retries even if a transport error is marked retryable', async t => {
+  const f = await fixture(t, { execute: async (_task, _signal, dispatch) => {
+    await dispatch('dispatching');
+    throw Object.assign(new Error('reply lost after tool may have run'), { retryableDispatch: true, executionStarted: false });
+  } });
+  const state = await f.service.save(f.input({ dispatchRetryLimit: 5 }));
+  await f.service.run(state.automations[0].id);
+  await f.waitFor(s => s.runs[0]?.status === 'failed');
+  assert.equal((await f.service.snapshot()).runs[0].attempts, 1);
+});
+
 function deferred() {
   let resolve, reject;
   const promise = new Promise((yes, no) => { resolve = yes; reject = no; });
   return { promise, resolve, reject };
 }
+
+test('scheduled completion write failure preserves exactly one count when a later edit flushes it', async t => {
+  const f = await fixture(t);
+  const task = (await f.service.save(f.input({ maxScheduledRuns: 1 }))).automations[0];
+  f.advance(3600000); await f.service.tick();
+  const durable = await readFile(f.filePath, 'utf8'); await rm(f.filePath); await mkdir(f.filePath);
+  f.calls[0].gate.resolve({ sessionId: 'done', sessionPath: join(f.root, 'done.jsonl'), summary: 'completed once' });
+  await f.waitFor(snapshot => Boolean(snapshot.error));
+  await assert.rejects(f.service.tick()); assert.equal(f.calls.length, 1);
+  await rmdir(f.filePath); await writeFile(f.filePath, durable);
+  const recovered = await f.service.save({ ...task, name: 'edited after completion' });
+  assert.equal(recovered.automations[0].scheduledRunCount, 1); assert.equal(recovered.automations[0].enabled, false);
+  assert.equal(recovered.runs[0].counted, true); assert.equal(recovered.runs[0].status, 'succeeded');
+  f.advance(7200000); await Promise.all([f.service.tick(), f.service.tick()]);
+  assert.equal(f.calls.length, 1); assert.equal((await f.service.snapshot()).automations[0].scheduledRunCount, 1);
+  const disk = JSON.parse(await readFile(f.filePath, 'utf8'));
+  assert.equal(disk.automations[0].scheduledRunCount, 1); assert.equal(disk.runs[0].counted, true);
+});
+
+test('pausing during setup suppresses a subsequent transient retry for recurring and already-claimed one-shot tasks', async t => {
+  for (const once of [false, true]) {
+    const setup = deferred(), entered = deferred(); let attempts = 0;
+    const f = await fixture(t, { execute: async () => { attempts++; entered.resolve(); await setup.promise; throw Object.assign(new Error('temporary setup disconnect'), { retryableDispatch: true, executionStarted: false }); } });
+    const task = (await f.service.save(f.input({ ...(once ? { schedule: { kind: 'once', at: '2026-09-24T01:00:00Z' } } : {}), dispatchRetryLimit: 5 }))).automations[0];
+    f.advance(3600000); await f.service.tick(); await entered.promise;
+    await f.service.setEnabled(task.id, false); setup.resolve();
+    const settled = await f.waitFor(snapshot => snapshot.runs[0]?.status !== 'running');
+    assert.equal(settled.runs[0].status, 'failed', 'an explicit pause also inhibits retries of setup still in flight');
+    f.advance(600000); await f.service.tick(); assert.equal(attempts, 1);
+    assert.equal(settled.automations[0].scheduledRunCount ?? 0, 0);
+  }
+});
+
+test('a retry whose persistence failed can still be explicitly cancelled without dispatching again', async t => {
+  const setup = deferred(), entered = deferred(); let attempts = 0;
+  const f = await fixture(t, { execute: async () => { attempts++; entered.resolve(); await setup.promise; throw Object.assign(new Error('temporary setup disconnect'), { retryableDispatch: true, executionStarted: false }); } });
+  const task = (await f.service.save(f.input({ dispatchRetryLimit: 5 }))).automations[0];
+  f.advance(3600000); await f.service.tick(); await entered.promise;
+  const claimed = await f.service.snapshot(), durable = await readFile(f.filePath, 'utf8');
+  await rm(f.filePath); await mkdir(f.filePath); setup.resolve(); await f.waitFor(snapshot => Boolean(snapshot.error));
+  await new Promise(resolve => setImmediate(resolve));
+  await rmdir(f.filePath); await writeFile(f.filePath, durable);
+  const cancelled = await f.service.cancelRun(claimed.runs[0].id);
+  assert.equal(cancelled.runs[0].status, 'cancelled'); assert.equal(cancelled.runs[0].retryAt, null);
+  f.advance(600000); await f.service.tick(); assert.equal(attempts, 1);
+});
+
+test('failed accepted-receipt and completion writes preserve quota and never replay after recovery or restart', async t => {
+  const accepted = deferred(), resume = deferred(); let attempts = 0;
+  const f = await fixture(t, { execute: async (_task, _signal, dispatch) => {
+    attempts++; await dispatch('dispatching'); accepted.resolve(); await resume.promise;
+    try { await dispatch('accepted'); } catch (error) { throw Object.assign(error, { executionStarted: true, retryableDispatch: false }); }
+    return { sessionId: 'already-sent', sessionPath: '/already-sent', summary: 'done' };
+  } });
+  await f.service.save(f.input({ maxScheduledRuns: 1, dispatchRetryLimit: 5 }));
+  f.advance(3600000); await f.service.tick(); await accepted.promise;
+  const completion = [...f.service.active.values()][0].done;
+  const durable = await readFile(f.filePath, 'utf8'); await rm(f.filePath); await mkdir(f.filePath);
+  resume.resolve(); await f.waitFor(snapshot => Boolean(snapshot.error));
+  await assert.rejects(completion, undefined, 'both the accepted receipt and terminal write fail before restoring storage');
+  await rmdir(f.filePath); await writeFile(f.filePath, durable); await f.service.tick();
+  const recovered = await f.service.snapshot();
+  assert.equal(recovered.runs[0].status, 'failed'); assert.equal(recovered.runs[0].counted, true);
+  assert.equal(recovered.automations[0].scheduledRunCount, 1); assert.equal(recovered.automations[0].enabled, false);
+  await f.service.dispose(); const restarted = f.create(); await restarted.initialize();
+  f.advance(86400000); await restarted.tick(); assert.equal(attempts, 1);
+  assert.equal((await restarted.snapshot()).automations[0].scheduledRunCount, 1);
+});
 
 async function fixture(t, overrides = {}) {
   const temp = await realpath(tmpdir());

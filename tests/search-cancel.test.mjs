@@ -8,10 +8,18 @@ import { test } from 'node:test';
 globalThis.__searchFileSystem = fs;
 registerHooks({
   resolve(specifier, context, nextResolve) {
-    if (specifier === 'node:fs/promises' && context.parentURL?.endsWith('/searchService.ts')) {
+    if (specifier === 'node:fs/promises' && ['/searchService.ts', '/indexedSearch.ts'].some(path => context.parentURL?.endsWith(path))) {
       const code = `
         const fs = globalThis.__searchFileSystem;
-        export const { lstat, open, opendir, stat } = fs;
+        export const { open, stat, readFile } = fs;
+        export async function lstat(path) {
+          if (path === globalThis.__failSearchEntry) throw Object.assign(new Error('permission denied'), { code: 'EACCES' });
+          return fs.lstat(path);
+        }
+        export async function opendir(path) {
+          if (path === globalThis.__failSearchDirectory) throw Object.assign(new Error('permission denied'), { code: 'EACCES' });
+          return fs.opendir(path);
+        }
         export async function realpath(path) {
           if (globalThis.__delaySearchPath) {
             const gate = globalThis.__delaySearchPath;
@@ -39,9 +47,31 @@ test('a delayed old file search cannot cancel a later search after root resoluti
   globalThis.__delaySearchPath = new Promise((resolve) => { releaseLatest = resolve; });
   const latest = searchWorkspaceFiles(root, 'latest');
   releaseOld();
-  assert.deepEqual(await old, { files: [], truncated: true });
+  const oldResult = await old;
+  assert.deepEqual(oldResult.files, []);
+  assert.equal(oldResult.truncated, true);
   releaseLatest();
   const result = await latest;
   assert.equal(result.truncated, false);
   assert.equal(result.files[0].name, 'latest.txt');
+});
+
+test('unreadable files and directories are skipped without reporting a budget limit', async (t) => {
+  const root = await fs.mkdtemp(join(tmpdir(), 'pi-search-permissions-'));
+  t.after(async () => {
+    globalThis.__failSearchDirectory = undefined;
+    globalThis.__failSearchEntry = undefined;
+    await fs.rm(root, { recursive: true, force: true });
+  });
+  await fs.mkdir(join(root, 'blocked'));
+  await fs.writeFile(join(root, 'readable.txt'), '');
+  await fs.writeFile(join(root, 'blocked.txt'), '');
+  const resolvedRoot = await fs.realpath(root);
+  globalThis.__failSearchDirectory = join(resolvedRoot, 'blocked');
+  globalThis.__failSearchEntry = join(resolvedRoot, 'blocked.txt');
+  const { searchWorkspaceFiles } = await import('../packages/desktop/src/main/searchService.ts');
+  const result = await searchWorkspaceFiles(root, 'txt');
+  assert.equal(result.truncated, false);
+  assert.equal(result.skipped, 2);
+  assert.deepEqual(result.files.map((entry) => entry.name), ['readable.txt']);
 });

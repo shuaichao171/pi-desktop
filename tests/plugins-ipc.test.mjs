@@ -8,7 +8,7 @@ import { test } from 'node:test';
 const stubs = {
   electron: `
     export const app = { getPath: () => globalThis.__pluginRoot };
-    export const BrowserWindow = { getAllWindows: () => [] };
+    export const BrowserWindow = { getAllWindows: () => [], fromWebContents: (sender) => globalThis.__reviewWindow?.webContents === sender ? globalThis.__reviewWindow : null };
     export const Menu = { buildFromTemplate: () => ({}) };
     export const nativeImage = { createFromPath: () => ({ isEmpty: () => true }) };
     export const Tray = class {};
@@ -24,7 +24,7 @@ const stubs = {
     sessionPaths: () => [], isSessionRunning: () => false,
   });`,
   './pluginDiscovery': 'export const createPluginDiscovery = () => async () => ({ items: [], total: 0 });',
-  './updateService': 'export const updateService = {};',
+  './updateService': 'export const updateService = { stop() {} };',
   './workbenchIpc': 'export const registerWorkbenchIpc = () => ({ async reset() {}, async dispose() {} });',
 };
 registerHooks({ resolve(specifier, context, nextResolve) {
@@ -34,7 +34,7 @@ registerHooks({ resolve(specifier, context, nextResolve) {
 } });
 const deferred = () => { let resolve; const promise = new Promise(done => { resolve = done; }); return { promise, resolve }; };
 
-test('settings and plugin IPC authenticate senders; plugin mutations coordinate with automation claims', async () => {
+test('settings, input and plugin IPC authenticate senders; plugin mutations coordinate with automation claims', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'pi-plugin-ipc-'));
   const cwd = join(root, 'project');
   await mkdir(cwd);
@@ -46,6 +46,8 @@ test('settings and plugin IPC authenticate senders; plugin mutations coordinate 
   const instructions = [{ id: 'user', path: join(root, 'AGENTS.md'), content: 'Use Chinese.', exists: true, revision: 'initial' }];
   let mutations = 0;
   let mutate = async () => catalog;
+  const queueReads = [], queueMutations = [];
+  const queueSnapshot = { version: 7, paused: true, items: [] };
   globalThis.__pluginAgent = {
     onEvent() {}, onBackgroundActivity() {}, async dispose() {},
     async getPersonalization() { return instructions; },
@@ -56,6 +58,8 @@ test('settings and plugin IPC authenticate senders; plugin mutations coordinate 
     async mutatePlugin(input) { mutations++; return mutate(input); },
     async setExtensionEnabled() { mutations++; return mutate(); },
     async executeSlashCommand() { mutations++; return mutate(); },
+    async getInputQueue(scope) { queueReads.push(scope); return { ...queueSnapshot, scope }; },
+    async mutateInputQueue(request) { queueMutations.push(request); return { ...queueSnapshot, scope: request.scope }; },
   };
   const runStarted = deferred();
   globalThis.__pluginExecute = async (_task, signal) => {
@@ -67,16 +71,18 @@ test('settings and plugin IPC authenticate senders; plugin mutations coordinate 
   const event = { sender: owner.webContents, senderFrame: owner.webContents.mainFrame };
   const ipc = await import('../packages/desktop/src/main/ipc.ts');
   const { IPC_CHANNELS: ch } = await import('../packages/shared/src/index.ts');
+  const { INPUT_FEATURE_CHANNELS: inputChannels } = await import('../packages/shared/src/inputFeatures.ts');
+  globalThis.__reviewWindow = owner;
   ipc.registerIpc({ getDialogWindow: () => owner });
   ipc.defaultWorkspace();
   const call = (channel, ...args) => globalThis.__pluginHandlers.get(channel)(event, ...args);
   const reload = { cwd, action: 'reload' };
   let release;
   try {
-    for (const channel of [ch.personalizationRead, ch.personalizationSave, ch.agentDiscoverProviderModels, ch.pluginCatalog, ch.pluginMutate, ch.pluginPreview, ch.pluginDiscover, ch.pluginPickDirectory, ch.agentSetExtensionEnabled]) {
+    for (const channel of [ch.personalizationRead, ch.personalizationSave, ch.agentDiscoverProviderModels, ch.pluginCatalog, ch.pluginMutate, ch.pluginPreview, ch.pluginDiscover, ch.pluginPickDirectory, ch.agentSetExtensionEnabled, inputChannels.getInputQueue, inputChannels.mutateInputQueue]) {
       const handler = globalThis.__pluginHandlers.get(channel);
-      await assert.rejects(async () => handler({ sender: {}, senderFrame: event.senderFrame }), /Invalid plugin sender/);
-      await assert.rejects(async () => handler({ sender: event.sender, senderFrame: {} }), /Invalid plugin sender/);
+      await assert.rejects(async () => handler({ sender: {}, senderFrame: event.senderFrame }), /Invalid (plugin|renderer) sender|no longer available/);
+      await assert.rejects(async () => handler({ sender: event.sender, senderFrame: {} }), /Invalid (plugin|renderer) sender|no longer available/);
     }
     for (const [channel, input] of [[ch.pluginCatalog, root], [ch.pluginMutate, { ...reload, cwd: root }], [ch.pluginPreview, { cwd: root }]]) {
       assert.throws(() => call(channel, input), /项目已切换/);
@@ -88,6 +94,45 @@ test('settings and plugin IPC authenticate senders; plugin mutations coordinate 
     assert.equal(await call(ch.pluginPickDirectory), root);
     assert.equal(globalThis.__pluginPickerOwner, owner);
     assert.equal((await call(ch.pluginPreview, { cwd, path: 'known.md' })).text, 'preview');
+
+    await t.test('input queue IPC rejects missing or malformed conversation scopes before agent dispatch', async () => {
+      const valid = { cwd, sessionPath: join(cwd, 'session.jsonl'), sessionId: 'queue-session' };
+      const request = { requestId: 'queue-request', expectedVersion: 7, action: 'pause' };
+      const invalidScopes = [
+        undefined, null, {},
+        { cwd, sessionPath: valid.sessionPath },
+        { cwd, sessionId: valid.sessionId },
+        { sessionPath: valid.sessionPath, sessionId: valid.sessionId },
+        { ...valid, cwd: '' }, { ...valid, cwd: 'bad\u0000path' },
+        { ...valid, sessionPath: '' }, { ...valid, sessionPath: 42 }, { ...valid, sessionPath: 'bad\npath' },
+        { ...valid, sessionId: '' }, { ...valid, sessionId: 42 }, { ...valid, sessionId: 'bad\u007fid' },
+      ];
+      await assert.rejects(async () => call(inputChannels.mutateInputQueue), /输入队列所属会话信息无效/);
+      await assert.rejects(async () => call(inputChannels.mutateInputQueue, null), /输入队列所属会话信息无效/);
+      await assert.rejects(async () => call(inputChannels.mutateInputQueue, request), /输入队列所属会话信息无效/);
+      for (const scope of invalidScopes) {
+        await assert.rejects(async () => call(inputChannels.getInputQueue, scope), /输入队列所属会话信息无效/);
+        await assert.rejects(async () => call(inputChannels.mutateInputQueue, { ...request, scope }), /输入队列所属会话信息无效/);
+        assert.equal(queueReads.length, 0, 'invalid reads never reach the agent service');
+        assert.equal(queueMutations.length, 0, 'invalid mutations never reach the agent service');
+      }
+    });
+
+    await t.test('input queue IPC forwards exact valid scopes and mutation fields, including an unsaved session', async () => {
+      for (const sessionPath of [join(cwd, 'session.jsonl'), null]) {
+        const scope = { cwd, sessionPath, sessionId: 'queue-session' };
+        const result = await call(inputChannels.getInputQueue, scope);
+        assert.equal(queueReads.at(-1), scope, 'reads preserve the complete caller identity');
+        assert.deepEqual(result, { ...queueSnapshot, scope });
+        const request = { scope, requestId: `queue-request-${queueMutations.length}`, expectedVersion: 7, action: 'edit', id: 'queued-message', text: '', beforeId: null };
+        const original = structuredClone(request);
+        assert.deepEqual(await call(inputChannels.mutateInputQueue, request), { ...queueSnapshot, scope });
+        assert.equal(queueMutations.at(-1), request, 'mutations preserve scope, request identity, version and payload');
+        assert.deepEqual(request, original, 'IPC validation must not rewrite the request');
+      }
+      assert.equal(queueReads.length, 2);
+      assert.equal(queueMutations.length, 2);
+    });
 
     const task = (await call(ch.automationSave, { name: 'review', prompt: 'Review changes', cwd, model: null, thinkingLevel: null,
       schedule: { kind: 'weekly', days: [1], time: '09:00' }, timeZone: 'Asia/Shanghai', enabled: false })).automations[0];
@@ -123,7 +168,7 @@ test('settings and plugin IPC authenticate senders; plugin mutations coordinate 
     await assert.rejects(call(ch.automationRun, task.id), /上次自动化执行进程尚未退出/);
     globalThis.__pluginWorkerStuck = false;
     await ipc.disposeServices();
-    assert.throws(() => call(ch.pluginCatalog, cwd), /Invalid plugin sender/);
+    assert.throws(() => call(ch.pluginCatalog, cwd), /Invalid (plugin|renderer) sender|no longer available/);
   } finally {
     release?.();
     await ipc.disposeServices();

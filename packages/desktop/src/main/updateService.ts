@@ -158,12 +158,14 @@ class UpdateService {
 
 	/** Downloads the previously found update (never automatic — user consent required). */
 	private async startDownload(): Promise<void> {
+		const attempt = this.checkAttempt;
 		this.publish({ phase: 'downloading', progressPercent: 0, error: undefined });
 		try {
 			const updater = await this.getUpdater();
 			await updater.downloadUpdate();
 		} catch (error) {
-			this.reportCheckError(error, this.checkAttempt);
+			// 同一次失败可能先触发 error 事件、稍后才拒绝 Promise；旧下载不能取消已经开始的新重试。
+			this.reportCheckError(error, attempt);
 		}
 	}
 
@@ -233,7 +235,7 @@ class UpdateService {
 				// Metadata checking resolves before the automatic download. Its separate promise
 				// still rejects after the updater emits "error", so it needs its own handler.
 				void result?.downloadPromise?.catch((error: unknown) => this.reportCheckError(error, attempt));
-				// With autoDownload off, a consented check (Settings "check and install")
+				// With autoDownload off, a check with an explicit installation request
 				// must chain into the download itself.
 				if (!attempt.failed && attempt === this.checkAttempt && this.state.installRequested && this.state.phase === 'available') {
 					await this.startDownload();
@@ -256,7 +258,6 @@ class UpdateService {
 		if (phase !== 'ready' && phase !== 'downloading' && phase !== 'available' && !(['checking', 'error'].includes(phase) && this.state.availableVersion)) {
 			throw new Error('No available update is ready to install.');
 		}
-		this.publish({ installRequested: true });
 		this.publish({ installRequested: true });
 		if (phase === 'ready') await this.installReadyUpdate();
 		else if (phase === 'available') await this.startDownload();

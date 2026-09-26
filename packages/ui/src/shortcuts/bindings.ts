@@ -7,7 +7,7 @@ export type ShortcutScope = 'global' | 'composer' | 'transcript';
 
 export interface ShortcutBinding {
 	id: string;
-	/** Default key spec, e.g. 'Ctrl+K'; Ctrl renders as ⌘ on macOS. */
+	/** Default key spec, e.g. 'Ctrl+K'; empty means unassigned. Ctrl renders as ⌘ on macOS. */
 	keys: string;
 	/** i18n key for the human label. */
 	labelKey: string;

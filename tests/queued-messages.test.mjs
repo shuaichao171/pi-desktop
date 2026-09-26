@@ -41,7 +41,8 @@ test('SDK queues project accepted instructions, duplicates, attachments and sess
     assert.equal(snapshot.queuedMessages[1].id, firstId);
     assert.notEqual(firstId, secondId);
 
-    await session._handleAgentEvent({ type: 'message_start', message: { role: 'user', content: 'same instruction', timestamp: Date.now() } });
+    const [firstDelivered] = session.agent.followUpQueue.drain();
+    await session._handleAgentEvent({ type: 'message_start', message: firstDelivered });
     snapshot = service.getSnapshot();
     assert.deepEqual(snapshot.queuedMessages.map(({ id }) => id), [snapshot.queuedMessages[0].id, secondId], 'consumption removes the first duplicate, preserving the later entry');
     assert.equal(snapshot.queuedCount, 2);
@@ -102,9 +103,9 @@ test('SDK queues project accepted instructions, duplicates, attachments and sess
     await settle();
     const imageOnly = session.agent.peekQueuedMessages()[0];
     const imageOnlyId = service.getSnapshot().queuedMessages[0].id;
-    session.agent.clearAllQueues(); // Simulate the low-level loop draining this one message.
+    session.agent.followUpQueue.drain(); // Exercise the actual low-level reservation boundary.
     await session._handleAgentEvent({ type: 'message_start', message: imageOnly });
-    assert.deepEqual(session.getFollowUpMessages(), [''], 'Pi 0.87 leaves an empty-text display entry behind');
+    assert.deepEqual(session.getFollowUpMessages(), [], 'the adapter synchronizes the SDK display mirror for image-only delivery');
     assert.deepEqual(service.getSnapshot().queuedMessages, [], 'a real delivery event removes the confirmed image-only instruction');
     await session.followUp('', [{ type: 'image', data: 'aGVsbG8=', mimeType: 'image/png' }]);
     await settle();

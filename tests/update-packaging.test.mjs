@@ -5,6 +5,7 @@ import { dirname, join, resolve } from 'node:path';
 import { test } from 'node:test';
 import YAML from 'yaml';
 import { prepareUpdateConfig } from '../scripts/prepare-update-config.mjs';
+import { WINDOWS_PTY_PREBUILD_CONFIG, verifyWindowsPtyPrebuilds } from '../scripts/windows-pty-prebuild.mjs';
 
 const defaultUrl = 'https://github.com/shuaichao171/pi-desktop/releases/latest/download/';
 function fixture(t) {
@@ -46,4 +47,21 @@ test('default builder feed matches the shipped source configuration and copies g
   assert.equal(config.publish.provider, 'generic');
   assert.deepEqual(config.extraResources.find((entry) => entry.to === 'update-config.json'), { from: 'out/update-config.json', to: 'update-config.json' });
   assert.equal(config.win.verifyUpdateCodeSignature, true, 'signed releases retain publisher verification');
+});
+
+test('Windows packaging entries ship node-pty prebuilds instead of running node-gyp', () => {
+  assert.deepEqual(WINDOWS_PTY_PREBUILD_CONFIG, { npmRebuild: false });
+  // Both Windows entries must opt out of native rebuilds; the debug entry used to
+  // invoke node-gyp and fail on machines without Visual Studio.
+  for (const entry of ['dist-win.mjs', 'dist-debug.mjs']) {
+    const source = readFileSync(new URL(`../scripts/${entry}`, import.meta.url), 'utf8');
+    assert.match(source, /\.\.\.WINDOWS_PTY_PREBUILD_CONFIG/, `${entry} must reuse the shared no-rebuild config`);
+    assert.match(source, /verifyWindowsPtyPrebuilds\(require\)/, `${entry} must verify the shipped prebuilds`);
+  }
+});
+
+test('missing node-pty Windows prebuilds abort packaging before node-gyp runs', (t) => {
+  const root = mkdtempSync(join(realpathSync(tmpdir()), 'pi-pty-prebuilds-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  assert.throws(() => verifyWindowsPtyPrebuilds({ resolve: () => join(root, 'package.json') }), { code: 'ENOENT' });
 });

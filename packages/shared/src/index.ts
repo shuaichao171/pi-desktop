@@ -1,3 +1,15 @@
+import type { ManagementFeaturesBridge } from './managementFeatures';
+import type { PluginUpdatesBridge } from './pluginUpdates';
+import type { McpFeaturesBridge } from './mcpFeatures';
+export * from './pluginUpdates.ts';
+export * from './mcpFeatures.ts';
+export * from './managementFeatures.ts';
+import type { InputFeatureBridge } from './inputFeatures';
+import type { DataFeaturesBridge } from './dataFeatures';
+import type { WorkbenchFeaturesBridge } from './workbenchFeatures';
+export * from './inputFeatures.ts';
+export * from './dataFeatures.ts';
+export * from './workbenchFeatures.ts';
 /**
  * @pidesktop/shared — IPC contract shared between the Electron main process,
  * the preload bridge, and the React renderer.
@@ -42,6 +54,7 @@ export const IPC_CHANNELS = {
   agentNewSession: 'agent:new-session',
   agentSnapshot: 'agent:snapshot',
   agentHistoryPage: 'agent:history-page',
+  agentMessageAttachment: 'agent:message-attachment',
   agentSessionStats: 'agent:session-stats',
   agentExportSession: 'agent:export-session',
   agentSessionTree: 'agent:session-tree',
@@ -144,6 +157,10 @@ export interface UiAutomationInput {
   schedule: UiAutomationSchedule;
   timeZone: string;
   enabled: boolean;
+  /** Missing fields preserve the original coalesced catch-up/unlimited behavior. */
+  misfireGraceMinutes?: number | null;
+  maxScheduledRuns?: number | null;
+  dispatchRetryLimit?: number;
 }
 
 export interface UiAutomation extends Omit<UiAutomationInput, 'id'> {
@@ -152,6 +169,8 @@ export interface UiAutomation extends Omit<UiAutomationInput, 'id'> {
   updatedAt: string;
   nextRunAt: string | null;
   lastRunAt: string | null;
+  scheduledRunCount?: number;
+  completedAt?: string | null;
 }
 
 export interface UiAutomationRun {
@@ -160,13 +179,18 @@ export interface UiAutomationRun {
   name: string;
   cwd: string;
   trigger: 'schedule' | 'manual';
-  status: 'running' | 'succeeded' | 'failed' | 'cancelled' | 'interrupted';
+  status: 'running' | 'retrying' | 'skipped' | 'succeeded' | 'failed' | 'cancelled' | 'interrupted';
   startedAt: string;
   finishedAt: string | null;
   sessionId: string | null;
   sessionPath: string | null;
   summary: string;
   error: string | null;
+  scheduledAt?: string;
+  attempts?: number;
+  retryAt?: string | null;
+  dispatchState?: 'not-started' | 'dispatching' | 'accepted';
+  counted?: boolean;
 }
 
 export interface UiAutomationSnapshot {
@@ -318,6 +342,7 @@ export interface UiPluginCatalog {
   warnings: string[];
 }
 export type UiPluginMutation =
+  | { cwd: string; action: 'update-target'; scope: UiPluginScope; previewId: string }
   | { cwd: string; action: 'install' | 'remove' | 'update'; source: string; scope: UiPluginScope }
   | { cwd: string; action: 'set-enabled'; path: string; kind: UiPluginResourceKind; scope: UiPluginScope; enabled: boolean }
   | { cwd: string; action: 'reload' };
@@ -331,8 +356,19 @@ export interface UiPluginDiscoveryItem {
 }
 export interface UiPluginDiscovery { items: UiPluginDiscoveryItem[]; total: number }
 
+/** One complete user request, including preflight, model/tool turns and retries. */
+export interface UiConversationRun {
+  id: string;
+  /** Recorded lifecycle boundaries in epoch milliseconds; never inferred from message timestamps. */
+  startedAt: number;
+  /** Null while running or when a crash/legacy record has no observed completion. */
+  finishedAt: number | null;
+  status: 'running' | 'completed' | 'cancelled' | 'failed' | 'interrupted';
+}
+
 export interface UiMessage {
   id: string;
+  runId?: string;
   /** Stable position in the session timeline, shared with tool activities. */
   order: number;
   role: 'user' | 'assistant' | 'system';
@@ -348,6 +384,10 @@ export interface UiMessage {
   status: 'streaming' | 'done' | 'error';
   errorMessage?: string;
   attachments?: UiAttachment[];
+  /** Historical attachments omitted from this transport payload; persisted content is retained. */
+  attachmentsOmitted?: number;
+  /** Metadata for omitted payloads; index addresses the persisted attachment array. */
+  attachmentReferences?: UiAttachmentReference[];
 }
 
 export type UiThinkingStatus = 'streaming' | 'done' | 'interrupted' | 'error';
@@ -390,6 +430,8 @@ export type UiAttachment =
   | { kind: 'image'; name: string; mimeType: string; data: string }
   | { kind: 'text'; name: string; mimeType: string; text: string; source?: UiContextSource };
 
+export interface UiAttachmentReference { index: number; kind: 'image' | 'text'; name: string; mimeType: string; size: number }
+
 /** Queue previews never repeat large image or context payloads over IPC. */
 export interface UiQueuedAttachment {
   kind: 'image' | 'text';
@@ -430,6 +472,7 @@ export interface UiExtensionDialogRequest {
 export interface UiToolActivity {
   /** pi toolCallId. */
   id: string;
+  runId?: string;
   order: number;
   /** Tool name, e.g. `bash`, `read`, `edit`. */
   tool: string;
@@ -460,12 +503,13 @@ export interface UiToolActivity {
 export type AgentUiEvent =
   | { type: 'reset'; cwd: string }
   | { type: 'status'; status: AgentStatus; message?: string; attempt?: number; maxAttempts?: number }
-  | { type: 'ready'; model: string; modelName?: string | null; modelProvider: string; thinkingLevel: UiThinkingLevel; availableThinkingLevels: UiThinkingLevel[]; contextUsage: UiContextUsage | null; cwd: string; sessionId: string; sessionPath: string | null; messages: UiMessage[]; activities: UiToolActivity[]; fileChanges: UiFileChange[]; historyTotal?: number }
+  | { type: 'ready'; model: string; modelName?: string | null; modelProvider: string; thinkingLevel: UiThinkingLevel; availableThinkingLevels: UiThinkingLevel[]; contextUsage: UiContextUsage | null; cwd: string; sessionId: string; sessionPath: string | null; messages: UiMessage[]; activities: UiToolActivity[]; fileChanges: UiFileChange[]; historyTotal?: number; runs?: UiConversationRun[] }
   | { type: 'model'; model: string; modelName?: string | null; modelProvider: string; thinkingLevel: UiThinkingLevel; availableThinkingLevels: UiThinkingLevel[]; contextUsage: UiContextUsage | null }
   | { type: 'context-usage'; contextUsage: UiContextUsage | null }
   | { type: 'thinking-level'; level: UiThinkingLevel }
-  | { type: 'user-message'; id: string; order: number; text: string; attachments?: UiAttachment[] }
-  | { type: 'assistant-start'; id: string; order: number }
+  | { type: 'user-message'; id: string; order: number; text: string; attachments?: UiAttachment[]; attachmentsOmitted?: number; attachmentReferences?: UiAttachmentReference[]; runId?: string }
+  | { type: 'assistant-start'; id: string; order: number; runId?: string }
+  | { type: 'run'; run: UiConversationRun }
   | { type: 'assistant-delta'; id: string; delta: string }
   | ({ type: 'assistant-thinking'; id: string } & UiThinkingOutput)
   | ({ type: 'assistant-end'; id: string; text: string; aborted?: boolean; errorMessage?: string } & Partial<UiThinkingOutput>)
@@ -473,6 +517,7 @@ export type AgentUiEvent =
   | { type: 'queue'; count: number; items: UiQueuedMessage[] }
   | { type: 'file-changes'; items: UiFileChange[] }
   | { type: 'sessions-changed'; cwd: string }
+  | { type: 'session-runtime'; cwd: string; path: string; runtime: UiSessionRuntimeState }
   | { type: 'error'; message: string };
 
 export interface AgentEventEnvelope {
@@ -482,6 +527,8 @@ export interface AgentEventEnvelope {
 
 export interface AgentSnapshot {
   sequence: number;
+  /** Independent runtime states, including conversations running in the background. */
+  sessionRuntimes?: UiSessionRuntimeSummary[];
   status: AgentStatus;
   statusMessage?: string;
   /** Auto-retry progress while the agent retries a failed model call (4.4). */
@@ -499,6 +546,7 @@ export interface AgentSnapshot {
   sessionPath: string | null;
   messages: UiMessage[];
   activities: UiToolActivity[];
+  runs?: UiConversationRun[];
   queuedCount: number;
   queuedMessages: UiQueuedMessage[];
   fileChanges: UiFileChange[];
@@ -517,6 +565,7 @@ export interface UiHistoryPage {
   total: number;
   messages: UiMessage[];
   activities: UiToolActivity[];
+  runs?: UiConversationRun[];
 }
 
 /** Aggregate usage of the active session, matching Pi CLI /session. */
@@ -544,6 +593,17 @@ export interface UiSessionTreeNode {
   timestamp?: string;
 }
 
+export interface UiSessionRuntimeState {
+  phase: 'idle' | 'running' | 'waiting-input' | 'waiting-approval' | 'failed';
+  message?: string;
+}
+
+export interface UiSessionRuntimeSummary {
+  cwd: string;
+  path: string;
+  runtime: UiSessionRuntimeState;
+}
+
 export interface UiSessionSummary {
   path: string;
   id: string;
@@ -554,6 +614,8 @@ export interface UiSessionSummary {
   pinned?: boolean;
   archived?: boolean;
   unread?: boolean;
+  /** Live runtime state; independent of persisted unread metadata. */
+  runtime?: UiSessionRuntimeState;
   /** Manual sidebar position. Undefined entries keep their time-based sort. */
   order?: number;
 }
@@ -606,6 +668,8 @@ export interface WorkspaceGitStatus {
   isRepository: boolean;
   branch: string | null;
   entries: WorkspaceGitChange[];
+  /** More changes exist beyond the bounded status preview. */
+  truncated?: boolean;
 }
 
 /** One commit in the workbench git history (4.5). */
@@ -707,9 +771,9 @@ export interface UiDesktopSettings {
 }
 
 /** Main → renderer commands (tray menu, notification clicks). */
-export type UiAppCommand = { type: 'new-session' } | { type: 'switch-session'; path: string };
+export type UiAppCommand = { type: 'new-session' } | { type: 'switch-session'; path: string; cwd?: string };
 
-export interface AgentBridge {
+export interface AgentBridge extends InputFeatureBridge, DataFeaturesBridge, WorkbenchFeaturesBridge, ManagementFeaturesBridge, PluginUpdatesBridge, McpFeaturesBridge {
   getPersonalization(): Promise<UiInstructionDocument[]>;
   saveInstruction(request: UiSaveInstructionRequest): Promise<UiSaveInstructionResult>;
   getPluginCatalog(cwd: string): Promise<UiPluginCatalog>;
@@ -748,10 +812,10 @@ export interface AgentBridge {
   pickWorkspace(): Promise<string | null>;
   openWorkspaceFolder(cwd: string): Promise<void>;
   listWorkspaceEntries(relativePath?: string): Promise<WorkspaceEntry[]>;
-  searchWorkspaceFiles(query: string, options?: { includeDirectories?: boolean }): Promise<{ files: WorkspaceEntry[]; truncated: boolean }>;
+  searchWorkspaceFiles(query: string, options?: { includeDirectories?: boolean }): Promise<{ files: WorkspaceEntry[]; truncated: boolean; skipped?: number; ignoredDirectories?: string[] }>;
   readWorkspaceFile(relativePath: string): Promise<string>;
   getWorkspaceGitStatus(): Promise<WorkspaceGitStatus>;
-  getWorkspaceGitDiff(relativePath: string): Promise<string>;
+  getWorkspaceGitDiff(relativePath: string, source?: 'staged' | 'unstaged' | 'all'): Promise<string>;
   /** Local branch list and current ref for the composer branch picker. */
   getWorkspaceBranches(): Promise<WorkspaceBranches>;
   /** Checks out an existing local branch in the active workspace. */
@@ -765,7 +829,7 @@ export interface AgentBridge {
   /** Creates a local branch, optionally switching to it (4.5). */
   createWorkspaceGitBranch(name: string, checkout: boolean): Promise<void>;
   /** Opens a workspace file in VS Code, optionally at a line (4.7). */
-  openWorkspacePathInEditor(path: string, line?: number): Promise<void>;
+  openWorkspacePathInEditor(path: string, line?: number, column?: number): Promise<void>;
   /** Reveals a workspace file in the OS file manager (4.7). */
   revealWorkspacePath(path: string): Promise<void>;
   /** Opens the workspace folder in VS Code (zcode-style editor launch). */
@@ -794,6 +858,8 @@ export interface AgentBridge {
   getAgentSnapshot(): Promise<AgentSnapshot>;
   /** Loads an older slice of the active session's timeline for long conversations. */
   getHistoryPage(offset: number, limit: number): Promise<UiHistoryPage>;
+  /** Reads one attachment on the active branch; capped at 20 MiB encoded payload. */
+  getMessageAttachment(sessionPath: string, messageId: string, index: number): Promise<UiAttachment>;
   /** Aggregate stats for the active session (message counts, tokens, cost). */
   getSessionStats(): Promise<UiSessionStats>;
   /** Writes the active session to a chosen file; the main process shows the save dialog. */
@@ -803,7 +869,7 @@ export interface AgentBridge {
   /** Moves the visible branch leaf onto another entry (zcode-style branch switch). */
   switchSessionBranch(entryId: string): Promise<void>;
   listSessions(cwd?: string): Promise<UiSessionSummary[]>;
-  searchSessions(query: string): Promise<{ sessions: UiSessionSearchResult[]; truncated: boolean }>;
+  searchSessions(query: string): Promise<{ sessions: UiSessionSearchResult[]; truncated: boolean; skipped?: number }>;
   switchSession(path: string): Promise<void>;
   updateSessionMeta(path: string, patch: UiSessionMetaPatch): Promise<void>;
   /** Moves a conversation file to the app trash and clears its desktop metadata (3.3). */

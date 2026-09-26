@@ -105,3 +105,96 @@ test('live growth keeps historyTotal in step with the timeline', async () => {
   assert.equal(state().historyTotal, TOTAL + 2);
   assert.equal(state().messages.length, TOTAL + 2);
 });
+
+function deferred() {
+  let resolve;
+  let reject;
+  const promise = new Promise((done, fail) => { resolve = done; reject = fail; });
+  return { promise, resolve, reject };
+}
+
+test('an old history response never enters another session with the same timeline size', async () => {
+  const host = createHost();
+  const pending = deferred();
+  host.bridge.getHistoryPage = () => pending.promise;
+  state().setBridge(host.bridge);
+  await settle();
+  const loading = state().loadOlderMessages(30);
+  const otherMessages = allMessages.slice(TOTAL - WINDOW).map((message) => ({ ...message, id: `other-${message.id}` }));
+  host.emit(readyEvent(otherMessages, TOTAL, 'other-session', 'other.jsonl'));
+  pending.resolve({ offset: 30, limit: 30, total: TOTAL, messages: allMessages.slice(30, 60), activities: [] });
+  assert.equal(await loading, false);
+  assert.deepEqual(state().messages, otherMessages);
+  assert.equal(state().loadingOlder, false);
+});
+
+test('a same-session branch replacement retries the page against the new branch', async () => {
+  const host = createHost();
+  const pending = deferred();
+  const newBranch = allMessages.map((message) => ({ ...message, id: `branch-${message.id}` }));
+  let requests = 0;
+  host.bridge.getHistoryPage = async (offset, limit) => {
+    requests += 1;
+    return requests === 1 ? pending.promise : { offset, limit, total: TOTAL, messages: newBranch.slice(offset, offset + limit), activities: [] };
+  };
+  state().setBridge(host.bridge);
+  await settle();
+  const loading = state().loadOlderMessages(30);
+  host.emit(readyEvent(newBranch.slice(TOTAL - WINDOW)));
+  pending.resolve({ offset: 30, limit: 30, total: TOTAL, messages: allMessages.slice(30, 60), activities: [] });
+  assert.equal(await loading, true);
+  assert.equal(requests, 2);
+  assert.equal(state().messages.length, 70);
+  assert.ok(state().messages.every((message) => message.id.startsWith('branch-')));
+});
+
+test('live appends during history paging retain their count and do not trigger a retry', async () => {
+  const host = createHost();
+  const pending = deferred();
+  host.bridge.getHistoryPage = () => pending.promise;
+  state().setBridge(host.bridge);
+  await settle();
+  const loading = state().loadOlderMessages(30);
+  host.emit({ type: 'user-message', id: 'live', order: TOTAL, text: 'new message' });
+  pending.resolve({ offset: 30, limit: 30, total: TOTAL, messages: allMessages.slice(30, 60), activities: [] });
+  assert.equal(await loading, true);
+  assert.equal(state().historyTotal, TOTAL + 1);
+  assert.equal(state().messages.length, 71);
+  assert.equal(state().messages.at(-1).id, 'live');
+});
+
+test('an old history failure cannot overwrite a new session or clear its pending request', async () => {
+  const host = createHost();
+  const oldPage = deferred();
+  const newPage = deferred();
+  let calls = 0;
+  host.bridge.getHistoryPage = () => ++calls === 1 ? oldPage.promise : newPage.promise;
+  state().setBridge(host.bridge);
+  await settle();
+  const oldLoading = state().loadOlderMessages(30);
+  host.emit(readyEvent(allMessages.slice(TOTAL - WINDOW), TOTAL, 'new-session', 'new.jsonl'));
+  const newLoading = state().loadOlderMessages(30);
+  oldPage.reject(new Error('stale failure'));
+  assert.equal(await oldLoading, false);
+  assert.equal(state().error, null);
+  assert.equal(state().loadingOlder, true);
+  newPage.resolve({ offset: 30, limit: 30, total: TOTAL, messages: allMessages.slice(30, 60), activities: [] });
+  assert.equal(await newLoading, true);
+  assert.equal(state().loadingOlder, false);
+});
+
+test('repeated resyncs stop after one retry and explain how to resume loading', async () => {
+  const host = createHost();
+  let calls = 0;
+  host.bridge.getHistoryPage = async (offset, limit) => {
+    calls += 1;
+    host.emit(readyEvent(allMessages.slice(TOTAL - WINDOW)));
+    return { offset, limit, total: TOTAL, messages: allMessages.slice(offset, offset + limit), activities: [] };
+  };
+  state().setBridge(host.bridge);
+  await settle();
+  assert.equal(await state().loadOlderMessages(30), false);
+  assert.equal(calls, 2);
+  assert.ok(state().error);
+  assert.equal(state().loadingOlder, false);
+});

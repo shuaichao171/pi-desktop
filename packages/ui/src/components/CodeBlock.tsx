@@ -1,4 +1,5 @@
-import { isValidElement, useMemo, useState, type ReactNode } from 'react';
+import { isValidElement, useContext, useMemo, useState, type ReactNode } from 'react';
+import { TranscriptSearchContext } from '../transcriptSearch';
 import hljs from 'highlight.js/lib/common';
 import { useT } from '../i18n';
 import './codeBlock.css';
@@ -17,8 +18,9 @@ export function CodeBlock({ code, language }: { code: string; language?: string 
 	const source = useMemo(() => code.replace(/\n$/, ''), [code]);
 	const lines = useMemo(() => source.split('\n'), [source]);
 	const collapsible = lines.length > COLLAPSE_LINES;
-	const [userExpanded, setUserExpanded] = useState<boolean | null>(null);
-	const collapsed = collapsible && (userExpanded ?? true);
+	const [userCollapsed, setUserCollapsed] = useState<boolean | null>(null);
+	const findQuery = useContext(TranscriptSearchContext).trim().toLocaleLowerCase();
+	const collapsed = collapsible && (userCollapsed ?? true) && !(findQuery && source.toLocaleLowerCase().includes(findQuery));
 	const shown = collapsed ? lines.slice(0, COLLAPSE_LINES).join('\n') : source;
 	const resolved = language && hljs.getLanguage(language) ? language : '';
 	const html = useMemo(() => {
@@ -49,7 +51,7 @@ export function CodeBlock({ code, language }: { code: string; language?: string 
 			</div>
 			<pre className="pd-code-block-body"><code dangerouslySetInnerHTML={{ __html: html }} /></pre>
 			{collapsible && (
-				<button type="button" className="pd-code-block-toggle" aria-expanded={!collapsed} onClick={() => setUserExpanded(!collapsed)}>
+				<button type="button" className="pd-code-block-toggle" aria-expanded={!collapsed} onClick={() => setUserCollapsed(!collapsed)}>
 					{collapsed ? t('chat.code.expand', { count: lines.length.toLocaleString(locale) }) : t('chat.code.collapse')}
 				</button>
 			)}

@@ -11,6 +11,8 @@ import { HoverTooltip } from './HoverTooltip';
 import { WindowControls } from './WindowControls';
 import { ExtensionDialogHost } from './ExtensionDialogHost';
 import { UpdateNotice } from './UpdateNotice';
+import { OperationFeedback } from './OperationFeedback';
+import { clampWorkbenchWidth } from '../workbenchReading';
 import { WorkbenchSidePane, type WorkbenchOpenRequest } from './WorkbenchSidePane';
 import { useChatStore } from '../store';
 import { bindingKeysFor, matchesShortcut } from '../shortcuts/bindings';
@@ -69,6 +71,16 @@ export function AppShell() {
 	const [settingsInitialPage, setSettingsInitialPage] = useState<'general' | 'model' | 'updates'>('general');
 	const [modelManagementTarget, setModelManagementTarget] = useState<ModelManagementTarget>({ kind: 'manage' });
 	const [workbenchOpen, setWorkbenchOpen] = useState(readWorkbenchOpen);
+	const [viewportWidth, setViewportWidth] = useState(() => window.innerWidth);
+	const [workbenchWidth, setWorkbenchWidth] = useState(() => {
+		const value = Number(readStoredPreference('pi-desktop.workbench-width'));
+		return Number.isFinite(value) && value >= 320 && value <= 800 ? value : 420;
+	});
+	const [workbenchResizing, setWorkbenchResizing] = useState(false);
+	const workbenchOverlay = viewportWidth <= 1100;
+	useEffect(() => { const resize = () => setViewportWidth(window.innerWidth); window.addEventListener('resize', resize); return () => window.removeEventListener('resize', resize); }, []);
+	useEffect(() => { writeStoredPreference('pi-desktop.workbench-width', String(workbenchWidth)); }, [workbenchWidth]);
+	useEffect(() => { if (workbenchOpen && narrow) setSidebarOpen(false); }, [workbenchOpen, narrow]);
 	const resizeStart = useRef<{ x: number; width: number } | null>(null);
 	const workbenchToggleRef = useRef<HTMLButtonElement>(null);
 	const platform = useChatStore((state) => state.appInfo?.platform);
@@ -105,13 +117,13 @@ export function AppShell() {
 			setMainView('chat');
 			setSearchMessageTarget(null);
 			if (command.type === 'new-session') {
-				void useChatStore.getState().newSession();
+				void useChatStore.getState().newSession().catch(() => { /* Navigation errors are shown by the store. */ });
 				return;
 			}
 			const state = useChatStore.getState();
-			const workspace = Object.entries(state.sessionsByWorkspace)
+			const workspace = command.cwd ?? Object.entries(state.sessionsByWorkspace)
 				.find(([, sessions]) => sessions.some((session) => session.path === command.path))?.[0];
-			if (workspace) void state.selectSession(workspace, command.path);
+			if (workspace) void state.selectSession(workspace, command.path).catch(() => { /* Navigation errors are shown by the store. */ });
 		});
 	}, [commandBridge]);
 
@@ -186,6 +198,7 @@ export function AppShell() {
 
 	async function selectSearchSession(result: UiSessionSearchResult) {
 		if (!await useChatStore.getState().selectSession(result.cwd, result.path)) return;
+		if ('otherBranch' in result && result.otherBranch && 'branchLeafId' in result && typeof result.branchLeafId === 'string') await useChatStore.getState().bridge?.switchSessionBranch(result.branchLeafId);
 		setMainView('chat');
 		if (result.messageId || result.snippet) setSearchMessageTarget({ sessionPath: result.path, messageId: result.messageId ?? '', snippet: result.snippet, requestId: ++navigationRequest.current });
 		if (narrow) setSidebarOpen(false);
@@ -230,7 +243,7 @@ export function AppShell() {
 
 	function closeWorkbench(): void {
 		setWorkbenchOpen(false);
-		workbenchToggleRef.current?.focus();
+		window.requestAnimationFrame(() => workbenchToggleRef.current?.focus());
 	}
 	function openModelManagement(target: ModelManagementTarget): void {
 		setModelManagementTarget(target);
@@ -240,7 +253,7 @@ export function AppShell() {
 	const headerControls = !sidebarOpen && !narrow ? <div className="pd-header-navigation"><HistoryNavigation {...history} /><SearchButton open={searchOpen} onClick={() => setSearchOpen(true)} /></div> : undefined;
 
 	return (
-		<div className={`pd-app-shell flex${isWindows ? ' is-frameless' : ''}${settingsOpen || searchOpen ? ' is-settings-open' : ''}${sidebarResizing ? ' is-sidebar-resizing' : ''}`} style={{ '--pd-sidebar-width': `${sidebarWidth}px` } as CSSProperties}>
+		<div className={`pd-app-shell flex${isWindows ? ' is-frameless' : ''}${settingsOpen || searchOpen ? ' is-settings-open' : ''}${sidebarResizing ? ' is-sidebar-resizing' : ''}${workbenchResizing ? ' is-workbench-resizing' : ''}`} style={{ '--pd-sidebar-width': `${sidebarWidth}px`, '--pd-workbench-width': `${clampWorkbenchWidth(workbenchWidth, viewportWidth)}px` } as CSSProperties}>
 			<button type="button" className={`pd-sidebar-scrim${narrow && sidebarOpen ? ' is-open' : ''}`} aria-label={t('app.closeSidebar')} aria-hidden={!narrow || !sidebarOpen} inert={!narrow || !sidebarOpen} tabIndex={-1} onClick={() => setSidebarOpen(false)} />
 			<Sidebar
 				open={sidebarOpen}
@@ -265,13 +278,14 @@ export function AppShell() {
 			{mainView === 'automations' && <AutomationPage headerControls={headerControls} onToggleSidebar={() => setSidebarOpen((open) => !open)} onOpenSession={async (cwd, path) => { const selected = await useChatStore.getState().selectSession(cwd, path); if (selected) { setSearchMessageTarget(null); setMainView('chat'); if (narrow) setSidebarOpen(false); } return selected; }} />}
 			{mainView === 'plugins' && <PluginsPage headerControls={headerControls} onToggleSidebar={() => setSidebarOpen((open) => !open)} />}
 			<button type="button" className={`pd-workbench-scrim${workbenchOpen && mainView === 'chat' ? ' is-open' : ''}`} aria-label={t('app.closeWorkbench')} aria-hidden={!workbenchOpen || mainView !== 'chat'} inert={!workbenchOpen || mainView !== 'chat'} tabIndex={-1} onClick={closeWorkbench} />
-			<WorkbenchSidePane open={workbenchOpen && mainView === 'chat'} onClose={closeWorkbench} openRequest={workbenchRequest} />
+			<WorkbenchSidePane open={workbenchOpen && mainView === 'chat'} modal={workbenchOverlay && !settingsOpen && !searchOpen} suspended={settingsOpen || searchOpen} width={clampWorkbenchWidth(workbenchWidth, viewportWidth)} onWidthChange={value => setWorkbenchWidth(clampWorkbenchWidth(value, viewportWidth))} onResizing={setWorkbenchResizing} onClose={closeWorkbench} openRequest={workbenchRequest} />
 			{mainView === 'chat' && <HoverTooltip title={t('app.workbench')}><button ref={workbenchToggleRef} type="button" className="pd-workbench-toggle pd-icon-button" aria-label={t(workbenchOpen ? 'app.closeWorkbench' : 'app.openWorkbench')} aria-pressed={workbenchOpen} onClick={() => setWorkbenchOpen((value) => !value)}><Icon name="panelRight" width="17" height="17" /></button></HoverTooltip>}
 			{settingsOpen && <SettingsPanel initialPage={settingsInitialPage} modelManagementTarget={settingsInitialPage === 'model' ? modelManagementTarget : undefined} onClose={() => setSettingsOpen(false)} themePreference={themePreference} onThemePreferenceChange={setThemePreference} colorPreferences={colorPreferences} onColorPreferencesChange={setColorPreferences} colorSaveFailed={colorSaveFailed} />}
 			{searchOpen && <SearchDialog commands={searchCommands} onClose={() => setSearchOpen(false)} onSelectSession={selectSearchSession} onSelectFile={selectSearchFile} />}
 			{isWindows && <WindowControls />}
 			<ExtensionDialogHost />
 			<UpdateNotice />
+			<OperationFeedback />
 		</div>
 	);
 }

@@ -4,9 +4,11 @@ import { useT } from '../i18n';
 import { useChatStore } from '../store';
 import { bindingKeysFor, matchesShortcut } from '../shortcuts/bindings';
 import type { ModelManagementTarget } from '../modelManagement';
-import { buildTimelineLayout, type TimelineEntry } from '../timeline';
+import { buildConversationTimeline, entryContainsMessage, type ConversationTimelineEntry } from '../conversationTimeline';
+import { ConversationDisclosureProvider } from '../conversationDisclosure';
 import { ConversationRail } from './ConversationRail';
 import { Composer } from './Composer';
+import { ComposerChanges } from './ComposerChanges';
 import { RunStatusBar } from './RunStatusBar';
 import { ComposerContextBar } from './ComposerContextBar';
 import { ChatTitle, type ChatTitleHandle } from './ChatTitle';
@@ -17,9 +19,14 @@ import { WorkspaceFolderButton } from './WorkspaceFolderButton';
 import { Icon } from './Icons';
 import { HoverTooltip } from './HoverTooltip';
 import { MessageItem } from './MessageItem';
-import { ToolActivityPanel } from './ToolActivity';
+import { ConversationTurn } from './ConversationTurn';
 import { ActivityLabel } from './ActivityDisclosure';
 import { TranscriptFind } from './TranscriptFind';
+import { useConversationCopy } from '../conversationCopy';
+import { findOccurrences, readReading, recentReading, readingKey, saveReading, type ReadingPosition } from '../conversationState';
+import { locateHistoryMessage } from '../conversationNavigation';
+import { TranscriptSearchContext, paintTranscriptMatches, revealTranscriptRange } from '../transcriptSearch';
+import './conversationEnhancements.css';
 
 const BOTTOM_THRESHOLD = 24;
 const SCROLL_TO_BOTTOM_DURATION = 260;
@@ -59,7 +66,13 @@ export interface SearchMessageTarget { sessionPath: string; messageId: string; s
 export function ChatView({ onToggleSidebar, onOpenModelManagement, searchTarget, historyControls, navigationError }: { onToggleSidebar(): void; onOpenModelManagement(target: ModelManagementTarget): void; searchTarget?: SearchMessageTarget | null; historyControls?: ReactNode; navigationError?: string | null }) {
 	const { t } = useT();
 	const messages = useChatStore((s) => s.messages);
+	const c = useConversationCopy();
+	const historyGeneration = useChatStore((s) => s.historyGeneration);
 	const activities = useChatStore((s) => s.activities);
+	const runs = useChatStore((s) => s.runs);
+	const fileChanges = useChatStore((s) => s.fileChanges);
+	const [changesDock, setChangesDock] = useState<HTMLDivElement | null>(null);
+	const changesRegionRef = useRef<HTMLDivElement>(null);
 	const sessions = useChatStore((s) => s.sessions);
 	const sessionPath = useChatStore((s) => s.sessionPath);
 	const sessionId = useChatStore((s) => s.sessionId);
@@ -72,14 +85,16 @@ export function ChatView({ onToggleSidebar, onOpenModelManagement, searchTarget,
 	const historyTotal = useChatStore((s) => s.historyTotal);
 	const loadingOlder = useChatStore((s) => s.loadingOlder);
 	const loadOlderMessages = useChatStore((s) => s.loadOlderMessages);
-	const timelineRef = useRef<{ revision: number; entries: TimelineEntry[] } | null>(null);
-	if (timelineRef.current?.revision !== timelineRevision) {
-		timelineRef.current = { revision: timelineRevision, entries: buildTimelineLayout(messages, activities) };
+	const timelineRef = useRef<{ revision: number; runs: typeof runs; entries: ConversationTimelineEntry[] } | null>(null);
+	if (timelineRef.current?.revision !== timelineRevision || timelineRef.current.runs !== runs) {
+		timelineRef.current = { revision: timelineRevision, runs, entries: buildConversationTimeline(messages, activities, runs) };
 	}
 	const timeline = timelineRef.current.entries;
 	const hasOlderHistory = historyTotal > messages.length + activities.length;
-	const isEmpty = timeline.length === 0 && !error;
-	const awaitingResponse = agentStatus === 'busy' && !error && !messages.some((message) => message.status === 'streaming') && !activities.some((activity) => activity.status === 'running');
+	const isEmpty = timeline.length === 0 && !error && fileChanges.length === 0;
+	const awaitingResponse = agentStatus === 'busy' && !runs.some(run => run.status === 'running') && !error && !messages.some((message) => message.status === 'streaming') && !activities.some((activity) => activity.status === 'running');
+	const disclosureScope = `${cwd}\0${sessionPath}\0${sessionId}`;
+	const [revealMessage, setRevealMessage] = useState<{ id: string; request: number; scope: string } | null>(null);
 	const bodyRef = useRef<HTMLDivElement>(null);
 	const scrollRef = useRef<HTMLDivElement>(null);
 	const messageListRef = useRef<HTMLDivElement>(null);
@@ -88,6 +103,14 @@ export function ChatView({ onToggleSidebar, onOpenModelManagement, searchTarget,
 	const [showBackToBottom, setShowBackToBottom] = useState(false);
 	const handledSearchRequest = useRef<number | null>(null);
 	const [highlightedMessage, setHighlightedMessage] = useState<SearchMessageTarget | null>(null);
+	const [locationStatus, setLocationStatus] = useState<'loading' | 'missing' | null>(null);
+	const [locationTarget, setLocationTarget] = useState<{ id: string; snippet?: string } | null>(null);
+	const locationRequest = useRef<AbortController | null>(null);
+	const restoring = useRef(false);
+	const readingAnchor = useRef<ReadingPosition | null>(null);
+	const memoryKey = readingKey(cwd, sessionPath, messages.at(-1)?.id ?? 'empty');
+	const memoryKeyRef = useRef(memoryKey);
+	const memoryIdentity = useRef({ cwd, sessionPath, historyGeneration });
 	const activeSession = sessions.find((session) => session.path === sessionPath);
 	const firstUserText = messages.find((message) => message.role === 'user')?.text;
 	const title = activeSession?.name?.trim() || activeSession?.firstMessage?.trim().split(/\r?\n/)[0] || firstUserText?.trim().split(/\r?\n/)[0] || t('chat.newSession');
@@ -95,14 +118,13 @@ export function ChatView({ onToggleSidebar, onOpenModelManagement, searchTarget,
 	// --- In-conversation find (2.5) ---
 	const [findOpen, setFindOpen] = useState(false);
 	const [findQuery, setFindQuery] = useState('');
-	const [findIndex, setFindIndex] = useState(0);
-	const findMatches = useMemo(() => {
-		const query = findQuery.trim().toLocaleLowerCase();
-		if (!query) return [];
-		return messages.filter((message) => message.text.toLocaleLowerCase().includes(query)).map((message) => message.id);
-	}, [messages, findQuery]);
-	const findMatchSet = useMemo(() => new Set(findMatches), [findMatches]);
-	const activeFindId = findOpen && findMatches.length > 0 ? findMatches[Math.min(findIndex, findMatches.length - 1)] ?? null : null;
+	const [findKey, setFindKey] = useState<string | null>(null);
+	const findMatches = useMemo(() => findOccurrences(messages, findQuery), [messages, findQuery]);
+	const findIndex = Math.max(0, findMatches.findIndex((item) => item.key === findKey));
+	const activeFind = findOpen ? findMatches[findIndex] : undefined;
+	const activeFindId = activeFind?.messageId ?? null;
+	const findMatchSet = useMemo(() => new Set(findMatches.map((item) => item.messageId)), [findMatches]);
+	useEffect(() => { if (findOpen && findMatches.length && !findMatches.some((item) => item.key === findKey)) setFindKey(findMatches[0]!.key); }, [findOpen, findMatches, findKey]);
 	// Mark the user turns (rail markers) that contain a find hit.
 	const railMarkedIds = useMemo(() => {
 		if (!findOpen || findMatches.length === 0) return null;
@@ -144,16 +166,17 @@ export function ChatView({ onToggleSidebar, onOpenModelManagement, searchTarget,
 	const closeFind = useCallback(() => {
 		setFindOpen(false);
 		setFindQuery('');
-		setFindIndex(0);
-		document.querySelector<HTMLTextAreaElement>('.pd-composer textarea')?.focus();
+		setFindKey(null);
+		document.querySelector<HTMLTextAreaElement>('.pd-composer-shell textarea')?.focus();
 	}, []);
 
 	// --- Virtualized transcript (2.6) ---
 	const virtualize = timeline.length > VIRTUALIZE_THRESHOLD;
-	const estimateSize = useCallback((index: number) => (timeline[index]?.kind === 'tools' ? 44 : 140), [timeline]);
+	const estimateSize = useCallback((index: number) => (timeline[index]?.kind === 'turn' ? 180 : 100), [timeline]);
 	const virtualizer = useVirtualizer({
 		count: timeline.length,
 		getScrollElement: () => scrollRef.current,
+		useAnimationFrameWithResizeObserver: true,
 		estimateSize,
 		overscan: 8,
 		getItemKey: (index) => {
@@ -166,7 +189,7 @@ export function ChatView({ onToggleSidebar, onOpenModelManagement, searchTarget,
 		const transcript = scrollRef.current;
 		if (!transcript) return false;
 		const row = transcript.querySelector<HTMLElement>(`[data-message-id="${CSS.escape(id)}"]`);
-		if (!row) return false;
+		if (!row || row.closest('[inert],[hidden],[aria-hidden="true"]')) return false;
 		row.scrollIntoView({ block: 'center', behavior: 'auto' });
 		setShowBackToBottom(transcript.scrollHeight - transcript.scrollTop - transcript.clientHeight > BOTTOM_THRESHOLD);
 		return true;
@@ -177,47 +200,98 @@ export function ChatView({ onToggleSidebar, onOpenModelManagement, searchTarget,
 		if (!transcript) return;
 		cancelScrollAnimation();
 		followsBottomRef.current = false;
+		readingAnchor.current = null;
+		setRevealMessage(previous => ({ id, request: (previous?.request ?? 0) + 1, scope: disclosureScope }));
 		if (!virtualize) {
-			scrollToRow(id);
+			window.requestAnimationFrame(() => window.requestAnimationFrame(() => scrollToRow(id)));
 			return;
 		}
-		const index = timelineRef.current?.entries.findIndex((entry) => entry.kind === 'message' && entry.id === id) ?? -1;
+		const index = timelineRef.current?.entries.findIndex((entry) => entryContainsMessage(entry, id)) ?? -1;
 		if (index >= 0) virtualizer.scrollToIndex(index, { align: 'center' });
 		// The row mounts after the virtual window moves; settle it precisely on the next frames.
 		window.requestAnimationFrame(() => window.requestAnimationFrame(() => scrollToRow(id)));
-	}, [virtualize, virtualizer, scrollToRow]);
+	}, [virtualize, virtualizer, scrollToRow, disclosureScope]);
 
 	useEffect(() => {
 		if (activeFindId) jumpToMessage(activeFindId);
-	}, [activeFindId, jumpToMessage]);
+		let frame = requestAnimationFrame(() => { frame = requestAnimationFrame(() => {
+			const node = scrollRef.current; if (!node) return;
+			const range = paintTranscriptMatches(node, findOpen ? findQuery : '', activeFindId, activeFind?.ordinal ?? 0);
+			if (range) revealTranscriptRange(range, node);
+		}); });
+		return () => cancelAnimationFrame(frame);
+	}, [activeFind?.key, findQuery, findOpen]);
+	useLayoutEffect(() => {
+		if (scrollRef.current) paintTranscriptMatches(scrollRef.current, findOpen ? findQuery : '', activeFindId, activeFind?.ordinal ?? 0);
+	});
 
 	useLayoutEffect(() => {
 		if (followsBottomRef.current && scrollRef.current) {
 			scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
 		}
-	}, [messages, activities, error, awaitingResponse]);
+	}, [messages, activities, runs, fileChanges, error, awaitingResponse]);
 
 	useLayoutEffect(() => {
 		const list = messageListRef.current;
 		if (!list) return;
 		// Disclosure transitions keep changing layout after the data update.
+		let frame: number | null = null;
 		const observer = new ResizeObserver(() => {
-			const node = scrollRef.current;
-			if (!node) return;
-			if (followsBottomRef.current) node.scrollTop = node.scrollHeight;
-			setShowBackToBottom(node.scrollHeight - node.scrollTop - node.clientHeight > BOTTOM_THRESHOLD);
+			// Scrolling can mount and measure virtual rows. Let this observer delivery finish first.
+			if (frame !== null) return;
+			frame = requestAnimationFrame(() => {
+				frame = null;
+				const node = scrollRef.current;
+				if (!node) return;
+				if (followsBottomRef.current) node.scrollTop = node.scrollHeight;
+				else if (!restoring.current && readingAnchor.current?.messageId) {
+					const row = node.querySelector<HTMLElement>(`[data-message-id="${CSS.escape(readingAnchor.current.messageId)}"]`);
+					if (row && !row.closest('[inert],[hidden],[aria-hidden="true"]')) {
+						const delta = row.getBoundingClientRect().top - node.getBoundingClientRect().top - readingAnchor.current.offset;
+						if (Math.abs(delta) > .5) node.scrollTop += delta;
+					}
+				}
+				setShowBackToBottom(node.scrollHeight - node.scrollTop - node.clientHeight > BOTTOM_THRESHOLD);
+			});
 		});
 		observer.observe(list);
+		if (changesRegionRef.current) observer.observe(changesRegionRef.current);
 		if (scrollRef.current) observer.observe(scrollRef.current);
-		return () => observer.disconnect();
+		return () => { observer.disconnect(); if (frame !== null) cancelAnimationFrame(frame); };
 	}, [isEmpty]);
 
 	useLayoutEffect(() => {
-		cancelScrollAnimation();
-		followsBottomRef.current = true;
-		setShowBackToBottom(false);
-		if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-	}, [sessionId, sessionPath]);
+		cancelScrollAnimation(); locationRequest.current?.abort(); setLocationStatus(null); setLocationTarget(null); readingAnchor.current = null;
+		memoryKeyRef.current = memoryKey;
+		const exact = readReading(memoryKey);
+		const earlier = exact ? undefined : recentReading(cwd, sessionPath);
+		const saved = exact ?? earlier?.position;
+		followsBottomRef.current = saved?.followsBottom ?? true;
+		setShowBackToBottom(!followsBottomRef.current);
+		if (sessionLoading || (searchTarget?.sessionPath === sessionPath && handledSearchRequest.current !== searchTarget.requestId)) return;
+		if (!saved || saved.followsBottom || !saved.messageId) { if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight; return; }
+		const controller = new AbortController(); locationRequest.current = controller; restoring.current = true;
+		void (async () => {
+			if (earlier && !await locateHistoryMessage(earlier.tailId, controller.signal)) return null;
+			return locateHistoryMessage(saved.messageId!, controller.signal);
+		})().then((id) => {
+			if (controller.signal.aborted) return;
+			if (!id) { restoring.current = false; followsBottomRef.current = true; if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight; return; }
+			jumpToMessage(id);
+			requestAnimationFrame(() => requestAnimationFrame(() => {
+				if (controller.signal.aborted) return;
+				const node = scrollRef.current; const row = node?.querySelector<HTMLElement>(`[data-message-id="${CSS.escape(id)}"]`);
+				if (node && row) node.scrollTop += row.getBoundingClientRect().top - node.getBoundingClientRect().top - saved.offset;
+				readingAnchor.current = saved; restoring.current = false;
+			}));
+		});
+		return () => { controller.abort(); restoring.current = false; };
+	}, [cwd, sessionId, sessionPath, historyGeneration, sessionLoading]);
+	useLayoutEffect(() => {
+		const previous = memoryIdentity.current;
+		if (previous.cwd === cwd && previous.sessionPath === sessionPath && previous.historyGeneration === historyGeneration && readingAnchor.current && !restoring.current) saveReading(memoryKey, readingAnchor.current);
+		memoryKeyRef.current = memoryKey; memoryIdentity.current = { cwd, sessionPath, historyGeneration };
+	}, [memoryKey, cwd, sessionPath, historyGeneration]);
 
 	useEffect(() => () => cancelScrollAnimation(), []);
 
@@ -226,29 +300,23 @@ export function ChatView({ onToggleSidebar, onOpenModelManagement, searchTarget,
 		if (bodyRef.current) bodyRef.current.scrollTop = 0;
 	}, [isEmpty, sessionId]);
 
-	useLayoutEffect(() => {
-		if (!searchTarget || searchTarget.sessionPath !== sessionPath || handledSearchRequest.current === searchTarget.requestId) return;
-		const transcript = scrollRef.current;
-		// Live messages have transient IDs until history is reloaded. Locate the
-		// same visible text when a persisted search hit points at such a message.
-		const normalize = (text: string) => text.replace(/\s+/g, ' ').trim().toLocaleLowerCase();
-		const snippet = normalize((searchTarget.snippet ?? '').replace(/^(?:…|\.{3})|(?:…|\.{3})$/g, ''));
-		const targetId = messages.some((message) => message.id === searchTarget.messageId)
-			? searchTarget.messageId
-			: snippet ? messages.find((message) => normalize(message.text).includes(snippet))?.id : undefined;
-		if (!transcript || !targetId) return;
-		cancelScrollAnimation();
+	const jumpRef = useRef(jumpToMessage); jumpRef.current = jumpToMessage;
+	const locate = useCallback((id: string, snippet?: string) => {
+		locationRequest.current?.abort(); const controller = new AbortController(); locationRequest.current = controller;
+		setLocationTarget({ id, snippet });
+		followsBottomRef.current = false; restoring.current = true; setLocationStatus('loading');
+		void locateHistoryMessage(id, controller.signal, snippet).then((found) => {
+			if (controller.signal.aborted) return;
+			restoring.current = false; setLocationStatus(found ? null : 'missing');
+			if (found) { jumpRef.current(found); setHighlightedMessage({ sessionPath: useChatStore.getState().sessionPath ?? '', messageId: found, requestId: Date.now() }); }
+		});
+	}, []);
+	useEffect(() => {
+		if (sessionLoading || !searchTarget || searchTarget.sessionPath !== sessionPath || handledSearchRequest.current === searchTarget.requestId) return;
 		handledSearchRequest.current = searchTarget.requestId;
-		followsBottomRef.current = false;
-		setHighlightedMessage({ ...searchTarget, messageId: targetId });
-		if (virtualize) {
-			const index = timeline.findIndex((entry) => entry.kind === 'message' && entry.id === targetId);
-			if (index >= 0) virtualizer.scrollToIndex(index, { align: 'center' });
-			window.requestAnimationFrame(() => window.requestAnimationFrame(() => scrollToRow(targetId)));
-		} else {
-			scrollToRow(targetId);
-		}
-	}, [searchTarget, sessionPath, messages, virtualize, virtualizer, timeline, scrollToRow]);
+		locate(searchTarget.messageId, searchTarget.snippet);
+	}, [searchTarget, sessionPath, sessionLoading, locate]);
+	useEffect(() => () => locationRequest.current?.abort(), []);
 
 	useEffect(() => {
 		if (!highlightedMessage) return;
@@ -259,9 +327,13 @@ export function ChatView({ onToggleSidebar, onOpenModelManagement, searchTarget,
 	function handleScroll() {
 		const node = scrollRef.current;
 		if (!node) return;
+		if (restoring.current) return;
 		const nearBottom = node.scrollHeight - node.scrollTop - node.clientHeight <= BOTTOM_THRESHOLD;
 		if (scrollAnimationRef.current === null) followsBottomRef.current = nearBottom;
 		setShowBackToBottom(!nearBottom);
+		const row = Array.from(node.querySelectorAll<HTMLElement>('[data-message-id]')).find((item) => !item.closest('[inert],[hidden],[aria-hidden="true"]') && item.getBoundingClientRect().bottom > node.getBoundingClientRect().top);
+		readingAnchor.current = { messageId: row?.dataset.messageId ?? null, offset: row ? row.getBoundingClientRect().top - node.getBoundingClientRect().top : 0, followsBottom: nearBottom };
+		saveReading(memoryKeyRef.current, readingAnchor.current);
 		// Long sessions fetch the next older slice as the reader approaches the top.
 		if (hasOlderHistory && !loadingOlder && node.scrollTop < LOAD_OLDER_TRIGGER_PX) void loadOlderMessages();
 	}
@@ -308,10 +380,11 @@ export function ChatView({ onToggleSidebar, onOpenModelManagement, searchTarget,
 	let lastReplyId: string | null = null;
 	for (let i = messages.length - 1; i >= 0; i -= 1) {
 		const message = messages[i]!;
-		if (message.role === 'assistant' && message.text.trim()) { lastReplyId = message.id; break; }
+		if (message.role === 'user') break;
+		if (message.role === 'assistant' && (message.text.trim() || message.status === 'error')) { lastReplyId = message.id; break; }
 	}
 	const canRegenerateLatest = agentStatus === 'idle' && lastReplyId !== null;
-	const renderEntry = (entry: TimelineEntry) => entry.kind === 'message'
+	const renderEntry = (entry: ConversationTimelineEntry) => entry.kind === 'message'
 		? <MessageItem
 			key={`message-${entry.id}`}
 			message={messages[entry.index]!}
@@ -320,9 +393,11 @@ export function ChatView({ onToggleSidebar, onOpenModelManagement, searchTarget,
 			showHeading={entry.showAssistantHeading}
 			canRegenerate={canRegenerateLatest && entry.id === lastReplyId}
 		/>
-		: <div className="pd-timeline-tool-group" key={`tools-${entry.id}`}>
-			<div className="pd-message-column"><ToolActivityPanel sourceActivities={activities} indices={entry.indices} /></div>
-		</div>;
+		: <ConversationTurn key={`${disclosureScope}:${entry.id}`} entry={entry} messages={messages} activities={activities}
+			run={runs.find(run => run.id === entry.runId)} legacyRunning={agentStatus === 'busy' && entry === timeline.at(-1)}
+			highlightedId={activeFindId ?? (highlightedMessage?.sessionPath === sessionPath ? highlightedMessage.messageId : null)}
+			findIds={findOpen ? findMatchSet : new Set()} query={findOpen ? findQuery : ''} reveal={revealMessage?.scope === disclosureScope ? revealMessage : null}
+			canRegenerateId={canRegenerateLatest ? lastReplyId : null} />;
 
 	return (
 		<main className={`pd-main${isEmpty ? ' is-empty' : ''}`}>
@@ -338,13 +413,20 @@ export function ChatView({ onToggleSidebar, onOpenModelManagement, searchTarget,
 					{findOpen && <div className="pd-transcript-find-anchor">
 						<TranscriptFind
 							query={findQuery}
-							onQueryChange={(query) => { setFindQuery(query); setFindIndex(0); }}
+							onQueryChange={(query) => { setFindQuery(query); setFindKey(null); }}
 							index={findMatches.length > 0 ? Math.min(findIndex, findMatches.length - 1) : null}
 							total={findMatches.length}
-							onStep={(delta) => { if (findMatches.length === 0) return; setFindIndex((current) => (current + delta + findMatches.length) % findMatches.length); }}
+							loadedMessages={messages.length}
+							hasOlder={hasOlderHistory}
+							loadingOlder={loadingOlder}
+							onLoadOlder={() => { void loadOlderMessages(); }}
+							onStep={(delta) => { if (findMatches.length === 0) return; setFindKey(findMatches[(findIndex + delta + findMatches.length) % findMatches.length]!.key); }}
 							onClose={closeFind}
 						/>
 					</div>}
+					{locationStatus && <div className="pd-conversation-location" role="status">{c(locationStatus === 'loading' ? 'locating' : 'missing')}{locationStatus === 'missing' && locationTarget && <button type="button" onClick={() => locate(locationTarget.id, locationTarget.snippet)}>{c('retry')}</button>}</div>}
+					<TranscriptSearchContext.Provider value={findOpen ? findQuery : ''}>
+					<ConversationDisclosureProvider scope={disclosureScope}>
 					<div ref={scrollRef} className="pd-transcript" onScroll={handleScroll} onWheel={cancelScrollAnimation} onTouchStart={cancelScrollAnimation} onPointerDown={cancelScrollAnimation} onKeyDown={(event) => {
 						if (['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' '].includes(event.key)) cancelScrollAnimation();
 					}}>
@@ -360,6 +442,7 @@ export function ChatView({ onToggleSidebar, onOpenModelManagement, searchTarget,
 									: timeline.map((entry) => renderEntry(entry))}
 							</div>
 						)}
+						<div ref={changesRegionRef} className="pd-transcript-end pd-transcript-changes">{!sessionLoading && <ComposerChanges key={`changes:${disclosureScope}`} items={fileChanges} running={agentStatus === 'busy'} liveTarget={changesDock} />}</div>
 						{awaitingResponse && <div className="pd-transcript-end"><div className="pd-message-column"><div className="pd-response-pending" role="status"><ActivityLabel active>{t('message.preparing')}</ActivityLabel></div></div></div>}
 						{error && <div className="pd-transcript-end">
 							{navigationError
@@ -368,12 +451,14 @@ export function ChatView({ onToggleSidebar, onOpenModelManagement, searchTarget,
 						</div>}
 						{!error && <div className="pd-transcript-end"><RunStatusBar onOpenModelManagement={() => onOpenModelManagement({ kind: 'manage' })} /></div>}
 					</div>
+					</ConversationDisclosureProvider>
+					</TranscriptSearchContext.Provider>
 					<button type="button" className={`pd-back-to-bottom${showBackToBottom ? ' is-visible' : ''}`} aria-label={t('chat.backToBottom')} aria-hidden={!showBackToBottom} tabIndex={showBackToBottom ? 0 : -1} onClick={showBackToBottom ? scrollToBottom : undefined}>
 						{agentStatus === 'busy' ? <span className="pd-back-to-bottom-dots" aria-hidden="true"><span /><span /><span /></span> : <Icon name="arrowDown" width="20" height="20" />}
 					</button>
-					{!isEmpty && !sessionLoading && <ConversationRail messages={messages} getScrollElement={() => scrollRef.current} markedIds={railMarkedIds ?? undefined} onJumpToMessage={virtualize ? jumpToMessage : undefined} />}
+					{!isEmpty && !sessionLoading && <ConversationRail messages={messages} getScrollElement={() => scrollRef.current} markedIds={railMarkedIds ?? undefined} onJumpToMessage={jumpToMessage} />}
 				</div>
-				<Composer header={isEmpty ? <ComposerContextBar /> : undefined} onOpenModelManagement={onOpenModelManagement} />
+				<Composer header={isEmpty ? <ComposerContextBar /> : undefined} onOpenModelManagement={onOpenModelManagement} changesSlotRef={setChangesDock} />
 			</div>
 			{commitOpen && <ChatCommitDialog onClose={() => setCommitOpen(false)} />}
 		</main>

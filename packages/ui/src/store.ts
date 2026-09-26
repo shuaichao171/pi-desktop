@@ -9,6 +9,8 @@
 import { create } from 'zustand';
 import { translate } from './i18n.ts';
 import { parseSlashCommand } from './composerSlash.ts';
+import { mergeRuntimeStates, sessionRuntimeKey, type WorkspaceSessionRequest } from './managementState.ts';
+import { mergeConversationRuns } from './conversationRuns.ts';
 import type {
 	AgentBridge,
 	AgentEventEnvelope,
@@ -20,12 +22,14 @@ import type {
 	UiFileChange,
 	UiContextUsage,
 	UiMessage,
+	UiConversationRun,
 	UiModelSummary,
 	UiModelProvider,
 	UiSaveCustomProviderRequest,
 	UiProviderAuthStatus,
 	UiQueuedMessage,
 	UiSessionSummary,
+	UiSessionRuntimeState,
 	UiSessionMetaPatch,
 	UiThinkingLevel,
 	UiToolActivity,
@@ -53,12 +57,17 @@ interface ChatState {
 	cwd: string;
 	workspaces: string[];
 	sessionsByWorkspace: Record<string, UiSessionSummary[]>;
+	workspaceSessionRequests: Record<string, WorkspaceSessionRequest>;
+	sessionRuntimes: Record<string, UiSessionRuntimeState>;
 	sessionId: string | null;
 	sessionPath: string | null;
 	sessions: UiSessionSummary[];
 	messages: UiMessage[];
 	activities: UiToolActivity[];
+	runs: UiConversationRun[];
 	timelineRevision: number;
+	/** Changes when ready/reset replaces the branch, but not on live appends. */
+	historyGeneration: number;
 	/** Full timeline entry count of the loaded branch; older entries load via loadOlderMessages. */
 	historyTotal: number;
 	loadingOlder: boolean;
@@ -97,11 +106,11 @@ interface ChatState {
 	removeProviderCredential(provider: string): Promise<void>;
 	switchSession(path: string): Promise<void>;
 	selectSession(cwd: string, path: string): Promise<boolean>;
-	send(text: string, behavior?: 'steer' | 'followUp', attachments?: UiAttachment[]): Promise<void>;
+	send(text: string, behavior?: 'steer' | 'followUp', attachments?: UiAttachment[], inputId?: string): Promise<void>;
 	/** Rewind to a sent user message and resend the edited text (zcode-style edit). */
 	editMessage(entryId: string, text: string, attachments?: UiAttachment[]): Promise<void>;
 	/** Rewind to the latest user message and resend it, keeping the old reply as a branch (3.4). */
-	regenerate(): Promise<void>;
+	regenerate(replyId?: string): Promise<void>;
 	/** Fork the conversation at an assistant message (rewinds the visible branch to it). */
 	forkMessage(entryId: string): Promise<void>;
 	/** Edit, remove, or steer-early a queued instruction while the agent is busy (Codex-style queue management). */
@@ -120,6 +129,7 @@ let modelProvidersRequest = 0;
 let providerAuthRequest = 0;
 let unsubscribeAgentEvent: (() => void) | null = null;
 let bridgeGeneration = 0;
+let historyLoadRequest = 0;
 const MAX_BOOTSTRAP_EVENTS = 256;
 const MAX_BOOTSTRAP_RESYNCS = 3;
 const SNAPSHOT_TIMEOUT_MS = 15_000;
@@ -188,12 +198,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
 	cwd: '',
 	workspaces: [],
 	sessionsByWorkspace: {},
+	workspaceSessionRequests: {},
+	sessionRuntimes: {},
 	sessionId: null,
 	sessionPath: null,
 	sessions: [],
 	messages: [],
 	activities: [],
+	runs: [],
 	timelineRevision: 0,
+	historyGeneration: 0,
 	historyTotal: 0,
 	loadingOlder: false,
 	sessionLoading: false,
@@ -210,6 +224,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 		unsubscribeAgentEvent?.();
 		unsubscribeAgentEvent = null;
 		bridgeGeneration += 1;
+		historyLoadRequest += 1;
 		const generation = bridgeGeneration;
 		sessionListRequests.clear();
 		resetSettingsRequests();
@@ -251,6 +266,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 				}
 				set({
 					status: snapshot.status,
+					sessionRuntimes: Object.fromEntries((snapshot.sessionRuntimes ?? []).map((entry) => [sessionRuntimeKey(entry.cwd, entry.path), entry.runtime])),
 					statusMessage: snapshot.statusMessage,
 					retryAttempt: snapshot.retryAttempt,
 					retryMaxAttempts: snapshot.retryMaxAttempts,
@@ -265,7 +281,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
 					sessionPath: snapshot.sessionPath,
 					messages: snapshot.messages,
 					activities: snapshot.activities,
+					runs: snapshot.runs ?? [],
 					timelineRevision: get().timelineRevision + 1,
+					historyGeneration: get().historyGeneration + 1,
 					queuedCount: snapshot.queuedCount,
 					queuedMessages: snapshot.queuedMessages ?? [],
 					fileChanges: snapshot.fileChanges ?? [],
@@ -327,6 +345,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 		switch (event.type) {
 			case 'reset':
 				resetSettingsRequests();
+				historyLoadRequest += 1;
 				set({
 					status: 'uninitialized',
 					statusMessage: undefined,
@@ -349,7 +368,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
 					sessions: get().sessionsByWorkspace[event.cwd] ?? [],
 					messages: [],
 					activities: [],
+					runs: [],
 					timelineRevision: get().timelineRevision + 1,
+					historyGeneration: get().historyGeneration + 1,
+					historyTotal: 0,
+					loadingOlder: false,
 					queuedCount: 0,
 					queuedMessages: [],
 					fileChanges: [],
@@ -361,6 +384,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 				set((state) => ({
 					status: event.status, statusMessage: event.message, retryAttempt: event.attempt, retryMaxAttempts: event.maxAttempts,
 					...(event.status === 'error' ? {
+						runs: state.runs.map(run => run.status === 'running' ? { ...run, status: 'interrupted' as const, finishedAt: null } : run),
 						messages: state.messages.map((message) => message.status === 'streaming' ? {
 							...message, status: 'error' as const, errorMessage: event.message ?? message.errorMessage,
 							thinkingStatus: message.thinkingStatus === 'streaming' ? 'error' as const : message.thinkingStatus,
@@ -375,7 +399,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
 			case 'ready': {
 				const previous = get();
 				// A fresh session context clears the view; a same-session resync keeps older pages coming.
-				const sameSession = previous.sessionId === event.sessionId && previous.sessionPath === event.sessionPath;
+				const sameSession = previous.cwd === event.cwd && previous.sessionId === event.sessionId && previous.sessionPath === event.sessionPath;
+				if (!sameSession) historyLoadRequest += 1;
 				const olderLoaded = sameSession
 					? previous.messages.length + previous.activities.length - (event.messages.length + event.activities.length)
 					: 0;
@@ -392,8 +417,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
 					sessionPath: event.sessionPath,
 					messages: event.messages,
 					activities: event.activities,
+					runs: event.runs ?? [],
 					historyTotal: event.historyTotal ?? event.messages.length + event.activities.length,
 					timelineRevision: get().timelineRevision + 1,
+					historyGeneration: previous.historyGeneration + 1,
+					loadingOlder: sameSession && previous.loadingOlder,
 					queuedCount: 0,
 					queuedMessages: [],
 					fileChanges: event.fileChanges ?? [],
@@ -419,16 +447,19 @@ export const useChatStore = create<ChatState>((set, get) => ({
 			case 'thinking-level':
 				set({ thinkingLevel: event.level });
 				return;
+			case 'run':
+				set(state => ({ runs: mergeConversationRuns(state.runs, [event.run]) }));
+				return;
 			case 'user-message':
 				set((s) => ({
-					messages: [...s.messages, { id: event.id, order: event.order, role: 'user', text: event.text, attachments: event.attachments, status: 'done' }],
+					messages: [...s.messages, { id: event.id, order: event.order, runId: event.runId, role: 'user', text: event.text, attachments: event.attachments, attachmentsOmitted: event.attachmentsOmitted, attachmentReferences: event.attachmentReferences, status: 'done' }],
 					historyTotal: s.historyTotal + 1,
 					timelineRevision: s.timelineRevision + 1,
 				}));
 				return;
 			case 'assistant-start':
 				set((s) => ({
-					messages: [...s.messages, { id: event.id, order: event.order, role: 'assistant', text: '', status: 'streaming' }],
+					messages: [...s.messages, { id: event.id, order: event.order, runId: event.runId, role: 'assistant', text: '', status: 'streaming' }],
 					historyTotal: s.historyTotal + 1,
 					timelineRevision: s.timelineRevision + 1,
 					error: null,
@@ -491,6 +522,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
 			case 'sessions-changed':
 				void get().refreshWorkspaceSessions(event.cwd);
 				return;
+			case 'session-runtime': {
+				set((state) => {
+					const sessionRuntimes = { ...state.sessionRuntimes, [sessionRuntimeKey(event.cwd, event.path)]: event.runtime };
+					const cached = state.sessionsByWorkspace[event.cwd];
+					const sessions = cached ? mergeRuntimeStates(event.cwd, cached, sessionRuntimes) : undefined;
+					return { sessionRuntimes, ...(sessions ? { sessionsByWorkspace: { ...state.sessionsByWorkspace, [event.cwd]: sessions }, ...(state.cwd === event.cwd ? { sessions } : {}) } : {}) };
+				});
+				// A newly persisted background conversation may not have a row yet.
+				if (!get().sessionsByWorkspace[event.cwd]?.some((session) => session.path === event.path)) void get().refreshWorkspaceSessions(event.cwd);
+				return;
+			}
 			case 'error':
 				set({ error: event.message });
 				return;
@@ -503,34 +545,49 @@ export const useChatStore = create<ChatState>((set, get) => ({
 	},
 
 	async loadOlderMessages(pageSize = 200) {
-		const bridge = get().bridge;
-		if (!bridge || get().loadingOlder) return false;
-		const received = get().messages.length + get().activities.length;
-		const total = get().historyTotal;
-		const remaining = total - received;
-		if (remaining <= 0) return false;
-		const limit = Math.min(pageSize, remaining);
-		const offset = Math.max(0, remaining - limit);
+		const { bridge, cwd, sessionId, sessionPath, navigationRequestId } = get();
+		if (!bridge || get().loadingOlder || !Number.isInteger(pageSize) || pageSize < 1) return false;
+		if (get().historyTotal <= get().messages.length + get().activities.length) return false;
+		const request = ++historyLoadRequest;
+		const isCurrentSession = () => {
+			const current = get();
+			return request === historyLoadRequest && current.bridge === bridge && current.cwd === cwd &&
+				current.sessionId === sessionId && current.sessionPath === sessionPath && current.navigationRequestId === navigationRequestId;
+		};
 		set({ loadingOlder: true });
 		try {
-			const page = await bridge.getHistoryPage(offset, limit);
-			const current = get();
-			if (current.bridge !== bridge) return false;
-			// A session switch or resync during the fetch invalidates this page.
-			const sessionStillWaiting = current.historyTotal - (current.messages.length + current.activities.length) >= page.limit - 1;
-			if (!sessionStillWaiting) return false;
-			set({
-				messages: [...page.messages.filter((message) => !current.messages.some((existing) => existing.id === message.id)), ...current.messages],
-				activities: [...page.activities.filter((activity) => !current.activities.some((existing) => existing.id === activity.id)), ...current.activities],
-				historyTotal: page.total,
-				timelineRevision: current.timelineRevision + 1,
-			});
-			return page.messages.length + page.activities.length > 0;
+			for (let attempt = 0; attempt < 2; attempt += 1) {
+				const before = get();
+				const remaining = before.historyTotal - before.messages.length - before.activities.length;
+				if (remaining <= 0) return false;
+				const limit = Math.min(pageSize, remaining, 500);
+				const offset = Math.max(0, remaining - limit);
+				const page = await bridge.getHistoryPage(offset, limit);
+				if (!isCurrentSession()) return false;
+				const current = get();
+				// Branch replacement invalidates the offset. Retry it once against
+				// the fresh window; live appends do not invalidate older entries.
+				if (current.historyGeneration !== before.historyGeneration) continue;
+				const messages = new Set(current.messages.map((message) => message.id));
+				const activities = new Set(current.activities.map((activity) => activity.id));
+				const olderMessages = page.messages.filter((message) => !messages.has(message.id));
+				const olderActivities = page.activities.filter((activity) => !activities.has(activity.id));
+				set({
+					messages: [...olderMessages, ...current.messages],
+					activities: [...olderActivities, ...current.activities],
+					runs: mergeConversationRuns(current.runs, page.runs ?? []),
+					historyTotal: Math.max(current.historyTotal, page.total),
+					timelineRevision: current.timelineRevision + 1,
+				});
+				return olderMessages.length + olderActivities.length > 0;
+			}
+			set({ error: translate('store.historyChanged') });
+			return false;
 		} catch (error) {
-			set({ error: errorMessage(error) });
+			if (isCurrentSession()) set({ error: errorMessage(error) });
 			return false;
 		} finally {
-			set({ loadingOlder: false });
+			if (request === historyLoadRequest) set({ loadingOlder: false });
 		}
 	},
 
@@ -582,9 +639,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
 			throw error;
 		}
 		if (get().bridge !== bridge) return;
+		sessionListRequests.set(cwd, (sessionListRequests.get(cwd) ?? 0) + 1);
 		set((state) => ({
 			workspaces: state.workspaces.filter((path) => path !== cwd),
 			sessionsByWorkspace: Object.fromEntries(Object.entries(state.sessionsByWorkspace).filter(([path]) => path !== cwd)),
+			workspaceSessionRequests: Object.fromEntries(Object.entries(state.workspaceSessionRequests).filter(([path]) => path !== cwd)),
+			sessionRuntimes: Object.fromEntries(Object.entries(state.sessionRuntimes).filter(([key]) => !key.startsWith(`${JSON.stringify([cwd]).slice(0, -1)},`))),
 		}));
 		await get().refreshWorkspaces();
 	},
@@ -794,7 +854,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 		} finally { finishSessionNavigation(bridge, request); finishSessionLoadIndicator(set); }
 	},
 
-	async send(text, behavior, attachments) {
+	async send(text, behavior, attachments, inputId) {
 		const { bridge, status, cwd, sessionId } = get();
 		const trimmed = text.trim();
 		if (!bridge || (!trimmed && !attachments?.length)) return;
@@ -807,11 +867,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
 		let navigationRequest: number | undefined;
 		try {
 			const command = parseSlashCommand(trimmed);
-			const delivery = behavior ?? (status === 'busy' ? 'followUp' : undefined);
+			const delivery = inputId ? behavior : behavior ?? (status === 'busy' ? 'followUp' : undefined);
 			if (command) {
 				if (!sessionId) throw new Error(translate('store.agentNotReady'));
 				if (command.name === 'new') navigationRequest = beginSessionNavigation();
 				await bridge.executeSlashCommand({ cwd, sessionId, ...command, behavior: delivery, attachments });
+			} else if (inputId && 'submitInput' in bridge && typeof bridge.submitInput === 'function') {
+				const receipt = await bridge.submitInput({ id: inputId, sessionId: sessionId ?? '', text: trimmed, behavior: delivery, attachments });
+				if (receipt.state === 'recovered' || receipt.state === 'failed' || receipt.state === 'reserved') throw new Error(receipt.message ?? translate('store.inputNeedsConfirmation'));
 			} else await bridge.prompt(trimmed, delivery, attachments);
 		} catch (error) {
 			if (get().bridge === bridge && get().cwd === cwd && get().sessionId === sessionId
@@ -823,7 +886,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
 	async editMessage(entryId, text, attachments) {
 		const { bridge, status, cwd, sessionId } = get();
 		const trimmed = text.trim();
-		if (!bridge || !trimmed) return;
+		const original = get().messages.find((message) => message.id === entryId);
+		if (!bridge || (!trimmed && !attachments?.length && !original?.attachmentsOmitted)) return;
 		if (status !== 'idle') {
 			const error = new Error(translate('store.sessionBusy'));
 			set({ error: error.message });
@@ -831,19 +895,25 @@ export const useChatStore = create<ChatState>((set, get) => ({
 		}
 		set({ error: null });
 		try {
-			await bridge.editMessage(entryId, trimmed, attachments);
+			const message = get().messages.find((entry) => entry.id === entryId);
+			// An incomplete history preview is not an edited attachment list.
+			await bridge.editMessage(entryId, trimmed, message?.attachmentsOmitted ? undefined : attachments);
 		} catch (error) {
 			if (get().bridge === bridge && get().cwd === cwd && get().sessionId === sessionId) set({ error: errorMessage(error) });
 			throw error;
 		}
 	},
 
-	async regenerate() {
+	async regenerate(replyId) {
 		// Rewind to the latest user message and resend it verbatim; editMessage reuses navigateTree.
 		const messages = get().messages;
+		if (replyId) {
+			const replyIndex = messages.findIndex((message) => message.id === replyId && message.role === 'assistant');
+			if (replyIndex < 0 || messages.slice(replyIndex + 1).some((message) => message.role === 'user')) throw new Error(translate('store.nothingToRegenerate'));
+		}
 		for (let i = messages.length - 1; i >= 0; i -= 1) {
 			const message = messages[i]!;
-			if (message.role === 'user' && message.text.trim()) {
+			if (message.role === 'user' && (message.text.trim() || message.attachments?.length || message.attachmentsOmitted)) {
 				await get().editMessage(message.id, message.text, message.attachments);
 				return;
 			}
@@ -958,14 +1028,20 @@ async function refreshSessionCache(cwd: string, reportError = true): Promise<voi
 	if (!bridge || !cwd) return;
 	const request = (sessionListRequests.get(cwd) ?? 0) + 1;
 	sessionListRequests.set(cwd, request);
+	useChatStore.setState((state) => ({ workspaceSessionRequests: { ...state.workspaceSessionRequests,
+		[cwd]: { phase: Object.hasOwn(state.sessionsByWorkspace, cwd) ? 'refreshing' : 'loading', requestId: request } } }));
 	try {
 		const sessions = await bridge.listSessions(cwd);
 		if (useChatStore.getState().bridge !== bridge || sessionListRequests.get(cwd) !== request) return;
-		useChatStore.setState((state) => ({
-			sessionsByWorkspace: { ...state.sessionsByWorkspace, [cwd]: sessions },
-			...(state.cwd === cwd ? { sessions } : {}),
-		}));
+		useChatStore.setState((state) => {
+			const merged = mergeRuntimeStates(cwd, sessions, state.sessionRuntimes);
+			return { sessionsByWorkspace: { ...state.sessionsByWorkspace, [cwd]: merged },
+				workspaceSessionRequests: { ...state.workspaceSessionRequests, [cwd]: { phase: 'idle', requestId: request } },
+				...(state.cwd === cwd ? { sessions: merged } : {}) };
+		});
 	} catch (error) {
+		if (useChatStore.getState().bridge !== bridge || sessionListRequests.get(cwd) !== request) return;
+		useChatStore.setState((state) => ({ workspaceSessionRequests: { ...state.workspaceSessionRequests, [cwd]: { phase: 'error', requestId: request, error: errorMessage(error) } } }));
 		if (reportError && currentSessionNavigation(bridge, navigationRequestId) && sessionListRequests.get(cwd) === request) useChatStore.setState({ error: errorMessage(error) });
 	}
 }

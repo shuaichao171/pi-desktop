@@ -4,6 +4,7 @@ import { createRequire } from 'node:module';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
+import { WINDOWS_PTY_PREBUILD_CONFIG, verifyWindowsPtyPrebuilds } from './windows-pty-prebuild.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const DESKTOP = join(ROOT, 'packages', 'desktop');
@@ -101,6 +102,9 @@ console.log('[3/4] 打包便携版（仓库外暂存）...');
 const { version } = JSON.parse(readFileSync(join(DESKTOP, 'package.json'), 'utf8'));
 const require = createRequire(join(DESKTOP, 'package.json'));
 const { Arch, Platform, build } = require('electron-builder');
+// Same Windows PTY policy as the release packaging entry: ship node-pty's
+// N-API prebuilds instead of triggering a node-gyp rebuild that needs Visual Studio.
+verifyWindowsPtyPrebuilds(require);
 if (!(await removeWithRetry(STAGING))) throw new Error(`暂存目录无法清空：${STAGING}`);
 mkdirSync(OUTPUT, { recursive: true });
 await build({
@@ -108,6 +112,7 @@ await build({
 	targets: Platform.WINDOWS.createTarget(['portable'], Arch.x64),
 	publish: 'never',
 	config: {
+		...WINDOWS_PTY_PREBUILD_CONFIG,
 		directories: { output: STAGING },
 		extraMetadata: { name: 'pi-desktop-debug', productName: 'Pi Desktop Debug' },
 		portable: {

@@ -1,10 +1,9 @@
+import { recordDiagnostic } from './diagnostics.ts';
 import { app, utilityProcess, type UtilityProcess } from 'electron';
 import { join } from 'node:path';
 import type { ProjectTrustDecision } from '@pidesktop/agent';
-import type { AgentEventEnvelope, AgentSnapshot, UiAttachment, UiExtensionDialogRequest, UiHistoryPage, UiSessionStats, UiSessionTreeNode, UiSessionSummary, UiSessionSearchResult, UiSlashCommand, UiSlashCommandRequest, WorkspaceEntry } from '@pidesktop/shared';
-import type { AgentHostMethod, AgentHostToMain, MainToAgentHost } from './agentHostProtocol';
-import type { UiPluginCatalog, UiPluginMutation, UiPluginResourceKind, UiPluginResourcePreview, UiPluginScope } from '@pidesktop/shared';
-import type { UiInstructionDocument, UiSaveInstructionRequest, UiSaveInstructionResult } from '@pidesktop/shared';
+import type { AgentEventEnvelope, AgentSnapshot, UiExtensionDialogRequest } from '@pidesktop/shared';
+import { createAgentHostProxy, type AgentHostMethod, type AgentHostToMain, type MainToAgentHost } from './agentHostProtocol';
 
 export interface AgentHostUiHandlers {
 	requestProjectTrust(cwd: string): Promise<ProjectTrustDecision>;
@@ -13,6 +12,7 @@ export interface AgentHostUiHandlers {
 }
 
 interface PendingCall {
+	startedAt: number;
 	method: AgentHostMethod;
 	resolve(value: unknown): void;
 	reject(error: Error): void;
@@ -79,6 +79,7 @@ export class AgentHostClient {
 	private start(): Promise<void> {
 		if (this.closing) return Promise.reject(new Error('Pi agent is shutting down'));
 		if (this.ready) return this.ready;
+		recordDiagnostic({ stage: 'host', action: 'spawn', outcome: 'start' });
 		const host = utilityProcess.fork(join(app.getAppPath(), 'out', 'main', 'agentHost.js'), [], { serviceName: 'Pi Agent' });
 		this.host = host;
 		let resolveExit!: () => void;
@@ -94,6 +95,7 @@ export class AgentHostClient {
 			console.error(`Pi agent host error (${type}) at ${location}: ${report}`);
 		});
 		host.on('exit', (code) => {
+			recordDiagnostic({ stage: 'host', action: 'exit', outcome: 'exit', code: String(code) });
 			resolveExit();
 			if (this.host !== host) return;
 			if (this.startTimer) clearTimeout(this.startTimer);
@@ -142,6 +144,7 @@ export class AgentHostClient {
 			case 'error': {
 				const pending = this.pending.get(message.id);
 				if (!pending) return;
+				recordDiagnostic({ stage: pending.method === 'mutatePlugin' ? 'plugin' : 'rpc', action: pending.method, outcome: message.kind === 'reply' ? 'success' : 'failure', durationMs: Date.now() - pending.startedAt, requestId: message.id });
 				this.pending.delete(message.id);
 				if (pending.timer) clearTimeout(pending.timer);
 				if (message.kind === 'reply') {
@@ -196,6 +199,13 @@ export class AgentHostClient {
 	}
 
 	async call(method: AgentHostMethod, ...args: unknown[]): Promise<unknown> {
+		const startedAt = Date.now();
+		recordDiagnostic({ stage: method === 'mutatePlugin' ? 'plugin' : 'rpc', action: method, outcome: 'start' });
+		try { return await this.performCall(method, ...args); }
+		catch (error) { recordDiagnostic({ stage: method === 'mutatePlugin' ? 'plugin' : 'rpc', action: method, outcome: 'failure', durationMs: Date.now() - startedAt }); throw error; }
+		finally { recordDiagnostic({ stage: 'rpc', action: `${method}.finished`, outcome: 'exit', durationMs: Date.now() - startedAt }); }
+	}
+	private async performCall(method: AgentHostMethod, ...args: unknown[]): Promise<unknown> {
 		const ready = this.start();
 		const host = this.host;
 		await ready;
@@ -205,7 +215,8 @@ export class AgentHostClient {
 		if (!host || this.host !== host) throw new Error('Pi agent process is unavailable');
 		const id = ++this.nextCallId;
 		return new Promise<unknown>((resolve, reject) => {
-			const pending: PendingCall = { method, resolve, reject, timer: null };
+			const pending: PendingCall = { method, resolve, reject, timer: null, startedAt: Date.now() };
+			recordDiagnostic({ stage: 'rpc', action: method, outcome: 'start', requestId: id });
 			this.pending.set(id, pending);
 			const timeout = this.callTimeout(method);
 			const expire = (): void => {
@@ -287,53 +298,10 @@ export class AgentHostClient {
 export function createIsolatedAgentService(ui: AgentHostUiHandlers) {
 	const client = new AgentHostClient(ui);
 	return {
+		...createAgentHostProxy((method, ...args) => client.call(method, ...args)),
 		get cwd(): string { return client.cwd; },
-		getPersonalization: (): Promise<UiInstructionDocument[]> => client.call('getPersonalization') as Promise<UiInstructionDocument[]>,
-		saveInstruction: (request: UiSaveInstructionRequest): Promise<UiSaveInstructionResult> => client.call('saveInstruction', request) as Promise<UiSaveInstructionResult>,
 		onEvent: (listener: (event: AgentEventEnvelope) => void): void => client.onEvent(listener),
 		onBackgroundActivity: (listener: (cwd: string, path: string) => void): void => client.onBackgroundActivity(listener),
-		init: (...args: unknown[]) => client.call('init', ...args),
-		switchWorkspace: (...args: unknown[]) => client.call('switchWorkspace', ...args),
-		forgetWorkspace: (...args: unknown[]) => client.call('forgetWorkspace', ...args),
-		getSnapshot: (...args: unknown[]): Promise<AgentSnapshot> => client.call('getSnapshot', ...args) as Promise<AgentSnapshot>,
-		getHistoryPage: (...args: unknown[]): Promise<UiHistoryPage> => client.call('getHistoryPage', ...args) as Promise<UiHistoryPage>,
-		getSessionStats: (...args: unknown[]): Promise<UiSessionStats> => client.call('getSessionStats', ...args) as Promise<UiSessionStats>,
-		exportSession: (...args: unknown[]): Promise<string> => client.call('exportSession', ...args) as Promise<string>,
-		getSessionTree: (...args: unknown[]): Promise<UiSessionTreeNode[]> => client.call('getSessionTree', ...args) as Promise<UiSessionTreeNode[]>,
-		switchSessionBranch: (...args: unknown[]): Promise<void> => client.call('switchSessionBranch', ...args) as Promise<void>,
-		listSessions: (...args: unknown[]): Promise<UiSessionSummary[]> => client.call('listSessions', ...args) as Promise<UiSessionSummary[]>,
-		searchSessions: (workspaces: string[], query: string): Promise<{ sessions: UiSessionSearchResult[]; truncated: boolean }> =>
-			client.call('searchSessions', workspaces, query) as Promise<{ sessions: UiSessionSearchResult[]; truncated: boolean }>,
-		searchWorkspaceFiles: (cwd: string, query: string, options?: { includeDirectories?: boolean }): Promise<{ files: WorkspaceEntry[]; truncated: boolean }> =>
-			client.call('searchWorkspaceFiles', cwd, query, options) as Promise<{ files: WorkspaceEntry[]; truncated: boolean }>,
-		readSessionContext: (cwd: string, path: string): Promise<UiAttachment> => client.call('readSessionContext', cwd, path) as Promise<UiAttachment>,
-		listSlashCommands: (): Promise<UiSlashCommand[]> => client.call('listSlashCommands') as Promise<UiSlashCommand[]>,
-		executeSlashCommand: (request: UiSlashCommandRequest): Promise<void> => client.call('executeSlashCommand', request) as Promise<void>,
-		switchSession: (...args: unknown[]) => client.call('switchSession', ...args),
-		renameSession: (...args: unknown[]) => client.call('renameSession', ...args),
-		listModels: (...args: unknown[]) => client.call('listModels', ...args),
-		listModelProviders: (...args: unknown[]) => client.call('listModelProviders', ...args),
-		discoverProviderModels: (...args: unknown[]) => client.call('discoverProviderModels', ...args),
-		saveCustomProvider: (...args: unknown[]) => client.call('saveCustomProvider', ...args),
-		removeCustomProvider: (...args: unknown[]) => client.call('removeCustomProvider', ...args),
-		setModel: (...args: unknown[]) => client.call('setModel', ...args),
-		setThinkingLevel: (...args: unknown[]) => client.call('setThinkingLevel', ...args),
-		listProviderAuth: (...args: unknown[]) => client.call('listProviderAuth', ...args),
-		setProviderApiKey: (...args: unknown[]) => client.call('setProviderApiKey', ...args),
-		removeProviderCredential: (...args: unknown[]) => client.call('removeProviderCredential', ...args),
-		setModelEnabled: (...args: unknown[]) => client.call('setModelEnabled', ...args),
-		listExtensions: (...args: unknown[]) => client.call('listExtensions', ...args),
-		setExtensionEnabled: (...args: unknown[]) => client.call('setExtensionEnabled', ...args),
-		getPluginCatalog: (cwd: string): Promise<UiPluginCatalog> => client.call('getPluginCatalog', cwd) as Promise<UiPluginCatalog>,
-		mutatePlugin: (input: UiPluginMutation): Promise<UiPluginCatalog> => client.call('mutatePlugin', input) as Promise<UiPluginCatalog>,
-		previewPluginResource: (request: { cwd: string; path: string; kind: UiPluginResourceKind; scope: UiPluginScope }): Promise<UiPluginResourcePreview> => client.call('previewPluginResource', request) as Promise<UiPluginResourcePreview>,
-		prompt: (...args: unknown[]) => client.call('prompt', ...args),
-		abort: (...args: unknown[]) => client.call('abort', ...args),
-		newSession: (...args: unknown[]) => client.call('newSession', ...args),
-		editUserMessage: (...args: unknown[]) => client.call('editUserMessage', ...args),
-		forkAssistantMessage: (...args: unknown[]) => client.call('forkAssistantMessage', ...args),
-		updateQueuedMessage: (...args: unknown[]) => client.call('updateQueuedMessage', ...args),
-		generateCommitMessage: (...args: unknown[]) => client.call('generateCommitMessage', ...args),
 		dispose: () => client.dispose(),
 	};
 }

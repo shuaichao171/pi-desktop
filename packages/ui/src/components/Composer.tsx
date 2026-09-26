@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, type ChangeEvent, type ClipboardEvent, type DragEvent, type KeyboardEvent, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type ChangeEvent, type ClipboardEvent, type DragEvent, type KeyboardEvent, type ReactNode, type Ref } from 'react';
 import type { UiAttachment, UiContextRequest, UiSlashCommand } from '@pidesktop/shared';
 import { inspectAttachmentFile, MAX_ATTACHMENTS } from '../attachmentPolicy';
 import { appendFileAttachments, clearSubmittedDraft, type ComposerDraft } from '../composerDrafts';
@@ -13,8 +13,12 @@ import { consumeContextMention, contextMentionAt, hasContextSource, type Context
 import { completeSlashCommand, slashTriggerAt, type SlashTrigger } from '../composerSlash';
 import { ComposerSlashPicker, type ComposerSlashPickerHandle } from './ComposerSlashPicker';
 import { ComposerQueue } from './ComposerQueue';
-import { ComposerChanges } from './ComposerChanges';
 import './composerLayout.css';
+import { appendQuote } from '../conversationState';
+import { useConversationCopy } from '../conversationCopy';
+import { ImagePreviewDialog } from './ImagePreviewDialog';
+import type { InputFeatureBridge, UiStoredAttachment } from '../../../shared/src/inputFeatures';
+import { PersistedComposerDrafts } from '../persistedDrafts';
 
 type BusyBehavior = 'steer' | 'followUp';
 
@@ -35,9 +39,10 @@ function writeDraft(key: string, value: string): boolean {
 	} catch { return false; }
 }
 
-async function readFileAttachment(file: File, t: Translate): Promise<UiAttachment> {
+async function readFileAttachment(file: File, t: Translate, pdf?: (file: File) => Promise<UiAttachment>): Promise<UiAttachment> {
 	const policy = inspectAttachmentFile(file);
 	if ('errorKey' in policy) throw new Error(t(policy.errorKey, { name: file.name }));
+	if (policy.kind === 'pdf') { if (!pdf) throw new Error('PDF处理服务尚未就绪'); return pdf(file); }
 	if (policy.kind === 'image') {
 		const dataUrl = await new Promise<string>((resolve, reject) => {
 			const reader = new FileReader();
@@ -57,12 +62,14 @@ function attachmentLabel(attachment: UiAttachment, t: Translate): string {
 	return t(attachment.kind === 'image' ? 'composer.image' : 'composer.text');
 }
 
-export function Composer({ header, onOpenModelManagement }: { header?: ReactNode; onOpenModelManagement(target: ModelManagementTarget): void }) {
-	const { t } = useT();
+export function Composer({ header, onOpenModelManagement, changesSlotRef }: { header?: ReactNode; onOpenModelManagement(target: ModelManagementTarget): void; changesSlotRef?: Ref<HTMLDivElement> }) {
+	const { t, locale } = useT(); const zh = locale === 'zh-CN';
+	const c = useConversationCopy();
+	const [imagePreview, setImagePreview] = useState<{ index: number; trigger: HTMLElement } | null>(null);
+	const [quotes, setQuotes] = useState<{ key: string; block: string; source: string }[]>([]);
 	const bridge = useChatStore((s) => s.bridge);
 	const status = useChatStore((s) => s.status);
 	const queuedMessages = useChatStore((s) => s.queuedMessages);
-	const fileChanges = useChatStore((s) => s.fileChanges);
 	const platform = useChatStore((s) => s.appInfo?.platform);
 	const cwd = useChatStore((s) => s.cwd);
 	const sessionPath = useChatStore((s) => s.sessionPath);
@@ -78,9 +85,22 @@ export function Composer({ header, onOpenModelManagement }: { header?: ReactNode
 	const [attaching, setAttaching] = useState(false);
 	const [submissionError, setSubmissionError] = useState<string | null>(null);
 	const [draftWarning, setDraftWarning] = useState(false);
+	const [missingAttachments, setMissingAttachments] = useState<UiStoredAttachment[]>([]);
+	const [queueEditorTarget, setQueueEditorTarget] = useState<HTMLDivElement | null>(null);
+	const [queueEditing, setQueueEditing] = useState(false);
+	const [defaultBusyBehavior, setDefaultBusyBehavior] = useState<BusyBehavior>(() => { try { return localStorage.getItem('pi-desktop:busy-input-behavior') === 'steer' ? 'steer' : 'followUp'; } catch { return 'followUp'; } });
+	const [draftRestoreError, setDraftRestoreError] = useState(false);
+	const [restoreRetry, setRestoreRetry] = useState(0);
+	const [pdfCount, setPdfCount] = useState(0);
+	const durable = useRef<{ bridge: unknown; drafts: PersistedComposerDrafts } | null>(null);
+	const loadedDrafts = useRef(new Set<string>());
+	const missingByKey = useRef(new Map<string, UiStoredAttachment[]>());
+	const pdfJobs = useRef(new Set<string>());
+	const sendRequest = useRef<{ key: string; text: string; attachments: UiAttachment[]; id: string; behavior?: BusyBehavior } | null>(null);
 	const textRef = useRef(text);
 	const attachmentsRef = useRef(attachments);
 	const draftsRef = useRef(new Map<string, ComposerDraft>([[draftKey, { text, attachments }]]));
+	const textEdits = useRef(new Map<string, number>());
 	const pendingAttachmentsRef = useRef(0);
 	const sendingRef = useRef(false);
 	const currentKeyRef = useRef(draftKey);
@@ -100,10 +120,31 @@ export function Composer({ header, onOpenModelManagement }: { header?: ReactNode
 	const busy = status === 'busy';
 	const steerShortcut = platform === 'darwin' ? '⌘Enter' : 'Ctrl+Enter';
 	const unavailable = status === 'starting' || status === 'uninitialized' || status === 'error';
-	const placeholder = t(status === 'error' ? 'composer.connectionErrorPlaceholder' : unavailable ? 'composer.connecting' : busy ? 'composer.busyPlaceholder' : 'composer.placeholder');
-	const canSubmit = Boolean(text.trim() || attachments.length) && !sending && !attaching && !unavailable;
+	const placeholder = busy && defaultBusyBehavior === 'steer' ? (zh ? '继续输入，补充引导当前任务…' : 'Add instructions to steer the current task…') : t(status === 'error' ? 'composer.connectionErrorPlaceholder' : unavailable ? 'composer.connecting' : busy ? 'composer.busyPlaceholder' : 'composer.placeholder');
+	const canSubmit = Boolean(text.trim() || attachments.length) && !sending && !attaching && !unavailable && !missingAttachments.length && !draftRestoreError;
 	const slashCatalogKey = JSON.stringify([cwd, sessionId]);
 	const slashOpen = slashTrigger !== null;
+	const inputBridge = bridge as Partial<InputFeatureBridge> | null;
+	if (inputBridge?.getInputDraft && durable.current?.bridge !== bridge) { durable.current = { bridge, drafts: new PersistedComposerDrafts(inputBridge as InputFeatureBridge) }; loadedDrafts.current.clear(); }
+	useEffect(() => {
+		const persistence = durable.current?.drafts;
+		if (!persistence || loadedDrafts.current.has(draftKey)) { setDraftRestoreError(false); setMissingAttachments(missingByKey.current.get(draftKey) ?? []); return; }
+		const key = draftKey, scope = { cwd, sessionPath }, initialTextRevision = textEdits.current.get(draftKey) ?? 0; let cancelled = false;
+		setDraftRestoreError(false);
+		pendingAttachmentsRef.current++; setAttaching(true);
+		void persistence.load(scope).then(({ draft, missing }) => {
+			loadedDrafts.current.add(key); missingByKey.current.set(key, missing);
+			const local = draftsRef.current.get(key), editedWhileLoading = (textEdits.current.get(key) ?? 0) !== initialTextRevision;
+			const next = { text: editedWhileLoading ? local?.text ?? '' : local?.text || draft.text, attachments: local?.attachments.length ? local.attachments : draft.attachments };
+			draftsRef.current.set(key, next);
+			if (!cancelled && currentKeyRef.current === key) { textRef.current = next.text; attachmentsRef.current = next.attachments; setText(next.text); setAttachments(next.attachments); setMissingAttachments(missing); writeDraft(key, next.text); }
+		}).catch((error: unknown) => { if (!cancelled) { setDraftRestoreError(true); setSubmissionError(error instanceof Error ? error.message : String(error)); } }).finally(() => { pendingAttachmentsRef.current--; setAttaching(pendingAttachmentsRef.current > 0); });
+		return () => { cancelled = true; };
+	}, [bridge, draftKey, restoreRetry]);
+	useEffect(() => {
+		if (!loadedDrafts.current.has(draftKey) || missingAttachments.length || text !== textRef.current || attachments !== attachmentsRef.current) return;
+		void durable.current?.drafts.save({ cwd, sessionPath }, { text, attachments }).catch(() => { if (currentKeyRef.current === draftKey) setDraftWarning(true); });
+	}, [text, attachments, draftKey, missingAttachments]);
 
 	useEffect(() => {
 		if (!slashOpen || !bridge || unavailable) return;
@@ -128,11 +169,25 @@ export function Composer({ header, onOpenModelManagement }: { header?: ReactNode
 		setText(next.text);
 		setAttachments(next.attachments);
 		setSubmissionError(null);
+		setMissingAttachments(missingByKey.current.get(draftKey) ?? []);
 		setContextPicker(null);
 		dismissedMention.current = null;
 		setSlashTrigger(null);
 		dismissedSlash.current = null;
 	}, [draftKey]);
+	useEffect(() => { setImagePreview(null); }, [draftKey]);
+	useEffect(() => {
+		const quote = (event: Event) => {
+			const detail = (event as CustomEvent<{ cwd: string; sessionPath: string | null; messageId: string; text: string }>).detail;
+			if (!detail || detail.cwd !== cwd || detail.sessionPath !== sessionPath || typeof detail.text !== 'string' || !detail.text.trim()) return;
+			const source = `${c('quoteSource')} · ${detail.messageId}`;
+			const next = appendQuote(textRef.current, detail.text, source);
+			changeText(next.text); setQuotes((items) => [...items, { key: currentKeyRef.current, block: next.block, source }].slice(-100));
+			textareaRef.current?.focus();
+		};
+		window.addEventListener('pd:quote-selection', quote);
+		return () => window.removeEventListener('pd:quote-selection', quote);
+	}, [cwd, sessionPath, c('quoteSource')]);
 
 	useEffect(() => { if (unavailable) { setContextPicker(null); setSlashTrigger(null); } }, [unavailable]);
 
@@ -159,6 +214,7 @@ export function Composer({ header, onOpenModelManagement }: { header?: ReactNode
 	}, [text, placeholder]);
 
 	function changeText(value: string) {
+		textEdits.current.set(currentKeyRef.current, (textEdits.current.get(currentKeyRef.current) ?? 0) + 1);
 		textRef.current = value;
 		setText(value);
 		draftsRef.current.set(currentKeyRef.current, { text: value, attachments: attachmentsRef.current });
@@ -275,7 +331,14 @@ export function Composer({ header, onOpenModelManagement }: { header?: ReactNode
 		setAttaching(true);
 		setSubmissionError(null);
 		try {
-			await appendFileAttachments(files, (file) => readFileAttachment(file, t),
+			await appendFileAttachments(files, (file) => readFileAttachment(file, t, async (pdf) => {
+				if (!inputBridge?.processPdfInput) throw new Error(zh ? 'PDF处理服务尚未就绪' : 'PDF processing is not ready');
+				if (pdf.size > 20 * 1024 * 1024) throw new Error(zh ? 'PDF超过20 MiB限制' : 'PDF exceeds the 20 MiB limit');
+				const data = await new Promise<string>((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result).split(',')[1] ?? ''); reader.onerror = () => reject(reader.error); reader.readAsDataURL(pdf); });
+				const requestId = crypto.randomUUID(); pdfJobs.current.add(requestId); setPdfCount(pdfJobs.current.size);
+				try { const result = await inputBridge.processPdfInput({ requestId, name: pdf.name.toLowerCase().endsWith('.pdf') ? pdf.name.slice(-200) : `${pdf.name.slice(0, 196)}.pdf`, data }); return result.attachment; }
+				finally { pdfJobs.current.delete(requestId); setPdfCount(pdfJobs.current.size); }
+			}),
 				() => draftsRef.current.get(key)?.attachments ?? [],
 				(next) => changeAttachments(next, key),
 				() => new Error(t('composer.maxAttachments', { count: MAX_ATTACHMENTS })));
@@ -293,6 +356,7 @@ export function Composer({ header, onOpenModelManagement }: { header?: ReactNode
 	}
 
 	function onDrop(event: DragEvent<HTMLDivElement>) {
+		if (queueEditing) { event.preventDefault(); return; }
 		if (!event.dataTransfer.files.length) return;
 		event.preventDefault();
 		void addFiles(Array.from(event.dataTransfer.files));
@@ -308,7 +372,7 @@ export function Composer({ header, onOpenModelManagement }: { header?: ReactNode
 	async function submit(behavior?: BusyBehavior): Promise<void> {
 		const value = textRef.current.trim();
 		const submittedAttachments = attachmentsRef.current;
-		if ((!value && !submittedAttachments.length) || sendingRef.current || pendingAttachmentsRef.current > 0 || unavailable) return;
+		if ((!value && !submittedAttachments.length) || sendingRef.current || pendingAttachmentsRef.current > 0 || unavailable || missingAttachments.length || draftRestoreError) return;
 		const submittedKey = currentKeyRef.current;
 		sendingRef.current = true;
 		setSending(true);
@@ -316,12 +380,16 @@ export function Composer({ header, onOpenModelManagement }: { header?: ReactNode
 		setSlashTrigger(null);
 		setContextPicker(null);
 		try {
-			await send(value, busy ? (behavior ?? 'followUp') : undefined, submittedAttachments);
+			const prior = sendRequest.current;
+			const request = prior?.key === submittedKey && prior.text === value && prior.attachments === submittedAttachments ? prior : { key: submittedKey, text: value, attachments: submittedAttachments, id: crypto.randomUUID(), behavior: busy ? behavior ?? defaultBusyBehavior : undefined };
+			sendRequest.current = request;
+			await send(value, request.behavior, submittedAttachments, request.id);
+			sendRequest.current = null;
 			if (clearSubmittedDraft(draftsRef.current, submittedKey, { text: value, attachments: submittedAttachments })) {
 				if (currentKeyRef.current === submittedKey) {
 					changeText('');
 					changeAttachments([]);
-				} else writeDraft(submittedKey, '');
+				} else { writeDraft(submittedKey, ''); void durable.current?.drafts.save({ cwd, sessionPath }, { text: '', attachments: [] }).catch(() => setDraftWarning(true)); }
 			}
 		} catch (error) {
 			if (currentKeyRef.current === submittedKey) setSubmissionError(error instanceof Error ? error.message : String(error));
@@ -337,7 +405,7 @@ export function Composer({ header, onOpenModelManagement }: { header?: ReactNode
 		if (contextPicker && pickerRef.current?.handleKeyDown(event)) return;
 		if (event.key !== 'Enter' || event.shiftKey || event.nativeEvent.isComposing) return;
 		event.preventDefault();
-		void submit(busy && (event.ctrlKey || event.metaKey) ? 'steer' : undefined);
+		void submit(busy && (event.ctrlKey || event.metaKey) ? defaultBusyBehavior === 'followUp' ? 'steer' : 'followUp' : undefined);
 	}
 
 	async function retryConnection() {
@@ -349,39 +417,50 @@ export function Composer({ header, onOpenModelManagement }: { header?: ReactNode
 		finally { setRetrying(false); }
 	}
 
+	function onQueueEditingChange(editing: boolean) {
+		setQueueEditing(editing);
+		if (!editing) return;
+		setContextPicker(null); setSlashTrigger(null);
+	}
+
 	return (
 		<div className="pd-composer-dock">
 			<div className="pd-composer-wrap">
 				{submissionError && <div className="pd-composer-error" role="alert">{submissionError}</div>}
 				{draftWarning && <div className="pd-composer-error" role="status">{t('composer.draftWarning')}</div>}
-				{fileChanges.length > 0 && <ComposerChanges key={`changes:${cwd}\0${sessionId}`} items={fileChanges} />}
-				<ComposerQueue key={`queue:${cwd}\0${sessionId}`} items={queuedMessages} />
+				{draftRestoreError && <button type="button" onClick={() => setRestoreRetry((value) => value + 1)}>{zh ? '重试恢复草稿' : 'Retry draft recovery'}</button>}
+				{missingAttachments.map((attachment) => <div className="pd-composer-error" role="alert" key={attachment.id}>{zh ? '草稿附件缺失，请重新添加或移除：' : 'Draft attachment missing. Add it again or remove it: '}{attachment.name}<button type="button" onClick={() => { const next = missingAttachments.filter((item) => item.id !== attachment.id); missingByKey.current.set(draftKey, next); setMissingAttachments(next); }}>{zh ? '移除' : 'Remove'}</button></div>)}
+				<div ref={changesSlotRef} className="pd-composer-changes-slot" />
+				<ComposerQueue key={`queue:${cwd}\0${sessionPath}\0${sessionId}`} scopeKey={`${cwd}\0${sessionPath}\0${sessionId}`} items={queuedMessages} editorTarget={queueEditorTarget} onEditingChange={onQueueEditingChange} defaultBehavior={defaultBusyBehavior} onToggleDefault={() => { const next = defaultBusyBehavior === 'followUp' ? 'steer' : 'followUp'; setDefaultBusyBehavior(next); try { localStorage.setItem('pi-desktop:busy-input-behavior', next); } catch { setSubmissionError(zh ? '发送偏好未能保存，下次启动将使用默认设置。' : 'Could not save the send preference for the next launch.'); } }} />
 				<div ref={shellRef} className={`pd-composer-shell${queuedMessages.length ? ' has-queue' : ''}`} data-composer-layout="multiline" onDragOver={(event) => { if (event.dataTransfer.types.includes('Files')) event.preventDefault(); }} onDrop={onDrop}>
+					<div ref={setQueueEditorTarget} className="pd-queue-editor-slot" />
 					{header ? <div className="pd-composer-header">{header}</div> : null}
 					{attachments.length > 0 && <div className="pd-composer-attachments" aria-label={t('composer.pendingAttachments')}>{attachments.map((attachment, index) => <div className={`pd-composer-attachment${attachment.kind === 'text' && attachment.source ? ' is-context' : ''}`} key={`${attachment.name}-${index}`}>
-						{attachment.kind === 'image' ? <img src={`data:${attachment.mimeType};base64,${attachment.data}`} alt="" /> : <span className="pd-composer-attachment-type">{attachment.source ? <Icon name={attachment.source.kind === 'session' ? 'message' : attachment.source.kind === 'directory' ? 'folder' : 'file'} width="16" height="16" /> : 'TXT'}</span>}
+						{attachment.kind === 'image' ? <button type="button" className="pd-composer-image-preview" aria-label={`${c('preview')}: ${attachment.name}`} onClick={(event) => setImagePreview({ index: attachments.slice(0, index).filter((item) => item.kind === 'image').length, trigger: event.currentTarget })}><img src={`data:${attachment.mimeType};base64,${attachment.data}`} alt="" /></button> : <span className="pd-composer-attachment-type">{attachment.source ? <Icon name={attachment.source.kind === 'session' ? 'message' : attachment.source.kind === 'directory' ? 'folder' : 'file'} width="16" height="16" /> : 'TXT'}</span>}
 						<HoverTooltip title={attachment.name} description={attachment.kind === 'text' && attachment.source ? `${attachment.source.workspace}\n${attachment.source.path}${attachment.source.truncated ? `\n${t('composer.contextTruncated')}` : ''}` : attachmentLabel(attachment, t)}><span className="pd-composer-attachment-name" tabIndex={0}>{attachment.name}<small>{attachmentLabel(attachment, t)}{attachment.kind === 'text' && attachment.source?.truncated ? ` · ${t('composer.contextTruncatedShort')}` : ''}</small></span></HoverTooltip>
 						<button type="button" onClick={() => { changeAttachments(attachmentsRef.current.filter((_, itemIndex) => itemIndex !== index)); textareaRef.current?.focus(); }} aria-label={t('composer.removeAttachment', { name: attachment.name })}><Icon name="close" width="14" height="14" /></button>
 					</div>)}</div>}
 					<textarea ref={textareaRef} value={text} rows={2} placeholder={placeholder} aria-label={t('composer.messageLabel')} disabled={unavailable} onChange={(event) => { changeText(event.target.value); syncCompletions(event.target.value, event.target.selectionStart, event.target.selectionEnd); }} onSelect={(event) => syncCompletions(event.currentTarget.value, event.currentTarget.selectionStart, event.currentTarget.selectionEnd)} onCompositionStart={() => { composingRef.current = true; setContextPicker(null); setSlashTrigger(null); }} onCompositionEnd={(event) => { composingRef.current = false; syncCompletions(event.currentTarget.value, event.currentTarget.selectionStart, event.currentTarget.selectionEnd); }} onKeyDown={onKeyDown} onPaste={onPaste} />
 					<div className="pd-composer-toolbar">
+						{quotes.filter((item) => item.key === draftKey && text.includes(item.block)).map((item, index) => <button type="button" className="pd-quote-chip" key={`${item.source}:${index}`} onClick={() => { changeText(textRef.current.replace(item.block, '')); setQuotes((items) => items.filter((entry) => entry !== item)); }} aria-label={c('removeQuote')}>{item.source} ×</button>)}
 						<div className="pd-composer-meta">
 							<input ref={fileInputRef} type="file" multiple className="pd-composer-file-input" tabIndex={-1} aria-hidden="true" onChange={onFileChange} />
 							<HoverTooltip title={t('composer.contextAddTitle')} shortcut="@"><button ref={contextButtonRef} type="button" className="pd-composer-add-attachment" onMouseDown={(event) => event.preventDefault()} onClick={() => { closeSlash(); setContextPicker((current) => current?.mode === 'menu' ? null : { mode: 'menu' }); }} disabled={unavailable || attaching || attachments.length >= MAX_ATTACHMENTS} aria-label={t('composer.contextAddTitle')} aria-haspopup="dialog" aria-expanded={contextPicker !== null}><Icon name="plus" width="16" height="16" /></button></HoverTooltip>
 						</div>
 						<div className="pd-composer-actions">
-							<ComposerControls onOpenModelManagement={onOpenModelManagement} />
-							{busy && <><HoverTooltip title={t('composer.stopTitle')}><button type="button" className="pd-composer-action" onClick={() => void abort().catch((error: unknown) => setSubmissionError(error instanceof Error ? error.message : String(error)))} aria-label={t('composer.stopTitle')}><Icon name="square" width="16" height="16" /><span>{t('composer.stop')}</span></button></HoverTooltip><HoverTooltip title={t('composer.steer')} description={t('composer.queuedSteerDescription')} shortcut={steerShortcut}><button type="button" className="pd-composer-action pd-steer-action" onClick={() => void submit('steer')} disabled={!canSubmit} aria-label={t('composer.steer')}><Icon name="steer" width="15" height="15" /><span>{t('composer.steer')}</span></button></HoverTooltip></>}
+							<ComposerControls onOpenModelManagement={onOpenModelManagement} hasImages={attachments.some((item) => item.kind === 'image')} />
+							{busy && <><HoverTooltip title={t('composer.stopTitle')}><button type="button" className="pd-composer-action" onClick={() => void abort().catch((error: unknown) => setSubmissionError(error instanceof Error ? error.message : String(error)))} aria-label={t('composer.stopTitle')}><Icon name="square" width="16" height="16" /><span>{t('composer.stop')}</span></button></HoverTooltip><HoverTooltip title={t(defaultBusyBehavior === 'followUp' ? 'composer.steer' : 'composer.queueSend')} description={t(defaultBusyBehavior === 'followUp' ? 'composer.queuedSteerDescription' : 'composer.queuedFollowUpDescription')} shortcut={steerShortcut}><button type="button" className="pd-composer-action pd-steer-action" onClick={() => void submit(defaultBusyBehavior === 'followUp' ? 'steer' : 'followUp')} disabled={!canSubmit} aria-label={t(defaultBusyBehavior === 'followUp' ? 'composer.steer' : 'composer.queueSend')}><Icon name={defaultBusyBehavior === 'followUp' ? 'steer' : 'queue'} width="15" height="15" /><span>{t(defaultBusyBehavior === 'followUp' ? 'composer.steer' : 'composer.queuedFollowUp')}</span></button></HoverTooltip></>}
 							{status === 'error' || retrying
 								? <button type="button" className="pd-send-button pd-composer-retry" onClick={() => void retryConnection()} disabled={retrying}><Icon name="refresh" width="15" height="15" /><span>{t(retrying ? 'composer.retryingConnection' : 'composer.retryConnection')}</span></button>
-								: <button type="button" className="pd-send-button" onClick={() => void submit(busy ? 'followUp' : undefined)} disabled={!canSubmit} aria-label={t(busy ? 'composer.queueSend' : 'composer.send')}><Icon name={busy ? 'queue' : 'arrowUp'} width="16" height="16" /></button>}
+								: <button type="button" className="pd-send-button" onClick={() => void submit()} disabled={!canSubmit} aria-label={t(busy ? defaultBusyBehavior === 'followUp' ? 'composer.queueSend' : 'composer.steer' : 'composer.send')} title={busy ? `${t(defaultBusyBehavior === 'followUp' ? 'composer.queueSend' : 'composer.steer')} (Enter)` : undefined}><Icon name={busy ? defaultBusyBehavior === 'followUp' ? 'queue' : 'steer' : 'arrowUp'} width="16" height="16" /></button>}
 						</div>
 					</div>
 				</div>
 				{contextPicker && !unavailable && shellRef.current && <ComposerContextPicker ref={pickerRef} anchor={shellRef.current} trigger={contextButtonRef.current} mode={contextPicker.mode} query={contextPicker.mode === 'mention' ? contextPicker.mention.query : ''} workspace={cwd} sessionPath={sessionPath} onSelect={(request) => void selectContext(request)} onUpload={() => { closeContext(); fileInputRef.current?.click(); }} onClose={closeContext} />}
 				{slashTrigger && !unavailable && shellRef.current && <ComposerSlashPicker ref={slashPickerRef} anchor={shellRef.current} query={slashTrigger.query} commands={slashCatalog.key === slashCatalogKey ? slashCatalog.commands : []} loading={slashCatalog.key !== slashCatalogKey || slashCatalog.loading} error={slashCatalog.key === slashCatalogKey ? slashCatalog.error : null} busy={busy} onSelect={selectSlash} onClose={closeSlash} onRetry={() => setSlashRetry((value) => value + 1)} />}
-				{attaching && <p className="pd-composer-attachment-hint" role="status">{t('composer.readingAttachments')}</p>}
-				{attachments.length > 0 && <p className="pd-composer-attachment-hint">{t('composer.attachmentPersistence')}</p>}
+				{attaching && <p className="pd-composer-attachment-hint" role="status">{t('composer.readingAttachments')}{pdfCount > 0 && <button type="button" onClick={() => { for (const id of pdfJobs.current) void inputBridge?.cancelPdfInput?.(id); }}>{zh ? '取消PDF处理' : 'Cancel PDF processing'}</button>}</p>}
+				{!queueEditing && attachments.length > 0 && <p className="pd-composer-attachment-hint">{inputBridge?.getInputDraft ? (zh ? '附件随草稿保存在本机。PDF以带页码的本地提取文字发送；不支持扫描OCR。' : 'Attachments are saved locally with the draft. PDFs send locally extracted text with page numbers; OCR is unavailable.') : t('composer.attachmentPersistence')}</p>}
+				{imagePreview && <ImagePreviewDialog images={attachments.flatMap((attachment, index) => attachment.kind === 'image' ? [{ id: `pending:${index}`, name: attachment.name, attachment }] : [])} initialIndex={imagePreview.index} returnFocus={imagePreview.trigger} onClose={() => setImagePreview(null)} />}
 			</div>
 		</div>
 	);

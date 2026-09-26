@@ -26,6 +26,12 @@ test('the transcript find bar counts matches and exposes keyboard stepping', asy
     assert.match(empty, /pd-transcript-find-count is-empty/);
     assert.ok(empty.includes(translate('chat.find.noResults')));
     assert.ok(empty.includes('disabled'));
+
+    const partial = renderToStaticMarkup(createElement(TranscriptFind, { query: 'old needle', onQueryChange() {}, index: null, total: 0, onStep() {}, onClose() {}, loadedMessages: 40, hasOlder: true, onLoadOlder() {} }));
+    assert.ok(partial.includes(translate('chat.find.loadedOnly', { count: '40' })));
+    assert.ok(partial.includes(translate('chat.find.loadOlder')));
+    assert.match(partial, /pd-transcript-find-scope.*role="status"/);
+    assert.ok(!empty.includes('pd-transcript-find-scope'), 'complete histories do not show a scope warning');
   } finally {
     await server.close();
   }

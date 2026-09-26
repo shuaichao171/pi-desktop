@@ -33,7 +33,7 @@ function findRow(scroll: HTMLElement, id: string): HTMLElement | null {
 	return scroll.querySelector<HTMLElement>(`[data-message-id="${CSS.escape(id)}"]`);
 }
 
-export const ConversationRail = memo(function ConversationRail({ messages, getScrollElement, markedIds, onJumpToMessage }: { messages: UiMessage[]; getScrollElement(): HTMLElement | null; /** User-message ids whose turn contains an in-conversation find hit. */ markedIds?: ReadonlySet<string>; /** Virtualized transcripts route jumps through the view. */ onJumpToMessage?(id: string): void }) {
+export const ConversationRail = memo(function ConversationRail({ messages, getScrollElement, markedIds, onJumpToMessage }: { messages: UiMessage[]; getScrollElement(): HTMLElement | null; markedIds?: ReadonlySet<string>; onJumpToMessage?(id: string): void }) {
 	const { t } = useT();
 	const items = useMemo<RailItem[]>(() => {
 		const result: RailItem[] = [];
@@ -211,7 +211,7 @@ export const ConversationRail = memo(function ConversationRail({ messages, getSc
 		if (!button || !id || id === drag.itemId) return;
 		draggingRef.current = { ...drag, itemId: id };
 		suppressClickRef.current = true;
-		scrollToItem(id, 'auto');
+		jump(id, 'auto');
 		openHover(id, button, true);
 };
 
@@ -243,7 +243,7 @@ export const ConversationRail = memo(function ConversationRail({ messages, getSc
 							jump(item.id);
 						}}
 						onPointerEnter={(event) => { if (draggingRef.current == null) openHover(item.id, event.currentTarget); }}
-						onPointerLeave={() => { if (draggingRef.current == null) { clearHoverTimer(); setHover((current) => current?.id === item.id ? null : current); } }}
+						onPointerLeave={() => { if (draggingRef.current == null) clearHoverTimer(); }}
 						onFocus={(event) => openHover(item.id, event.currentTarget, true)}
 						onBlur={() => setHover((current) => current?.id === item.id ? null : current)}
 					>
@@ -252,7 +252,7 @@ export const ConversationRail = memo(function ConversationRail({ messages, getSc
 				))}
 			</div>
 			{previewItem && hover && createPortal(
-				<div className="pd-conv-rail-preview" style={{ left: hover.x, top: hover.y }} role="tooltip">
+				<div className="pd-conv-rail-preview" style={{ left: hover.x, top: hover.y }} role="tooltip" aria-label={itemTitle(previewItem, t)}>
 					<div className="pd-conv-rail-preview-title">{itemTitle(previewItem, t)}</div>
 					{previewItem.preview ? <div className="pd-conv-rail-preview-body">{previewItem.preview}</div> : null}
 				</div>,

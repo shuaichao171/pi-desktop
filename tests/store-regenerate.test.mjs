@@ -56,3 +56,31 @@ test('regenerate rejects when the transcript has no user turn', async () => {
   assert.deepEqual(host.editCalls, []);
   assert.ok(useChatStore.getState().error.length > 0);
 });
+
+test('editing and regenerating incomplete history previews request persisted attachments', async () => {
+  const host = createBridge();
+  const calls = [];
+  host.bridge.editMessage = async (...args) => { calls.push(args); };
+  useChatStore.getState().setBridge(host.bridge);
+  await settle();
+  const preview = { kind: 'image', name: 'preview.png', mimeType: 'image/png', data: 'aaaa' };
+  useChatStore.setState((state) => ({ messages: state.messages.map((message) => message.id === 'u2' ? { ...message, attachments: [preview], attachmentsOmitted: 1 } : message) }));
+  await useChatStore.getState().regenerate();
+  await useChatStore.getState().editMessage('u2', 'edited', [preview]);
+  assert.deepEqual(calls, [['u2', 'second question', undefined], ['u2', 'edited', undefined]]);
+});
+
+test('regeneration preserves image-only turns and refuses stale reply ids or busy sessions', async () => {
+  const host = createBridge();
+  const calls = []; host.bridge.editMessage = async (...args) => { calls.push(args); };
+  useChatStore.getState().setBridge(host.bridge); await settle();
+  const attachment = { kind: 'image', name: 'image.png', mimeType: 'image/png', data: 'aaaa' };
+  useChatStore.setState(state => ({ messages: state.messages.map(message => message.id === 'u2' ? { ...message, text: '', attachments: [attachment] } : message) }));
+  await assert.rejects(() => useChatStore.getState().regenerate('a1'));
+  assert.equal(calls.length, 0);
+  await useChatStore.getState().regenerate('a2');
+  assert.deepEqual(calls, [['u2', '', [attachment]]]);
+  useChatStore.setState({ status: 'busy' });
+  await assert.rejects(() => useChatStore.getState().regenerate('a2'));
+  assert.equal(calls.length, 1);
+});

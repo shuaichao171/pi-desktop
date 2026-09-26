@@ -56,6 +56,11 @@ test('message component renders historical image and text attachments', async ()
     assert.ok(contextHtml.includes(translate('composer.contextTruncated')));
     assert.doesNotMatch(contextHtml, /<summary[^>]*>[^<]*text\/x-pi-/);
 
+    const omittedHtml = renderToStaticMarkup(createElement(MessageItem, {
+      message: { id: 'omitted', order: 3, role: 'user', text: 'Heavy attachments', status: 'done', attachmentsOmitted: 2 },
+    }));
+    assert.ok(omittedHtml.includes(translate('message.attachmentsOmitted', { count: '2' })));
+
   } finally {
     await server.close();
   }

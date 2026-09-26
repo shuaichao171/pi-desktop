@@ -8,7 +8,7 @@ import { test } from 'node:test';
 const stubs = {
   electron: `
     export const app = { getPath: () => globalThis.__searchRoot };
-    export const BrowserWindow = { getAllWindows: () => [] };
+    export const BrowserWindow = { getAllWindows: () => [], fromWebContents: (sender) => globalThis.__reviewWindow?.webContents === sender ? globalThis.__reviewWindow : null };
     export const Menu = { buildFromTemplate: () => ({}) };
     export const nativeImage = { createFromPath: () => ({ isEmpty: () => true }) };
     export const Tray = class {};
@@ -17,7 +17,7 @@ const stubs = {
     export const ipcMain = { handle: (channel, handler) => globalThis.__searchHandlers.set(channel, handler) };
   `,
   './agentClient': `export const createIsolatedAgentService = () => globalThis.__searchAgent;`,
-  './updateService': `export const updateService = {};`,
+  './updateService': `export const updateService = { stop() {} };`,
   './workbenchIpc': `export const registerWorkbenchIpc = () => ({ reset: async () => {}, dispose: async () => {} });`,
   './stateFiles': `
     export class CorruptStateFileError extends Error {}
@@ -72,38 +72,41 @@ test('search IPC uses registered workspaces, preserves metadata and does not dis
   const ipc = await import('../packages/desktop/src/main/ipc.ts?search-ipc');
   const { IPC_CHANNELS } = await import('../packages/shared/src/index.ts');
   ipc.defaultWorkspace();
+  const win = { isDestroyed: () => false, webContents: { mainFrame: {}, isDestroyed: () => false } };
+  globalThis.__reviewWindow = win;
+  const event = { sender: win.webContents, senderFrame: win.webContents.mainFrame };
   ipc.registerIpc();
   const search = globalThis.__searchHandlers.get(IPC_CHANNELS.agentSearchSessions);
-  const result = await search({}, 'needle');
+  const result = await search(event, 'needle');
   assert.deepEqual(calls[0], { workspaces: [first, second], query: 'needle' });
   assert.deepEqual({ pinned: result.sessions[0].pinned, archived: result.sessions[0].archived, unread: result.sessions[0].unread }, { pinned: true, archived: true, unread: true });
   assert.equal(result.sessions[0].messageId, 'message');
-  const files = await globalThis.__searchHandlers.get(IPC_CHANNELS.workspaceSearchFiles)({}, 'file.ts');
+  const files = await globalThis.__searchHandlers.get(IPC_CHANNELS.workspaceSearchFiles)(event, 'file.ts');
   assert.equal(files.files[0].path, first);
   assert.equal(fileSearchCalls[0].options, undefined);
-  await globalThis.__searchHandlers.get(IPC_CHANNELS.workspaceSearchFiles)({}, 'src', { includeDirectories: true });
+  await globalThis.__searchHandlers.get(IPC_CHANNELS.workspaceSearchFiles)(event, 'src', { includeDirectories: true });
   assert.deepEqual(fileSearchCalls.at(-1), { cwd: first, query: 'src', options: { includeDirectories: true } });
 
   let release;
   globalThis.__searchWorkspaceGate = new Promise((resolve) => { release = resolve; });
-  const stale = search({}, 'old');
-  await search({}, 'new');
+  const stale = search(event, 'old');
+  await search(event, 'new');
   release();
   assert.deepEqual(await stale, { sessions: [], truncated: true });
   assert.deepEqual(calls.map((call) => call.query), ['needle', 'new']);
 
   const context = globalThis.__searchHandlers.get(IPC_CHANNELS.contextRead);
-  await assert.rejects(context({}, { kind: 'file', workspace: root, path: 'private.txt' }), /未知工作区/);
-  await assert.rejects(context({}, { kind: 'session', workspace: first, path }), /不属于/);
-  await assert.rejects(context({}, { kind: 'session', workspace: second, path: join(root, 'unknown.jsonl') }), /未找到会话/);
+  await assert.rejects(context(event, { kind: 'file', workspace: root, path: 'private.txt' }), /未知工作区/);
+  await assert.rejects(context(event, { kind: 'session', workspace: first, path }), /不属于/);
+  await assert.rejects(context(event, { kind: 'session', workspace: second, path: join(root, 'unknown.jsonl') }), /未找到会话/);
   assert.equal(contextCalls.length, 0, 'unregistered and mismatched owners must be rejected before dispatch');
-  const sessionContext = await context({}, { kind: 'session', workspace: second, path });
+  const sessionContext = await context(event, { kind: 'session', workspace: second, path });
   assert.deepEqual(contextCalls, [{ cwd: second, path }]);
   assert.equal(sessionContext.source.workspace, second, 'context from an inactive workspace must not switch the active workspace');
   await writeFile(join(first, 'known.txt'), 'not read into context');
-  const fileContext = await context({}, { kind: 'file', workspace: first, path: 'known.txt' });
+  const fileContext = await context(event, { kind: 'file', workspace: first, path: 'known.txt' });
   assert.equal(fileContext.source.path, 'known.txt');
   assert.doesNotMatch(fileContext.text, /not read into context/);
-  assert.equal((await globalThis.__searchHandlers.get(IPC_CHANNELS.workspaceSearchFiles)({}, 'after.txt')).files[0].path, first);
+  assert.equal((await globalThis.__searchHandlers.get(IPC_CHANNELS.workspaceSearchFiles)(event, 'after.txt')).files[0].path, first);
   await ipc.disposeServices();
 });

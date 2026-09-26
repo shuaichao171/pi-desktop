@@ -5,9 +5,9 @@
 .pd-instruction-heading h3 { margin: 0; font-size: var(--pd-font-base); font-weight: 600; }
 .pd-instruction-heading > span { flex-shrink: 0; color: var(--pd-text-weak); font-size: var(--pd-font-xs); }
 .pd-instruction-description { margin: 8px 0; color: var(--pd-text-subtle); font-size: var(--pd-font-caption); line-height: 1.6; }
-.pd-instruction-path { display: block; color: var(--pd-text-weak); font: 11px/1.6 ui-monospace, Consolas, monospace; overflow-wrap: anywhere; user-select: text; }
+.pd-instruction-path { display: block; color: var(--pd-text-subtle); font: var(--pd-font-sm)/1.6 ui-monospace, Consolas, monospace; overflow-wrap: anywhere; user-select: text; }
 .pd-instruction-label { display: block; margin: 12px 0 7px; color: var(--pd-text-subtle); font-size: var(--pd-font-sm); }
-.pd-instruction-editor { display: block; width: 100%; min-height: 155px; max-height: 440px; padding: 11px 12px; resize: vertical; border: 1px solid var(--pd-border); border-radius: 8px; background: var(--pd-bg); color: var(--pd-text); font: 12px/1.65 ui-monospace, Consolas, 'Microsoft YaHei', monospace; tab-size: 2; }
+.pd-instruction-editor { display: block; width: 100%; min-height: 155px; max-height: 440px; padding: 11px 12px; resize: vertical; border: 1px solid var(--pd-border); border-radius: 8px; background: var(--pd-bg); color: var(--pd-text); font: var(--pd-code-font-size, 12px)/1.65 ui-monospace, Consolas, 'Microsoft YaHei', monospace; tab-size: 2; }
 .pd-instruction-editor::placeholder { color: var(--pd-text-weak); }
 .pd-instruction-editor:disabled { opacity: .7; }
 .pd-instruction-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 10px; }
@@ -21,10 +21,10 @@
 .pd-instruction-conflict > strong { color: var(--pd-warning); }
 .pd-instruction-conflict p { margin: 5px 0 8px; color: var(--pd-text-subtle); }
 .pd-instruction-conflict summary { cursor: pointer; }
-.pd-instruction-conflict pre { max-height: 180px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 11px; }
+.pd-instruction-conflict pre { max-height: 180px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-size: var(--pd-code-font-size, 12px); }
 .pd-instruction-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
 .pd-settings-discard { margin: auto; padding: 24px; max-width: 440px; }
-.pd-settings-discard h2 { margin: 0 0 10px; font-size: 17px; }
+.pd-settings-discard h2 { margin: 0 0 10px; font-size: var(--pd-font-xl); }
 .pd-settings-discard p { color: var(--pd-text-subtle); font-size: var(--pd-font-caption); line-height: 1.6; }
 .pd-settings-discard .pd-instruction-actions { justify-content: flex-end; }
 .pd-settings-layout[inert] { display: none; }
