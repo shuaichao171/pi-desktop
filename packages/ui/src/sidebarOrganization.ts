@@ -47,6 +47,39 @@ export function saveSidebarPreferences(
   }
 }
 
+/** Projects pinned to the top of the sidebar's project list (Codex-style). */
+const PINNED_PROJECTS_KEY = 'pi-desktop.pinned-projects.v1';
+
+export function readPinnedProjects(storage?: Pick<Storage, 'getItem'>): string[] {
+  try {
+    const raw = (storage ?? globalThis.localStorage)?.getItem(PINNED_PROJECTS_KEY);
+    const value = raw ? JSON.parse(raw) : undefined;
+    return Array.isArray(value)
+      ? [...new Set(value.filter((path): path is string => typeof path === 'string' && path.length > 0))]
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+export function savePinnedProjects(paths: string[], storage?: Pick<Storage, 'setItem'>): void {
+  try {
+    (storage ?? globalThis.localStorage)?.setItem(PINNED_PROJECTS_KEY, JSON.stringify(paths));
+  } catch {
+    // Pinning is cosmetic; ignore unavailable storage.
+  }
+}
+
+/** Remove the legacy renderer-only pin store after migration to workspace.json. */
+export function clearPinnedProjects(storage?: Pick<Storage, 'removeItem'>): void {
+  try {
+    (storage ?? globalThis.localStorage)?.removeItem(PINNED_PROJECTS_KEY);
+  } catch {
+    // Migration cleanup is best effort.
+  }
+}
+
+
 export function collectSidebarSessions(
   workspacePaths: string[],
   sessionsByWorkspace: Record<string, UiSessionSummary[]>,

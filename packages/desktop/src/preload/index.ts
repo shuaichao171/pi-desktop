@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import { IPC_CHANNELS, type AgentBridge, type AgentEventEnvelope, type UiAutomationSnapshot, type UiExtensionDialogRequest, type UiUpdateState, type WindowChromeState, type WorkspaceCommandEvent } from '@pidesktop/shared';
+import { IPC_CHANNELS, type AgentBridge, type AgentEventEnvelope, type UiAppCommand, type UiAutomationSnapshot, type UiExtensionDialogRequest, type UiUpdateState, type WindowChromeState, type WorkspaceCommandEvent } from '@pidesktop/shared';
 import { unwrapIpcError } from './ipcErrors';
 
 /**
@@ -49,6 +49,12 @@ const onWorkspaceCommandEvent: AgentBridge['onWorkspaceCommandEvent'] = (listene
 	return () => ipcRenderer.removeListener(IPC_CHANNELS.workspaceCommandEvent, wrapped);
 };
 
+const onAppCommand: AgentBridge['onAppCommand'] = (listener) => {
+	const wrapped = (_e: Electron.IpcRendererEvent, command: UiAppCommand): void => listener(command);
+	ipcRenderer.on(IPC_CHANNELS.appCommand, wrapped);
+	return () => ipcRenderer.removeListener(IPC_CHANNELS.appCommand, wrapped);
+};
+
 const onUpdateStateChanged: AgentBridge['onUpdateStateChanged'] = (listener) => {
 	const wrapped = (_e: Electron.IpcRendererEvent, state: UiUpdateState): void => listener(state);
 	ipcRenderer.on(IPC_CHANNELS.updateStateChanged, wrapped);
@@ -81,6 +87,9 @@ const bridge: AgentBridge = {
 	checkForUpdates: (autoInstall?: boolean) => invoke(IPC_CHANNELS.updateCheck, autoInstall === true),
 	installUpdate: () => invoke(IPC_CHANNELS.updateInstall),
 	onUpdateStateChanged,
+	getDesktopSettings: () => invoke(IPC_CHANNELS.desktopSettingsGet),
+	setDesktopSettings: (patch) => invoke(IPC_CHANNELS.desktopSettingsSet, patch),
+	onAppCommand,
 	getWindowChromeState: () => invoke(IPC_CHANNELS.windowChromeState),
 	onWindowChromeStateChanged,
 	minimizeWindow: () => invoke(IPC_CHANNELS.windowMinimize),
@@ -96,6 +105,12 @@ const bridge: AgentBridge = {
 		getWorkspaceGitDiff: (relativePath) => invoke(IPC_CHANNELS.workspaceGitDiff, relativePath),
 		getWorkspaceBranches: () => invoke(IPC_CHANNELS.workspaceBranches),
 		checkoutWorkspaceBranch: (branch) => invoke(IPC_CHANNELS.workspaceCheckoutBranch, branch),
+		setWorkspaceGitStaged: (paths, staged) => invoke(IPC_CHANNELS.workspaceGitSetStaged, paths, staged),
+		discardWorkspaceGitChanges: (paths) => invoke(IPC_CHANNELS.workspaceGitDiscard, paths),
+		getWorkspaceGitLog: (limit) => invoke(IPC_CHANNELS.workspaceGitLog, limit),
+		createWorkspaceGitBranch: (name, checkout) => invoke(IPC_CHANNELS.workspaceGitCreateBranch, name, checkout),
+		openWorkspacePathInEditor: (path, line) => invoke(IPC_CHANNELS.workspaceOpenPathInEditor, path, line),
+		revealWorkspacePath: (path) => invoke(IPC_CHANNELS.workspaceRevealPath, path),
 		openWorkspaceInVsCode: (cwd) => invoke(IPC_CHANNELS.workspaceOpenInVsCode, cwd),
 		listWorkspaceOpeners: () => invoke(IPC_CHANNELS.workspaceOpeners),
 		getWorkspaceCommitContext: () => invoke(IPC_CHANNELS.workspaceCommitContext),
@@ -106,12 +121,21 @@ const bridge: AgentBridge = {
 	initAgent: (cwd) => invoke(IPC_CHANNELS.agentInit, cwd),
 	listWorkspaces: () => invoke(IPC_CHANNELS.agentListWorkspaces),
 	switchWorkspace: (cwd) => invoke(IPC_CHANNELS.workspaceSwitch, cwd),
-	getDefaultWorkspace: () => invoke(IPC_CHANNELS.workspaceDefault),
+		getDefaultWorkspace: () => invoke(IPC_CHANNELS.workspaceDefault),
+		removeWorkspace: (cwd) => invoke(IPC_CHANNELS.workspaceRemove, cwd),
+		listPinnedWorkspaces: () => invoke(IPC_CHANNELS.workspaceListPinned),
+		setPinnedWorkspaces: (cwds) => invoke(IPC_CHANNELS.workspaceSetPinned, cwds),
 	getAgentSnapshot: () => invoke(IPC_CHANNELS.agentSnapshot),
+	getHistoryPage: (offset, limit) => invoke(IPC_CHANNELS.agentHistoryPage, offset, limit),
+	getSessionStats: () => invoke(IPC_CHANNELS.agentSessionStats),
+	exportSession: (format) => invoke(IPC_CHANNELS.agentExportSession, format),
+	getSessionTree: () => invoke(IPC_CHANNELS.agentSessionTree),
+	switchSessionBranch: (entryId) => invoke(IPC_CHANNELS.agentSwitchBranch, entryId),
 	listSessions: (cwd) => invoke(IPC_CHANNELS.agentListSessions, cwd),
 	searchSessions: (query) => invoke(IPC_CHANNELS.agentSearchSessions, query),
 	switchSession: (path) => invoke(IPC_CHANNELS.agentSwitchSession, path),
 	updateSessionMeta: (path, patch) => invoke(IPC_CHANNELS.agentUpdateSessionMeta, path, patch),
+	deleteSession: (path) => invoke(IPC_CHANNELS.sessionDelete, path),
 	listSessionGroups: () => invoke(IPC_CHANNELS.agentListSessionGroups),
 	updateSessionGroups: (change) => invoke(IPC_CHANNELS.agentUpdateSessionGroups, change),
 	updateSessionOrders: (entries) => invoke(IPC_CHANNELS.agentUpdateSessionOrders, entries),
@@ -127,11 +151,13 @@ const bridge: AgentBridge = {
 	listProviderAuth: () => invoke(IPC_CHANNELS.agentListProviderAuth),
 	setProviderApiKey: (provider, key) => invoke(IPC_CHANNELS.agentSetProviderApiKey, provider, key),
 	removeProviderCredential: (provider) => invoke(IPC_CHANNELS.agentRemoveProviderCredential, provider),
+	setModelEnabled: (provider, modelId, enabled) => invoke(IPC_CHANNELS.agentSetModelEnabled, provider, modelId, enabled),
 	listExtensions: () => invoke(IPC_CHANNELS.agentListExtensions),
 	setExtensionEnabled: (path, enabled) => invoke(IPC_CHANNELS.agentSetExtensionEnabled, path, enabled),
 	prompt: (text, behavior, attachments) => invoke(IPC_CHANNELS.agentPrompt, text, behavior, attachments),
 		editMessage: (entryId, text, attachments) => invoke(IPC_CHANNELS.agentEditMessage, entryId, text, attachments),
 		forkAssistantMessage: (entryId) => invoke(IPC_CHANNELS.agentForkMessage, entryId),
+		updateQueuedMessage: (id, action, text) => invoke(IPC_CHANNELS.agentUpdateQueuedMessage, id, action, text),
 		generateCommitMessage: (context) => invoke(IPC_CHANNELS.agentGenerateCommitMessage, context),
 	abort: () => invoke(IPC_CHANNELS.agentAbort),
 	newSession: () => invoke(IPC_CHANNELS.agentNewSession),

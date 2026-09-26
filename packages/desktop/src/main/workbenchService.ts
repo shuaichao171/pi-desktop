@@ -7,7 +7,7 @@ import { lstat, open, readFile, readdir, realpath, stat } from 'node:fs/promises
 import { tmpdir } from 'node:os';
 import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
-import type { WorkspaceBranches, WorkspaceCommandEvent, WorkspaceEntry, WorkspaceGitStatus, WorkspaceOpener } from '@pidesktop/shared';
+import type { WorkspaceBranches, WorkspaceCommandEvent, WorkspaceEntry, WorkspaceGitLogEntry, WorkspaceGitStatus, WorkspaceOpener } from '@pidesktop/shared';
 
 const execFileAsync = promisify(execFile);
 const MAX_PREVIEW_BYTES = 1024 * 1024;
@@ -132,6 +132,33 @@ export class WorkbenchService {
 		}
 	}
 
+	/**
+	 * Opens a specific file in VS Code, optionally at a line (4.7 file:line jumps
+	 * from diffs and tool activity).
+	 */
+	async openPathInEditor(relativePath: string, line?: number): Promise<void> {
+		const { path } = await this.resolveEntry(relativePath);
+		const target = typeof line === 'number' && Number.isInteger(line) && line > 0 ? `${path}:${line}` : path;
+		let executable = await this.vsCodeExecutable();
+		if (executable) {
+			const child = spawn(executable, ['-g', target], { detached: true, stdio: 'ignore' });
+			child.on('error', () => { /* fall through to the CLI below */ });
+			await new Promise<void>((resolve) => { child.once('spawn', () => resolve()); child.once('error', () => { executable = null; resolve(); }); });
+			if (executable) return;
+		}
+		try {
+			await execFileAsync(process.platform === 'win32' ? 'code.cmd' : 'code', ['-g', target], { timeout: 15000, windowsHide: true });
+		} catch (error) {
+			throw new Error(`未找到 VS Code，请安装后重试：${error instanceof Error ? error.message : String(error)}`);
+		}
+	}
+
+	/** Reveals a workspace file in the OS file manager (4.7). */
+	async revealPathInFolder(relativePath: string, reveal: (path: string) => void): Promise<void> {
+		const { path } = await this.resolveEntry(relativePath);
+		reveal(path);
+	}
+
 	private async resolveEntry(relativePath: string, root?: string): Promise<{ root: string; path: string; relativePath: string }> {
 		if (typeof relativePath !== 'string' || relativePath.includes('\0') || isAbsolute(relativePath)) {
 			throw new Error('文件路径无效');
@@ -249,6 +276,96 @@ export class WorkbenchService {
 			const raw = error instanceof Error ? (error as ExecFileException).stderr : undefined;
 			const detail = (typeof raw === 'string' ? raw : undefined)?.trim() || (error instanceof Error ? error.message : String(error));
 			throw new Error(`切换分支失败：${detail}`);
+		}
+	}
+
+	/** Validates a git pathspec stays inside the workspace and returns a normalized relative path. */
+	private validateGitPath(input: string, root: string): string {
+		if (typeof input !== 'string' || input.length === 0 || input.length > 4096 || input.includes('\0') || isAbsolute(input)) throw new Error('文件路径无效');
+		const candidate = resolve(root, input);
+		if (!isWithin(root, candidate)) throw new Error('文件不属于当前工作区');
+		return relative(root, candidate).split(sep).join('/');
+	}
+
+	private static execDetail(error: unknown): string {
+		const raw = error instanceof Error ? (error as ExecFileException).stderr : undefined;
+		return (typeof raw === 'string' ? raw : undefined)?.trim() || (error instanceof Error ? error.message : String(error));
+	}
+
+	/** Stage or unstage specific paths (4.5). */
+	async gitSetStaged(paths: string[], staged: boolean): Promise<void> {
+		if (!Array.isArray(paths) || paths.length === 0 || paths.length > 200 || !paths.every((path) => typeof path === 'string')) throw new Error('文件列表无效');
+		const root = await this.workspaceRoot();
+		const relativePaths = paths.map((path) => this.validateGitPath(path, root));
+		const prefix = this.gitPrefix(root);
+		const args = staged ? [...prefix, 'add', '--', ...relativePaths] : [...prefix, 'restore', '--staged', '--', ...relativePaths];
+		try {
+			await execFileAsync('git', args, { timeout: 30000, maxBuffer: 1024 * 1024, env: SAFE_GIT_ENV });
+		} catch (error) {
+			throw new Error(`${staged ? '暂存' : '取消暂存'}失败：${WorkbenchService.execDetail(error)}`);
+		}
+	}
+
+	/** Discard worktree changes (tracked restore / untracked clean) — destructive, caller confirms with the real diff (4.5). */
+	async gitDiscard(paths: string[]): Promise<void> {
+		if (!Array.isArray(paths) || paths.length === 0 || paths.length > 200 || !paths.every((path) => typeof path === 'string')) throw new Error('文件列表无效');
+		const root = await this.workspaceRoot();
+		const relativePaths = paths.map((path) => this.validateGitPath(path, root));
+		const prefix = this.gitPrefix(root);
+		let statusOutput: string;
+		try {
+			statusOutput = (await execFileAsync('git', [...prefix, 'status', '--porcelain=v1', '-z', '--untracked-files=all', '--', ...relativePaths], { timeout: 30000, maxBuffer: 2 * 1024 * 1024, env: SAFE_GIT_ENV })).stdout;
+		} catch (error) {
+			throw new Error(`丢弃更改失败：${WorkbenchService.execDetail(error)}`);
+		}
+		const tracked: string[] = [];
+		const untracked: string[] = [];
+		for (const record of statusOutput.split('\0')) {
+			if (!record || record.length < 4) continue;
+			const status = record.slice(0, 2);
+			const path = record.slice(3);
+			if (status.includes('?')) untracked.push(path);
+			else tracked.push(path);
+		}
+		try {
+			if (tracked.length > 0) await execFileAsync('git', [...prefix, 'restore', '--worktree', '--', ...tracked], { timeout: 30000, maxBuffer: 1024 * 1024, env: SAFE_GIT_ENV });
+			if (untracked.length > 0) await execFileAsync('git', [...prefix, 'clean', '-f', '--', ...untracked], { timeout: 30000, maxBuffer: 1024 * 1024, env: SAFE_GIT_ENV });
+		} catch (error) {
+			throw new Error(`丢弃更改失败：${WorkbenchService.execDetail(error)}`);
+		}
+	}
+
+	/** Recent commit history for the git pane (4.5). */
+	async gitLog(limit = 30): Promise<WorkspaceGitLogEntry[]> {
+		const capped = Math.min(Math.max(Math.trunc(limit) || 30, 1), 100);
+		const root = await this.workspaceRoot();
+		const prefix = this.gitPrefix(root);
+		try {
+			const output = (await execFileAsync('git', [...prefix, 'log', `-n${capped}`, '--pretty=format:%H%x1f%h%x1f%an%x1f%aI%x1f%s'], { timeout: 15000, maxBuffer: 2 * 1024 * 1024, env: SAFE_GIT_ENV })).stdout;
+			return output.split('\n').filter((line) => line.trim()).map((line) => {
+				const [hash, shortHash, author, date, ...subject] = line.split('\x1f');
+				return { hash: hash ?? '', shortHash: shortHash ?? '', author: author ?? '', date: date ?? '', subject: subject.join('\x1f') };
+			});
+		} catch {
+			return []; // not a repository or no commits yet
+		}
+	}
+
+	/** Create a local branch, optionally switching to it (4.5). */
+	async gitCreateBranch(name: string, checkout: boolean): Promise<void> {
+		if (typeof name !== 'string' || name.length === 0 || name.length > 250 || name.includes('\0') || name.startsWith('-')) throw new Error('无效的分支名');
+		const root = await this.workspaceRoot();
+		const prefix = this.gitPrefix(root);
+		try {
+			await execFileAsync('git', [...prefix, 'check-ref-format', '--branch', name], { timeout: 8000, maxBuffer: 64 * 1024, env: SAFE_GIT_ENV });
+		} catch {
+			throw new Error('无效的分支名');
+		}
+		try {
+			// Names are validated (no leading '-', check-ref-format) so they cannot become flags; `switch -c` takes no `--` separator.
+			await execFileAsync('git', checkout ? [...prefix, 'switch', '-c', name] : [...prefix, 'branch', '--', name], { timeout: 30000, maxBuffer: 1024 * 1024, env: SAFE_GIT_ENV });
+		} catch (error) {
+			throw new Error(`创建分支失败：${WorkbenchService.execDetail(error)}`);
 		}
 	}
 

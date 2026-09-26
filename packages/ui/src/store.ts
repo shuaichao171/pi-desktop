@@ -35,6 +35,9 @@ interface ChatState {
 	bridge: AgentBridge | null;
 	status: AgentStatus;
 	statusMessage: string | undefined;
+	/** Auto-retry progress from the agent (4.4 run-status bar). */
+	retryAttempt: number | undefined;
+	retryMaxAttempts: number | undefined;
 	sessionLoading: boolean;
 	model: string;
 	modelName: string | null;
@@ -56,6 +59,9 @@ interface ChatState {
 	messages: UiMessage[];
 	activities: UiToolActivity[];
 	timelineRevision: number;
+	/** Full timeline entry count of the loaded branch; older entries load via loadOlderMessages. */
+	historyTotal: number;
+	loadingOlder: boolean;
 	queuedCount: number;
 	queuedMessages: UiQueuedMessage[];
 	fileChanges: UiFileChange[];
@@ -69,15 +75,21 @@ interface ChatState {
 	retryAgent(): Promise<void>;
 	handleEvent(event: AgentUiEvent): void;
 	refreshSessions(): Promise<void>;
+	/** Loads the next older slice of the active session's timeline (2.6). */
+	loadOlderMessages(pageSize?: number): Promise<boolean>;
 	refreshWorkspaces(): Promise<void>;
 	refreshWorkspaceSessions(cwd: string): Promise<void>;
 	switchWorkspace(cwd: string): Promise<void>;
+	removeWorkspace(cwd: string): Promise<void>;
 	updateSessionMeta(path: string, patch: UiSessionMetaPatch): Promise<void>;
+	/** Moves a conversation to the app trash after a confirmation; active sessions switch away first (3.3). */
+	deleteSession(path: string): Promise<void>;
 	updateSessionOrders(entries: { path: string; order: number | null }[]): Promise<void>;
 	refreshModels(): Promise<void>;
 	refreshModelProviders(): Promise<void>;
 	saveCustomProvider(request: UiSaveCustomProviderRequest): Promise<void>;
 	removeCustomProvider(provider: string): Promise<void>;
+	setModelEnabled(provider: string, modelId: string, enabled: boolean): Promise<void>;
 	setModel(provider: string, id: string): Promise<void>;
 	setThinkingLevel(level: UiThinkingLevel): Promise<void>;
 	refreshProviderAuth(): Promise<void>;
@@ -88,8 +100,12 @@ interface ChatState {
 	send(text: string, behavior?: 'steer' | 'followUp', attachments?: UiAttachment[]): Promise<void>;
 	/** Rewind to a sent user message and resend the edited text (zcode-style edit). */
 	editMessage(entryId: string, text: string, attachments?: UiAttachment[]): Promise<void>;
+	/** Rewind to the latest user message and resend it, keeping the old reply as a branch (3.4). */
+	regenerate(): Promise<void>;
 	/** Fork the conversation at an assistant message (rewinds the visible branch to it). */
 	forkMessage(entryId: string): Promise<void>;
+	/** Edit, remove, or steer-early a queued instruction while the agent is busy (Codex-style queue management). */
+	updateQueuedMessage(id: string, action: 'edit' | 'remove' | 'steer', text?: string): Promise<void>;
 	abort(): Promise<void>;
 	newSession(): Promise<void>;
 	pickWorkspace(): Promise<void>;
@@ -156,6 +172,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
 	bridge: null,
 	status: 'uninitialized',
 	statusMessage: undefined,
+	retryAttempt: undefined,
+	retryMaxAttempts: undefined,
 	model: '',
 	modelName: null,
 	modelProvider: '',
@@ -176,6 +194,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
 	messages: [],
 	activities: [],
 	timelineRevision: 0,
+	historyTotal: 0,
+	loadingOlder: false,
 	sessionLoading: false,
 	queuedCount: 0,
 	queuedMessages: [],
@@ -232,6 +252,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
 				set({
 					status: snapshot.status,
 					statusMessage: snapshot.statusMessage,
+					retryAttempt: snapshot.retryAttempt,
+					retryMaxAttempts: snapshot.retryMaxAttempts,
 					model: snapshot.model,
 					modelName: snapshot.modelName ?? null,
 					modelProvider: snapshot.modelProvider,
@@ -247,6 +269,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 					queuedCount: snapshot.queuedCount,
 					queuedMessages: snapshot.queuedMessages ?? [],
 					fileChanges: snapshot.fileChanges ?? [],
+					historyTotal: snapshot.historyTotal ?? snapshot.messages.length + snapshot.activities.length,
 					error: snapshot.error,
 				});
 				bootstrapping = false;
@@ -287,7 +310,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 		const { bridge, status, cwd, workspaces } = get();
 		if (!bridge || status !== 'error') return;
 		const request = beginSessionNavigation();
-		set({ status: 'starting', error: null, statusMessage: undefined });
+		set({ status: 'starting', error: null, statusMessage: undefined, retryAttempt: undefined, retryMaxAttempts: undefined });
 		try {
 			const target = cwd || workspaces[0] || (await bridge.listWorkspaces())[0];
 			if (!currentSessionNavigation(bridge, request)) return;
@@ -307,6 +330,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
 				set({
 					status: 'uninitialized',
 					statusMessage: undefined,
+					retryAttempt: undefined,
+					retryMaxAttempts: undefined,
 					model: '',
 					modelName: null,
 					modelProvider: '',
@@ -334,7 +359,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 			case 'status': {
 				const previousStatus = get().status;
 				set((state) => ({
-					status: event.status, statusMessage: event.message,
+					status: event.status, statusMessage: event.message, retryAttempt: event.attempt, retryMaxAttempts: event.maxAttempts,
 					...(event.status === 'error' ? {
 						messages: state.messages.map((message) => message.status === 'streaming' ? {
 							...message, status: 'error' as const, errorMessage: event.message ?? message.errorMessage,
@@ -347,8 +372,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
 				if (event.status === 'idle' && previousStatus !== 'idle') void get().refreshSessions();
 				return;
 			}
-			case 'ready':
-				// A fresh session context: clear the conversation view.
+			case 'ready': {
+				const previous = get();
+				// A fresh session context clears the view; a same-session resync keeps older pages coming.
+				const sameSession = previous.sessionId === event.sessionId && previous.sessionPath === event.sessionPath;
+				const olderLoaded = sameSession
+					? previous.messages.length + previous.activities.length - (event.messages.length + event.activities.length)
+					: 0;
 				set({
 					model: event.model,
 					modelName: event.modelName ?? null,
@@ -362,13 +392,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
 					sessionPath: event.sessionPath,
 					messages: event.messages,
 					activities: event.activities,
+					historyTotal: event.historyTotal ?? event.messages.length + event.activities.length,
 					timelineRevision: get().timelineRevision + 1,
 					queuedCount: 0,
 					queuedMessages: [],
 					fileChanges: event.fileChanges ?? [],
 					error: null,
 				});
+				// agent_settled resyncs re-send only the newest window; restore pages the user already opened.
+				if (olderLoaded > 0) void get().loadOlderMessages(Math.min(olderLoaded, 500));
 				return;
+			}
 			case 'model':
 				set({
 					model: event.model,
@@ -388,12 +422,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
 			case 'user-message':
 				set((s) => ({
 					messages: [...s.messages, { id: event.id, order: event.order, role: 'user', text: event.text, attachments: event.attachments, status: 'done' }],
+					historyTotal: s.historyTotal + 1,
 					timelineRevision: s.timelineRevision + 1,
 				}));
 				return;
 			case 'assistant-start':
 				set((s) => ({
 					messages: [...s.messages, { id: event.id, order: event.order, role: 'assistant', text: '', status: 'streaming' }],
+					historyTotal: s.historyTotal + 1,
 					timelineRevision: s.timelineRevision + 1,
 					error: null,
 				}));
@@ -442,7 +478,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 					} else {
 						activities.push(incoming);
 					}
-					return { activities, ...(index < 0 ? { timelineRevision: s.timelineRevision + 1 } : {}) };
+					return { activities, ...(index < 0 ? { timelineRevision: s.timelineRevision + 1, historyTotal: s.historyTotal + 1 } : {}) };
 				});
 				return;
 			}
@@ -464,6 +500,38 @@ export const useChatStore = create<ChatState>((set, get) => ({
 	async refreshSessions() {
 		const cwd = get().cwd;
 		if (cwd) await get().refreshWorkspaceSessions(cwd);
+	},
+
+	async loadOlderMessages(pageSize = 200) {
+		const bridge = get().bridge;
+		if (!bridge || get().loadingOlder) return false;
+		const received = get().messages.length + get().activities.length;
+		const total = get().historyTotal;
+		const remaining = total - received;
+		if (remaining <= 0) return false;
+		const limit = Math.min(pageSize, remaining);
+		const offset = Math.max(0, remaining - limit);
+		set({ loadingOlder: true });
+		try {
+			const page = await bridge.getHistoryPage(offset, limit);
+			const current = get();
+			if (current.bridge !== bridge) return false;
+			// A session switch or resync during the fetch invalidates this page.
+			const sessionStillWaiting = current.historyTotal - (current.messages.length + current.activities.length) >= page.limit - 1;
+			if (!sessionStillWaiting) return false;
+			set({
+				messages: [...page.messages.filter((message) => !current.messages.some((existing) => existing.id === message.id)), ...current.messages],
+				activities: [...page.activities.filter((activity) => !current.activities.some((existing) => existing.id === activity.id)), ...current.activities],
+				historyTotal: page.total,
+				timelineRevision: current.timelineRevision + 1,
+			});
+			return page.messages.length + page.activities.length > 0;
+		} catch (error) {
+			set({ error: errorMessage(error) });
+			return false;
+		} finally {
+			set({ loadingOlder: false });
+		}
 	},
 
 	async refreshWorkspaces() {
@@ -497,6 +565,30 @@ export const useChatStore = create<ChatState>((set, get) => ({
 		} finally { finishSessionNavigation(bridge, request); }
 	},
 
+	async removeWorkspace(cwd) {
+		const bridge = get().bridge;
+		if (!bridge || !cwd) return;
+		if (cwd === get().cwd) {
+			// Removing the active project first falls back to the home workspace;
+			// switchWorkspace reports its own failures and aborts the removal.
+			const home = await bridge.getDefaultWorkspace();
+			if (get().bridge !== bridge) return;
+			await get().switchWorkspace(home);
+		}
+		try {
+			await bridge.removeWorkspace(cwd);
+		} catch (error) {
+			if (get().bridge === bridge) set({ error: errorMessage(error) });
+			throw error;
+		}
+		if (get().bridge !== bridge) return;
+		set((state) => ({
+			workspaces: state.workspaces.filter((path) => path !== cwd),
+			sessionsByWorkspace: Object.fromEntries(Object.entries(state.sessionsByWorkspace).filter(([path]) => path !== cwd)),
+		}));
+		await get().refreshWorkspaces();
+	},
+
 	async updateSessionMeta(path, patch) {
 		const { bridge, cwd, sessionId, navigationRequestId } = get();
 		if (!bridge) return;
@@ -507,6 +599,27 @@ export const useChatStore = create<ChatState>((set, get) => ({
 		await bridge.updateSessionMeta(path, patch);
 		if (get().bridge !== bridge) return;
 		if (workspace) await refreshSessionCache(workspace, isCurrent());
+	},
+
+	async deleteSession(path) {
+		const { bridge } = get();
+		if (!bridge || !path) return;
+		set({ error: null });
+		try {
+			// The main process rejects deleting the open session; switch to a fresh one first.
+			if (get().sessionPath === path) await bridge.newSession();
+			await bridge.deleteSession(path);
+			set((state) => ({
+				sessionsByWorkspace: Object.fromEntries(Object.entries(state.sessionsByWorkspace)
+					.map(([workspace, sessions]) => [workspace, sessions.filter((session) => session.path !== path)])),
+				sessions: state.sessions.filter((session) => session.path !== path),
+			}));
+			const workspace = Object.keys(get().sessionsByWorkspace).find((cwd) => cwd === get().cwd);
+			if (workspace) await get().refreshWorkspaceSessions(workspace);
+		} catch (error) {
+			set({ error: errorMessage(error) });
+			throw error;
+		}
 	},
 
 	async updateSessionOrders(entries) {
@@ -562,6 +675,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
 	async removeCustomProvider(provider) {
 		await updateCustomProvider((bridge) => bridge.removeCustomProvider(provider));
+	},
+
+	async setModelEnabled(provider, modelId, enabled) {
+		await updateCustomProvider((bridge) => bridge.setModelEnabled(provider, modelId, enabled));
 	},
 
 	async setModel(provider, id) {
@@ -721,6 +838,21 @@ export const useChatStore = create<ChatState>((set, get) => ({
 		}
 	},
 
+	async regenerate() {
+		// Rewind to the latest user message and resend it verbatim; editMessage reuses navigateTree.
+		const messages = get().messages;
+		for (let i = messages.length - 1; i >= 0; i -= 1) {
+			const message = messages[i]!;
+			if (message.role === 'user' && message.text.trim()) {
+				await get().editMessage(message.id, message.text, message.attachments);
+				return;
+			}
+		}
+		const error = new Error(translate('store.nothingToRegenerate'));
+		set({ error: error.message });
+		throw error;
+	},
+
 	async forkMessage(entryId) {
 		const { bridge, status, cwd, sessionId } = get();
 		if (!bridge || !entryId) return;
@@ -732,6 +864,19 @@ export const useChatStore = create<ChatState>((set, get) => ({
 		set({ error: null });
 		try {
 			await bridge.forkAssistantMessage(entryId);
+		} catch (error) {
+			if (get().bridge === bridge && get().cwd === cwd && get().sessionId === sessionId) set({ error: errorMessage(error) });
+			throw error;
+		}
+	},
+
+	async updateQueuedMessage(id, action, text) {
+		const { bridge, cwd, sessionId } = get();
+		if (!bridge || !id) return;
+		const trimmed = action === 'edit' ? (text ?? '').trim() : undefined;
+		set({ error: null });
+		try {
+			await bridge.updateQueuedMessage(id, action, trimmed);
 		} catch (error) {
 			if (get().bridge === bridge && get().cwd === cwd && get().sessionId === sessionId) set({ error: errorMessage(error) });
 			throw error;

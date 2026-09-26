@@ -38,3 +38,36 @@ export function parseUnifiedDiff(diff: string): DiffLine[] {
 		return { kind: 'meta', text };
 	});
 }
+
+export interface EditDiffLine {
+	kind: 'context' | 'addition' | 'deletion' | 'elision' | 'meta';
+	/** Line content without the Pi prefix and number. */
+	text: string;
+	oldLine?: number;
+	newLine?: number;
+}
+
+/**
+ * Parse Pi's edit-tool diff rows (`+3 added`, `-2 removed`, ` 1 context`,
+ * ` ...` elision). Added rows carry the new line number, removed rows the old one.
+ */
+export function parsePiEditDiff(diff: string): EditDiffLine[] {
+	const lines = diff.split('\n');
+	if (lines.at(-1) === '') lines.pop();
+	return lines.map((line): EditDiffLine => {
+		const change = /^([+-]) *(\d+)(?: (.*))?$/.exec(line);
+		if (change) {
+			const number = Number(change[2]);
+			return change[1] === '+'
+				? { kind: 'addition', text: change[3] ?? '', newLine: number }
+				: { kind: 'deletion', text: change[3] ?? '', oldLine: number };
+		}
+		const context = /^ +(\d+)(?: (.*))?$/.exec(line);
+		if (context) {
+			const number = Number(context[1]);
+			return { kind: 'context', text: context[2] ?? '', oldLine: number, newLine: number };
+		}
+		if (/^ +\.\.\.$/.test(line)) return { kind: 'elision', text: '…' };
+		return { kind: 'meta', text: line };
+	});
+}

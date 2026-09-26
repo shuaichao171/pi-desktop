@@ -1,10 +1,13 @@
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import { useT } from '../i18n';
 import { useChatStore } from '../store';
+import { bindingKeysFor, matchesShortcut } from '../shortcuts/bindings';
 import type { ModelManagementTarget } from '../modelManagement';
 import { buildTimelineLayout, type TimelineEntry } from '../timeline';
 import { ConversationRail } from './ConversationRail';
 import { Composer } from './Composer';
+import { RunStatusBar } from './RunStatusBar';
 import { ComposerContextBar } from './ComposerContextBar';
 import { ChatTitle, type ChatTitleHandle } from './ChatTitle';
 import { ChatHeaderMenu } from './ChatHeaderMenu';
@@ -16,9 +19,14 @@ import { HoverTooltip } from './HoverTooltip';
 import { MessageItem } from './MessageItem';
 import { ToolActivityPanel } from './ToolActivity';
 import { ActivityLabel } from './ActivityDisclosure';
+import { TranscriptFind } from './TranscriptFind';
 
 const BOTTOM_THRESHOLD = 24;
 const SCROLL_TO_BOTTOM_DURATION = 260;
+/** Beyond this many timeline entries the transcript renders through a virtual window. */
+const VIRTUALIZE_THRESHOLD = 250;
+/** Scrolling closer than this to the top loads one more history page (2.6). */
+const LOAD_OLDER_TRIGGER_PX = 600;
 
 function EmptyState() {
 	const { t } = useT();
@@ -61,11 +69,15 @@ export function ChatView({ onToggleSidebar, onOpenModelManagement, searchTarget,
 	const error = navigationError ?? agentError;
 	const timelineRevision = useChatStore((s) => s.timelineRevision);
 	const sessionLoading = useChatStore((s) => s.sessionLoading);
+	const historyTotal = useChatStore((s) => s.historyTotal);
+	const loadingOlder = useChatStore((s) => s.loadingOlder);
+	const loadOlderMessages = useChatStore((s) => s.loadOlderMessages);
 	const timelineRef = useRef<{ revision: number; entries: TimelineEntry[] } | null>(null);
 	if (timelineRef.current?.revision !== timelineRevision) {
 		timelineRef.current = { revision: timelineRevision, entries: buildTimelineLayout(messages, activities) };
 	}
 	const timeline = timelineRef.current.entries;
+	const hasOlderHistory = historyTotal > messages.length + activities.length;
 	const isEmpty = timeline.length === 0 && !error;
 	const awaitingResponse = agentStatus === 'busy' && !error && !messages.some((message) => message.status === 'streaming') && !activities.some((activity) => activity.status === 'running');
 	const bodyRef = useRef<HTMLDivElement>(null);
@@ -79,6 +91,106 @@ export function ChatView({ onToggleSidebar, onOpenModelManagement, searchTarget,
 	const activeSession = sessions.find((session) => session.path === sessionPath);
 	const firstUserText = messages.find((message) => message.role === 'user')?.text;
 	const title = activeSession?.name?.trim() || activeSession?.firstMessage?.trim().split(/\r?\n/)[0] || firstUserText?.trim().split(/\r?\n/)[0] || t('chat.newSession');
+
+	// --- In-conversation find (2.5) ---
+	const [findOpen, setFindOpen] = useState(false);
+	const [findQuery, setFindQuery] = useState('');
+	const [findIndex, setFindIndex] = useState(0);
+	const findMatches = useMemo(() => {
+		const query = findQuery.trim().toLocaleLowerCase();
+		if (!query) return [];
+		return messages.filter((message) => message.text.toLocaleLowerCase().includes(query)).map((message) => message.id);
+	}, [messages, findQuery]);
+	const findMatchSet = useMemo(() => new Set(findMatches), [findMatches]);
+	const activeFindId = findOpen && findMatches.length > 0 ? findMatches[Math.min(findIndex, findMatches.length - 1)] ?? null : null;
+	// Mark the user turns (rail markers) that contain a find hit.
+	const railMarkedIds = useMemo(() => {
+		if (!findOpen || findMatches.length === 0) return null;
+		const marked = new Set<string>();
+		let currentUser: string | null = null;
+		let segmentHit = false;
+		for (const message of messages) {
+			if (message.role === 'user') {
+				if (currentUser && segmentHit) marked.add(currentUser);
+				currentUser = message.id;
+				segmentHit = findMatchSet.has(message.id);
+			} else if (findMatchSet.has(message.id)) segmentHit = true;
+		}
+		if (currentUser && segmentHit) marked.add(currentUser);
+		return marked;
+	}, [findOpen, findMatches.length, findMatchSet, messages]);
+
+	useEffect(() => {
+		const onKeyDown = (event: KeyboardEvent) => {
+			if (event.defaultPrevented || event.isComposing) return;
+			if (matchesShortcut(event, bindingKeysFor('findInTranscript'))) {
+				event.preventDefault();
+				setFindOpen(true);
+				return;
+			}
+			if (matchesShortcut(event, bindingKeysFor('stopGeneration'))) {
+				const state = useChatStore.getState();
+				if (state.status !== 'busy' || document.querySelector('[role="dialog"][aria-modal="true"]')) return;
+				const target = event.target as HTMLElement | null;
+				if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) return;
+				event.preventDefault();
+				void state.abort();
+			}
+		};
+		window.addEventListener('keydown', onKeyDown);
+		return () => window.removeEventListener('keydown', onKeyDown);
+	}, []);
+
+	const closeFind = useCallback(() => {
+		setFindOpen(false);
+		setFindQuery('');
+		setFindIndex(0);
+		document.querySelector<HTMLTextAreaElement>('.pd-composer textarea')?.focus();
+	}, []);
+
+	// --- Virtualized transcript (2.6) ---
+	const virtualize = timeline.length > VIRTUALIZE_THRESHOLD;
+	const estimateSize = useCallback((index: number) => (timeline[index]?.kind === 'tools' ? 44 : 140), [timeline]);
+	const virtualizer = useVirtualizer({
+		count: timeline.length,
+		getScrollElement: () => scrollRef.current,
+		estimateSize,
+		overscan: 8,
+		getItemKey: (index) => {
+			const entry = timeline[index]!;
+			return (entry.kind === 'message' ? 'm:' : 't:') + entry.id;
+		},
+	});
+
+	const scrollToRow = useCallback((id: string) => {
+		const transcript = scrollRef.current;
+		if (!transcript) return false;
+		const row = transcript.querySelector<HTMLElement>(`[data-message-id="${CSS.escape(id)}"]`);
+		if (!row) return false;
+		row.scrollIntoView({ block: 'center', behavior: 'auto' });
+		setShowBackToBottom(transcript.scrollHeight - transcript.scrollTop - transcript.clientHeight > BOTTOM_THRESHOLD);
+		return true;
+	}, []);
+
+	const jumpToMessage = useCallback((id: string) => {
+		const transcript = scrollRef.current;
+		if (!transcript) return;
+		cancelScrollAnimation();
+		followsBottomRef.current = false;
+		if (!virtualize) {
+			scrollToRow(id);
+			return;
+		}
+		const index = timelineRef.current?.entries.findIndex((entry) => entry.kind === 'message' && entry.id === id) ?? -1;
+		if (index >= 0) virtualizer.scrollToIndex(index, { align: 'center' });
+		// The row mounts after the virtual window moves; settle it precisely on the next frames.
+		window.requestAnimationFrame(() => window.requestAnimationFrame(() => scrollToRow(id)));
+	}, [virtualize, virtualizer, scrollToRow]);
+
+	useEffect(() => {
+		if (activeFindId) jumpToMessage(activeFindId);
+	}, [activeFindId, jumpToMessage]);
+
 	useLayoutEffect(() => {
 		if (followsBottomRef.current && scrollRef.current) {
 			scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
@@ -124,15 +236,19 @@ export function ChatView({ onToggleSidebar, onOpenModelManagement, searchTarget,
 		const targetId = messages.some((message) => message.id === searchTarget.messageId)
 			? searchTarget.messageId
 			: snippet ? messages.find((message) => normalize(message.text).includes(snippet))?.id : undefined;
-		const message = targetId ? transcript?.querySelector<HTMLElement>(`[data-message-id="${CSS.escape(targetId)}"]`) : null;
-		if (!transcript || !message) return;
+		if (!transcript || !targetId) return;
 		cancelScrollAnimation();
 		handledSearchRequest.current = searchTarget.requestId;
 		followsBottomRef.current = false;
-		setHighlightedMessage({ ...searchTarget, messageId: targetId! });
-		message.scrollIntoView({ block: 'center', behavior: 'auto' });
-		setShowBackToBottom(transcript.scrollHeight - transcript.scrollTop - transcript.clientHeight > BOTTOM_THRESHOLD);
-	}, [searchTarget, sessionPath, messages]);
+		setHighlightedMessage({ ...searchTarget, messageId: targetId });
+		if (virtualize) {
+			const index = timeline.findIndex((entry) => entry.kind === 'message' && entry.id === targetId);
+			if (index >= 0) virtualizer.scrollToIndex(index, { align: 'center' });
+			window.requestAnimationFrame(() => window.requestAnimationFrame(() => scrollToRow(targetId)));
+		} else {
+			scrollToRow(targetId);
+		}
+	}, [searchTarget, sessionPath, messages, virtualize, virtualizer, timeline, scrollToRow]);
 
 	useEffect(() => {
 		if (!highlightedMessage) return;
@@ -146,6 +262,8 @@ export function ChatView({ onToggleSidebar, onOpenModelManagement, searchTarget,
 		const nearBottom = node.scrollHeight - node.scrollTop - node.clientHeight <= BOTTOM_THRESHOLD;
 		if (scrollAnimationRef.current === null) followsBottomRef.current = nearBottom;
 		setShowBackToBottom(!nearBottom);
+		// Long sessions fetch the next older slice as the reader approaches the top.
+		if (hasOlderHistory && !loadingOlder && node.scrollTop < LOAD_OLDER_TRIGGER_PX) void loadOlderMessages();
 	}
 
 	function cancelScrollAnimation() {
@@ -185,6 +303,27 @@ export function ChatView({ onToggleSidebar, onOpenModelManagement, searchTarget,
 	const titleRef = useRef<ChatTitleHandle>(null);
 	const [commitOpen, setCommitOpen] = useState(false);
 
+
+	// Regeneration rewinds to the latest user turn; offered only on the last reply while idle (3.4).
+	let lastReplyId: string | null = null;
+	for (let i = messages.length - 1; i >= 0; i -= 1) {
+		const message = messages[i]!;
+		if (message.role === 'assistant' && message.text.trim()) { lastReplyId = message.id; break; }
+	}
+	const canRegenerateLatest = agentStatus === 'idle' && lastReplyId !== null;
+	const renderEntry = (entry: TimelineEntry) => entry.kind === 'message'
+		? <MessageItem
+			key={`message-${entry.id}`}
+			message={messages[entry.index]!}
+			highlighted={(highlightedMessage?.sessionPath === sessionPath && highlightedMessage.messageId === entry.id) || activeFindId === entry.id}
+			findMatch={findOpen && entry.id !== activeFindId && findMatchSet.has(entry.id)}
+			showHeading={entry.showAssistantHeading}
+			canRegenerate={canRegenerateLatest && entry.id === lastReplyId}
+		/>
+		: <div className="pd-timeline-tool-group" key={`tools-${entry.id}`}>
+			<div className="pd-message-column"><ToolActivityPanel sourceActivities={activities} indices={entry.indices} /></div>
+		</div>;
+
 	return (
 		<main className={`pd-main${isEmpty ? ' is-empty' : ''}`}>
 			<header className="pd-chat-header">
@@ -196,25 +335,43 @@ export function ChatView({ onToggleSidebar, onOpenModelManagement, searchTarget,
 
 			<div ref={bodyRef} className={`pd-conversation-body${isEmpty ? ' is-empty' : ''}`}>
 				<div className="pd-chat-content">
+					{findOpen && <div className="pd-transcript-find-anchor">
+						<TranscriptFind
+							query={findQuery}
+							onQueryChange={(query) => { setFindQuery(query); setFindIndex(0); }}
+							index={findMatches.length > 0 ? Math.min(findIndex, findMatches.length - 1) : null}
+							total={findMatches.length}
+							onStep={(delta) => { if (findMatches.length === 0) return; setFindIndex((current) => (current + delta + findMatches.length) % findMatches.length); }}
+							onClose={closeFind}
+						/>
+					</div>}
 					<div ref={scrollRef} className="pd-transcript" onScroll={handleScroll} onWheel={cancelScrollAnimation} onTouchStart={cancelScrollAnimation} onPointerDown={cancelScrollAnimation} onKeyDown={(event) => {
 						if (['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' '].includes(event.key)) cancelScrollAnimation();
 					}}>
 						{sessionLoading ? <SessionLoading /> : isEmpty ? <EmptyState /> : (
-							<div ref={messageListRef} className="pd-message-list">
-								{timeline.map((entry) => entry.kind === 'message'
-									? <MessageItem key={`message-${entry.id}`} message={messages[entry.index]!} highlighted={highlightedMessage?.sessionPath === sessionPath && highlightedMessage.messageId === entry.id} />
-									: <div className="pd-timeline-tool-group" key={`tools-${entry.id}`}><div className="pd-message-column"><ToolActivityPanel sourceActivities={activities} indices={entry.indices} /></div></div>)}
+							<div ref={messageListRef} className="pd-message-list" style={virtualize ? { display: 'block', position: 'relative', height: `${virtualizer.getTotalSize()}px` } : undefined}>
+								{virtualize && hasOlderHistory && <div className="pd-load-older" role="status"><ActivityLabel active={loadingOlder}>{t(loadingOlder ? 'chat.loadingOlder' : 'chat.hasOlder')}</ActivityLabel></div>}
+								{virtualize
+									? virtualizer.getVirtualItems().map((item) => (
+										<div className="pd-virtual-row" key={item.key} ref={virtualizer.measureElement} data-index={item.index} style={{ position: 'absolute', top: 0, left: 0, width: '100%', transform: `translateY(${item.start}px)` }}>
+											{renderEntry(timeline[item.index]!)}
+										</div>
+									))
+									: timeline.map((entry) => renderEntry(entry))}
 							</div>
 						)}
 						{awaitingResponse && <div className="pd-transcript-end"><div className="pd-message-column"><div className="pd-response-pending" role="status"><ActivityLabel active>{t('message.preparing')}</ActivityLabel></div></div></div>}
 						{error && <div className="pd-transcript-end">
-							<div className="pd-error-banner" role="alert"><strong>{t(navigationError ? 'navigation.error' : 'chat.error')}</strong><span>{error}</span></div>
+							{navigationError
+								? <div className="pd-error-banner" role="alert"><strong>{t('navigation.error')}</strong><span>{error}</span></div>
+								: <RunStatusBar onOpenModelManagement={() => onOpenModelManagement({ kind: 'manage' })} />}
 						</div>}
+						{!error && <div className="pd-transcript-end"><RunStatusBar onOpenModelManagement={() => onOpenModelManagement({ kind: 'manage' })} /></div>}
 					</div>
 					<button type="button" className={`pd-back-to-bottom${showBackToBottom ? ' is-visible' : ''}`} aria-label={t('chat.backToBottom')} aria-hidden={!showBackToBottom} tabIndex={showBackToBottom ? 0 : -1} onClick={showBackToBottom ? scrollToBottom : undefined}>
 						{agentStatus === 'busy' ? <span className="pd-back-to-bottom-dots" aria-hidden="true"><span /><span /><span /></span> : <Icon name="arrowDown" width="20" height="20" />}
 					</button>
-					{!isEmpty && !sessionLoading && <ConversationRail messages={messages} getScrollElement={() => scrollRef.current} />}
+					{!isEmpty && !sessionLoading && <ConversationRail messages={messages} getScrollElement={() => scrollRef.current} markedIds={railMarkedIds ?? undefined} onJumpToMessage={virtualize ? jumpToMessage : undefined} />}
 				</div>
 				<Composer header={isEmpty ? <ComposerContextBar /> : undefined} onOpenModelManagement={onOpenModelManagement} />
 			</div>

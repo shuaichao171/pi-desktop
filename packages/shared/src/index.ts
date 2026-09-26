@@ -36,15 +36,25 @@ export const IPC_CHANNELS = {
   agentPrompt: 'agent:prompt',
   agentEditMessage: 'agent:edit-message',
   agentForkMessage: 'agent:fork-message',
+  agentUpdateQueuedMessage: 'agent:update-queued-message',
   agentGenerateCommitMessage: 'agent:generate-commit-message',
   agentAbort: 'agent:abort',
   agentNewSession: 'agent:new-session',
   agentSnapshot: 'agent:snapshot',
+  agentHistoryPage: 'agent:history-page',
+  agentSessionStats: 'agent:session-stats',
+  agentExportSession: 'agent:export-session',
+  agentSessionTree: 'agent:session-tree',
+  agentSwitchBranch: 'agent:switch-branch',
   agentListSessions: 'agent:list-sessions',
   agentSearchSessions: 'agent:search-sessions',
   agentSwitchSession: 'agent:switch-session',
   agentListWorkspaces: 'agent:list-workspaces',
   agentUpdateSessionMeta: 'agent:update-session-meta',
+  sessionDelete: 'session:delete',
+  appCommand: 'app:command',
+  desktopSettingsGet: 'desktop-settings:get',
+  desktopSettingsSet: 'desktop-settings:set',
   agentListSessionGroups: 'agent:list-session-groups',
   agentUpdateSessionGroups: 'agent:update-session-groups',
   agentUpdateSessionOrders: 'agent:update-session-orders',
@@ -64,11 +74,15 @@ export const IPC_CHANNELS = {
   agentListProviderAuth: 'agent:list-provider-auth',
   agentSetProviderApiKey: 'agent:set-provider-api-key',
   agentRemoveProviderCredential: 'agent:remove-provider-credential',
+  agentSetModelEnabled: 'agent:set-model-enabled',
   agentListExtensions: 'agent:list-extensions',
   agentSetExtensionEnabled: 'agent:set-extension-enabled',
   workspacePick: 'workspace:pick',
   workspaceSwitch: 'workspace:switch',
   workspaceDefault: 'workspace:default',
+  workspaceRemove: 'workspace:remove',
+  workspaceListPinned: 'workspace:list-pinned',
+  workspaceSetPinned: 'workspace:set-pinned',
   workspaceOpenFolder: 'workspace:open-folder',
   workspaceListEntries: 'workspace:list-entries',
   workspaceSearchFiles: 'workspace:search-files',
@@ -78,6 +92,12 @@ export const IPC_CHANNELS = {
   workspaceGitDiff: 'workspace:git-diff',
   workspaceBranches: 'workspace:branches',
   workspaceCheckoutBranch: 'workspace:checkout-branch',
+  workspaceGitSetStaged: 'workspace:git-set-staged',
+  workspaceGitDiscard: 'workspace:git-discard',
+  workspaceGitLog: 'workspace:git-log',
+  workspaceGitCreateBranch: 'workspace:git-create-branch',
+  workspaceOpenPathInEditor: 'workspace:open-path-in-editor',
+  workspaceRevealPath: 'workspace:reveal-path',
   workspaceOpenInVsCode: 'workspace:open-in-vscode',
   workspaceOpeners: 'workspace:openers',
   workspaceCommitContext: 'workspace:commit-context',
@@ -246,6 +266,8 @@ export interface UiModelProvider {
   /** Undefined preserves the existing Pi network behavior until explicitly configured. */
   useSystemProxy?: boolean;
   models: UiModelSummary[];
+  /** Model ids hidden from pickers via desktop model preferences. */
+  disabledModels?: string[];
 }
 
 export interface UiProviderAuthStatus {
@@ -313,7 +335,9 @@ export interface UiMessage {
   id: string;
   /** Stable position in the session timeline, shared with tool activities. */
   order: number;
-  role: 'user' | 'assistant';
+  role: 'user' | 'assistant' | 'system';
+  /** System-row flavor: compaction/branch summaries and extension notices (role 'system' only). */
+  systemKind?: 'compaction' | 'branch-summary' | 'custom';
   /** Accumulated text (grows while streaming). */
   text: string;
   /** Only provider-exposed thinking text; signatures and redacted blocks stay in the SDK. */
@@ -415,6 +439,18 @@ export interface UiToolActivity {
   detail?: string;
   /** True when a very large tool result was capped before crossing IPC. */
   detailTruncated?: boolean;
+  /** Wall-clock start in epoch milliseconds. Null when unknown, e.g. legacy history. */
+  startedAt?: number | null;
+  /** Wall-clock end in epoch milliseconds. Null while running or unknown. */
+  endedAt?: number | null;
+  /** Shell exit status. Zero on success; non-zero failures keep Pi's error text in `detail`. */
+  exitCode?: number | null;
+  /** Workspace-relative paths the call read or touched, when known. */
+  files?: string[] | null;
+  /** Shell command line, when the tool runs one. */
+  command?: string | null;
+  /** Pi edit-tool diff text (`+3 added` / `-2 removed` / ` 1 context` rows). */
+  diff?: string | null;
 }
 
 /**
@@ -423,8 +459,8 @@ export interface UiToolActivity {
  */
 export type AgentUiEvent =
   | { type: 'reset'; cwd: string }
-  | { type: 'status'; status: AgentStatus; message?: string }
-  | { type: 'ready'; model: string; modelName?: string | null; modelProvider: string; thinkingLevel: UiThinkingLevel; availableThinkingLevels: UiThinkingLevel[]; contextUsage: UiContextUsage | null; cwd: string; sessionId: string; sessionPath: string | null; messages: UiMessage[]; activities: UiToolActivity[]; fileChanges: UiFileChange[] }
+  | { type: 'status'; status: AgentStatus; message?: string; attempt?: number; maxAttempts?: number }
+  | { type: 'ready'; model: string; modelName?: string | null; modelProvider: string; thinkingLevel: UiThinkingLevel; availableThinkingLevels: UiThinkingLevel[]; contextUsage: UiContextUsage | null; cwd: string; sessionId: string; sessionPath: string | null; messages: UiMessage[]; activities: UiToolActivity[]; fileChanges: UiFileChange[]; historyTotal?: number }
   | { type: 'model'; model: string; modelName?: string | null; modelProvider: string; thinkingLevel: UiThinkingLevel; availableThinkingLevels: UiThinkingLevel[]; contextUsage: UiContextUsage | null }
   | { type: 'context-usage'; contextUsage: UiContextUsage | null }
   | { type: 'thinking-level'; level: UiThinkingLevel }
@@ -448,6 +484,9 @@ export interface AgentSnapshot {
   sequence: number;
   status: AgentStatus;
   statusMessage?: string;
+  /** Auto-retry progress while the agent retries a failed model call (4.4). */
+  retryAttempt?: number;
+  retryMaxAttempts?: number;
   model: string;
   /** Display name of the selected SDK model, independent of the loaded catalog. */
   modelName?: string | null;
@@ -463,7 +502,46 @@ export interface AgentSnapshot {
   queuedCount: number;
   queuedMessages: UiQueuedMessage[];
   fileChanges: UiFileChange[];
+  /** Full timeline entry count of the loaded branch; absent or equal to messages+activities means no older pages. */
+  historyTotal?: number;
   error: string | null;
+}
+
+/** One slice of a session branch's timeline, ordered oldest-first by `order`. */
+export interface UiHistoryPage {
+  /** Timeline index of the first returned entry. */
+  offset: number;
+  /** Number of requested entries (the page may be shorter at the start of the branch). */
+  limit: number;
+  /** Total timeline entries in the branch. */
+  total: number;
+  messages: UiMessage[];
+  activities: UiToolActivity[];
+}
+
+/** Aggregate usage of the active session, matching Pi CLI /session. */
+export interface UiSessionStats {
+  sessionId: string;
+  userMessages: number;
+  assistantMessages: number;
+  toolCalls: number;
+  toolResults: number;
+  totalMessages: number;
+  tokens: { input: number; output: number; cacheRead: number; cacheWrite: number; total: number };
+  cost: number;
+}
+
+/** One node of the session entry tree; branches appear as children. */
+export interface UiSessionTreeNode {
+  id: string;
+  kind: 'user' | 'assistant' | 'tool' | 'compaction' | 'branch-summary' | 'custom' | 'other';
+  label: string;
+  /** Entry ids of direct children (branches) below this node. */
+  childCount: number;
+  children: UiSessionTreeNode[];
+  /** True when this entry lies on the current visible branch. */
+  active: boolean;
+  timestamp?: string;
 }
 
 export interface UiSessionSummary {
@@ -528,6 +606,16 @@ export interface WorkspaceGitStatus {
   isRepository: boolean;
   branch: string | null;
   entries: WorkspaceGitChange[];
+}
+
+/** One commit in the workbench git history (4.5). */
+export interface WorkspaceGitLogEntry {
+  hash: string;
+  shortHash: string;
+  author: string;
+  /** ISO-8601 author date. */
+  date: string;
+  subject: string;
 }
 
 
@@ -612,6 +700,15 @@ export interface UiSaveInstructionResult {
  * interface. Implemented by the preload script in @pidesktop/desktop and
  * exposed as `window.piDesktop`.
  */
+/** Desktop-level preferences stored by the main process (4.1/4.2). */
+export interface UiDesktopSettings {
+  notificationsEnabled: boolean;
+  closeBehavior: 'tray' | 'quit';
+}
+
+/** Main → renderer commands (tray menu, notification clicks). */
+export type UiAppCommand = { type: 'new-session' } | { type: 'switch-session'; path: string };
+
 export interface AgentBridge {
   getPersonalization(): Promise<UiInstructionDocument[]>;
   saveInstruction(request: UiSaveInstructionRequest): Promise<UiSaveInstructionResult>;
@@ -639,6 +736,9 @@ export interface AgentBridge {
   checkForUpdates(autoInstall?: boolean): Promise<UiUpdateState>;
   installUpdate(): Promise<void>;
   onUpdateStateChanged(listener: (state: UiUpdateState) => void): () => void;
+  getDesktopSettings(): Promise<UiDesktopSettings>;
+  setDesktopSettings(patch: Partial<UiDesktopSettings>): Promise<UiDesktopSettings>;
+  onAppCommand(listener: (command: UiAppCommand) => void): () => void;
   getWindowChromeState(): Promise<WindowChromeState>;
   onWindowChromeStateChanged(listener: (state: WindowChromeState) => void): () => void;
   minimizeWindow(): Promise<void>;
@@ -656,6 +756,18 @@ export interface AgentBridge {
   getWorkspaceBranches(): Promise<WorkspaceBranches>;
   /** Checks out an existing local branch in the active workspace. */
   checkoutWorkspaceBranch(branch: string): Promise<void>;
+  /** Stages or unstages specific paths (4.5). */
+  setWorkspaceGitStaged(paths: string[], staged: boolean): Promise<void>;
+  /** Discards worktree changes; the caller confirms with the real diff first (4.5). */
+  discardWorkspaceGitChanges(paths: string[]): Promise<void>;
+  /** Recent commit history for the git pane (4.5). */
+  getWorkspaceGitLog(limit?: number): Promise<WorkspaceGitLogEntry[]>;
+  /** Creates a local branch, optionally switching to it (4.5). */
+  createWorkspaceGitBranch(name: string, checkout: boolean): Promise<void>;
+  /** Opens a workspace file in VS Code, optionally at a line (4.7). */
+  openWorkspacePathInEditor(path: string, line?: number): Promise<void>;
+  /** Reveals a workspace file in the OS file manager (4.7). */
+  revealWorkspacePath(path: string): Promise<void>;
   /** Opens the workspace folder in VS Code (zcode-style editor launch). */
   openWorkspaceInVsCode(cwd: string): Promise<void>;
   /** Lists apps able to open the workspace for the open-with picker. */
@@ -674,11 +786,28 @@ export interface AgentBridge {
   listWorkspaces(): Promise<string[]>;
   switchWorkspace(cwd: string): Promise<void>;
   getDefaultWorkspace(): Promise<string>;
+  /** Removes a project from the saved workspace list (sessions stay on disk). */
+  removeWorkspace(cwd: string): Promise<void>;
+  /** Project pins are desktop UI metadata persisted beside the workspace list. */
+  listPinnedWorkspaces(): Promise<string[]>;
+  setPinnedWorkspaces(cwds: string[]): Promise<string[]>;
   getAgentSnapshot(): Promise<AgentSnapshot>;
+  /** Loads an older slice of the active session's timeline for long conversations. */
+  getHistoryPage(offset: number, limit: number): Promise<UiHistoryPage>;
+  /** Aggregate stats for the active session (message counts, tokens, cost). */
+  getSessionStats(): Promise<UiSessionStats>;
+  /** Writes the active session to a chosen file; the main process shows the save dialog. */
+  exportSession(format: 'html' | 'jsonl'): Promise<string | null>;
+  /** Entry tree of the active session with branch structure and the current path. */
+  getSessionTree(): Promise<UiSessionTreeNode[]>;
+  /** Moves the visible branch leaf onto another entry (zcode-style branch switch). */
+  switchSessionBranch(entryId: string): Promise<void>;
   listSessions(cwd?: string): Promise<UiSessionSummary[]>;
   searchSessions(query: string): Promise<{ sessions: UiSessionSearchResult[]; truncated: boolean }>;
   switchSession(path: string): Promise<void>;
   updateSessionMeta(path: string, patch: UiSessionMetaPatch): Promise<void>;
+  /** Moves a conversation file to the app trash and clears its desktop metadata (3.3). */
+  deleteSession(path: string): Promise<void>;
   listSessionGroups(): Promise<UiSessionGroup[]>;
   updateSessionGroups(change: UiSidebarGroupChange): Promise<UiSessionGroup[]>;
   /** Persist manual sidebar positions for many sessions in one write. */
@@ -694,6 +823,8 @@ export interface AgentBridge {
   /** Persist an API key using pi's credential store. The key is never returned. */
   setProviderApiKey(provider: string, key: string): Promise<void>;
   removeProviderCredential(provider: string): Promise<void>;
+  /** Toggle a model's visibility in pickers; persisted in desktop model preferences. */
+  setModelEnabled(provider: string, modelId: string, enabled: boolean): Promise<void>;
   listExtensions(): Promise<UiExtensionSummary[]>;
   setExtensionEnabled(path: string, enabled: boolean): Promise<void>;
   prompt(text: string, behavior?: 'steer' | 'followUp', attachments?: UiAttachment[]): Promise<void>;
@@ -701,6 +832,8 @@ export interface AgentBridge {
   editMessage(entryId: string, text: string, attachments?: UiAttachment[]): Promise<void>;
   /** Fork the conversation at an assistant message: the visible branch rewinds to it and the next prompt grows a new branch (zcode-style fork). */
   forkAssistantMessage(entryId: string): Promise<void>;
+  /** Edit, remove, or steer-early a queued instruction while the agent is busy (Codex-style queue management). */
+  updateQueuedMessage(id: string, action: 'edit' | 'remove' | 'steer', text?: string): Promise<void>;
   abort(): Promise<void>;
   newSession(): Promise<void>;
   onExtensionDialog(listener: (request: UiExtensionDialogRequest) => void): () => void;

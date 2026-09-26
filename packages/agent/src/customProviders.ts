@@ -212,3 +212,55 @@ export async function commitProviderDocument(path: string, previous: ProviderDoc
 		else await atomicWrite(path, previous.raw);
 	};
 }
+
+/** Desktop-only model visibility preferences: models hidden from pickers, kept out of models.json. */
+export interface ModelPrefsDocument { disabled: Record<string, string[]> }
+
+let cachedDisabledModels: Record<string, string[]> = {};
+let cachedModelPrefsPath: string | null = null;
+
+function parseModelPrefs(raw: string): Record<string, string[]> {
+	const data: unknown = JSON.parse(raw);
+	if (!record(data)) throw new Error('Invalid model prefs');
+	const disabled: Record<string, string[]> = {};
+	for (const [provider, ids] of Object.entries(record(data.disabled) ? data.disabled : {})) {
+		if (!Array.isArray(ids) || ids.some((id) => typeof id !== 'string' || !id || id.length > 200 || /[\u0000-\u001f\u007f]/u.test(id))) throw new Error('Invalid model prefs');
+		const unique = [...new Set(ids)].filter(() => { try { validateProviderId(provider); return true; } catch { return false; } });
+		if (unique.length) disabled[provider] = unique;
+	}
+	return disabled;
+}
+
+/** Sync snapshot for listModels filtering; empty until the first load completes. */
+export function getCachedDisabledModels(): Record<string, string[]> {
+	return cachedDisabledModels;
+}
+
+export async function loadModelPrefs(agentDirectory: string): Promise<Record<string, string[]>> {
+	const path = join(agentDirectory, 'model-prefs.json');
+	if (cachedModelPrefsPath === path) return cachedDisabledModels;
+	try {
+		cachedDisabledModels = parseModelPrefs(await readFile(path, 'utf8'));
+	} catch {
+		// Missing or corrupt prefs never block the catalog; the next toggle rewrites the file.
+		cachedDisabledModels = {};
+	}
+	cachedModelPrefsPath = path;
+	return cachedDisabledModels;
+}
+
+export async function setModelDisabled(agentDirectory: string, provider: string, modelId: string, disabled: boolean): Promise<Record<string, string[]>> {
+	const current = await loadModelPrefs(agentDirectory);
+	const next: Record<string, string[]> = { ...current };
+	const ids = new Set(next[provider] ?? []);
+	if (disabled) ids.add(modelId);
+	else ids.delete(modelId);
+	if (ids.size) next[provider] = [...ids];
+	else delete next[provider];
+	const path = join(agentDirectory, 'model-prefs.json');
+	await mkdir(agentDirectory, { recursive: true });
+	await atomicWrite(path, JSON.stringify({ disabled: next }, null, 2) + '\n');
+	cachedDisabledModels = next;
+	cachedModelPrefsPath = path;
+	return next;
+}

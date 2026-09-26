@@ -5,6 +5,7 @@ import remarkGfm from 'remark-gfm';
 import { useT } from '../i18n';
 import { ActivityDisclosure, ActivityLabel } from './ActivityDisclosure';
 import { Icon } from './Icons';
+import { renderMarkdownPre } from './CodeBlock';
 
 export function ThinkingActivity({ message }: { message: UiMessage }) {
 	const { t } = useT();
@@ -33,7 +34,7 @@ export function ThinkingActivity({ message }: { message: UiMessage }) {
 					<div ref={outputRef} className="pd-markdown pd-thinking-markdown" onScroll={() => {
 						const node = outputRef.current;
 						if (node) followsOutput.current = node.scrollHeight - node.scrollTop - node.clientHeight < 32;
-					}}><Markdown remarkPlugins={[remarkGfm]}>{thinking}</Markdown></div>
+					}}><Markdown remarkPlugins={[remarkGfm]} components={{ pre: renderMarkdownPre }}>{thinking}</Markdown></div>
 					{message.thinkingTruncated && <p className="pd-activity-note">{t('message.thinking.truncated')}</p>}
 				</div>
 			</ActivityDisclosure>

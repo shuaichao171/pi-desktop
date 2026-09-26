@@ -24,9 +24,9 @@ test('timeline keeps tools between the messages that produced them', () => {
     { id: 'grep', order: 3, tool: 'grep', title: 'search', status: 'interrupted' },
   ];
   assert.deepEqual(buildTimelineLayout(messages, activities), [
-    { kind: 'message', id: 'user', order: 1, index: 0 },
+    { kind: 'message', id: 'user', order: 1, index: 0, showAssistantHeading: false },
     { kind: 'tools', id: 'read', order: 2, indices: [0, 1] },
-    { kind: 'message', id: 'assistant', order: 5, index: 1 },
+    { kind: 'message', id: 'assistant', order: 5, index: 1, showAssistantHeading: true },
   ]);
   assert.equal(translate('chat.tool.interrupted', undefined, 'zh-CN'), '已中断');
   assert.equal(translate('chat.tool.interrupted', undefined, 'en-US'), 'Interrupted');

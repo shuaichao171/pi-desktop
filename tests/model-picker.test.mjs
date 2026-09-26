@@ -64,3 +64,12 @@ test('provider selection prefers the requested tab, then current provider, then 
   assert.equal(selectModelProvider([], 'OpenAI', 'Anthropic'), null);
   assert.deepEqual(groupModelsByProvider([], '', 'en-US'), []);
 });
+
+test('configured-provider filtering drops other providers while unset allowlists keep the catalog', () => {
+  const models = [model('zeta', 'one'), model('alpha', 'two'), model('zeta', 'three')];
+  assert.deepEqual(groupModelsByProvider(models, '', 'en-US', new Set(['zeta'])).map((group) => group.provider), ['zeta']);
+  assert.deepEqual(groupModelsByProvider(models, '', 'en-US', new Set(['alpha'])).map((group) => group.models.map((item) => item.id)), [['two']]);
+  assert.deepEqual(groupModelsByProvider(models, 'three', 'en-US', new Set(['alpha'])), [], 'search results obey the allowlist');
+  assert.deepEqual(groupModelsByProvider(models, '', 'en-US', new Set()), [], 'empty allowlist hides everything');
+  assert.equal(groupModelsByProvider(models, '', 'en-US', undefined).length, 2, 'unset allowlist keeps loading-state catalogs');
+});

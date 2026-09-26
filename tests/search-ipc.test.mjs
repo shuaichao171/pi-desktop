@@ -13,6 +13,7 @@ const stubs = {
     export const nativeImage = { createFromPath: () => ({ isEmpty: () => true }) };
     export const Tray = class {};
     export const dialog = { showErrorBox: () => {} };
+    export const Notification = class { static isSupported() { return false; } on() { return this; } show() {} };
     export const ipcMain = { handle: (channel, handler) => globalThis.__searchHandlers.set(channel, handler) };
   `,
   './agentClient': `export const createIsolatedAgentService = () => globalThis.__searchAgent;`,

@@ -13,6 +13,7 @@ const stubs = {
     export const nativeImage = { createFromPath: () => ({ isEmpty: () => true }) };
     export const Tray = class {};
     export const dialog = { showErrorBox() {}, async showOpenDialog(owner) { globalThis.__pluginPickerOwner = owner; return { canceled: false, filePaths: [globalThis.__pluginRoot] }; } };
+    export const Notification = class { static isSupported() { return false; } on() { return this; } show() {} };
     export const ipcMain = { handle: (name, fn) => globalThis.__pluginHandlers.set(name, fn) };
   `,
   './agentClient': 'export const createIsolatedAgentService = () => globalThis.__pluginAgent;',

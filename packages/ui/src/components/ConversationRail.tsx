@@ -1,6 +1,7 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useT } from '../i18n';
+import { bindingKeysFor, matchesShortcut } from '../shortcuts/bindings';
 import type { UiMessage } from '@pidesktop/shared';
 
 /**
@@ -32,7 +33,7 @@ function findRow(scroll: HTMLElement, id: string): HTMLElement | null {
 	return scroll.querySelector<HTMLElement>(`[data-message-id="${CSS.escape(id)}"]`);
 }
 
-export const ConversationRail = memo(function ConversationRail({ messages, getScrollElement }: { messages: UiMessage[]; getScrollElement(): HTMLElement | null }) {
+export const ConversationRail = memo(function ConversationRail({ messages, getScrollElement, markedIds, onJumpToMessage }: { messages: UiMessage[]; getScrollElement(): HTMLElement | null; /** User-message ids whose turn contains an in-conversation find hit. */ markedIds?: ReadonlySet<string>; /** Virtualized transcripts route jumps through the view. */ onJumpToMessage?(id: string): void }) {
 	const { t } = useT();
 	const items = useMemo<RailItem[]>(() => {
 		const result: RailItem[] = [];
@@ -78,8 +79,9 @@ export const ConversationRail = memo(function ConversationRail({ messages, getSc
 	}, [getScrollElement]);
 
 	const jump = useCallback((id: string, behavior: ScrollBehavior = 'auto') => {
+		if (onJumpToMessage) { onJumpToMessage(id); return; }
 		if (scrollToItem(id, behavior)) flashItem(id);
-	}, [scrollToItem, flashItem]);
+	}, [scrollToItem, flashItem, onJumpToMessage]);
 
 	const clearHoverTimer = useCallback(() => {
 		const pending = hoverTimerRef.current;
@@ -153,11 +155,13 @@ export const ConversationRail = memo(function ConversationRail({ messages, getSc
 	useEffect(() => {
 		if (items.length < MIN_ITEMS) return;
 		const onKeyDown = (event: KeyboardEvent) => {
-			if (event.defaultPrevented || !event.altKey || event.shiftKey || event.ctrlKey || event.metaKey) return;
-			if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return;
+			if (event.defaultPrevented || event.isComposing) return;
+			const isPrev = matchesShortcut(event, bindingKeysFor('previousTurn'));
+			const isNext = matchesShortcut(event, bindingKeysFor('nextTurn'));
+			if (!isPrev && !isNext) return;
 			if (getScrollElement() == null) return;
 			const index = activeId != null ? items.findIndex((item) => item.id === activeId) : -1;
-			const next = event.key === 'ArrowDown'
+			const next = isNext
 				? (index === -1 ? 0 : Math.min(items.length - 1, index + 1))
 				: (index === -1 ? items.length - 1 : Math.max(0, index - 1));
 			const target = items[next];
@@ -230,7 +234,7 @@ export const ConversationRail = memo(function ConversationRail({ messages, getSc
 					<button
 						key={item.id}
 						type="button"
-						className="pd-conv-rail-item"
+						className={'pd-conv-rail-item' + (markedIds?.has(item.id) ? ' is-marked' : '')}
 						data-rail-id={item.id}
 						aria-current={item.id === activeId ? 'true' : undefined}
 						aria-label={t('rail.jump', { position: String(index + 1) })}

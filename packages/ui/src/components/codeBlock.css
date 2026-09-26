@@ -1,0 +1,24 @@
+.pd-code-block { min-width: 0; margin: 10px 0; overflow: hidden; border: 1px solid var(--pd-border-soft); border-radius: 10px; background: var(--pd-code-surface); }
+.pd-code-block-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 32px; padding: 3px 6px 3px 12px; border-bottom: 1px solid var(--pd-border-soft); }
+.pd-code-block-language { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--pd-text-weak); font-size: var(--pd-font-xs, 10px); text-transform: lowercase; }
+.pd-code-block-actions { display: flex; flex: 0 0 auto; }
+.pd-code-block-actions button, .pd-code-block-toggle { padding: 3px 8px; border: 0; border-radius: 5px; background: transparent; color: var(--pd-text-subtle); font-size: var(--pd-font-xs, 10px); }
+.pd-code-block-actions button:hover, .pd-code-block-toggle:hover { background: var(--pd-surface-hover); color: var(--pd-text); }
+.pd-code-block-actions button:focus-visible, .pd-code-block-toggle:focus-visible { outline: 2px solid var(--pd-focus-border); outline-offset: 1px; }
+.pd-markdown pre.pd-code-block-body { margin: 0; padding: 0; border: 0; border-radius: 0; background: transparent; }
+.pd-code-block-body { max-height: 560px; margin: 0; padding: 10px 0; overflow: auto; scrollbar-width: thin; overscroll-behavior: contain; }
+.pd-code-block-body code { display: block; width: max-content; min-width: 100%; padding: 0 12px; border: 0; border-radius: 0; background: transparent; color: var(--pd-code-text); font: 12px/1.65 ui-monospace, SFMono-Regular, Consolas, 'Liberation Mono', monospace; white-space: pre; tab-size: 2; }
+.pd-code-block-toggle { display: block; width: 100%; padding: 6px; border-top: 1px solid var(--pd-border-soft); text-align: center; }
+
+/* Highlight tokens follow the active theme through semantic variables. */
+.pd-code-block .hljs-keyword, .pd-code-block .hljs-selector-tag, .pd-code-block .hljs-subst { color: var(--pd-hl-keyword); }
+.pd-code-block .hljs-string, .pd-code-block .hljs-regexp, .pd-code-block .hljs-quote { color: var(--pd-hl-string); }
+.pd-code-block .hljs-comment, .pd-code-block .hljs-meta { color: var(--pd-hl-comment); font-style: italic; }
+.pd-code-block .hljs-number, .pd-code-block .hljs-literal, .pd-code-block .hljs-operator { color: var(--pd-hl-number); }
+.pd-code-block .hljs-title, .pd-code-block .hljs-title.function_, .pd-code-block .hljs-section { color: var(--pd-hl-title); }
+.pd-code-block .hljs-attr, .pd-code-block .hljs-attribute, .pd-code-block .hljs-variable, .pd-code-block .hljs-template-variable, .pd-code-block .hljs-selector-attr, .pd-code-block .hljs-selector-pseudo { color: var(--pd-hl-attr); }
+.pd-code-block .hljs-type, .pd-code-block .hljs-built_in, .pd-code-block .hljs-title.class_, .pd-code-block .hljs-class .hljs-title { color: var(--pd-hl-type); }
+.pd-code-block .hljs-symbol, .pd-code-block .hljs-bullet, .pd-code-block .hljs-link { color: var(--pd-hl-symbol); }
+.pd-code-block .hljs-tag, .pd-code-block .hljs-name, .pd-code-block .hljs-selector-id, .pd-code-block .hljs-selector-class { color: var(--pd-hl-tag); }
+.pd-code-block .hljs-emphasis { font-style: italic; }
+.pd-code-block .hljs-strong { font-weight: 600; }

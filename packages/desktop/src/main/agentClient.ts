@@ -1,7 +1,7 @@
 import { app, utilityProcess, type UtilityProcess } from 'electron';
 import { join } from 'node:path';
 import type { ProjectTrustDecision } from '@pidesktop/agent';
-import type { AgentEventEnvelope, AgentSnapshot, UiAttachment, UiExtensionDialogRequest, UiSessionSummary, UiSessionSearchResult, UiSlashCommand, UiSlashCommandRequest, WorkspaceEntry } from '@pidesktop/shared';
+import type { AgentEventEnvelope, AgentSnapshot, UiAttachment, UiExtensionDialogRequest, UiHistoryPage, UiSessionStats, UiSessionTreeNode, UiSessionSummary, UiSessionSearchResult, UiSlashCommand, UiSlashCommandRequest, WorkspaceEntry } from '@pidesktop/shared';
 import type { AgentHostMethod, AgentHostToMain, MainToAgentHost } from './agentHostProtocol';
 import type { UiPluginCatalog, UiPluginMutation, UiPluginResourceKind, UiPluginResourcePreview, UiPluginScope } from '@pidesktop/shared';
 import type { UiInstructionDocument, UiSaveInstructionRequest, UiSaveInstructionResult } from '@pidesktop/shared';
@@ -294,7 +294,13 @@ export function createIsolatedAgentService(ui: AgentHostUiHandlers) {
 		onBackgroundActivity: (listener: (cwd: string, path: string) => void): void => client.onBackgroundActivity(listener),
 		init: (...args: unknown[]) => client.call('init', ...args),
 		switchWorkspace: (...args: unknown[]) => client.call('switchWorkspace', ...args),
+		forgetWorkspace: (...args: unknown[]) => client.call('forgetWorkspace', ...args),
 		getSnapshot: (...args: unknown[]): Promise<AgentSnapshot> => client.call('getSnapshot', ...args) as Promise<AgentSnapshot>,
+		getHistoryPage: (...args: unknown[]): Promise<UiHistoryPage> => client.call('getHistoryPage', ...args) as Promise<UiHistoryPage>,
+		getSessionStats: (...args: unknown[]): Promise<UiSessionStats> => client.call('getSessionStats', ...args) as Promise<UiSessionStats>,
+		exportSession: (...args: unknown[]): Promise<string> => client.call('exportSession', ...args) as Promise<string>,
+		getSessionTree: (...args: unknown[]): Promise<UiSessionTreeNode[]> => client.call('getSessionTree', ...args) as Promise<UiSessionTreeNode[]>,
+		switchSessionBranch: (...args: unknown[]): Promise<void> => client.call('switchSessionBranch', ...args) as Promise<void>,
 		listSessions: (...args: unknown[]): Promise<UiSessionSummary[]> => client.call('listSessions', ...args) as Promise<UiSessionSummary[]>,
 		searchSessions: (workspaces: string[], query: string): Promise<{ sessions: UiSessionSearchResult[]; truncated: boolean }> =>
 			client.call('searchSessions', workspaces, query) as Promise<{ sessions: UiSessionSearchResult[]; truncated: boolean }>,
@@ -315,6 +321,7 @@ export function createIsolatedAgentService(ui: AgentHostUiHandlers) {
 		listProviderAuth: (...args: unknown[]) => client.call('listProviderAuth', ...args),
 		setProviderApiKey: (...args: unknown[]) => client.call('setProviderApiKey', ...args),
 		removeProviderCredential: (...args: unknown[]) => client.call('removeProviderCredential', ...args),
+		setModelEnabled: (...args: unknown[]) => client.call('setModelEnabled', ...args),
 		listExtensions: (...args: unknown[]) => client.call('listExtensions', ...args),
 		setExtensionEnabled: (...args: unknown[]) => client.call('setExtensionEnabled', ...args),
 		getPluginCatalog: (cwd: string): Promise<UiPluginCatalog> => client.call('getPluginCatalog', cwd) as Promise<UiPluginCatalog>,
@@ -325,6 +332,7 @@ export function createIsolatedAgentService(ui: AgentHostUiHandlers) {
 		newSession: (...args: unknown[]) => client.call('newSession', ...args),
 		editUserMessage: (...args: unknown[]) => client.call('editUserMessage', ...args),
 		forkAssistantMessage: (...args: unknown[]) => client.call('forkAssistantMessage', ...args),
+		updateQueuedMessage: (...args: unknown[]) => client.call('updateQueuedMessage', ...args),
 		generateCommitMessage: (...args: unknown[]) => client.call('generateCommitMessage', ...args),
 		dispose: () => client.dispose(),
 	};

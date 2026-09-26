@@ -25,6 +25,7 @@ import {
 	type ExtensionUIContext,
 	type ResolvedResource,
 	type SessionEntry,
+	type SessionTreeNode,
 	DefaultPackageManager,
 	createAgentSessionFromServices,
 	createAgentSessionRuntime,
@@ -59,6 +60,9 @@ import type {
 	UiPluginScope,
 	UiSaveCustomProviderRequest,
 	UiProviderAuthStatus,
+	UiHistoryPage,
+	UiSessionStats,
+	UiSessionTreeNode,
 	UiQueuedAttachment,
 	UiSessionSummary,
 	UiSlashCommand,
@@ -70,7 +74,7 @@ import type {
 	UiToolActivity,
 } from '@pidesktop/shared';
 import { BUILTIN_SLASH_COMMANDS, expandSlashPrompt, validateSlashCommandRequest, validSlashCommandName } from './slashCommands.ts';
-import { commitProviderDocument, CUSTOM_PROVIDER_APIS, getBuiltinProviderIds, isEditableProvider, literalApiKey, mergeProvider, readProviderDocument, safeProviderUrl, validateDiscoveryRequest, validateProviderId, validateProviderRequest, validateProviderWithSdk, type ProviderDocument } from './customProviders.ts';
+import { commitProviderDocument, CUSTOM_PROVIDER_APIS, getCachedDisabledModels, getBuiltinProviderIds, isEditableProvider, literalApiKey, loadModelPrefs, mergeProvider, readProviderDocument, safeProviderUrl, setModelDisabled, validateDiscoveryRequest, validateProviderId, validateProviderRequest, validateProviderWithSdk, type ProviderDocument } from './customProviders.ts';
 import { discoverProviderModels } from './providerDiscovery.ts';
 import { bindProviderNetwork, runWithProviderNetwork } from './providerNetwork.ts';
 export { configureProviderNetwork } from './providerNetwork.ts';
@@ -102,6 +106,9 @@ const THINKING_LEVELS: readonly UiThinkingLevel[] = ['off', 'minimal', 'low', 'm
 const MAX_TOOL_DETAIL_CHARS = 48000;
 const MAX_THINKING_CHARS = 48000;
 const THINKING_UPDATE_INTERVAL_MS = 80;
+/** Timeline entries sent in the ready payload; older history loads page-by-page. */
+const READY_HISTORY_LIMIT = 400;
+const HISTORY_PAGE_MAX = 500;
 const MAX_LOADED_CONTEXTS = 12;
 const TEXT_ATTACHMENT_MARKER = '\n\n<!-- pi-desktop:attachments-v1 -->\n';
 
@@ -145,6 +152,7 @@ function createRuntimeFactory(
 			} : undefined,
 		});
 		bindProviderNetwork(services.modelRuntime, join(agentDir, 'models.json'));
+		void loadModelPrefs(agentDir).catch(() => {});
 		const created = await createAgentSessionFromServices({ services, sessionManager, sessionStartEvent });
 		trackFileChanges(created.session, fileChanges);
 		return {
@@ -181,6 +189,7 @@ class SingleAgentService {
 	private readonly slashCommandExecution = new AsyncLocalStorage<{ name: string; error: string | null }>();
 	private readonly queuedPrompt = new AsyncLocalStorage<{ text: string; behavior: 'steer' | 'followUp' | undefined; images: UiQueuedAttachment[]; claimed: boolean }>();
 	private queuedMessages: QueuedMessageRecord[] = [];
+	private queueMutationDepth = 0;
 	private queueRefreshSession: PiRuntime['session'] | null = null;
 	private readonly queuedPreviewIds = new WeakMap<object, string>();
 	private deliveredEmptyQueued = { steer: 0, followUp: 0 };
@@ -245,6 +254,94 @@ class SingleAgentService {
 			queuedMessages: this.state.queuedMessages.map(cloneQueuedMessage),
 			fileChanges: this.state.fileChanges.map((file) => ({ ...file })),
 		};
+	}
+
+	/** One oldest-first page of the loaded branch's timeline for long conversations. */
+	getHistoryPage(offset: number, limit: number): UiHistoryPage {
+		const session = this.runtime?.session;
+		if (!session) throw new Error('会话尚未初始化');
+		if (!Number.isInteger(offset) || !Number.isInteger(limit) || offset < 0 || limit < 1 || limit > HISTORY_PAGE_MAX) {
+			throw new Error('历史分页参数无效');
+		}
+		return historyPageSlice(historyTimeline(session.sessionManager.getBranch()), offset, limit);
+	}
+
+	/** Aggregate usage of the loaded session, matching Pi CLI /session. */
+	getSessionStats(): UiSessionStats {
+		const session = this.runtime?.session;
+		if (!session) throw new Error('会话尚未初始化');
+		const stats = session.getSessionStats();
+		return {
+			sessionId: stats.sessionId,
+			userMessages: stats.userMessages,
+			assistantMessages: stats.assistantMessages,
+			toolCalls: stats.toolCalls,
+			toolResults: stats.toolResults,
+			totalMessages: stats.totalMessages,
+			tokens: {
+				input: stats.tokens.input, output: stats.tokens.output,
+				cacheRead: stats.tokens.cacheRead, cacheWrite: stats.tokens.cacheWrite, total: stats.tokens.total,
+			},
+			cost: stats.cost,
+		};
+	}
+
+	/** Writes the visible branch to disk in the requested format. */
+	async exportSession(outputPath: string, format: 'html' | 'jsonl'): Promise<string> {
+		const session = this.runtime?.session;
+		if (!session) throw new Error('会话尚未初始化');
+		if (typeof outputPath !== 'string' || !outputPath.trim()) throw new Error('导出路径无效');
+		return format === 'html' ? session.exportToHtml(outputPath) : session.exportToJsonl(outputPath);
+	}
+
+	/** Entry tree with the visible branch marked (3.5). */
+	getSessionTree(): UiSessionTreeNode[] {
+		const session = this.runtime?.session;
+		if (!session) throw new Error('会话尚未初始化');
+		const manager = session.sessionManager;
+		const activeIds = new Set(manager.getBranch().map((entry) => entry.id));
+		const firstLine = (text: string) => text.split(/\r?\n/)[0]!.slice(0, 90);
+		const describe = (entry: SessionEntry): { kind: UiSessionTreeNode['kind']; label: string } => {
+			if (entry.type !== 'message') {
+				if (entry.type === 'compaction') return { kind: 'compaction', label: firstLine(entry.summary) };
+				if (entry.type === 'branch_summary') return { kind: 'branch-summary', label: firstLine(entry.summary) };
+				if (entry.type === 'custom_message' || entry.type === 'custom') return { kind: 'custom', label: entry.customType };
+				return { kind: 'other', label: entry.type };
+			}
+			const message = entry.message;
+			if (message.role === 'user') return { kind: 'user', label: firstLine(userText(message)) };
+			if (message.role === 'assistant') {
+				const text = assistantText(message);
+				if (text.trim()) return { kind: 'assistant', label: firstLine(text) };
+				const toolCall = Array.isArray(message.content) ? message.content.find((part) => part?.type === 'toolCall') : undefined;
+				return { kind: 'assistant', label: toolCall && toolCall.type === 'toolCall' ? describeToolUse(toolCall.name, toolCall.arguments) : '…' };
+			}
+			if (message.role === 'toolResult') return { kind: 'tool', label: `tool: ${message.toolName}` };
+			return { kind: 'other', label: message.role };
+		};
+		const mapNode = (node: SessionTreeNode): UiSessionTreeNode => {
+			const { kind, label } = describe(node.entry);
+			return {
+				id: node.entry.id,
+				kind,
+				label: node.label ?? label,
+				childCount: node.children.length,
+				children: node.children.map(mapNode),
+				active: activeIds.has(node.entry.id),
+				timestamp: node.entry.timestamp,
+			};
+		};
+		return manager.getTree().map(mapNode);
+	}
+
+	/** Move the visible branch leaf onto another entry (branch switch). */
+	async switchSessionBranch(entryId: string): Promise<void> {
+		const runtime = this.runtime;
+		if (!runtime) throw new Error('会话尚未初始化');
+		this.requireIdleSession();
+		if (typeof entryId !== 'string' || !entryId.trim()) throw new Error('目标条目无效');
+		const result = await this.runExtensionSessionAction(runtime, () => runtime.session.navigateTree(entryId));
+		if (result.cancelled) return;
 	}
 
 	async listSessions(cwd = this.cwd): Promise<UiSessionSummary[]> {
@@ -349,17 +446,20 @@ class SingleAgentService {
 	listModels(): UiModelSummary[] {
 		const session = this.runtime?.session;
 		if (!session) return [];
-		return session.modelRuntime.getAvailableSnapshot().map((model) => ({
-			provider: model.provider,
-			id: model.id,
-			name: model.name,
-			reasoning: model.reasoning,
-			input: [...model.input],
-			contextWindow: model.contextWindow,
-			maxTokens: model.maxTokens,
-			thinkingLevels: getSupportedThinkingLevels(model),
-			...(model.thinkingLevelMap ? { thinkingLevelMap: { ...model.thinkingLevelMap } } : {}),
-		}));
+		const disabledByProvider = getCachedDisabledModels();
+		return session.modelRuntime.getAvailableSnapshot()
+			.filter((model) => !disabledByProvider[model.provider]?.includes(model.id))
+			.map((model) => ({
+				provider: model.provider,
+				id: model.id,
+				name: model.name,
+				reasoning: model.reasoning,
+				input: [...model.input],
+				contextWindow: model.contextWindow,
+				maxTokens: model.maxTokens,
+				thinkingLevels: getSupportedThinkingLevels(model),
+				...(model.thinkingLevelMap ? { thinkingLevelMap: { ...model.thinkingLevelMap } } : {}),
+			}));
 	}
 
 	/** Provider IDs and configuration state only; never expose auth objects or keys. */
@@ -392,6 +492,7 @@ class SingleAgentService {
 		const providers = new Map(runtime.getProviders().map((provider) => [provider.id, provider]));
 		const ids = new Set([...providers.keys(), ...Object.keys(document.data.providers)]);
 		const registered = new Set(runtime.getRegisteredProviderIds());
+		const disabledByProvider = getCachedDisabledModels();
 		return [...ids].map((id): UiModelProvider => {
 			const config = Object.hasOwn(document.data.providers, id) ? document.data.providers[id] : undefined;
 			const custom = config !== undefined;
@@ -406,6 +507,7 @@ class SingleAgentService {
 				models: runtime.getModels(id).map((model) => ({ provider: model.provider, id: model.id, name: model.name, reasoning: model.reasoning,
 					input: [...model.input], contextWindow: model.contextWindow, maxTokens: model.maxTokens, thinkingLevels: getSupportedThinkingLevels(model),
 					...(model.thinkingLevelMap ? { thinkingLevelMap: { ...model.thinkingLevelMap } } : {}) })),
+				...(disabledByProvider[id]?.length ? { disabledModels: [...disabledByProvider[id]!] } : {}),
 			};
 		}).sort((a, b) => a.provider.localeCompare(b.provider));
 	}
@@ -752,6 +854,53 @@ class SingleAgentService {
 		await this.runExtensionSessionAction(runtime, () => runtime.session.navigateTree(entryId));
 	}
 
+	/** Rebuild Pi's message queue so a queued instruction can be edited, removed, or steered early. */
+	async updateQueuedMessage(id: string, action: 'edit' | 'remove' | 'steer', text?: string): Promise<void> {
+		if (this.lifecycleOperation) throw new Error('会话正在切换，请稍后发送消息');
+		const session = this.runtime?.session;
+		if (!session) throw new Error('Agent is not initialized');
+		const record = this.queuedMessages.find((entry) => entry.item.id === id);
+		if (!record) throw new Error('该排队消息已发送或不存在');
+		if (action === 'edit' && (typeof text !== 'string' || text.trim().length === 0)) throw new Error('排队消息内容不能为空');
+		// Images ride the SDK queue messages; key them by raw text so the rebuild can re-attach.
+		const imagesByRaw = new Map<string, { type: 'image'; data: string; mimeType: string }[][]>();
+		for (const message of session.agent.peekQueuedMessages()) {
+			if (message.role !== 'user') continue;
+			const raw = queuedMessageText(message);
+			const images = (Array.isArray(message.content) ? message.content : []).filter((part): part is { type: 'image'; data: string; mimeType: string } =>
+				part?.type === 'image' && typeof (part as { data?: unknown }).data === 'string' && typeof (part as { mimeType?: unknown }).mimeType === 'string');
+			if (!images.length) continue;
+			const pool = imagesByRaw.get(raw) ?? [];
+			pool.push(images);
+			imagesByRaw.set(raw, pool);
+		}
+		const takeImages = (raw: string) => imagesByRaw.get(raw)?.shift() ?? [];
+		const cleared = session.clearQueue();
+		const steering = [...cleared.steering];
+		const followUp = [...cleared.followUp];
+		const target = record.item.behavior === 'steer' ? steering : followUp;
+		const index = target.indexOf(record.raw);
+		if (index >= 0) target.splice(index, 1);
+		if (action === 'edit') {
+			const markerIndex = record.raw.indexOf(TEXT_ATTACHMENT_MARKER);
+			target.splice(Math.max(index, 0), 0, text + (markerIndex >= 0 ? record.raw.slice(markerIndex) : ''));
+		}
+		this.queueMutationDepth += 1;
+		let failure: unknown = null;
+		try {
+			for (const raw of steering) { try { await session.steer(raw, takeImages(raw)); } catch (error) { failure ??= error; } }
+			for (const raw of followUp) { try { await session.followUp(raw, takeImages(raw)); } catch (error) { failure ??= error; } }
+			if (action === 'steer') {
+				if (this.state.status === 'idle') this.fire({ type: 'status', status: 'busy' });
+				await session.steer(record.raw, takeImages(record.raw));
+			}
+		} finally {
+			this.queueMutationDepth -= 1;
+			this.publishQueue({ steering: session.getSteeringMessages(), followUp: session.getFollowUpMessages() });
+		}
+		if (failure) throw failure instanceof Error ? failure : new Error(String(failure));
+	}
+
 	/**
 	 * Ask the current model for a commit message covering the given git context.
 	 * Standalone LLM call: never touches the session transcript, so it is safe
@@ -1061,6 +1210,8 @@ class SingleAgentService {
 		this.toolTitles.clear();
 		this.toolUpdateAt.clear();
 		const timeline = historyTimeline(session.sessionManager.getBranch());
+		// Long branches stream only the newest window; older entries load page-by-page.
+		const recent = trimRecentTimeline(timeline, READY_HISTORY_LIMIT);
 		this.timelineOrder = timeline.nextOrder;
 		this.fire({
 			type: 'ready',
@@ -1068,14 +1219,17 @@ class SingleAgentService {
 			cwd: this.cwd,
 			sessionId: session.sessionId,
 			sessionPath: session.sessionFile ?? null,
-			messages: timeline.messages,
-			activities: timeline.activities,
+			messages: recent.messages,
+			activities: recent.activities,
 			fileChanges: this.fileChangeTrackers.get(session)?.restore() ?? [],
+			historyTotal: recent.historyTotal,
 		});
 		this.publishQueue({ steering: session.getSteeringMessages(), followUp: session.getFollowUpMessages() });
 	}
 
 	private publishQueue(queue: SdkQueueSnapshot): void {
+		// A queue rebuild re-emits every intermediate snapshot; publish the final state once instead.
+		if (this.queueMutationDepth > 0) return;
 		const submitted = this.queuedPrompt.getStore();
 		const pending = (values: readonly string[], behavior: 'steer' | 'followUp') => {
 			// Pi 0.87 ignores empty text on delivery, leaving its display mirror
@@ -1180,6 +1334,8 @@ class SingleAgentService {
 			case 'status':
 				this.state.status = event.status;
 				this.state.statusMessage = event.message;
+				this.state.retryAttempt = event.attempt;
+				this.state.retryMaxAttempts = event.maxAttempts;
 				break;
 			case 'ready':
 				this.state = {
@@ -1198,6 +1354,7 @@ class SingleAgentService {
 					queuedCount: 0,
 					queuedMessages: [],
 					fileChanges: event.fileChanges.map((file) => ({ ...file })),
+					historyTotal: event.historyTotal ?? event.messages.length + event.activities.length,
 					error: null,
 				};
 				break;
@@ -1217,9 +1374,11 @@ class SingleAgentService {
 				break;
 			case 'user-message':
 				this.state.messages.push({ id: event.id, order: event.order, role: 'user', text: event.text, attachments: event.attachments, status: 'done' });
+				this.state.historyTotal = (this.state.historyTotal ?? this.state.messages.length - 1) + 1;
 				break;
 			case 'assistant-start':
 				this.state.messages.push({ id: event.id, order: event.order, role: 'assistant', text: '', status: 'streaming' });
+				this.state.historyTotal = (this.state.historyTotal ?? this.state.messages.length - 1) + 1;
 				this.state.error = null;
 				break;
 			case 'assistant-delta': {
@@ -1254,7 +1413,10 @@ class SingleAgentService {
 			case 'tool': {
 				const index = this.state.activities.findIndex((item) => item.id === event.activity.id);
 				if (index >= 0) this.state.activities[index] = event.activity;
-				else this.state.activities.push(event.activity);
+				else {
+					this.state.activities.push(event.activity);
+					this.state.historyTotal = (this.state.historyTotal ?? this.state.activities.length - 1) + 1;
+				}
 				break;
 			}
 			case 'queue':
@@ -1337,10 +1499,12 @@ class SingleAgentService {
 				return;
 			}
 			case 'auto_retry_start': {
-				this.fire({
-					type: 'status',
-					status: 'busy',
-					message: `auto retry ${event.attempt}/${event.maxAttempts}`,
+			this.fire({
+				type: 'status',
+				status: 'busy',
+				message: `自动重试 ${event.attempt}/${event.maxAttempts}`,
+				attempt: event.attempt,
+				maxAttempts: event.maxAttempts,
 				});
 				return;
 			}
@@ -1429,7 +1593,11 @@ class SingleAgentService {
 				const order = this.timelineOrder++;
 				this.fire({
 					type: 'tool',
-					activity: { id: event.toolCallId, order, tool: event.toolName, title, status: 'running' },
+					activity: {
+						id: event.toolCallId, order, tool: event.toolName, title, status: 'running',
+						startedAt: Date.now(),
+						...toolCallMeta(event.args),
+					},
 				});
 				return;
 			}
@@ -1438,20 +1606,26 @@ class SingleAgentService {
 				if (now - (this.toolUpdateAt.get(event.toolCallId) ?? 0) < 120) return;
 				this.toolUpdateAt.set(event.toolCallId, now);
 				const title = this.toolTitles.get(event.toolCallId) ?? event.toolName;
-				const order = this.state.activities.find((item) => item.id === event.toolCallId)?.order ?? this.timelineOrder++;
+				const previous = this.state.activities.find((item) => item.id === event.toolCallId);
+				const order = previous?.order ?? this.timelineOrder++;
 				this.fire({ type: 'tool', activity: {
 					id: event.toolCallId,
 					order,
 					tool: event.toolName,
 					title,
 					status: 'running',
+					startedAt: previous?.startedAt ?? null,
+					files: previous?.files ?? null,
+					command: previous?.command ?? null,
 					...toolResultText(event.partialResult),
 				} });
 				return;
 			}
 			case 'tool_execution_end': {
 				const title = this.toolTitles.get(event.toolCallId) ?? event.toolName;
-				const order = this.state.activities.find((item) => item.id === event.toolCallId)?.order ?? this.timelineOrder++;
+				const previous = this.state.activities.find((item) => item.id === event.toolCallId);
+				const order = previous?.order ?? this.timelineOrder++;
+				const rawText = toolResultRawText(event.result);
 				this.toolTitles.delete(event.toolCallId);
 				this.toolUpdateAt.delete(event.toolCallId);
 				this.fire({
@@ -1462,7 +1636,12 @@ class SingleAgentService {
 						tool: event.toolName,
 						title,
 						status: event.isError ? 'error' : 'done',
+						startedAt: previous?.startedAt ?? null,
+						endedAt: Date.now(),
+						files: previous?.files ?? null,
+						command: previous?.command ?? null,
 						...toolResultText(event.result),
+						...toolResultMeta(event.toolName, event.isError, rawText),
 					},
 				});
 				return;
@@ -1518,6 +1697,36 @@ export class AgentService {
 			thinkingLevel: 'off', availableThinkingLevels: ['off'], contextUsage: null, cwd: '', sessionId: null,
 			sessionPath: null, messages: [], activities: [], queuedCount: 0, queuedMessages: [], fileChanges: [], error: null,
 		};
+	}
+
+	/** Forwards to the active context; older timeline slices load on demand. */
+	getHistoryPage(offset: number, limit: number): UiHistoryPage {
+		if (!this.active) throw new Error('会话尚未初始化');
+		return this.active.getHistoryPage(offset, limit);
+	}
+
+	/** Forwards to the active context (3.1). */
+	getSessionStats(): UiSessionStats {
+		if (!this.active) throw new Error('会话尚未初始化');
+		return this.active.getSessionStats();
+	}
+
+	/** Writes the visible branch to disk (3.2). */
+	exportSession(outputPath: string, format: 'html' | 'jsonl'): Promise<string> {
+		if (!this.active) throw new Error('会话尚未初始化');
+		return this.active.exportSession(outputPath, format);
+	}
+
+	/** Entry tree of the active context (3.5). */
+	getSessionTree(): UiSessionTreeNode[] {
+		if (!this.active) throw new Error('会话尚未初始化');
+		return this.active.getSessionTree();
+	}
+
+	/** Branch switch with the plugin guard and cache trim (3.5). */
+	switchSessionBranch(entryId: string): Promise<void> {
+		if (this.pluginOperation) return Promise.reject(new Error('插件设置正在更新，请稍后再试'));
+		return this.requireActive().switchSessionBranch(entryId).finally(() => { void this.trimContexts(); });
 	}
 
 	async listSessions(cwd = this.cwd): Promise<UiSessionSummary[]> {
@@ -1588,6 +1797,35 @@ export class AgentService {
 		});
 	}
 
+	/** Dispose every idle runtime belonging to a project removed from the desktop workspace list. */
+	async forgetWorkspace(cwd: string): Promise<void> {
+		const value = typeof cwd === 'string' ? cwd.trim() : '';
+		if (!value || value.length > 32768 || value.includes('\0')) throw new Error('工作区路径无效');
+		if (this.trimOperation || this.credentialOperation) throw new Error('会话或设置正在更新，请稍后移除项目');
+		const keyOf = (path: string) => {
+			const key = resolve(path);
+			return process.platform === 'win32' ? key.toLowerCase() : key;
+		};
+		const target = keyOf(value);
+		await this.runTransition(async () => {
+			if (this.active && keyOf(this.active.cwd) === target) throw new Error('无法移除当前项目，请先切换到其他项目');
+			const entries = [...this.contexts.entries()].filter(([, service]) => keyOf(service.cwd) === target);
+			if (entries.some(([, service]) => !service.canEvict)
+				|| [...this.reservedSessionPaths.values()].some((service) => keyOf(service.cwd) === target)) {
+				throw new Error('项目中仍有会话或扩展正在运行，请结束后再移除');
+			}
+			const keys = new Set(entries.map(([key]) => key));
+			for (const [key] of entries) this.contexts.delete(key);
+			for (const [rememberedCwd, key] of this.lastContextByCwd) {
+				if (keyOf(rememberedCwd) === target || keys.has(key)) this.lastContextByCwd.delete(rememberedCwd);
+			}
+			for (const trustedCwd of this.projectTrustByCwd.keys()) {
+				if (keyOf(trustedCwd) === target) this.projectTrustByCwd.delete(trustedCwd);
+			}
+			await Promise.all(entries.map(([, service]) => service.dispose()));
+		});
+	}
+
 	async switchSession(path: string): Promise<void> {
 		const cwd = this.cwd;
 		if (!cwd) throw new Error('请先打开工作区');
@@ -1637,8 +1875,33 @@ export class AgentService {
 	async listModelProviders(): Promise<UiModelProvider[]> {
 		if (this.providerOperation) { try { await this.providerOperation; } catch { /* Read restored state after an unsuccessful edit. */ } }
 		const service = this.requireActive();
-		const [document, builtinIds] = await Promise.all([readProviderDocument(join(service.agentDirectory, 'models.json')), getBuiltinProviderIds()]);
+		const [document, builtinIds] = await Promise.all([readProviderDocument(join(service.agentDirectory, 'models.json')), getBuiltinProviderIds(), loadModelPrefs(service.agentDirectory)]);
 		return service.listModelProviders(document, builtinIds);
+	}
+	async setModelEnabled(provider: string, modelId: string, enabled: boolean): Promise<void> {
+		const providerId = validateProviderId(provider);
+		const id = typeof modelId === 'string' ? modelId.trim() : '';
+		if (!id || id.length > 200 || /[\u0000-\u001f\u007f]/u.test(id)) throw new Error('模型 ID 无效');
+		if (typeof enabled !== 'boolean') throw new Error('模型启用参数无效');
+		const service = this.requireActive();
+		if (this.credentialOperation || this.trimOperation) throw new Error('会话或设置正在更新，请稍后再修改模型');
+		const contexts = [...this.contexts.values()];
+		const releases: (() => void)[] = [];
+		try { for (const context of contexts) releases.push(context.lockProviderConfiguration()); }
+		catch (error) { for (const release of releases) release(); throw error; }
+		const operation = Promise.resolve().then(async () => {
+			if (!enabled && contexts.some((context) => {
+				const snapshot = context.getSnapshot();
+				return snapshot.modelProvider === providerId && snapshot.model === id;
+			})) throw new Error('当前或后台会话正在使用此模型，不能从选择器隐藏');
+			await setModelDisabled(service.agentDirectory, providerId, id, !enabled);
+		});
+		this.providerOperation = operation;
+		try { await operation; }
+		finally {
+			for (const release of releases) release();
+			if (this.providerOperation === operation) this.providerOperation = null;
+		}
 	}
 	async saveCustomProvider(input: UiSaveCustomProviderRequest): Promise<void> {
 		const request = validateProviderRequest(input);
@@ -1731,6 +1994,11 @@ export class AgentService {
 	forkAssistantMessage(entryId: string): Promise<void> {
 		if (this.pluginOperation) return Promise.reject(new Error('插件设置正在更新，请稍后再试'));
 		return this.requireActive().forkAssistantMessage(entryId).finally(() => { void this.trimContexts(); });
+	}
+
+	updateQueuedMessage(id: string, action: 'edit' | 'remove' | 'steer', text?: string): Promise<void> {
+		if (this.pluginOperation) return Promise.reject(new Error('插件设置正在更新，请稍后再试'));
+		return this.requireActive().updateQueuedMessage(id, action, text);
 	}
 
 	generateCommitMessage(context: string): Promise<string> {
@@ -2153,6 +2421,21 @@ function historyTimeline(entries: SessionEntry[]): { messages: UiMessage[]; acti
 	const activities = new Map<string, UiToolActivity>();
 	let nextOrder = 0;
 	for (const entry of entries) {
+		// Project compaction/branch summaries and visible extension notices into system rows (3.6).
+		if (entry.type === 'compaction' || entry.type === 'branch_summary' || (entry.type === 'custom_message' && entry.display)) {
+			const text = entry.type === 'custom_message'
+				? (typeof entry.content === 'string' ? entry.content : '')
+				: entry.summary;
+			if (text.trim()) messages.push({
+				id: entry.id,
+				order: nextOrder++,
+				role: 'system',
+				systemKind: entry.type === 'compaction' ? 'compaction' : entry.type === 'branch_summary' ? 'branch-summary' : 'custom',
+				text,
+				status: 'done',
+			});
+			continue;
+		}
 		if (entry.type !== 'message') continue;
 		const message = entry.message;
 		if (message.role === 'user') {
@@ -2172,6 +2455,7 @@ function historyTimeline(entries: SessionEntry[]): { messages: UiMessage[]; acti
 					errorMessage,
 				});
 			}
+			const startedAt = timestampOf(entry.timestamp);
 			if (Array.isArray(message.content)) for (const part of message.content) {
 				if (part.type !== 'toolCall') continue;
 				activities.set(part.id, {
@@ -2180,17 +2464,25 @@ function historyTimeline(entries: SessionEntry[]): { messages: UiMessage[]; acti
 					tool: part.name,
 					title: describeToolUse(part.name, part.arguments),
 					status: 'running',
+					startedAt,
+					...toolCallMeta(part.arguments),
 				});
 			}
 		} else if (message.role === 'toolResult') {
 			const previous = activities.get(message.toolCallId);
+			const rawText = toolResultRawText(message);
 			activities.set(message.toolCallId, {
 				id: message.toolCallId,
 				order: previous?.order ?? nextOrder++,
 				tool: message.toolName,
 				title: previous?.title ?? message.toolName,
 				status: message.isError ? 'error' : 'done',
+				startedAt: previous?.startedAt ?? null,
+				endedAt: timestampOf(entry.timestamp),
+				files: previous?.files ?? null,
+				command: previous?.command ?? null,
 				...toolResultText(message),
+				...toolResultMeta(message.toolName, message.isError, rawText),
 			});
 		}
 	}
@@ -2202,18 +2494,125 @@ function historyTimeline(entries: SessionEntry[]): { messages: UiMessage[]; acti
 	};
 }
 
-function toolResultText(value: unknown): Pick<UiToolActivity, 'detail' | 'detailTruncated'> {
-	if (!value || typeof value !== 'object') return {};
+/** Combined timeline entries (messages plus activities) sorted by order. */
+function timelineEntries(timeline: { messages: UiMessage[]; activities: UiToolActivity[] }): { order: number; message?: UiMessage; activity?: UiToolActivity }[] {
+	return [
+		...timeline.messages.map((message) => ({ order: message.order, message })),
+		...timeline.activities.map((activity) => ({ order: activity.order, activity })),
+	].sort((a, b) => a.order - b.order);
+}
+
+/**
+ * Keep the newest `limit` timeline entries (by order) for the ready payload.
+ * `historyTotal` reports the full count so the renderer can page older slices.
+ */
+export function trimRecentTimeline(timeline: { messages: UiMessage[]; activities: UiToolActivity[] }, limit: number): { messages: UiMessage[]; activities: UiToolActivity[]; historyTotal: number } {
+	const combined = timelineEntries(timeline);
+	if (combined.length <= limit) return { messages: timeline.messages, activities: timeline.activities, historyTotal: combined.length };
+	const cutoff = combined[combined.length - limit]!.order;
+	return {
+		messages: timeline.messages.filter((message) => message.order >= cutoff),
+		activities: timeline.activities.filter((activity) => activity.order >= cutoff),
+		historyTotal: combined.length,
+	};
+}
+
+/** Slice one oldest-first page from a built timeline. */
+export function historyPageSlice(timeline: { messages: UiMessage[]; activities: UiToolActivity[] }, offset: number, limit: number): UiHistoryPage {
+	const combined = timelineEntries(timeline);
+	const slice = combined.slice(offset, offset + limit);
+	return {
+		offset,
+		limit,
+		total: combined.length,
+		messages: slice.flatMap((entry) => (entry.message ? [entry.message] : [])),
+		activities: slice.flatMap((entry) => (entry.activity ? [entry.activity] : [])),
+	};
+}
+
+function toolResultRawText(value: unknown): string {
+	if (!value || typeof value !== 'object') return '';
 	const content = (value as { content?: unknown }).content;
-	if (!Array.isArray(content)) return {};
-	const text = content
+	if (!Array.isArray(content)) return '';
+	return content
 		.filter((part): part is { type: string; text: string } => part?.type === 'text' && typeof part.text === 'string')
 		.map((part) => part.text)
 		.join('\n');
+}
+
+function toolResultText(value: unknown): Pick<UiToolActivity, 'detail' | 'detailTruncated'> {
+	const text = toolResultRawText(value);
 	return text ? {
 		detail: text.slice(0, MAX_TOOL_DETAIL_CHARS),
 		detailTruncated: text.length > MAX_TOOL_DETAIL_CHARS,
 	} : {};
+}
+
+/** Parse persisted entry timestamps; null keeps legacy history renderable. */
+function timestampOf(value: string | undefined): number | null {
+	if (!value) return null;
+	const parsed = Date.parse(value);
+	return Number.isFinite(parsed) ? parsed : null;
+}
+
+/** Structured activity-card metadata: touched paths and the shell command line. Kept IPC-small. */
+export function toolCallMeta(args: unknown): Pick<UiToolActivity, 'files' | 'command'> {
+	if (!args || typeof args !== 'object') return { files: null, command: null };
+	const record = args as Record<string, unknown>;
+	const files = new Set<string>();
+	const add = (value: unknown) => {
+		if (typeof value === 'string' && value.trim()) files.add(value.trim());
+	};
+	add(record.file);
+	add(record.path);
+	if (Array.isArray(record.files)) for (const item of record.files) add(item);
+	if (Array.isArray(record.paths)) for (const item of record.paths) add(item);
+	return {
+		files: files.size > 0 ? [...files].slice(0, 12) : null,
+		command: typeof record.command === 'string' && record.command.trim() ? record.command.trim() : null,
+	};
+}
+
+const EXIT_CODE_PATTERN = /Command exited with code (\d+)/;
+
+/**
+ * Best-effort shell exit status. Successful Pi bash calls report zero; failures
+ * carry the status in the trailing error text ("Command exited with code N").
+ */
+export function toolExitCode(tool: string, isError: boolean, text: string): number | null {
+	if (tool !== 'bash') return null;
+	if (!isError) return 0;
+	const match = EXIT_CODE_PATTERN.exec(text.slice(-400));
+	return match ? Number(match[1]) : null;
+}
+
+/**
+ * Pi's edit tool returns its diff as `+3 added`, `-2 removed`, ` 1 context`
+ * and ` ...` elision rows (dist/core/tools/edit-diff.js). Recognizing that
+ * shape lets activity cards render line-numbered diffs instead of raw text.
+ */
+export function isEditDiffText(tool: string, isError: boolean, text: string): boolean {
+	if (tool !== 'edit' || isError) return false;
+	const lines = text.split('\n');
+	if (lines.at(-1) === '') lines.pop();
+	if (lines.length === 0) return false;
+	let changed = 0;
+	for (const line of lines) {
+		if (/^[+-] *\d+(?: |$)/.test(line)) { changed += 1; continue; }
+		if (/^  *\d+(?: |$)/.test(line) || /^ +\.\.\.$/.test(line)) continue;
+		return false;
+	}
+	return changed > 0;
+}
+
+/** Structured fields for finished calls: exit status and capped edit diffs. */
+export function toolResultMeta(tool: string, isError: boolean, rawText: string): Pick<UiToolActivity, 'exitCode' | 'diff'> {
+	return {
+		exitCode: toolExitCode(tool, isError, rawText),
+		diff: isEditDiffText(tool, isError, rawText)
+			? rawText.length > MAX_TOOL_DETAIL_CHARS ? rawText.slice(0, MAX_TOOL_DETAIL_CHARS) : rawText
+			: null,
+	};
 }
 
 function truncate(value: string, max: number): string {

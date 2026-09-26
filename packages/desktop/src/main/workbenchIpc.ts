@@ -29,6 +29,22 @@ export function registerWorkbenchIpc(getWorkspace: () => string): WorkbenchServi
 		}
 		await service.openWorkspaceInVsCode(cwd);
 	});
+	ipcMain.handle(IPC_CHANNELS.workspaceOpenPathInEditor, async (event, relativePath: unknown, line: unknown) => {
+		const win = BrowserWindow.fromWebContents(event.sender);
+		if (!win || win.isDestroyed() || event.sender.isDestroyed() || win.webContents !== event.sender || event.senderFrame !== win.webContents.mainFrame) {
+			throw new Error('无法确认编辑器打开请求来源');
+		}
+		if (typeof relativePath !== 'string') throw new Error('文件路径无效');
+		await service.openPathInEditor(relativePath, typeof line === 'number' ? line : undefined);
+	});
+	ipcMain.handle(IPC_CHANNELS.workspaceRevealPath, async (event, relativePath: unknown) => {
+		const win = BrowserWindow.fromWebContents(event.sender);
+		if (!win || win.isDestroyed() || event.sender.isDestroyed() || win.webContents !== event.sender || event.senderFrame !== win.webContents.mainFrame) {
+			throw new Error('无法确认文件定位请求来源');
+		}
+		if (typeof relativePath !== 'string') throw new Error('文件路径无效');
+		await service.revealPathInFolder(relativePath, (path) => shell.showItemInFolder(path));
+	});
 	ipcMain.handle(IPC_CHANNELS.workspaceOpeners, () => service.listWorkspaceOpeners());
 	ipcMain.handle(IPC_CHANNELS.workspaceCommitContext, () => service.gitCommitContext());
 	ipcMain.handle(IPC_CHANNELS.workspaceCommit, (_event, message: string) => service.gitCommit(message));
@@ -38,6 +54,22 @@ export function registerWorkbenchIpc(getWorkspace: () => string): WorkbenchServi
 	ipcMain.handle(IPC_CHANNELS.workspaceGitDiff, (_event, relativePath: string) => service.gitDiff(relativePath));
 	ipcMain.handle(IPC_CHANNELS.workspaceBranches, () => service.gitBranches());
 	ipcMain.handle(IPC_CHANNELS.workspaceCheckoutBranch, (_event, branch: string) => service.gitCheckout(branch));
+	ipcMain.handle(IPC_CHANNELS.workspaceGitSetStaged, (_event, paths: unknown, staged: unknown) => {
+		if (!Array.isArray(paths) || typeof staged !== 'boolean') throw new Error('暂存参数无效');
+		return service.gitSetStaged(paths, staged);
+	});
+	ipcMain.handle(IPC_CHANNELS.workspaceGitDiscard, (_event, paths: unknown) => {
+		if (!Array.isArray(paths)) throw new Error('丢弃参数无效');
+		return service.gitDiscard(paths);
+	});
+	ipcMain.handle(IPC_CHANNELS.workspaceGitLog, (_event, limit: unknown) => {
+		const count = typeof limit === 'number' ? limit : 30;
+		return service.gitLog(count);
+	});
+	ipcMain.handle(IPC_CHANNELS.workspaceGitCreateBranch, (_event, name: unknown, checkout: unknown) => {
+		if (typeof name !== 'string' || typeof checkout !== 'boolean') throw new Error('分支参数无效');
+		return service.gitCreateBranch(name, checkout);
+	});
 	ipcMain.handle(IPC_CHANNELS.workspaceCommandStart, async (event, command: string) => {
 		if (typeof command !== 'string' || !command.trim() || command.length > 4000) throw new Error('命令无效或过长');
 		const win = BrowserWindow.fromWebContents(event.sender);

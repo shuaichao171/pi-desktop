@@ -5,11 +5,12 @@ export interface ModelProviderGroup {
 	models: UiModelSummary[];
 }
 
-/** Search the whole catalog before grouping; keep each provider's model order. */
-export function groupModelsByProvider(models: UiModelSummary[], query: string, locale: string): ModelProviderGroup[] {
+/** Search the whole catalog before grouping; keep each provider's model order. Unset providers keep every model (loading state). */
+export function groupModelsByProvider(models: UiModelSummary[], query: string, locale: string, allowedProviders?: ReadonlySet<string>): ModelProviderGroup[] {
 	const search = query.trim().toLowerCase();
 	const grouped = new Map<string, UiModelSummary[]>();
 	for (const model of models) {
+		if (allowedProviders && !allowedProviders.has(model.provider)) continue;
 		if (search && !`${model.provider} ${model.id} ${model.name}`.toLowerCase().includes(search)) continue;
 		const group = grouped.get(model.provider);
 		if (group) group.push(model);

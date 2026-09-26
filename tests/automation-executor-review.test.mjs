@@ -185,6 +185,7 @@ test('automation IPC accepts only its current main renderer and starts schedulin
     './workbenchIpc': `export const registerWorkbenchIpc=()=>({async reset(){},async dispose(){}});`,
     './updateService': `export const updateService={};`,
     './tray': `export const createAppTray=()=>null;export const destroyAppTray=()=>{};export const updateAppTrayMenu=()=>{};`,
+    './notifications': `export const createDesktopNotifier=()=>({handleAgentEvent(){},handleAutomationRun(){}});`,
   };
   const hook = registerHooks({ resolve(specifier, context, nextResolve) {
     if (context.parentURL?.includes('/main/ipc.ts?automation-sender-review') && stubSources[specifier]) {

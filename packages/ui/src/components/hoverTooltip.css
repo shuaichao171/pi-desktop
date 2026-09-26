@@ -21,7 +21,7 @@
   color: var(--pd-tooltip-text);
   box-shadow: var(--pd-shadow-low);
   font-family: 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif;
-  font-size: 12px;
+  font-size: var(--pd-font-caption);
   line-height: 1.4;
   text-align: left;
   -webkit-app-region: no-drag;

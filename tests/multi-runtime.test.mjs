@@ -268,3 +268,38 @@ test('Pi extension dialogs reach the desktop callback and a background session k
     rmSync(resolvedTemp, { recursive: true, force: true });
   }
 });
+
+test('removed projects dispose their idle cached runtimes without deleting sessions', async () => {
+  const tempRoot = mkdtempSync(join(tmpdir(), 'pi-desktop-forget-workspace-'));
+  const workspace = join(tempRoot, 'workspace');
+  const otherWorkspace = join(tempRoot, 'other');
+  mkdirSync(workspace); mkdirSync(otherWorkspace);
+  const previous = new Map(['PI_CODING_AGENT_DIR', 'PI_OFFLINE'].map((key) => [key, process.env[key]]));
+  process.env.PI_CODING_AGENT_DIR = join(tempRoot, 'agent');
+  process.env.PI_OFFLINE = '1';
+  let service;
+  try {
+    const { AgentService } = await import('../packages/agent/src/index.ts');
+    service = new AgentService();
+    await service.init({ cwd: workspace });
+    const path = service.getSnapshot().sessionPath;
+    await service.renameSession(path, 'Kept on disk');
+    await service.switchWorkspace(otherWorkspace);
+    assert.ok([...service.contexts.values()].some((context) => resolve(context.cwd) === resolve(workspace)));
+    await service.forgetWorkspace(workspace);
+    assert.equal(service.getSnapshot().cwd, otherWorkspace);
+    assert.ok(![...service.contexts.values()].some((context) => resolve(context.cwd) === resolve(workspace)));
+    assert.ok(![...service.lastContextByCwd.keys()].some((cwd) => resolve(cwd) === resolve(workspace)));
+    assert.equal(existsSync(path), true, 'removing a project from the desktop must keep Pi sessions on disk');
+    await assert.rejects(service.forgetWorkspace(otherWorkspace), /当前项目|切换/);
+  } finally {
+    await service?.dispose();
+    for (const [key, value] of previous) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    const resolvedTemp = resolve(tempRoot);
+    if (!resolvedTemp.startsWith(realpathSync(tmpdir()) + sep)) throw new Error('Unsafe temporary path');
+    rmSync(resolvedTemp, { recursive: true, force: true });
+  }
+});

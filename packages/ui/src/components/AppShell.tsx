@@ -13,6 +13,7 @@ import { ExtensionDialogHost } from './ExtensionDialogHost';
 import { UpdateNotice } from './UpdateNotice';
 import { WorkbenchSidePane, type WorkbenchOpenRequest } from './WorkbenchSidePane';
 import { useChatStore } from '../store';
+import { bindingKeysFor, matchesShortcut } from '../shortcuts/bindings';
 import { useT } from '../i18n';
 import { useSessionNavigation } from '../useSessionNavigation';
 import { HistoryNavigation, type HistoryNavigationProps } from './HistoryNavigation';
@@ -71,6 +72,7 @@ export function AppShell() {
 	const resizeStart = useRef<{ x: number; width: number } | null>(null);
 	const workbenchToggleRef = useRef<HTMLButtonElement>(null);
 	const platform = useChatStore((state) => state.appInfo?.platform);
+	const commandBridge = useChatStore((state) => state.bridge);
 	const isWindows = (platform ?? (navigator.userAgent.includes('Windows') ? 'win32' : '')) === 'win32';
 	const history: HistoryNavigationProps = {
 		canGoBack: navigation.canGoBack,
@@ -83,7 +85,7 @@ export function AppShell() {
 	useEffect(() => {
 		const onKeyDown = (event: KeyboardEvent) => {
 			if (event.defaultPrevented || event.isComposing || event.keyCode === 229 || event.altKey || event.shiftKey || !(event.ctrlKey || event.metaKey)) return;
-			const direction = event.key === '[' || event.code === 'BracketLeft' ? 'back' : event.key === ']' || event.code === 'BracketRight' ? 'forward' : null;
+			const direction = matchesShortcut(event, bindingKeysFor('historyBack')) ? 'back' : matchesShortcut(event, bindingKeysFor('historyForward')) ? 'forward' : null;
 			if (!direction || document.querySelector('[role="dialog"][aria-modal="true"]')) return;
 			event.preventDefault();
 			setSearchMessageTarget(null);
@@ -94,6 +96,24 @@ export function AppShell() {
 		window.addEventListener('keydown', onKeyDown);
 		return () => window.removeEventListener('keydown', onKeyDown);
 	}, [navigation.goBack, navigation.goForward]);
+
+	// Tray menu / notification-click commands from the main process (4.1).
+	useEffect(() => {
+		const bridge = commandBridge;
+		if (!bridge?.onAppCommand) return;
+		return bridge.onAppCommand((command) => {
+			setMainView('chat');
+			setSearchMessageTarget(null);
+			if (command.type === 'new-session') {
+				void useChatStore.getState().newSession();
+				return;
+			}
+			const state = useChatStore.getState();
+			const workspace = Object.entries(state.sessionsByWorkspace)
+				.find(([, sessions]) => sessions.some((session) => session.path === command.path))?.[0];
+			if (workspace) void state.selectSession(workspace, command.path);
+		});
+	}, [commandBridge]);
 
 	useEffect(() => {
 		const media = window.matchMedia(NARROW_WINDOW_QUERY);
@@ -149,14 +169,13 @@ export function AppShell() {
 	useEffect(() => {
 		const onKeyDown = (event: KeyboardEvent) => {
 			if (event.defaultPrevented || event.isComposing) return;
-			const key = event.key.toLowerCase();
-			if ((event.ctrlKey || event.metaKey) && !event.altKey && ((!event.shiftKey && key === 'k') || (event.shiftKey && key === 'p'))) {
+			if (matchesShortcut(event, bindingKeysFor('search')) || matchesShortcut(event, bindingKeysFor('commandPalette'))) {
 				if (document.querySelector('[role="dialog"][aria-modal="true"]')) return;
 				event.preventDefault();
 				setSearchOpen(true);
 				return;
 			}
-			if ((event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === 'b') {
+			if (matchesShortcut(event, bindingKeysFor('toggleSidebar'))) {
 				event.preventDefault();
 				setSidebarOpen((open) => !open);
 			}

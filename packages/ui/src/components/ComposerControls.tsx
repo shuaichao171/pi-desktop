@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import type { UiThinkingLevel } from '@pidesktop/shared';
 import { useChatStore } from '../store';
 import { useT } from '../i18n';
-import { groupModelsByProvider, listUnconfiguredProviders, selectModelProvider } from '../modelPicker';
+import { groupModelsByProvider, selectModelProvider } from '../modelPicker';
 import type { ModelManagementTarget } from '../modelManagement';
 import { HoverTooltip } from './HoverTooltip';
 import { Icon } from './Icons';
@@ -64,8 +64,14 @@ export function ComposerControls({ onOpenModelManagement }: { onOpenModelManagem
 	const amount = usage?.tokens ?? null;
 	const capacityLabel = capacity ? tokenLabel(capacity) : '—';
 	const thinkingLabel = thinking ? t(`composer.thinking.${thinking}`) : t('composer.pickerThinking');
-	const providerGroups = useMemo(() => groupModelsByProvider(models, search, locale), [models, search, locale]);
-	const unconfiguredProviders = useMemo(() => listUnconfiguredProviders(modelProviders, providerAuth, search, locale), [modelProviders, providerAuth, search, locale]);
+	const configuredProviders = useMemo(() => {
+		if (!modelProviders.length && !providerAuth.length) return undefined;
+		const byProvider = new Map(providerAuth.map((item) => [item.provider, item.configured]));
+		const configured = new Set<string>();
+		for (const item of modelProviders) if (byProvider.get(item.provider) ?? item.configured) configured.add(item.provider);
+		return configured;
+	}, [modelProviders, providerAuth]);
+	const providerGroups = useMemo(() => groupModelsByProvider(models, search, locale, configuredProviders), [models, search, locale, configuredProviders]);
 	const activeProvider = selectModelProvider(providerGroups, requestedProvider, provider);
 	const visibleModels = providerGroups.find((group) => group.provider === activeProvider)?.models ?? [];
 	const providerTabId = (name: string) => `${pickerId}-provider-${encodeURIComponent(name)}`;
@@ -273,10 +279,6 @@ export function ComposerControls({ onOpenModelManagement }: { onOpenModelManagem
 						</div>
 					</section>
 				</div> : <div className="pd-composer-picker-empty">{t(loading ? 'composer.pickerLoading' : search ? 'composer.pickerNoMatch' : 'composer.pickerEmpty')}</div>}
-				{unconfiguredProviders.length > 0 && <section className="pd-composer-unconfigured" aria-label={t('settings.providersUnconfigured')}>
-					<div className="pd-composer-unconfigured-heading"><span>{t('settings.providersUnconfigured')}</span><small>{t('composer.configureProviderHint')}</small></div>
-					<div className="pd-composer-unconfigured-list">{unconfiguredProviders.map((item) => <button key={item.provider} type="button" data-configure-provider={item.provider} disabled={pending} onClick={() => openManagement({ kind: 'provider', provider: item.provider })}><span>{item.name}</span><Icon name="chevronRight" width="12" height="12" /></button>)}</div>
-				</section>}
 				<div className="pd-composer-model-actions">
 					<button type="button" disabled={pending} onClick={() => openManagement({ kind: 'add-provider' })}><Icon name="plus" width="15" height="15" /><span>{t('settings.providerAdd')}</span></button>
 					<button type="button" disabled={pending} onClick={() => openManagement({ kind: 'manage' })}><Icon name="settings" width="15" height="15" /><span>{t('settings.modelManagement')}</span></button>

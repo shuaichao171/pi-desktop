@@ -1,8 +1,58 @@
-import { memo, useId, useLayoutEffect, useRef, useState } from 'react';
+import { memo, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import type { UiToolActivity } from '@pidesktop/shared';
 import { useT } from '../i18n';
 import { ActivityDisclosure, ActivityLabel } from './ActivityDisclosure';
 import { Icon } from './Icons';
+import { ToolDiffView } from './toolRenderers/ToolDiffView';
+
+function formatDuration(ms: number): string {
+	if (ms < 0) ms = 0;
+	const seconds = ms / 1000;
+	if (seconds < 10) return `${seconds.toFixed(1)}s`;
+	if (seconds < 60) return `${Math.round(seconds)}s`;
+	const minutes = Math.floor(seconds / 60);
+	const rest = Math.round(seconds % 60);
+	if (minutes < 60) return `${minutes}m ${String(rest).padStart(2, '0')}s`;
+	const hours = Math.floor(minutes / 60);
+	return `${hours}h ${String(minutes % 60).padStart(2, '0')}m`;
+}
+
+/** Elapsed label for one activity; ticks once per second while it runs. */
+function useDurationLabel(activity: UiToolActivity): string | null {
+	const running = activity.status === 'running';
+	const [now, setNow] = useState(() => Date.now());
+	useEffect(() => {
+		if (!running || activity.startedAt == null) return;
+		setNow(Date.now());
+		const timer = window.setInterval(() => setNow(Date.now()), 1000);
+		return () => window.clearInterval(timer);
+	}, [running, activity.startedAt]);
+	if (activity.startedAt == null) return null;
+	const end = running ? now : activity.endedAt;
+	if (end == null) return null;
+	return formatDuration(end - activity.startedAt);
+}
+
+function ActivityFiles({ files }: { files: string[] }) {
+	const { t } = useT();
+	const [copied, setCopied] = useState('');
+	const copyPath = async (path: string) => {
+		try {
+			await navigator.clipboard.writeText(path);
+			setCopied(path);
+			window.setTimeout(() => setCopied((current) => (current === path ? '' : current)), 1200);
+		} catch {
+			// Clipboard refusal is non-fatal; the path stays selectable as text.
+		}
+	};
+	return <div className="pd-activity-files">{files.map((file) => (
+		<button type="button" key={file} className="pd-activity-file" title={file} onClick={() => void copyPath(file)} aria-label={t('chat.tool.copyPath', { path: file })}>
+			<Icon name="file" width="12" height="12" />
+			<span>{file}</span>
+			{copied === file && <span className="pd-activity-file-copied" role="status">{t('chat.tool.pathCopied')}</span>}
+		</button>
+	))}</div>;
+}
 
 export function ToolActivityItem({ activity, onInteract }: { activity: UiToolActivity; onInteract?(): void }) {
 	const { t, locale } = useT();
@@ -18,6 +68,7 @@ export function ToolActivityItem({ activity, onInteract }: { activity: UiToolAct
 	const detail = activity.detail ?? '';
 	const previewLength = 12000;
 	const isLong = detail.length > previewLength;
+	const duration = useDurationLabel(activity);
 	// Keep the newest output visible during execution; allow access to all retained content.
 	const showingTail = !showAll && isLong && activity.status === 'running';
 	const visibleDetail = showAll ? detail : showingTail ? detail.slice(-previewLength) : detail.slice(0, previewLength);
@@ -29,24 +80,37 @@ export function ToolActivityItem({ activity, onInteract }: { activity: UiToolAct
 
 	async function copyDetail() {
 		try {
-			await navigator.clipboard.writeText(visibleDetail);
+			await navigator.clipboard.writeText(activity.diff ?? visibleDetail);
 			setCopyStatus(t('chat.tool.copied'));
 		} catch {
 			setCopyStatus(t('chat.tool.copyFailed'));
 		}
 	}
 
+	const files = activity.files ?? [];
 	return (
 		<div className={'pd-activity-item is-' + activity.status}>
 			<button type="button" className="pd-activity-head" onClick={() => { setUserExpanded(!expanded); onInteract?.(); }} aria-expanded={expanded} aria-controls={detailId}>
 				<span className={'pd-activity-icon is-' + activity.status} aria-hidden="true"><Icon name={activity.status === 'done' ? 'check' : activity.status === 'error' ? 'close' : activity.status === 'interrupted' ? 'square' : activity.tool === 'bash' ? 'terminal' : 'file'} width="14" height="14" /></span>
 				<span className="pd-activity-copy"><ActivityLabel active={activity.status === 'running'}>{activity.tool}</ActivityLabel><span className="pd-activity-title" title={activity.title}>{activity.title}</span></span>
+				{activity.exitCode != null && activity.exitCode !== 0 && <span className="pd-activity-exit is-error">{t('chat.tool.exitCode', { code: activity.exitCode })}</span>}
+				{duration && <span className="pd-activity-duration">{duration}</span>}
 				<span className={'pd-activity-status is-' + activity.status}>{t('chat.tool.' + activity.status)}</span>
 				<Icon name="chevronDown" className={'pd-chevron' + (expanded ? ' is-open' : '')} width="14" height="14" />
 			</button>
 			<ActivityDisclosure id={detailId} expanded={expanded}>
 				<div className="pd-activity-detail">
-					{detail ? <>
+					{files.length > 0 && <ActivityFiles files={files} />}
+					{activity.diff ? <>
+						<div className="pd-activity-output-heading">
+							<span>{t('chat.tool.diffOutput')}</span>
+							<div className="pd-activity-output-actions">
+								<button type="button" onClick={() => void copyDetail()} aria-label={t('chat.tool.copyLabel', { tool: activity.tool })}>{t('chat.tool.copy')}</button>
+							</div>
+						</div>
+						<ToolDiffView diff={activity.diff} />
+						{copyStatus && <span className="pd-activity-copy-status" role="status">{copyStatus}</span>}
+					</> : detail ? <>
 						<div className="pd-activity-output-heading">
 							<span>{t(activity.status === 'error' ? 'chat.tool.errorOutput' : activity.status === 'interrupted' ? 'chat.tool.interruptedOutput' : activity.status === 'running' ? 'chat.tool.liveOutput' : 'chat.tool.result')}</span>
 							<div className="pd-activity-output-actions">

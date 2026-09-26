@@ -4,9 +4,12 @@ import { test } from 'node:test';
 import {
   buildSidebarGroups,
   collectSidebarSessions,
+  clearPinnedProjects,
   groupSessionsByDate,
   readSidebarPreferences,
+  readPinnedProjects,
   saveSidebarPreferences,
+  savePinnedProjects,
   selectSidebarSessions,
 } from '../packages/ui/src/sidebarOrganization.ts';
 
@@ -34,6 +37,20 @@ test('sidebar preferences survive storage and tolerate corrupt or unavailable st
   assert.deepEqual(readSidebarPreferences(storage), defaults);
   assert.deepEqual(readSidebarPreferences({ getItem() { throw new Error('blocked'); } }), defaults);
   assert.doesNotThrow(() => saveSidebarPreferences(preferred, { setItem() { throw new Error('quota'); } }));
+});
+
+test('legacy project pins migrate safely and can be cleared after desktop persistence', () => {
+  let stored;
+  const storage = {
+    getItem(key) { assert.equal(key, 'pi-desktop.pinned-projects.v1'); return stored; },
+    setItem(key, value) { assert.equal(key, 'pi-desktop.pinned-projects.v1'); stored = value; },
+    removeItem(key) { assert.equal(key, 'pi-desktop.pinned-projects.v1'); stored = undefined; },
+  };
+  savePinnedProjects(['C:/one', 'C:/one', 'D:/two'], storage);
+  assert.deepEqual(readPinnedProjects(storage), ['C:/one', 'D:/two']);
+  clearPinnedProjects(storage);
+  assert.deepEqual(readPinnedProjects(storage), []);
+  assert.doesNotThrow(() => clearPinnedProjects({ removeItem() { throw new Error('blocked'); } }));
 });
 
 test('sidebar preference validation preserves valid fields and supplies independent defaults', () => {

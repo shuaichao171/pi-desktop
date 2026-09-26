@@ -8,6 +8,7 @@ import { HoverTooltip } from './HoverTooltip';
 import { Icon } from './Icons';
 import { ThinkingActivity } from './ThinkingActivity';
 import { ActivityLabel } from './ActivityDisclosure';
+import { renderMarkdownPre } from './CodeBlock';
 
 function AttachmentPreview({ attachment }: { attachment: UiAttachment }) {
 	const { t } = useT();
@@ -29,7 +30,7 @@ function AttachmentPreview({ attachment }: { attachment: UiAttachment }) {
 }
 
 /** Sent messages reveal copy and edit actions on hover, zcode-style. */
-const UserMessageItem = memo(function UserMessageItem({ message, highlighted }: { message: UiMessage; highlighted: boolean }) {
+const UserMessageItem = memo(function UserMessageItem({ message, highlighted, findMatch }: { message: UiMessage; highlighted: boolean; findMatch?: boolean }) {
 	const { t } = useT();
 	const [copied, setCopied] = useState(false);
 	const [editing, setEditing] = useState(false);
@@ -109,7 +110,7 @@ const UserMessageItem = memo(function UserMessageItem({ message, highlighted }: 
 	}
 
 	return (
-		<div className={`pd-message-row is-user${highlighted ? ' is-search-match' : ''}`} data-message-id={message.id}>
+		<div className={`pd-message-row is-user${highlighted ? ' is-search-match' : ''}${findMatch ? ' is-find-match' : ''}`} data-message-id={message.id}>
 			<div className="pd-message-column">
 				<div className="pd-user-bubble">{message.text && <p>{message.text}</p>}{Boolean(message.attachments?.length) && <div className="pd-message-attachments">{message.attachments?.map((attachment, index) => <AttachmentPreview key={`${attachment.name}-${index}`} attachment={attachment} />)}</div>}</div>
 				<div className="pd-message-actions">
@@ -121,10 +122,11 @@ const UserMessageItem = memo(function UserMessageItem({ message, highlighted }: 
 	);
 });
 
-const AssistantMessageItem = memo(function AssistantMessageItem({ message, highlighted }: { message: UiMessage; highlighted: boolean }) {
+const AssistantMessageItem = memo(function AssistantMessageItem({ message, highlighted, showHeading = true, findMatch, canRegenerate = false }: { message: UiMessage; highlighted: boolean; showHeading?: boolean; findMatch?: boolean; canRegenerate?: boolean }) {
 	const { t } = useT();
 	const [copied, setCopied] = useState(false);
 	const [forking, setForking] = useState(false);
+	const [regenerating, setRegenerating] = useState(false);
 
 	const copy = async () => {
 		if (!message.text || !navigator.clipboard) return;
@@ -144,22 +146,34 @@ const AssistantMessageItem = memo(function AssistantMessageItem({ message, highl
 			setForking(false);
 		}
 	};
+	const regenerate = async () => {
+		if (regenerating) return;
+		setRegenerating(true);
+		try {
+			await useChatStore.getState().regenerate();
+		} catch {
+			// The store surfaces the failure; the branch stays untouched.
+		} finally {
+			setRegenerating(false);
+		}
+	};
 
 	const hasThinking = Boolean(message.thinking || message.thinkingStatus);
 	const showActions = message.status === 'done' && Boolean(message.text);
 
 	if (message.status === 'done' && !message.text && !hasThinking && !message.errorMessage) return null;
 	return (
-		<div className={`pd-message-row is-assistant${highlighted ? ' is-search-match' : ''}`} data-message-id={message.id}>
+		<div className={`pd-message-row is-assistant${highlighted ? ' is-search-match' : ''}${findMatch ? ' is-find-match' : ''}`} data-message-id={message.id}>
 			<div className="pd-message-column">
-				<div className="pd-assistant-heading"><span className="pd-assistant-mark">π</span><span>Pi</span></div>
+				{showHeading && <div className="pd-assistant-heading"><span className="pd-assistant-mark">π</span><span>Pi</span></div>}
 				{hasThinking && <ThinkingActivity message={message} />}
-				{message.text && <div className="pd-markdown"><Markdown remarkPlugins={[remarkGfm]}>{message.text}</Markdown></div>}
+				{message.text && <div className="pd-markdown"><Markdown remarkPlugins={[remarkGfm]} components={{ pre: renderMarkdownPre }}>{message.text}</Markdown></div>}
 				{message.status === 'streaming' && message.thinkingStatus !== 'streaming' && <span className="pd-response-pending" role="status"><ActivityLabel active>{t(message.text ? 'message.generating' : 'message.preparing')}</ActivityLabel></span>}
 				{message.status === 'error' && <div className="pd-message-interrupted">{message.errorMessage || t('message.interrupted')}</div>}
 				{showActions && (
 					<div className="pd-message-actions">
 						<button type="button" className="pd-message-action" onClick={() => void copy()} aria-label={t(copied ? 'message.copied' : 'message.copy')}><Icon name={copied ? 'check' : 'copy'} width="14" height="14" /></button>
+						{canRegenerate && <button type="button" className="pd-message-action" onClick={() => void regenerate()} disabled={regenerating} aria-label={t('message.regenerate')}><Icon name={regenerating ? 'more' : 'gitBranch'} width="14" height="14" /></button>}
 						<button type="button" className="pd-message-action" onClick={() => void fork()} disabled={forking} aria-label={t('message.fork')}><Icon name="gitBranch" width="14" height="14" /></button>
 					</div>
 				)}
@@ -167,7 +181,21 @@ const AssistantMessageItem = memo(function AssistantMessageItem({ message, highl
 		</div>
 	);
 });
-export const MessageItem = memo(function MessageItem({ message, highlighted = false }: { message: UiMessage; highlighted?: boolean }) {
-	if (message.role === 'user') return <UserMessageItem message={message} highlighted={highlighted} />;
-	return <AssistantMessageItem message={message} highlighted={highlighted} />;
+
+/** System rows surface compaction/branch summaries as collapsible notices (3.6). */
+const SystemMessageItem = memo(function SystemMessageItem({ message, highlighted, findMatch }: { message: UiMessage; highlighted: boolean; findMatch?: boolean }) {
+	const { t } = useT();
+	return (
+		<div className={`pd-message-row is-system${highlighted ? ' is-search-match' : ''}${findMatch ? ' is-find-match' : ''}`} data-message-id={message.id}>
+			<details className="pd-system-notice" data-system-kind={message.systemKind}>
+				<summary><Icon name={message.systemKind === 'compaction' ? 'archive' : message.systemKind === 'branch-summary' ? 'gitBranch' : 'file'} width="13" height="13" />{t(`message.system.${message.systemKind ?? 'custom'}`)}</summary>
+				<div className="pd-system-notice-body">{message.text}</div>
+			</details>
+		</div>
+		);
+});
+export const MessageItem = memo(function MessageItem({ message, highlighted = false, showHeading = true, findMatch, canRegenerate }: { message: UiMessage; highlighted?: boolean; showHeading?: boolean; findMatch?: boolean; canRegenerate?: boolean }) {
+	if (message.role === 'system') return <SystemMessageItem message={message} highlighted={highlighted} findMatch={findMatch} />;
+	if (message.role === 'user') return <UserMessageItem message={message} highlighted={highlighted} findMatch={findMatch} />;
+	return <AssistantMessageItem message={message} highlighted={highlighted} showHeading={showHeading} findMatch={findMatch} canRegenerate={canRegenerate} />;
 });

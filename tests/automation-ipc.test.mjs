@@ -13,6 +13,7 @@ const stubs = {
     export const Tray = class {};
     export const BrowserWindow = { getAllWindows: () => [] };
     export const dialog = { showErrorBox: () => {} };
+    export const Notification = class { static isSupported() { return false; } on() { return this; } show() {} };
     export const ipcMain = { handle: (channel, handler) => globalThis.__automationHandlers.set(channel, handler) };
   `,
   './agentClient': 'export const createIsolatedAgentService = () => ({ onEvent() {}, onBackgroundActivity() {}, async dispose() {} });',

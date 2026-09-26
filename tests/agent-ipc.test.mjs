@@ -17,6 +17,7 @@ const stubs = {
       fromWebContents: (sender) => globalThis.__ipcWindows?.find((win) => win.webContents === sender),
     };
     export const dialog = { showErrorBox: () => {} };
+    export const Notification = class { static isSupported() { return false; } on() { return this; } show() {} };
     export const ipcMain = { handle: (channel, handler) => globalThis.__ipcHandlers.set(channel, handler) };
   `,
   './agentClient': `

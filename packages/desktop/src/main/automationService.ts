@@ -21,6 +21,8 @@ export interface AutomationServiceOptions {
   execute: (automation: UiAutomation, signal: AbortSignal) => Promise<AutomationExecutionResult>;
   validateWorkspace?: (cwd: string) => Promise<void>;
   onChanged?: (snapshot: UiAutomationSnapshot) => void;
+  /** Fired once a run settles (succeeded/failed/cancelled); used for OS notifications (4.1). */
+  onRunFinished?: (entry: UiAutomationRun, task: UiAutomation) => void;
   onError?: (error: unknown) => void;
   now?: () => number;
   pollIntervalMs?: number;
@@ -354,6 +356,7 @@ export class AutomationService {
         error = message(caught);
         if (object(caught)) result = caught as Partial<AutomationExecutionResult>;
       }
+      let finishedEntry: UiAutomationRun | null = null;
       await this.serialize(async () => {
         const finished = structuredClone(this.state);
         const entry = finished.runs.find((item) => item.id === run.id)!;
@@ -373,7 +376,9 @@ export class AutomationService {
           } : {}),
         });
         await this.commit(finished);
+        finishedEntry = structuredClone(entry);
       });
+      if (finishedEntry) { try { this.options.onRunFinished?.(finishedEntry, task); } catch { /* notifications must never break runs */ } }
     }).finally(() => { this.active.delete(run.id); });
     this.active.set(run.id, { controller, done });
     void done.catch((error) => this.report(error));

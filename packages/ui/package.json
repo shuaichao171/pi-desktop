@@ -14,6 +14,8 @@
   },
   "dependencies": {
     "@pidesktop/shared": "workspace:*",
+    "@tanstack/react-virtual": "^3.13.12",
+    "highlight.js": "^11.11.1",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
     "react-markdown": "^10.1.0",

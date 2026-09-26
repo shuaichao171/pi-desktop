@@ -1,6 +1,6 @@
 import { app, BrowserWindow, dialog, Menu, session, shell } from 'electron';
 import { mkdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { IPC_CHANNELS } from '@pidesktop/shared';
 import { getAppLocale } from './appLocale';
@@ -146,13 +146,63 @@ function createWindow(onReady?: () => void, onLoadError?: (error: unknown) => vo
 		if (unresponsiveTimer) clearTimeout(unresponsiveTimer);
 		unresponsiveTimer = null;
 	});
-	// Windows mirrors ZCode: the close button hides to the tray while the
-	// agent keeps running. Real exits set readyToQuit (quit menu, updates, or
-	// window-all-closed paths) before closing.
+	// Windows mirrors ZCode: closing hides to the tray while the agent keeps
+	// running. 4.2: the behavior follows the desktop setting — hide to tray by
+	// default (with a notice while tasks run), or quit after a confirm dialog.
+	let closeDialogOpen = false;
+	const requestClose = (): void => {
+		if (closeDialogOpen || win.isDestroyed()) return;
+		closeDialogOpen = true;
+		void (async () => {
+			try {
+				const settings = ipc ? ipc.readCurrentDesktopSettings() : { notificationsEnabled: true, closeBehavior: 'tray' as const };
+				const busy = ipc ? await ipc.isAgentWorkActive() : false;
+				const english = getAppLocale() === 'en-US';
+				if (!busy) {
+					if (settings.closeBehavior === 'quit') { readyToQuit = true; app.quit(); } else win.hide();
+					return;
+				}
+				if (settings.closeBehavior === 'quit') {
+					const choice = await dialog.showMessageBox(win, {
+						type: 'warning',
+						message: english ? 'Tasks are still running' : '仍有任务在运行',
+						detail: english ? 'Quitting interrupts the running conversation or automation.' : '退出会中断正在运行的会话或自动化任务。',
+						buttons: [english ? 'Cancel' : '取消', english ? 'Quit' : '退出'],
+						defaultId: 0,
+						cancelId: 0,
+					});
+					if (choice.response === 1) { readyToQuit = true; app.quit(); }
+					return;
+				}
+				const choice = await dialog.showMessageBox(win, {
+					type: 'info',
+					message: english ? 'Pi Desktop is still running tasks' : 'Pi Desktop 仍有任务在运行',
+					detail: english ? 'It keeps running from the tray.' : '窗口将最小化到托盘，任务继续在后台运行。',
+					buttons: [english ? 'Minimize to tray' : '最小化到托盘', english ? 'Quit anyway' : '仍要退出'],
+					checkboxLabel: english ? 'Remember my choice' : '记住我的选择',
+					defaultId: 0,
+					cancelId: 0,
+				});
+				if (choice.response === 1) {
+					if (choice.checkboxChecked) void ipc?.saveCloseBehavior('quit');
+					readyToQuit = true;
+					app.quit();
+				} else {
+					if (choice.checkboxChecked) void ipc?.saveCloseBehavior('tray');
+					win.hide();
+				}
+			} catch (error) {
+			console.error('Close handling failed:', error);
+				win.hide();
+			} finally {
+				closeDialogOpen = false;
+			}
+		})();
+	};
 	win.on('close', (event) => {
 		if (process.platform !== 'win32' || readyToQuit) return;
 		event.preventDefault();
-		win.hide();
+		requestClose();
 	});
 	win.on('closed', () => {
 		if (unresponsiveTimer) clearTimeout(unresponsiveTimer);
@@ -257,7 +307,29 @@ if (!hasSingleInstanceLock) {
 	if (process.platform === 'win32') {
 		app.setAppUserModelId('dev.pidesktop.app');
 		Menu.setApplicationMenu(null);
-		createAppTray({ showMainWindow, quitApp: () => app.quit() });
+		createAppTray({
+			showMainWindow,
+			quitApp: () => app.quit(),
+			getStatus: async () => {
+				if (!ipc) return null;
+				try {
+					const snapshot = await ipc.agentService.getSnapshot();
+					return { running: snapshot.status === 'busy', project: snapshot.cwd ? basename(snapshot.cwd) : '' };
+				} catch { return null; }
+			},
+			getRecentSessions: async () => {
+				if (!ipc) return [];
+				try {
+					const snapshot = await ipc.agentService.getSnapshot();
+					const sessions = await ipc.agentService.listSessions(snapshot.cwd);
+					return sessions.filter((session) => !session.archived).slice(0, 5)
+						.map((session) => ({ path: session.path, title: session.name || session.firstMessage }));
+				} catch { return []; }
+			},
+			onNewSession: () => { showMainWindow(); ipc?.sendAppCommand({ type: 'new-session' }); },
+			onSwitchSession: (path) => { showMainWindow(); ipc?.sendAppCommand({ type: 'switch-session', path }); },
+			onCheckUpdates: () => { showMainWindow(); void updateService?.check(false).catch(() => undefined); },
+		});
 	}
 	// The renderer only needs clipboard write for its explicit copy action.
 	session.defaultSession.setPermissionRequestHandler((_webContents, permission, callback) => {

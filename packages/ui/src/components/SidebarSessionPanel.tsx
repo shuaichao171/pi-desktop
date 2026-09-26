@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, type CSSProperties, type PointerE
 import type { UiSessionGroup, UiSidebarGroupChange } from '@pidesktop/shared';
 import { useChatStore } from '../store';
 import { useT } from '../i18n';
-import { buildSidebarGroups, collectSidebarSessions, groupSessionsByDate, orderSessions, readSidebarPreferences, saveSidebarPreferences, selectSidebarSessions, type SidebarPreferences, type SidebarSession } from '../sidebarOrganization';
+import { buildSidebarGroups, clearPinnedProjects, collectSidebarSessions, groupSessionsByDate, orderSessions, readPinnedProjects, readSidebarPreferences, saveSidebarPreferences, selectSidebarSessions, type SidebarPreferences, type SidebarSession } from '../sidebarOrganization';
 import { HoverTooltip } from './HoverTooltip';
 import { Icon } from './Icons';
 import { SidebarPopover } from './SidebarPopover';
@@ -12,6 +12,7 @@ type Popup = { anchor: HTMLElement } & (
 	| { kind: 'filter' }
 	| { kind: 'session' | 'move'; session: SidebarSession }
 	| { kind: 'group'; group: UiSessionGroup }
+	| { kind: 'project'; workspace: string }
 	| { kind: 'edit-group'; group?: UiSessionGroup }
 );
 
@@ -57,6 +58,8 @@ export function SidebarSessionPanel({ visible, onNavigate, onError }: { visible:
 	const sessionsByWorkspace = useChatStore((s) => s.sessionsByWorkspace);
 	const pickWorkspace = useChatStore((s) => s.pickWorkspace);
 	const switchWorkspace = useChatStore((s) => s.switchWorkspace);
+	const removeWorkspace = useChatStore((s) => s.removeWorkspace);
+	const newSession = useChatStore((s) => s.newSession);
 	const refreshWorkspaces = useChatStore((s) => s.refreshWorkspaces);
 	const refreshWorkspaceSessions = useChatStore((s) => s.refreshWorkspaceSessions);
 	const selectSession = useChatStore((s) => s.selectSession);
@@ -82,9 +85,13 @@ export function SidebarSessionPanel({ visible, onNavigate, onError }: { visible:
 	const [renameDraft, setRenameDraft] = useState('');
 	const renameRef = useRef<HTMLInputElement>(null);
 	const renameCancelled = useRef(false);
+	const [pinnedProjects, setPinnedProjects] = useState<string[]>(readPinnedProjects);
 	const listed = useRef(new Set<string>());
 	const listedBridge = useRef<typeof bridge>(null);
 	const workspacePaths = useMemo(() => cwd && !workspaces.includes(cwd) ? [cwd, ...workspaces] : workspaces, [cwd, workspaces]);
+	const pinnedWorkspaceSet = useMemo(() => new Set(pinnedProjects), [pinnedProjects]);
+	// Pinned projects float to the top (stable sort keeps relative order).
+	const orderedWorkspaces = useMemo(() => [...workspacePaths].sort((a, b) => Number(pinnedWorkspaceSet.has(b)) - Number(pinnedWorkspaceSet.has(a))), [workspacePaths, pinnedWorkspaceSet]);
 	const allSessions = useMemo(() => collectSidebarSessions(workspacePaths, sessionsByWorkspace), [workspacePaths, sessionsByWorkspace]);
 	const sessions = useMemo(() => selectSidebarSessions(allSessions, { archived, filter: preferences.filter, sort: preferences.sort }), [allSessions, archived, preferences.filter, preferences.sort]);
 	const grouped = useMemo(() => buildSidebarGroups(sessions, groups), [sessions, groups]);
@@ -96,8 +103,8 @@ export function SidebarSessionPanel({ visible, onNavigate, onError }: { visible:
 			return [...grouped.groups.map((group) => ({ key: groupKey(group.id), sessions: group.sessions })),
 				{ key: UNGROUPED_KEY, sessions: grouped.ungrouped }];
 		}
-		return workspacePaths.map((workspace) => ({ key: projectKey(workspace), sessions: orderSessions(sessions.filter((session) => session.workspace === workspace && !session.pinned)) }));
-	}, [dragMode, preferences.mode, grouped, sessions, workspacePaths]);
+		return orderedWorkspaces.map((workspace) => ({ key: projectKey(workspace), sessions: orderSessions(sessions.filter((session) => session.workspace === workspace && !session.pinned)) }));
+	}, [dragMode, preferences.mode, grouped, sessions, orderedWorkspaces]);
 	const dates = useMemo(() => {
 		const result = groupSessionsByDate(archived ? sessions : sessions.filter((session) => !session.pinned));
 		return preferences.sort === 'oldest' ? result.reverse() : result;
@@ -126,6 +133,23 @@ export function SidebarSessionPanel({ visible, onNavigate, onError }: { visible:
 
 	useEffect(() => { saveSidebarPreferences(preferences); }, [preferences]);
 	useEffect(() => { if (!visible) setPopup(null); }, [visible]);
+	useEffect(() => {
+		if (!bridge || workspacePaths.length === 0) return;
+		let cancelled = false;
+		const legacy = readPinnedProjects();
+		void (async () => {
+			const persisted = await bridge.listPinnedWorkspaces();
+			const registered = new Set(workspacePaths);
+			const migration = legacy.filter((path) => registered.has(path));
+			const next = persisted.length === 0 && migration.length > 0 ? await bridge.setPinnedWorkspaces(migration) : persisted;
+			if (cancelled) return;
+			setPinnedProjects(next);
+			clearPinnedProjects();
+		})().catch((error: unknown) => {
+			if (!cancelled) onError(error instanceof Error ? error.message : String(error));
+		});
+		return () => { cancelled = true; };
+	}, [bridge, workspacePaths, onError]);
 	useEffect(() => {
 		if (!bridge) return;
 		const request = ++groupRequest.current;
@@ -441,17 +465,18 @@ export function SidebarSessionPanel({ visible, onNavigate, onError }: { visible:
 		const color = options.group ? ['#9290d2', '#72a699', '#bc9683', '#749cbe'][[...options.group.id].reduce((hash, character) => (hash * 31 + character.charCodeAt(0)) >>> 0, 0) % 4] : undefined;
 		const droppable = (options.group !== undefined || options.workspace !== undefined) && dragMode;
 		return <section className={`pd-sidebar-group${options.group ? ' is-custom' : ''}${options.workspace === cwd ? ' is-current' : ''}`} key={key} data-section-key={key} style={{ '--pd-group-color': color } as CSSProperties}>
-			<div className="pd-sidebar-group-heading" data-drag-heading={droppable ? key : undefined} data-drag-container={droppable ? key : undefined}>
-				<HoverTooltip title={name} description={options.workspace} align="start"><button type="button" className="pd-sidebar-group-toggle" aria-expanded={expanded} onPointerDown={options.group && dragMode && !draggingGroup ? (event) => beginDrag({ kind: 'group', id: options.group!.id }, event) : undefined} onClick={() => toggleSection(key)}>
+			<HoverTooltip title={name} description={options.workspace} side="right" align="start"><div className="pd-sidebar-group-heading" data-drag-heading={droppable ? key : undefined} data-drag-container={droppable ? key : undefined} onContextMenu={options.workspace ? (event) => { event.preventDefault(); setPopup({ kind: 'project', anchor: event.currentTarget, workspace: options.workspace! }); } : undefined}>
+				<button type="button" className="pd-sidebar-group-toggle" aria-expanded={expanded} onPointerDown={options.group && dragMode && !draggingGroup ? (event) => beginDrag({ kind: 'group', id: options.group!.id }, event) : undefined} onClick={() => toggleSection(key)}>
 					<Icon name={options.icon ?? 'hash'} width="14" height="14" /><span>{name}</span><Icon name="chevronRight" width="12" height="12" className={expanded ? 'is-expanded' : ''} /><small>{count}</small>
-				</button></HoverTooltip>
-				{options.group && <HoverTooltip title={t('sidebar.groupActions')}><button type="button" className="pd-icon-button pd-group-more" aria-label={t('sidebar.groupMenuLabel', { name })} aria-haspopup="menu" onClick={(event) => setPopup({ kind: 'group', anchor: event.currentTarget, group: options.group! })}><Icon name="more" width="15" height="15" /></button></HoverTooltip>}
-				{options.workspace && <HoverTooltip title={t('sidebar.openProject')}><button type="button" className="pd-icon-button pd-group-more" aria-label={t('sidebar.activateProject', { name })} disabled={status === 'starting' || navigating} onClick={() => {
+				</button>
+				{options.group && <HoverTooltip title={t('sidebar.groupActions')} side="right"><button type="button" className="pd-icon-button pd-group-more" aria-label={t('sidebar.groupMenuLabel', { name })} aria-haspopup="menu" onClick={(event) => setPopup({ kind: 'group', anchor: event.currentTarget, group: options.group! })}><Icon name="more" width="15" height="15" /></button></HoverTooltip>}
+				{options.workspace && <HoverTooltip title={t('sidebar.projectNewChat')} side="right"><button type="button" className="pd-icon-button pd-group-more" aria-label={t('sidebar.projectNewChat')} disabled={status === 'starting' || navigating} onClick={() => {
 					if (navigationPending.current) return;
 					navigationPending.current = true; setNavigating(true);
-					void perform(async () => { try { await switchWorkspace(options.workspace!); } finally { navigationPending.current = false; setNavigating(false); } }, true);
-				}}><Icon name="chevronRight" width="14" height="14" /></button></HoverTooltip>}
-			</div>
+					void perform(async () => { try { await switchWorkspace(options.workspace!); await newSession(); } finally { navigationPending.current = false; setNavigating(false); } }, true);
+				}}><Icon name="plus" width="14" height="14" /></button></HoverTooltip>}
+				{options.workspace && <HoverTooltip title={t('sidebar.projectActions')} side="right"><button type="button" className="pd-icon-button pd-group-more" aria-label={t('sidebar.projectMenuLabel', { name })} aria-haspopup="menu" aria-expanded={popup?.kind === 'project' && popup.workspace === options.workspace} onClick={(event) => setPopup({ kind: 'project', anchor: event.currentTarget, workspace: options.workspace! })}><Icon name="more" width="15" height="15" /></button></HoverTooltip>}
+			</div></HoverTooltip>
 			{expanded && <div className="pd-sidebar-group-content" data-drag-container={droppable ? key : undefined}>{content}{droppable && drag && <div className="pd-session-drop-zone" data-drag-footer />}</div>}
 		</section>;
 	}
@@ -507,13 +532,13 @@ export function SidebarSessionPanel({ visible, onNavigate, onError }: { visible:
 				</div>
 				{!sessions.length && !showUnsaved && !groups.length && <div className="pd-session-empty">{t(loadingSessions ? 'sidebar.loading' : filtered ? 'sidebar.noMatches' : 'sidebar.noSessions')}</div>}
 			</> : <>
-				{workspacePaths.map((workspace) => {
+				{orderedWorkspaces.map((workspace) => {
 					const items = sessions.filter((s) => s.workspace === workspace && !s.pinned);
 					return section(projectKey(workspace), workspaceName(workspace), items.length, <>
 						{showUnsaved && workspace === cwd && unsaved(false)}
 						{renderOrdered(projectKey(workspace), false)}
 						{!items.length && !(showUnsaved && workspace === cwd) && <div className="pd-session-empty">{t(!Object.hasOwn(sessionsByWorkspace, workspace) ? 'sidebar.loading' : filtered ? 'sidebar.noMatches' : 'sidebar.noSessions')}</div>}
-					</>, { icon: 'folder', workspace });
+					</>, { icon: pinnedWorkspaceSet.has(workspace) ? 'pin' : 'folder', workspace });
 				})}
 			</>}
 			{!workspacePaths.length && !archived && <div className="pd-project-empty"><p>{t('sidebar.noProjects')}</p><button type="button" onClick={() => void perform(pickWorkspace)}>{t('sidebar.openFolder')}</button></div>}
@@ -521,7 +546,7 @@ export function SidebarSessionPanel({ visible, onNavigate, onError }: { visible:
 		{drag && (ghostSession || ghostGroup) && <div className="pd-sidebar-drag-ghost" style={{ left: drag.ghost.x, top: drag.ghost.y, width: drag.ghost.width }} aria-hidden>
 			{ghostGroup ? <><Icon name="hash" width="14" height="14" /><span>{ghostGroup.name}</span></> : <span>{titleOf(ghostSession!)}</span>}
 		</div>}
-		{popup && <SidebarPopover key={popup.kind} anchor={popup.anchor} label={t(popup.kind === 'filter' ? 'sidebar.filter' : popup.kind === 'edit-group' ? popup.group ? 'sidebar.renameGroup' : 'sidebar.newGroup' : popup.kind === 'move' ? 'sidebar.moveToGroup' : popup.kind === 'group' ? 'sidebar.groupActions' : 'sidebar.menuTitle')} dialog={popup.kind === 'edit-group'} onClose={() => setPopup(null)}>
+		{popup && <SidebarPopover key={popup.kind} anchor={popup.anchor} label={t(popup.kind === 'filter' ? 'sidebar.filter' : popup.kind === 'edit-group' ? popup.group ? 'sidebar.renameGroup' : 'sidebar.newGroup' : popup.kind === 'move' ? 'sidebar.moveToGroup' : popup.kind === 'group' ? 'sidebar.groupActions' : popup.kind === 'project' ? 'sidebar.projectActions' : 'sidebar.menuTitle')} dialog={popup.kind === 'edit-group'} onClose={() => setPopup(null)}>
 			{popup.kind === 'filter' && <>
 				{preferences.mode === 'project' && !archived && <><div className="pd-sidebar-menu-label">{t('sidebar.organize')}</div>{radio(t('sidebar.byProject'), preferences.projectView === 'project', () => preference({ projectView: 'project' }))}{radio(t('sidebar.byTime'), preferences.projectView === 'timeline', () => preference({ projectView: 'timeline' }))}<hr /></>}
 				<div className="pd-sidebar-menu-label">{t('sidebar.filter')}</div>
@@ -550,6 +575,27 @@ export function SidebarSessionPanel({ visible, onNavigate, onError }: { visible:
 				{formError && <p role="alert">{formError}</p>}
 				<div className="pd-sidebar-form-actions"><button type="button" onClick={() => { setPopup(null); popup.anchor.focus(); }}>{t('sidebar.cancel')}</button><button type="submit" disabled={!groupDraft.trim() || pending}>{t(pending ? 'sidebar.saving' : 'sidebar.save')}</button></div>
 			</form>}
+			{popup.kind === 'project' && <>
+				<button type="button" role="menuitem" disabled={status === 'starting' || navigating} onClick={() => {
+					const workspace = popup.workspace;
+					if (navigationPending.current) return;
+					navigationPending.current = true; setNavigating(true); setPopup(null);
+					void perform(async () => { try { await switchWorkspace(workspace); } finally { navigationPending.current = false; setNavigating(false); } }, true);
+				}}>{t('sidebar.openProject')}</button>
+				<button type="button" role="menuitem" disabled={!bridge} onClick={() => {
+					const workspace = popup.workspace;
+					const next = pinnedWorkspaceSet.has(workspace) ? pinnedProjects.filter((path) => path !== workspace) : [...pinnedProjects, workspace];
+					setPopup(null);
+					void perform(async () => {
+						if (!bridge) return;
+						setPinnedProjects(await bridge.setPinnedWorkspaces(next));
+						clearPinnedProjects();
+					});
+				}}>{t(pinnedWorkspaceSet.has(popup.workspace) ? 'sidebar.projectUnpin' : 'sidebar.projectPin')}</button>
+				<button type="button" role="menuitem" onClick={() => { const workspace = popup.workspace; setPopup(null); void perform(() => bridge ? bridge.openWorkspaceFolder(workspace) : Promise.resolve()); }}>{t('sidebar.projectReveal')}</button>
+				<hr /><button type="button" role="menuitem" onClick={() => { const workspace = popup.workspace; setPopup(null); void perform(async () => { await removeWorkspace(workspace); setPinnedProjects((current) => current.filter((path) => path !== workspace)); }); }}>{t('sidebar.projectRemove')}</button>
+				<p className="pd-sidebar-menu-note">{t('sidebar.projectRemoveHint')}</p>
+			</>}
 			{popup.kind === 'group' && <><button type="button" role="menuitem" onClick={() => editGroup(popup.anchor, popup.group)}>{t('sidebar.renameGroup')}</button><button type="button" role="menuitem" disabled={pending} onClick={() => { const group = popup.group; setPopup(null); void perform(async () => { await changeGroups({ type: 'delete', id: group.id }); }); }}>{t('sidebar.dissolveGroup')}</button><p className="pd-sidebar-menu-note">{t('sidebar.dissolveGroupHint')}</p></>}
 			{popup.kind === 'session' && <>
 				<button type="button" role="menuitem" onClick={() => { renameCancelled.current = false; setRenaming(popup.session.path); setRenameDraft(titleOf(popup.session)); setPopup(null); }}>{t('sidebar.rename')}</button>
@@ -557,6 +603,13 @@ export function SidebarSessionPanel({ visible, onNavigate, onError }: { visible:
 				<button type="button" role="menuitem" disabled={groupsLoading || groupsError || pending} onClick={() => setPopup({ ...popup, kind: 'move' })}>{t('sidebar.moveToGroup')}<Icon name="chevronRight" width="13" height="13" /></button>
 				<button type="button" role="menuitem" onClick={() => { const s = popup.session; sessionAction(s, popup.anchor, () => updateSessionMeta(s.path, { unread: !s.unread })); }}>{t(popup.session.unread ? 'sidebar.markRead' : 'sidebar.markUnread')}</button>
 				<hr /><button type="button" role="menuitem" onClick={() => { const s = popup.session; sessionAction(s, popup.anchor, () => updateSessionMeta(s.path, { archived: !s.archived })); }}>{t(popup.session.archived ? 'sidebar.unarchive' : 'sidebar.archive')}</button>
+				<button type="button" role="menuitem" className="pd-sidebar-menu-danger" onClick={() => {
+					const s = popup.session;
+					sessionAction(s, popup.anchor, async () => {
+						if (!window.confirm(t('sidebar.deleteConfirm'))) return;
+						await useChatStore.getState().deleteSession(s.path);
+					});
+				}}>{t('sidebar.deleteSession')}</button>
 			</>}
 			{popup.kind === 'move' && <>
 				<button type="button" role="menuitem" onClick={() => setPopup({ ...popup, kind: 'session' })}>{t('sidebar.back')}</button><hr />

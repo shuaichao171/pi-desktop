@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent } from 'react';
-import type { WorkspaceCommandEvent, WorkspaceEntry, WorkspaceGitStatus } from '@pidesktop/shared';
+import type { WorkspaceCommandEvent, WorkspaceEntry, WorkspaceGitLogEntry, WorkspaceGitStatus } from '@pidesktop/shared';
 import { useChatStore } from '../store';
 import { useT } from '../i18n';
 import { Icon } from './Icons';
@@ -43,6 +43,13 @@ export function WorkbenchSidePane({ open, onClose, openRequest }: { open: boolea
 	const [diffText, setDiffText] = useState('');
 	const [diffLoading, setDiffLoading] = useState(false);
 	const [diffError, setDiffError] = useState<string | null>(null);
+	const [gitLog, setGitLog] = useState<WorkspaceGitLogEntry[]>([]);
+	const [gitActionError, setGitActionError] = useState<string | null>(null);
+	const [gitActionBusy, setGitActionBusy] = useState(false);
+	const [discardTarget, setDiscardTarget] = useState<string | null>(null);
+	const [branchCreateOpen, setBranchCreateOpen] = useState(false);
+	const [branchName, setBranchName] = useState('');
+	const [branchCreating, setBranchCreating] = useState(false);
 	const [command, setCommand] = useState('');
 	const [commandRun, setCommandRun] = useState<CommandRun | null>(null);
 	const [commandStarting, setCommandStarting] = useState(false);
@@ -169,6 +176,9 @@ export function WorkbenchSidePane({ open, onClose, openRequest }: { open: boolea
 		}).catch((cause: unknown) => {
 			if (request === gitRequest.current) setGitError(cause instanceof Error ? cause.message : String(cause));
 		}).finally(() => { if (request === gitRequest.current) setGitLoading(false); });
+		void bridge.getWorkspaceGitLog(20).then((entries) => {
+			if (request === gitRequest.current) setGitLog(entries);
+		}).catch(() => { /* history stays empty when unavailable */ });
 		return () => { gitRequest.current += 1; };
 	}, [bridge, cwd, open, tab, gitRevision]);
 
@@ -205,6 +215,76 @@ export function WorkbenchSidePane({ open, onClose, openRequest }: { open: boolea
 		} catch (cause) {
 			if (request === diffRequest.current) setDiffError(cause instanceof Error ? cause.message : String(cause));
 		} finally { if (request === diffRequest.current) setDiffLoading(false); }
+	}
+
+	/** Stages or unstages one path, then refreshes status (4.5). */
+	async function setStaged(path: string, staged: boolean) {
+		if (!bridge || gitActionBusy) return;
+		setGitActionBusy(true);
+		setGitActionError(null);
+		try {
+			await bridge.setWorkspaceGitStaged([path], staged);
+			setGitRevision((value) => value + 1);
+		} catch (cause) {
+			setGitActionError(cause instanceof Error ? cause.message : String(cause));
+		} finally {
+			setGitActionBusy(false);
+		}
+	}
+
+	/** Shows the real diff and asks for confirmation before discarding (4.5). */
+	function requestDiscard(path: string) {
+		setDiscardTarget(path);
+		void openDiff(path);
+	}
+
+	async function confirmDiscard() {
+		if (!bridge || !discardTarget || gitActionBusy) return;
+		setGitActionBusy(true);
+		setGitActionError(null);
+		try {
+			await bridge.discardWorkspaceGitChanges([discardTarget]);
+			setDiscardTarget(null);
+			setDiffPath(null);
+			setDiffText('');
+			setGitRevision((value) => value + 1);
+		} catch (cause) {
+			setGitActionError(cause instanceof Error ? cause.message : String(cause));
+		} finally {
+			setGitActionBusy(false);
+		}
+	}
+
+	/** Creates and switches to a new branch from the branch row (4.5). */
+	async function createBranch(event: FormEvent<HTMLFormElement>) {
+		event.preventDefault();
+		const name = branchName.trim();
+		if (!bridge || !name || branchCreating) return;
+		setBranchCreating(true);
+		setGitActionError(null);
+		try {
+			await bridge.createWorkspaceGitBranch(name, true);
+			setBranchCreateOpen(false);
+			setBranchName('');
+			setGitRevision((value) => value + 1);
+		} catch (cause) {
+			setGitActionError(cause instanceof Error ? cause.message : String(cause));
+		} finally {
+			setBranchCreating(false);
+		}
+	}
+
+	/** Opens a workspace file in VS Code / reveals it in the file manager (4.7). */
+	async function openInEditor(path: string) {
+		if (!bridge) return;
+		try { await bridge.openWorkspacePathInEditor(path); }
+		catch (cause) { setGitActionError(cause instanceof Error ? cause.message : String(cause)); }
+	}
+
+	async function revealPath(path: string) {
+		if (!bridge) return;
+		try { await bridge.revealWorkspacePath(path); }
+		catch (cause) { setFileError(cause instanceof Error ? cause.message : String(cause)); }
 	}
 
 	async function startCommand(event: FormEvent<HTMLFormElement>) {
@@ -280,15 +360,47 @@ export function WorkbenchSidePane({ open, onClose, openRequest }: { open: boolea
 					{gitLoading && <div className="pd-workbench-empty">{t('workbench.loadingGit')}</div>}
 					{gitError && <div className="pd-workbench-error" role="alert">{gitError}</div>}
 					{!gitLoading && !gitError && gitStatus && (gitStatus.isRepository ? <>
-						<div className="pd-workbench-branch"><Icon name="gitBranch" width="15" height="15" /><span>{gitStatus.branch || 'HEAD'}</span><small>{t('workbench.changes', { count: gitStatus.entries.length })}</small></div>
+						<div className="pd-workbench-branch"><Icon name="gitBranch" width="15" height="15" /><span>{gitStatus.branch || 'HEAD'}</span><small>{t('workbench.changes', { count: gitStatus.entries.length })}</small>
+							<HoverTooltip title={t('workbench.newBranch')}><button type="button" className="pd-icon-button" onClick={() => setBranchCreateOpen((open) => !open)} aria-label={t('workbench.newBranch')} aria-expanded={branchCreateOpen}><Icon name="plus" width="14" height="14" /></button></HoverTooltip></div>
+						{branchCreateOpen && <form className="pd-workbench-branch-form" onSubmit={(event) => void createBranch(event)}>
+							<input value={branchName} onChange={(event) => setBranchName(event.target.value)} placeholder={t('workbench.branchNamePlaceholder')} spellCheck={false} autoComplete="off" aria-label={t('workbench.branchNamePlaceholder')} />
+							<button type="submit" disabled={!branchName.trim() || branchCreating}>{t(branchCreating ? 'workbench.creating' : 'workbench.createAndSwitch')}</button>
+						</form>}
+						{gitActionError && <div className="pd-workbench-error" role="alert">{gitActionError}</div>}
 						<div className="pd-workbench-changes">
-							{gitStatus.entries.map((entry) => <HoverTooltip key={entry.path} title={entry.path}><button type="button" className={`pd-workbench-change${diffPath === entry.path ? ' is-selected' : ''}`} onClick={() => void openDiff(entry.path)}><span className="pd-workbench-git-status">{entry.status.replaceAll(' ', '·')}</span><span>{entry.path}</span></button></HoverTooltip>)}
+							{gitStatus.entries.map((entry) => {
+								const staged = entry.status[0] !== ' ' && entry.status[0] !== '?';
+								const untracked = entry.status.startsWith('??');
+								return (<div key={entry.path} className={`pd-workbench-change${diffPath === entry.path ? ' is-selected' : ''}${discardTarget === entry.path ? ' is-discarding' : ''}`}>
+									<HoverTooltip title={entry.path}><button type="button" className="pd-workbench-change-main" onClick={() => void openDiff(entry.path)}><span className="pd-workbench-git-status">{entry.status.replaceAll(' ', '·')}</span><span className="pd-workbench-change-path">{entry.path}</span></button></HoverTooltip>
+									<span className="pd-workbench-change-actions">
+										{staged
+											? <HoverTooltip title={t('workbench.unstage')}><button type="button" disabled={gitActionBusy} onClick={() => void setStaged(entry.path, false)} aria-label={t('workbench.unstage')}><Icon name="minusCircle" width="13" height="13" /></button></HoverTooltip>
+											: <HoverTooltip title={t('workbench.stage')}><button type="button" disabled={gitActionBusy} onClick={() => void setStaged(entry.path, true)} aria-label={t('workbench.stage')}><Icon name="plus" width="13" height="13" /></button></HoverTooltip>}
+										{!untracked && <HoverTooltip title={t('workbench.discard')}><button type="button" className="pd-workbench-discard" disabled={gitActionBusy} onClick={() => requestDiscard(entry.path)} aria-label={t('workbench.discard')}><Icon name="rotateCcw" width="13" height="13" /></button></HoverTooltip>}
+									</span>
+								</div>);
+							})}
 							{gitStatus.entries.length === 0 && <div className="pd-workbench-empty">{t('workbench.clean')}</div>}
 						</div>
+						{discardTarget && (<div className="pd-workbench-discard-confirm" role="alertdialog" aria-label={t('workbench.discardTitle')}>
+							<p><strong>{t('workbench.discardTitle')}</strong><span>{t('workbench.discardHint', { path: discardTarget })}</span></p>
+							<div className="pd-workbench-discard-actions">
+								<button type="button" className="pd-workbench-discard-confirm-button" disabled={gitActionBusy} onClick={() => void confirmDiscard()}>{t('workbench.discard')}</button>
+								<button type="button" onClick={() => setDiscardTarget(null)}>{t('workbench.cancel')}</button>
+							</div>
+						</div>)}
 						{diffPath && <section className="pd-workbench-preview" aria-label={t('workbench.diff')}>
-							<div className="pd-workbench-preview-head"><strong title={diffPath}>{diffPath}</strong><button type="button" className="pd-icon-button" onClick={() => setDiffPath(null)} aria-label={t('workbench.closeDiff')}><Icon name="close" width="14" height="14" /></button></div>
+							<div className="pd-workbench-preview-head"><strong title={diffPath}>{diffPath}</strong><span className="pd-workbench-preview-actions"><HoverTooltip title={t('workbench.openInEditor')}><button type="button" className="pd-icon-button" onClick={() => void openInEditor(diffPath)} aria-label={t('workbench.openInEditor')}><Icon name="code" width="14" height="14" /></button></HoverTooltip><HoverTooltip title={t('workbench.revealInFolder')}><button type="button" className="pd-icon-button" onClick={() => void revealPath(diffPath)} aria-label={t('workbench.revealInFolder')}><Icon name="folder" width="14" height="14" /></button></HoverTooltip><button type="button" className="pd-icon-button" onClick={() => setDiffPath(null)} aria-label={t('workbench.closeDiff')}><Icon name="close" width="14" height="14" /></button></span></div>
 							{diffLoading ? <div className="pd-workbench-empty">{t('workbench.loadingDiff')}</div> : diffError ? <div className="pd-workbench-error" role="alert">{diffError}</div> : <pre>{diffText || t('workbench.noDiff')}</pre>}
 						</section>}
+						<details className="pd-workbench-history">
+							<summary><Icon name="gitCommit" width="13" height="13" />{t('workbench.history')}</summary>
+							<ul>
+								{gitLog.map((commit) => <li key={commit.hash}><code>{commit.shortHash}</code><span title={commit.subject}>{commit.subject}</span><small>{commit.author} · {new Date(commit.date).toLocaleDateString()}</small></li>)}
+								{gitLog.length === 0 && <li className="pd-workbench-empty">{t('workbench.historyEmpty')}</li>}
+							</ul>
+						</details>
 					</> : <div className="pd-workbench-empty">{t('workbench.notRepo')}</div>)}
 				</>}
 

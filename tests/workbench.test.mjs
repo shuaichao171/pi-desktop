@@ -378,3 +378,61 @@ test('command output overflow reports one error and no output after completion',
     removeSafeTemp(tempRoot);
   }
 });
+
+test('git stage/unstage/discard stay consistent with git status, log and branch create validate (4.5)', async () => {
+  const tempRoot = mkdtempSync(join(tmpdir(), 'pi-desktop-workbench-gitops-'));
+  const workspace = join(tempRoot, 'workspace');
+  mkdirSync(workspace);
+  writeFileSync(join(workspace, 'a.txt'), 'base\n');
+  writeFileSync(join(workspace, 'b.txt'), 'base\n');
+  const { WorkbenchService } = await import('../packages/desktop/src/main/workbenchService.ts');
+  const service = new WorkbenchService(() => workspace, () => {});
+  try {
+    execFileSync('git', ['-C', workspace, 'init', '-q']);
+    execFileSync('git', ['-C', workspace, 'config', 'core.autocrlf', 'false']);
+    execFileSync('git', ['-C', workspace, '-c', 'user.name=Test', '-c', 'user.email=test@example.com', 'add', '--', 'a.txt', 'b.txt']);
+    execFileSync('git', ['-C', workspace, '-c', 'user.name=Test', '-c', 'user.email=test@example.com', 'commit', '-qm', 'base']);
+    writeFileSync(join(workspace, 'a.txt'), 'changed\n');
+    writeFileSync(join(workspace, 'b.txt'), 'changed\n');
+
+    // Stage a.txt, then unstage it: status round-trips through the real index.
+    await service.gitSetStaged(['a.txt'], true);
+    assert.equal((await service.gitStatus()).entries.find((entry) => entry.path === 'a.txt')?.status, 'M ');
+    await service.gitSetStaged(['a.txt'], false);
+    assert.equal((await service.gitStatus()).entries.find((entry) => entry.path === 'a.txt')?.status, ' M');
+
+    // Discard restores the tracked worktree change to the committed content.
+    await service.gitDiscard(['a.txt']);
+    const afterDiscard = await service.gitStatus();
+    assert.equal(afterDiscard.entries.find((entry) => entry.path === 'a.txt'), undefined);
+    assert.equal((await service.readFile('a.txt')), 'base\n');
+
+    // Untracked discard removes the file entirely.
+    writeFileSync(join(workspace, 'new.txt'), 'fresh\n');
+    await service.gitDiscard(['new.txt']);
+    assert.equal(existsSync(join(workspace, 'new.txt')), false);
+
+    // Path validation rejects escapes before any git call.
+    await assert.rejects(service.gitSetStaged(['../outside.txt'], true), /不属于当前工作区/);
+    await assert.rejects(service.gitDiscard(['..']), /不属于当前工作区/);
+    await assert.rejects(service.gitSetStaged([], true), /文件列表无效/);
+
+    // History parses real commits; limits and invalid repos degrade gracefully.
+    const log = await service.gitLog(5);
+    assert.equal(log.length, 1);
+    assert.equal(log[0].subject, 'base');
+    assert.equal(log[0].author, 'Test');
+    assert.match(log[0].date, /^\d{4}-\d{2}-\d{2}T/);
+
+    // Branch creation validates names and only offers real refs afterwards.
+    await service.gitCreateBranch('feature/one', false);
+    assert.ok((await service.gitBranches()).branches.includes('feature/one'));
+    await service.gitCreateBranch('feature/two', true);
+    assert.equal((await service.gitBranches()).current, 'feature/two');
+    await assert.rejects(service.gitCreateBranch('-bad', false), /无效的分支名/);
+    await assert.rejects(service.gitCreateBranch('a b', false), /无效的分支名/);
+  } finally {
+    await service.dispose();
+    removeSafeTemp(tempRoot);
+  }
+});

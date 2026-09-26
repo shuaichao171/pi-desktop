@@ -1,13 +1,15 @@
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
-import type { UiProviderAuthStatus, UiUpdateState } from '@pidesktop/shared';
+import type { UiDesktopSettings, UiProviderAuthStatus, UiUpdateState } from '@pidesktop/shared';
 import { useChatStore } from '../store';
 import { useT, type Translate } from '../i18n';
 import { Icon } from './Icons';
 import { ModelSettingsPanel } from './ModelSettingsPanel';
+import { ShortcutSettings } from './ShortcutSettings';
 import { ColorThemeSettings } from './ColorThemeSettings';
 import { PersonalizationPanel } from './PersonalizationPanel';
 import type { ThemeColorPreferences } from '../themeColors';
 import type { ModelManagementTarget } from '../modelManagement';
+import { DEFAULT_UI_FONT_SIZE, UI_FONT_SIZE_MAX, UI_FONT_SIZE_MIN, applyUiFontSize, readUiFontSize, saveUiFontSize } from '../uiFontSize';
 
 export type ThemePreference = 'system' | 'dark' | 'light';
 type SettingsPage = 'general' | 'appearance' | 'personalization' | 'model' | 'shortcuts' | 'updates' | 'about';
@@ -88,6 +90,7 @@ export function SettingsPanel({ initialPage = 'general', modelManagementTarget, 
 	const [page, setPage] = useState<SettingsPage>(initialPage);
 	const [modelTarget, setModelTarget] = useState(modelManagementTarget);
 	const [draftState, setDraftState] = useState({ dirty: false, saving: false });
+	const [uiFontSize, setUiFontSize] = useState(readUiFontSize);
 	const [discardAction, setDiscardAction] = useState<(() => void) | null>(null);
 	const keepEditingRef = useRef<HTMLButtonElement>(null);
 	const wasConfirmingDiscard = useRef(false);
@@ -117,6 +120,14 @@ export function SettingsPanel({ initialPage = 'general', modelManagementTarget, 
 		wasConfirmingDiscard.current = Boolean(discardAction);
 	}, [discardAction]);
 	function keepEditing() { setDiscardAction(null); setPage('personalization'); }
+
+	const [desktopSettings, setDesktopSettings] = useState<UiDesktopSettings | null>(null);
+	useEffect(() => {
+		if (!bridge?.getDesktopSettings) return;
+		let active = true;
+		void bridge.getDesktopSettings().then((next) => { if (active) setDesktopSettings(next); }).catch(() => { /* keep defaults */ });
+		return () => { active = false; };
+	}, [bridge]);
 
 	useEffect(() => {
 		if (!bridge) return;
@@ -225,20 +236,51 @@ export function SettingsPanel({ initialPage = 'general', modelManagementTarget, 
 							<div className="pd-language-options" role="group" aria-label={t('settings.language')}>
 								<button type="button" className={locale === 'zh-CN' ? 'is-selected' : ''} aria-pressed={locale === 'zh-CN'} onClick={() => setLocale('zh-CN')}>{t('settings.languageZh')}</button>
 								<button type="button" className={locale === 'en-US' ? 'is-selected' : ''} aria-pressed={locale === 'en-US'} onClick={() => setLocale('en-US')}>{t('settings.languageEn')}</button>
+						</div>
+						<div className="pd-settings-section-head"><h3>{t('settings.notifications')}</h3><p>{t('settings.notificationsDescription')}</p></div>
+						{desktopSettings && (
+							<div className="pd-language-options" role="group" aria-label={t('settings.notifications')}>
+								<button type="button" className={desktopSettings.notificationsEnabled ? 'is-selected' : ''} aria-pressed={desktopSettings.notificationsEnabled}
+									onClick={() => { const next = { ...desktopSettings, notificationsEnabled: !desktopSettings.notificationsEnabled }; setDesktopSettings(next); void bridge?.setDesktopSettings?.({ notificationsEnabled: next.notificationsEnabled }); }}>{t('settings.notificationsOn')}</button>
+								<button type="button" className={!desktopSettings.notificationsEnabled ? 'is-selected' : ''} aria-pressed={!desktopSettings.notificationsEnabled}
+									onClick={() => { const next = { ...desktopSettings, notificationsEnabled: !desktopSettings.notificationsEnabled }; setDesktopSettings(next); void bridge?.setDesktopSettings?.({ notificationsEnabled: next.notificationsEnabled }); }}>{t('settings.notificationsOff')}</button>
 							</div>
+						)}
+						{appInfo?.platform === 'win32' && desktopSettings && (
+							<>
+								<div className="pd-settings-section-head"><h3>{t('settings.closeBehavior')}</h3><p>{t('settings.closeBehaviorDescription')}</p></div>
+									<div className="pd-language-options" role="group" aria-label={t('settings.closeBehavior')}>
+										<button type="button" className={desktopSettings.closeBehavior === 'tray' ? 'is-selected' : ''} aria-pressed={desktopSettings.closeBehavior === 'tray'}
+											onClick={() => { const next = { ...desktopSettings, closeBehavior: 'tray' as const }; setDesktopSettings(next); void bridge?.setDesktopSettings?.({ closeBehavior: 'tray' }); }}>{t('settings.closeBehaviorTray')}</button>
+										<button type="button" className={desktopSettings.closeBehavior === 'quit' ? 'is-selected' : ''} aria-pressed={desktopSettings.closeBehavior === 'quit'}
+											onClick={() => { const next = { ...desktopSettings, closeBehavior: 'quit' as const }; setDesktopSettings(next); void bridge?.setDesktopSettings?.({ closeBehavior: 'quit' }); }}>{t('settings.closeBehaviorQuit')}</button>
+									</div>
+								</>
+						) }
 						</>}
 						{page === 'appearance' && <>
 							<div className="pd-settings-section-head"><h2>{t('settings.appearance')}</h2><p>{t('settings.appearanceDescription')}</p></div>
 							<div className="pd-appearance-options" role="group" aria-label={t('settings.themeLabel')}>
 								{(['system', 'dark', 'light'] as const).map((theme) => <button type="button" key={theme} className={`pd-appearance-choice${themePreference === theme ? ' is-selected' : ''}`} aria-pressed={themePreference === theme} onClick={() => onThemePreferenceChange(theme)}><span className={`pd-theme-swatch is-${theme}`} aria-hidden="true" /><strong>{t(theme === 'system' ? 'settings.themeSystem' : theme === 'dark' ? 'settings.themeDark' : 'settings.themeLight')}</strong></button>)}
-							</div>
+						</div>
+						<div className="pd-settings-section-head"><h3>{t('settings.uiFontSize')}</h3><p>{t('settings.uiFontSizeDescription')}</p></div>
+						<div className="pd-font-size-row">
+							<input type="range" aria-label={t('settings.uiFontSize')} min={UI_FONT_SIZE_MIN} max={UI_FONT_SIZE_MAX} step={1} value={uiFontSize} onChange={(event) => {
+								const size = Number(event.target.value);
+								setUiFontSize(size);
+								applyUiFontSize(size);
+								saveUiFontSize(size);
+							}} />
+							<span className="pd-font-size-value" aria-live="polite">{uiFontSize}px</span>
+							{uiFontSize !== DEFAULT_UI_FONT_SIZE && <button type="button" className="pd-font-size-reset" onClick={() => { setUiFontSize(DEFAULT_UI_FONT_SIZE); applyUiFontSize(DEFAULT_UI_FONT_SIZE); saveUiFontSize(DEFAULT_UI_FONT_SIZE); }}>{t('settings.uiFontSizeReset')}</button>}
+						</div>
 							<div className="pd-settings-divider" />
 							<ColorThemeSettings themePreference={themePreference} preferences={colorPreferences} onChange={onColorPreferencesChange} saveFailed={colorSaveFailed} />
 						</>}
 						{page === 'model' && <ModelSettingsPanel key={cwd} initialTarget={modelTarget} renderCredential={(provider) => <ProviderCredentialRow key={provider.provider} {...provider} />} />}
 						{page === 'shortcuts' && <>
 							<div className="pd-settings-section-head"><h2>{t('settings.shortcuts')}</h2><p>{t('settings.shortcutsDescription')}</p></div>
-							<dl className="pd-shortcut-list"><div><dt>{t('settings.shortcutSearch')}</dt><dd><kbd>{appInfo?.platform === 'darwin' ? '⌘' : 'Ctrl'}</kbd> + <kbd>K</kbd></dd></div><div><dt>{t('settings.shortcutSidebar')}</dt><dd><kbd>{appInfo?.platform === 'darwin' ? '⌘' : 'Ctrl'}</kbd> + <kbd>B</kbd></dd></div><div><dt>{t('settings.shortcutSend')}</dt><dd><kbd>Enter</kbd></dd></div><div><dt>{t('settings.shortcutNewline')}</dt><dd><kbd>Shift</kbd> + <kbd>Enter</kbd></dd></div><div><dt>{t('settings.shortcutClose')}</dt><dd><kbd>Esc</kbd></dd></div></dl>
+						<ShortcutSettings isMac={appInfo?.platform === 'darwin'} />
 						</>}
 						{page === 'updates' && <>
 							<div className="pd-settings-section-head"><h2>{t('settings.updates')}</h2><p>{t('settings.updateDescription')}</p></div>

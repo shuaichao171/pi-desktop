@@ -14,6 +14,17 @@ const PROTOCOLS: { value: UiProviderApi; label: string }[] = [
 	{ value: 'google-generative-ai', label: 'Google Generative AI' },
 ];
 
+type ProviderTemplate = { id: string; name: string; baseUrl: string; api: UiProviderApi };
+const PROVIDER_TEMPLATES: ProviderTemplate[] = [
+	{ id: 'deepseek', name: 'DeepSeek', baseUrl: 'https://api.deepseek.com/v1', api: 'openai-completions' },
+	{ id: 'kimi', name: 'Moonshot Kimi', baseUrl: 'https://api.moonshot.cn/v1', api: 'openai-completions' },
+	{ id: 'openrouter', name: 'OpenRouter', baseUrl: 'https://openrouter.ai/api/v1', api: 'openai-completions' },
+	{ id: 'groq', name: 'Groq', baseUrl: 'https://api.groq.com/openai/v1', api: 'openai-completions' },
+	{ id: 'siliconflow', name: 'SiliconFlow 硅基流动', baseUrl: 'https://api.siliconflow.cn/v1', api: 'openai-completions' },
+	{ id: 'zhipu', name: '智谱 BigModel', baseUrl: 'https://open.bigmodel.cn/api/paas/v4', api: 'openai-completions' },
+	{ id: 'minimax', name: 'MiniMax', baseUrl: 'https://api.minimax.chat/v1', api: 'openai-completions' },
+];
+
 const THINKING_LEVELS: UiThinkingLevel[] = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
 const DEFAULT_CONTEXT = 128000;
 const DEFAULT_OUTPUT = 8192;
@@ -84,13 +95,14 @@ function ModelFields({ draft, onChange, disabled, t, idReadOnly = false }: { dra
 	</>;
 }
 
-function ProviderEditor({ provider, disabled, onSave, onCancel, autoDiscover = false }: { provider?: UiModelProvider; disabled: boolean; onSave(request: UiSaveCustomProviderRequest): Promise<boolean>; onCancel(): void; autoDiscover?: boolean }) {
+function ProviderEditor({ provider, template, disabled, onSave, onCancel, autoDiscover = false }: { provider?: UiModelProvider; template?: ProviderTemplate; disabled: boolean; onSave(request: UiSaveCustomProviderRequest): Promise<boolean>; onCancel(): void; autoDiscover?: boolean }) {
 	const { t } = useT();
 	const bridge = useChatStore((state) => state.bridge);
-	const [id, setId] = useState(provider?.provider ?? '');
-	const [name, setName] = useState(provider?.name ?? '');
-	const [baseUrl, setBaseUrl] = useState(provider?.baseUrl ?? '');
-	const [api, setApi] = useState<UiProviderApi>((provider?.api as UiProviderApi) ?? 'openai-completions');
+	const [id, setId] = useState(provider?.provider ?? template?.id ?? '');
+	const [name, setName] = useState(provider?.name ?? template?.name ?? '');
+	const [baseUrl, setBaseUrl] = useState(provider?.baseUrl ?? template?.baseUrl ?? '');
+	const [api, setApi] = useState<UiProviderApi>((provider?.api as UiProviderApi) ?? template?.api ?? 'openai-completions');
+	const [keyVisible, setKeyVisible] = useState(false);
 	const [apiKey, setApiKey] = useState('');
 	const [headers, setHeaders] = useState<HeaderDraft[]>(() => (provider?.headerNames ?? []).map((name, key) => ({ key, name, value: '', stored: true })));
 	const [headersChanged, setHeadersChanged] = useState(false);
@@ -209,7 +221,7 @@ function ProviderEditor({ provider, disabled, onSave, onCancel, autoDiscover = f
 		<label className="pd-model-settings-field">{t('settings.providerName')}<input data-field="provider.name" value={name} onChange={(event) => setName(event.target.value)} disabled={busy} placeholder={id || 'My provider'} /></label>
 		<label className="pd-model-settings-field">{t('settings.providerBaseUrl')}<input data-field="provider.baseUrl" required type="url" value={baseUrl} onChange={(event) => { invalidateDiscovery(); setBaseUrl(event.target.value); }} disabled={busy} spellCheck={false} autoComplete="off" placeholder="https://api.example.com/v1" /><small>{t('settings.providerBaseUrlHint')}</small></label>
 		<label className="pd-model-settings-field">{t('settings.providerProtocol')}<select data-field="provider.api" value={api} onChange={(event) => { invalidateDiscovery(); setApi(event.target.value as UiProviderApi); }} disabled={busy}>{PROTOCOLS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
-		<label className="pd-model-settings-field">{t('settings.apiKey')}<input data-field="provider.apiKey" type="password" value={apiKey} onChange={(event) => { invalidateDiscovery(); setApiKey(event.target.value); }} disabled={busy} autoComplete="new-password" spellCheck={false} placeholder={t(provider?.configured ? 'settings.replaceKey' : 'settings.enterKey')} /><small>{t('settings.providerKeyOptional')}</small></label>
+		<label className="pd-model-settings-field">{t('settings.apiKey')}<span className="pd-model-key-row"><input data-field="provider.apiKey" type={keyVisible ? 'text' : 'password'} value={apiKey} onChange={(event) => { invalidateDiscovery(); setApiKey(event.target.value); }} disabled={busy} autoComplete="new-password" spellCheck={false} placeholder={t(provider?.configured ? 'settings.replaceKey' : 'settings.enterKey')} /><button type="button" className="pd-model-key-reveal" data-action="toggle-key-visibility" disabled={busy} aria-label={t(keyVisible ? 'settings.hideApiKey' : 'settings.showApiKey')} aria-pressed={keyVisible} onClick={() => setKeyVisible(!keyVisible)}><Icon name={keyVisible ? 'eyeOff' : 'eye'} width="14" height="14" /></button></span><small>{t('settings.providerKeyOptional')}</small></label>
 		<section className="pd-model-headers" aria-label={t('settings.providerHeaders')}>
 			<div className="pd-model-settings-subhead"><h4>{t('settings.providerHeaders')}</h4><button type="button" className="pd-model-settings-button" data-action="add-header" disabled={busy} onClick={() => changeHeaders([...headers, { key: nextHeaderKey.current++, name: '', value: '', stored: false }])}><Icon name="plus" width="13" height="13" />{t('settings.providerHeaderAdd')}</button></div>
 			<p className="pd-model-settings-notice">{t('settings.providerHeadersHint')}</p>
@@ -279,13 +291,16 @@ export function ModelSettingsPanel({ initialTarget, renderCredential }: { initia
 	const saveProvider = useChatStore((state) => state.saveCustomProvider);
 	const removeProvider = useChatStore((state) => state.removeCustomProvider);
 	const setModel = useChatStore((state) => state.setModel);
+	const setModelEnabled = useChatStore((state) => state.setModelEnabled);
 	const setThinking = useChatStore((state) => state.setThinkingLevel);
 	const targetKind = initialTarget?.kind ?? 'manage';
 	const targetProvider = initialTarget?.kind === 'provider' ? initialTarget.provider : '';
 	const [selectedId, setSelectedId] = useState(targetProvider);
 	const [search, setSearch] = useState('');
 	const [modelSearch, setModelSearch] = useState('');
-	const [providerEditor, setProviderEditor] = useState<'create' | 'edit' | 'discover' | null>(targetKind === 'add-provider' ? 'create' : null);
+	const [providerEditor, setProviderEditor] = useState<'create' | 'edit' | 'discover' | null>(null);
+	const [providerTemplate, setProviderTemplate] = useState<ProviderTemplate | undefined>(undefined);
+	const [templatePicker, setTemplatePicker] = useState(targetKind === 'add-provider');
 	const [modelEditor, setModelEditor] = useState<{ originalId: string | null } | null>(null);
 	const [confirmRemove, setConfirmRemove] = useState<'provider' | { model: string } | null>(null);
 	const [pending, setPending] = useState(false);
@@ -315,6 +330,7 @@ export function ModelSettingsPanel({ initialTarget, renderCredential }: { initia
 	const selectedConfigured = selected ? authByProvider.get(selected.provider)?.configured ?? selected.configured : false;
 	const filteredModels = selected?.models.filter((item) => `${item.id} ${item.name}`.toLocaleLowerCase().includes(modelSearch.trim().toLocaleLowerCase())) ?? [];
 	const availableIds = new Set(availableModels.map((item) => `${item.provider}/${item.id}`));
+	const disabledIds = new Set(selected?.disabledModels ?? []);
 	const refreshCatalog = useCallback(async () => {
 		const results = await Promise.allSettled([refreshProviders(), refreshModels(), refreshAuth()]);
 		const failed = results.find((result) => result.status === 'rejected');
@@ -323,7 +339,7 @@ export function ModelSettingsPanel({ initialTarget, renderCredential }: { initia
 
 	useEffect(() => {
 		setSelectedId(targetProvider); setSearch(''); setModelSearch('');
-		setProviderEditor(targetKind === 'add-provider' ? 'create' : null);
+		setProviderEditor(null); setProviderTemplate(undefined); setTemplatePicker(targetKind === 'add-provider');
 		setCredentialTarget(targetProvider); focusedCredentialTarget.current = '';
 		setModelEditor(null); setConfirmRemove(null); setError(null); setFeedback(null);
 	}, [targetKind, targetProvider]);
@@ -368,7 +384,14 @@ export function ModelSettingsPanel({ initialTarget, renderCredential }: { initia
 	}
 
 	function selectProvider(provider: string) {
-		setSelectedId(provider); setCredentialTarget(''); setModelSearch(''); setProviderEditor(null); setModelEditor(null); setConfirmRemove(null); setError(null); setFeedback(null);
+		setSelectedId(provider); setCredentialTarget(''); setModelSearch(''); setProviderEditor(null); setProviderTemplate(undefined); setTemplatePicker(false); setModelEditor(null); setConfirmRemove(null); setError(null); setFeedback(null);
+	}
+
+	function startFromTemplate(template: ProviderTemplate | undefined) {
+		setProviderTemplate(template);
+		setProviderEditor('create');
+		setTemplatePicker(false);
+		setModelEditor(null); setConfirmRemove(null); setError(null); setFeedback(null);
 	}
 
 	async function saveModel(value: UiCustomProviderModel): Promise<boolean> {
@@ -403,7 +426,7 @@ export function ModelSettingsPanel({ initialTarget, renderCredential }: { initia
 		{feedback && <p className="pd-model-settings-feedback" role="status">{feedback}</p>}
 		<div className="pd-model-provider-layout">
 			<div className="pd-model-provider-sidebar">
-				<div className="pd-model-provider-heading"><strong>{t('settings.providers')}</strong><HoverTooltip title={t('settings.providerAdd')}><button type="button" data-action="add-provider" className="pd-icon-button" disabled={!canChange} aria-label={t('settings.providerAdd')} onClick={() => { setProviderEditor('create'); setModelEditor(null); setConfirmRemove(null); setError(null); setFeedback(null); }}><Icon name="plus" width="15" height="15" /></button></HoverTooltip></div>
+				<div className="pd-model-provider-heading"><strong>{t('settings.providers')}</strong><HoverTooltip title={t('settings.providerAdd')}><button type="button" data-action="add-provider" className="pd-icon-button" disabled={!canChange} aria-label={t('settings.providerAdd')} onClick={() => { setProviderEditor(null); setProviderTemplate(undefined); setTemplatePicker(true); setModelEditor(null); setConfirmRemove(null); setError(null); setFeedback(null); }}><Icon name="plus" width="15" height="15" /></button></HoverTooltip></div>
 				<input className="pd-model-provider-search" type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder={t('settings.providerSearch')} aria-label={t('settings.providerSearch')} />
 				<div className="pd-model-provider-list" aria-label={t('settings.providers')}>
 					{providerGroups.configured.length > 0 && <section className="pd-model-provider-group" data-provider-group="configured" aria-label={t('settings.providersConfigured')}><h4>{t('settings.providersConfigured')}</h4><div className="pd-model-provider-group-items">{providerGroups.configured.map((item) => renderProvider(item, true))}</div></section>}
@@ -413,10 +436,17 @@ export function ModelSettingsPanel({ initialTarget, renderCredential }: { initia
 				<button type="button" className="pd-model-settings-button" disabled={loading || pending} onClick={() => void run(refreshCatalog)} aria-label={t('settings.modelSettingsRefresh')}><Icon name="refresh" width="13" height="13" />{t('settings.modelSettingsRefresh')}</button>
 			</div>
 			<div ref={detailRef} className="pd-model-provider-detail">
-				{providerEditor ? <ProviderEditor key={`${cwd}:${providerEditor}:${providerEditor === 'create' ? 'create' : selected?.provider}`} provider={providerEditor !== 'create' ? selected : undefined} autoDiscover={providerEditor === 'discover'} disabled={!canChange} onCancel={() => setProviderEditor(null)} onSave={async (request) => {
+				{providerEditor ? <ProviderEditor key={`${cwd}:${providerEditor}:${providerEditor === 'create' ? providerTemplate?.id ?? 'create' : selected?.provider}`} provider={providerEditor !== 'create' ? selected : undefined} template={providerEditor === 'create' ? providerTemplate : undefined} autoDiscover={providerEditor === 'discover'} disabled={!canChange} onCancel={() => { if (providerEditor === 'create') setTemplatePicker(true); setProviderEditor(null); setProviderTemplate(undefined); }} onSave={async (request) => {
 					if (!canChange || !await run(() => saveProvider(request), 'settings.providerSaved')) return false;
-					setSelectedId(request.provider); setSearch(''); setProviderEditor(null); return true;
-				}} /> : selected ? <>
+					setSelectedId(request.provider); setSearch(''); setProviderEditor(null); setProviderTemplate(undefined); setTemplatePicker(false); return true;
+				}} /> : templatePicker ? <section className="pd-model-template-picker" data-template-picker aria-label={t('settings.providerTemplates')}>
+					<div className="pd-model-settings-subhead"><h3>{t('settings.providerTemplates')}</h3><button type="button" data-action="close-template-picker" className="pd-model-settings-button" disabled={!canChange} onClick={() => setTemplatePicker(false)}>{t('settings.modelSettingsCancel')}</button></div>
+					<p className="pd-model-settings-notice">{t('settings.providerTemplatesHint')}</p>
+					<div className="pd-model-template-grid">
+						{PROVIDER_TEMPLATES.filter((template) => !providers.some((item) => item.provider === template.id)).map((template) => <button key={template.id} type="button" data-template={template.id} className="pd-model-template-card" disabled={!canChange} onClick={() => startFromTemplate(template)}><strong>{template.name}</strong><code>{template.baseUrl}</code></button>)}
+						<button type="button" data-template="custom" className="pd-model-template-card is-custom" disabled={!canChange} onClick={() => startFromTemplate(undefined)}><strong>{t('settings.providerTemplateCustom')}</strong><span>{t('settings.providerTemplateCustomHint')}</span></button>
+					</div>
+				</section> : selected ? <>
 					<div className="pd-model-provider-detail-head"><div><h3>{selected.name || selected.provider}</h3><span className="pd-model-provider-badge">{t(selected.custom ? 'settings.providerCustom' : 'settings.providerBuiltin')}</span></div>{selected.custom && selected.editable && <button type="button" data-action="edit-provider" className="pd-model-settings-button" disabled={!canChange} onClick={() => { setProviderEditor('edit'); setModelEditor(null); setConfirmRemove(null); setError(null); setFeedback(null); }}>{t('settings.providerEdit')}</button>}</div>
 					<dl className="pd-model-provider-connection"><dt>{t('settings.providerBaseUrl')}</dt><dd>{selected.baseUrl || t('settings.providerDefaultUrl')}</dd><dt>{t('settings.providerProtocol')}</dt><dd>{PROTOCOLS.find((item) => item.value === selected.api)?.label || selected.api || t('settings.providerDefaultProtocol')}</dd>{selected.custom && <><dt>{t('settings.providerSystemProxy')}</dt><dd>{t(selected.useSystemProxy === undefined ? 'settings.providerProxyInheritedShort' : selected.useSystemProxy ? 'settings.providerProxyEnabledShort' : 'settings.providerProxyDisabledShort')}</dd>{Boolean(selected.headerNames?.length) && <><dt>{t('settings.providerHeaders')}</dt><dd>{selected.headerNames!.join(', ')}</dd></>}</>}</dl>
 					{selected.custom && !selected.editable && <p className="pd-model-settings-notice">{t('settings.providerReadonly')}</p>}
@@ -427,9 +457,13 @@ export function ModelSettingsPanel({ initialTarget, renderCredential }: { initia
 						<div className="pd-model-settings-models" aria-label={t('settings.availableModels')}>{filteredModels.map((item) => {
 							const current = item.provider === modelProvider && item.id === model;
 							const available = selectedConfigured && availableIds.has(`${item.provider}/${item.id}`);
-							return <div key={item.id} data-model-id={item.id} className={`pd-model-settings-model${current ? ' is-current' : ''}`}>
+							return <div key={item.id} data-model-id={item.id} className={`pd-model-settings-model${current ? ' is-current' : ''}${disabledIds.has(item.id) ? ' is-disabled' : ''}`}>
 								<div className="pd-model-settings-model-copy"><strong>{item.name || item.id}</strong><code>{item.id}</code><span className="pd-model-settings-model-meta"><span>{t(item.reasoning ? 'settings.reasoning' : 'settings.noReasoning')}</span>{item.input.includes('image') && <span>{t('settings.image')}</span>}<span>{t('settings.context', { size: modelSize(item.contextWindow) })}</span><span>{t('settings.modelOutputSize', { size: modelSize(item.maxTokens) })}</span>{item.reasoning && Boolean(item.thinkingLevels?.length) && <span>{t('settings.modelThinkingSummary', { levels: item.thinkingLevels!.map((level) => t(`composer.thinking.${level}`)).join(' / ') })}</span>}</span></div>
 								<div className="pd-model-settings-model-actions">
+									<label className="pd-model-switch" title={t(current ? 'settings.modelDisableCurrent' : 'settings.modelShowInPicker')}>
+										<input type="checkbox" role="switch" data-action="toggle-model" checked={!disabledIds.has(item.id)} disabled={!canChange || current} aria-label={t('settings.modelShowInPicker')} onChange={(event) => void run(() => setModelEnabled(selected.provider, item.id, event.target.checked))} />
+										<span className="pd-model-switch-track" aria-hidden="true"><span className="pd-model-switch-thumb" /></span>
+									</label>
 									{current ? <span className="pd-model-settings-current-badge">{t('composer.pickerCurrent')}</span> : <button type="button" data-action="use-model" className="pd-model-settings-button" disabled={!canChange || !available} onClick={() => void run(() => setModel(item.provider, item.id))}>{t('settings.customModelUse')}</button>}
 									{selected.custom && selected.editable && <>
 										<button type="button" data-action="edit-model" className="pd-model-settings-button" disabled={!canChange} aria-label={`${t('settings.customModelEdit')} ${item.name || item.id}`} onClick={() => { setModelEditor({ originalId: item.id }); setConfirmRemove(null); setError(null); setFeedback(null); }}>{t('settings.modelSettingsEdit')}</button>

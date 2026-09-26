@@ -9,7 +9,7 @@ import { app, BrowserWindow, dialog, ipcMain, type IpcMainInvokeEvent } from 'el
 import { mkdirSync, statSync } from 'node:fs';
 import { stat } from 'node:fs/promises';
 import { basename, dirname, join, resolve } from 'node:path';
-import { IPC_CHANNELS, type AgentEventEnvelope, type AppLocale, type UiAttachment, type UiExtensionDialogRequest, type UiSessionMetaPatch, type UiSidebarGroupChange, type UiSlashCommandRequest, type UiThinkingLevel } from '@pidesktop/shared';
+import { IPC_CHANNELS, type AgentEventEnvelope, type AppLocale, type UiAppCommand, type UiAttachment, type UiDesktopSettings, type UiExtensionDialogRequest, type UiSessionMetaPatch, type UiSidebarGroupChange, type UiSlashCommandRequest, type UiThinkingLevel } from '@pidesktop/shared';
 import { createIsolatedAgentService } from './agentClient';
 import { getAppLocale, setAppLocale } from './appLocale';
 import { updateAppTrayMenu } from './tray';
@@ -19,6 +19,9 @@ import { registerWorkbenchIpc } from './workbenchIpc';
 import type { WorkbenchService } from './workbenchService';
 import { backupCorruptStateFile, backupCorruptStateFileAsync, CorruptStateFileError, readStateFile, readStateFileAsync, writeStateFile, writeStateFileAsync } from './stateFiles';
 import { SessionGroupService } from './sessionGroups';
+import { createSessionTrash } from './sessionTrash';
+import { createDesktopNotifier } from './notifications';
+import { readDesktopSettings, writeDesktopSettings, type DesktopSettings } from './desktopSettings';
 import { readWorkspaceContext, validateContextRequest } from './contextService';
 import { createAutomationService } from './automationService';
 import { createAutomationExecutor } from './automationExecutor';
@@ -160,7 +163,11 @@ export const agentService = createIsolatedAgentService({ requestProjectTrust: as
 	}, 250);
 } });
 
-interface WorkspaceSettings { cwd?: string; workspaces?: string[] }
+interface WorkspaceSettings { cwd?: string; workspaces?: string[]; pinnedWorkspaces?: string[] }
+function workspaceKey(cwd: string): string {
+	const key = resolve(cwd);
+	return process.platform === 'win32' ? key.toLowerCase() : key;
+}
 let activeWorkspace = '';
 const pickedWorkspaces = new Set<string>();
 const sessionOwnerByPath = new Map<string, string>();
@@ -174,7 +181,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function isWorkspaceSettings(value: unknown): value is WorkspaceSettings {
 	return isRecord(value)
 		&& (value.cwd === undefined || typeof value.cwd === 'string')
-		&& (value.workspaces === undefined || (Array.isArray(value.workspaces) && value.workspaces.every((cwd) => typeof cwd === 'string')));
+		&& (value.workspaces === undefined || (Array.isArray(value.workspaces) && value.workspaces.every((cwd) => typeof cwd === 'string')))
+		&& (value.pinnedWorkspaces === undefined || (Array.isArray(value.pinnedWorkspaces) && value.pinnedWorkspaces.every((cwd) => typeof cwd === 'string')));
 }
 
 function readWorkspaceSettings(): WorkspaceSettings {
@@ -183,6 +191,47 @@ function readWorkspaceSettings(): WorkspaceSettings {
 
 function readWorkspaceSettingsAsync(): Promise<WorkspaceSettings> {
 	return readStateFileAsync(workspaceSettingsPath(), () => ({}), isWorkspaceSettings);
+}
+
+let workspaceSettingsQueue: Promise<void> = Promise.resolve();
+function withWorkspaceSettings<T>(action: (settings: WorkspaceSettings) => Promise<T> | T): Promise<T> {
+	const result = workspaceSettingsQueue.then(async () => action(await readWorkspaceSettingsAsync()));
+	workspaceSettingsQueue = result.then(() => undefined, () => undefined);
+	return result;
+}
+
+function desktopSettingsPath(): string {
+	return join(app.getPath('userData'), 'desktop-settings.json');
+}
+
+/** Sync read for the close-policy handler (4.2); corrupt files fall back to defaults. */
+export function readCurrentDesktopSettings(): DesktopSettings {
+	return readDesktopSettings(desktopSettingsPath());
+}
+
+/** Persists a close-policy choice made from the close dialog (4.2). */
+export function saveCloseBehavior(behavior: DesktopSettings['closeBehavior']): void {
+	const current = readDesktopSettings(desktopSettingsPath());
+	writeDesktopSettings(desktopSettingsPath(), { ...current, closeBehavior: behavior });
+}
+
+/** Sends a main → renderer command (tray menu, notification clicks). */
+export function sendAppCommand(command: UiAppCommand): void {
+	for (const win of BrowserWindow.getAllWindows()) {
+		if (!win.isDestroyed() && !win.webContents.isDestroyed()) win.webContents.send(IPC_CHANNELS.appCommand, command);
+	}
+}
+
+/** True while a foreground turn streams or an automation run is in flight (4.2). */
+export async function isAgentWorkActive(): Promise<boolean> {
+	try {
+		const snapshot = await agentService.getSnapshot();
+		if (snapshot.status === 'busy') return true;
+	} catch { /* snapshot unavailable — treat as idle */ }
+	try {
+		if (await automationService?.hasActiveRuns()) return true;
+	} catch { /* ignore scheduler errors */ }
+	return false;
 }
 
 function workspaceSettingsPath(): string {
@@ -223,17 +272,19 @@ function saveWorkspace(cwd: string): void {
 	const previous = readWorkspaceSettings();
 	const workspaces = [...new Set([...(Array.isArray(previous.workspaces) ? previous.workspaces : []), previous.cwd, cwd]
 		.filter((value): value is string => typeof value === 'string' && value.length > 0))];
-	writeStateFile(workspaceSettingsPath(), { cwd, workspaces });
+	writeStateFile(workspaceSettingsPath(), { cwd, workspaces, pinnedWorkspaces: previous.pinnedWorkspaces ?? [] });
 }
 
 async function saveWorkspaceAsync(cwd: string): Promise<void> {
-	const previous = await readWorkspaceSettingsAsync();
-	const workspaces = [...new Set([...(Array.isArray(previous.workspaces) ? previous.workspaces : []), previous.cwd, cwd]
-		.filter((value): value is string => typeof value === 'string' && value.length > 0))];
-	await writeStateFileAsync(workspaceSettingsPath(), { cwd, workspaces });
+	await withWorkspaceSettings(async (previous) => {
+		const workspaces = [...new Set([...(Array.isArray(previous.workspaces) ? previous.workspaces : []), previous.cwd, cwd]
+			.filter((value): value is string => typeof value === 'string' && value.length > 0))];
+		await writeStateFileAsync(workspaceSettingsPath(), { cwd, workspaces, pinnedWorkspaces: previous.pinnedWorkspaces ?? [] });
+	});
 }
 
 async function listWorkspaces(): Promise<string[]> {
+	await workspaceSettingsQueue;
 	const saved = await readWorkspaceSettingsAsync();
 	const candidates = [...new Set([...(Array.isArray(saved.workspaces) ? saved.workspaces : []), saved.cwd, activeWorkspace]
 		.filter((value): value is string => typeof value === 'string' && value.length > 0))];
@@ -242,6 +293,40 @@ async function listWorkspaces(): Promise<string[]> {
 		catch { return false; }
 	}));
 	return candidates.filter((_, index) => existing[index]);
+}
+
+async function listPinnedWorkspaces(): Promise<string[]> {
+	return withWorkspaceSettings(async (saved) => {
+		const registered = [...new Set([...(saved.workspaces ?? []), saved.cwd, activeWorkspace]
+			.filter((value): value is string => typeof value === 'string' && value.length > 0))];
+		const byKey = new Map(registered.map((cwd) => [workspaceKey(cwd), cwd]));
+		const pinned = [...new Set(saved.pinnedWorkspaces ?? [])].map((cwd) => byKey.get(workspaceKey(cwd))).filter((cwd): cwd is string => Boolean(cwd));
+		const existing = await Promise.all(pinned.map(async (cwd) => {
+			try { return (await stat(cwd)).isDirectory(); } catch { return false; }
+		}));
+		return pinned.filter((_, index) => existing[index]);
+	});
+}
+
+async function setPinnedWorkspaces(value: unknown): Promise<string[]> {
+	if (!Array.isArray(value) || value.length > 256 || value.some((cwd) => typeof cwd !== 'string' || !cwd || cwd.length > 32768 || cwd.includes('\0'))) {
+		throw new Error('置顶项目参数无效');
+	}
+	return withWorkspaceSettings(async (previous) => {
+		const registered = [...new Set([...(previous.workspaces ?? []), previous.cwd, activeWorkspace]
+			.filter((entry): entry is string => typeof entry === 'string' && entry.length > 0))];
+		const byKey = new Map(registered.map((cwd) => [workspaceKey(cwd), cwd]));
+		const pinned: string[] = [];
+		const seen = new Set<string>();
+		for (const requested of value) {
+			const key = workspaceKey(requested);
+			const cwd = byKey.get(key);
+			if (!cwd) throw new Error('只能置顶已打开的项目');
+			if (!seen.has(key)) { seen.add(key); pinned.push(cwd); }
+		}
+		await writeStateFileAsync(workspaceSettingsPath(), { ...previous, pinnedWorkspaces: pinned });
+		return pinned;
+	});
 }
 
 type SessionMeta = Omit<UiSessionMetaPatch, 'name'>;
@@ -413,6 +498,11 @@ export function registerIpc(options: {
 	getDialogWindow?(): BrowserWindow | undefined;
 } = {}): void {
 	getDialogWindow = options.getDialogWindow ?? (() => undefined);
+	const notifier = createDesktopNotifier({
+		settingsPath: desktopSettingsPath,
+		getMainWindow: () => getDialogWindow() ?? null,
+		revealSession: (path) => sendAppCommand({ type: 'switch-session', path }),
+	});
 	workbenchService = registerWorkbenchIpc(() => activeWorkspace);
 	ipcMain.handle(IPC_CHANNELS.personalizationRead, (event) => {
 		requirePluginSender(event);
@@ -435,6 +525,20 @@ export function registerIpc(options: {
 			if (win && !win.isDestroyed() && !win.webContents.isDestroyed()) win.webContents.send(IPC_CHANNELS.automationChanged, snapshot);
 		},
 		onError: (error) => console.error('Automation scheduler failed:', error),
+		onRunFinished: (entry, task) => notifier.handleAutomationRun(entry, task.name),
+	});
+	ipcMain.handle(IPC_CHANNELS.desktopSettingsGet, () => readDesktopSettings(desktopSettingsPath()));
+	ipcMain.handle(IPC_CHANNELS.desktopSettingsSet, (event, patch: unknown) => {
+		const win = invokingWindow(event);
+		if (event.senderFrame !== win.webContents.mainFrame) throw new Error('Invalid desktop-settings sender');
+		if (!isRecord(patch)) throw new Error('设置参数无效');
+		const current = readDesktopSettings(desktopSettingsPath());
+		const next: DesktopSettings = {
+			notificationsEnabled: typeof patch.notificationsEnabled === 'boolean' ? patch.notificationsEnabled : current.notificationsEnabled,
+			closeBehavior: patch.closeBehavior === 'tray' || patch.closeBehavior === 'quit' ? patch.closeBehavior : current.closeBehavior,
+		};
+		writeDesktopSettings(desktopSettingsPath(), next);
+		return next;
 	});
 	automationService = automations;
 	ipcMain.handle(IPC_CHANNELS.pluginCatalog, (event, cwd: unknown) => {
@@ -503,6 +607,7 @@ export function registerIpc(options: {
 	// Agent events → all renderer windows.
 	agentService.onEvent((event: AgentEventEnvelope) => {
 		if (event.event.type === 'ready') activeSessionPath = event.event.sessionPath;
+		notifier.handleAgentEvent(event, activeSessionPath);
 		for (const win of BrowserWindow.getAllWindows()) {
 			win.webContents.send(IPC_CHANNELS.agentEvent, event);
 		}
@@ -565,6 +670,8 @@ export function registerIpc(options: {
 		return selected;
 	});
 	ipcMain.handle(IPC_CHANNELS.agentListWorkspaces, () => listWorkspaces());
+	ipcMain.handle(IPC_CHANNELS.workspaceListPinned, () => listPinnedWorkspaces());
+	ipcMain.handle(IPC_CHANNELS.workspaceSetPinned, (_event, cwds: unknown) => setPinnedWorkspaces(cwds));
 	ipcMain.handle(IPC_CHANNELS.agentListSessionGroups, () => groups.list());
 	ipcMain.handle(IPC_CHANNELS.agentUpdateSessionGroups, (_event, change: UiSidebarGroupChange) => groups.update(change));
 	ipcMain.handle(IPC_CHANNELS.workspaceSwitch, (_event, cwd: string) => activateWorkspace(cwd, false));
@@ -575,8 +682,48 @@ export function registerIpc(options: {
 		mkdirSync(home, { recursive: true });
 		return home;
 	});
+	ipcMain.handle(IPC_CHANNELS.workspaceRemove, (_event, cwd: string) => queueWorkspaceActivation(async () => {
+		if (typeof cwd !== 'string' || cwd.length === 0 || cwd.length > 32768 || cwd.includes('\0')) throw new Error('项目路径无效');
+		const target = workspaceKey(cwd);
+		if (target === (activeWorkspace ? workspaceKey(activeWorkspace) : activeWorkspace)) throw new Error('无法移除当前项目，请先切换到其他项目');
+		await agentService.forgetWorkspace(cwd);
+		await withWorkspaceSettings(async (previous) => {
+			const workspaces = [...new Set([...(Array.isArray(previous.workspaces) ? previous.workspaces : []), previous.cwd]
+				.filter((value): value is string => typeof value === 'string' && value.length > 0))]
+				.filter((path) => workspaceKey(path) !== target);
+			const pinnedWorkspaces = (previous.pinnedWorkspaces ?? []).filter((path) => workspaceKey(path) !== target);
+			const home = join(app.getPath('home'), 'PiDesktopWorkspace');
+			await writeStateFileAsync(workspaceSettingsPath(), { cwd: previous.cwd && workspaceKey(previous.cwd) === target ? home : previous.cwd, workspaces, pinnedWorkspaces });
+		});
+		for (const picked of [...pickedWorkspaces]) if (workspaceKey(picked) === target) pickedWorkspaces.delete(picked);
+		for (const [path, owner] of sessionOwnerByPath) if (workspaceKey(owner) === target) sessionOwnerByPath.delete(path);
+	}));
 	ipcMain.handle(IPC_CHANNELS.agentInit, (_event, cwd: string) => activateWorkspace(cwd, true));
 	ipcMain.handle(IPC_CHANNELS.agentSnapshot, () => agentService.getSnapshot());
+	ipcMain.handle(IPC_CHANNELS.agentHistoryPage, (_event, offset: unknown, limit: unknown) => {
+		const pageOffset = typeof offset === 'number' ? offset : Number.NaN;
+		const pageLimit = typeof limit === 'number' ? limit : Number.NaN;
+		if (!Number.isInteger(pageOffset) || !Number.isInteger(pageLimit) || pageOffset < 0 || pageLimit < 1 || pageLimit > 500) throw new Error('历史分页参数无效');
+		return agentService.getHistoryPage(pageOffset, pageLimit);
+	});
+	ipcMain.handle(IPC_CHANNELS.agentSessionStats, () => agentService.getSessionStats());
+	ipcMain.handle(IPC_CHANNELS.agentExportSession, async (event, format: unknown) => {
+		const kind = format === 'html' ? 'html' : format === 'jsonl' ? 'jsonl' : null;
+		if (!kind) throw new Error('导出格式无效');
+		const win = invokingWindow(event);
+		if (event.senderFrame !== win.webContents.mainFrame) throw new Error('Invalid export sender');
+		const snapshot = await agentService.getSnapshot();
+		const baseName = (snapshot.sessionPath ? basename(snapshot.sessionPath).replace(/\.jsonl$/i, '') : snapshot.sessionId ?? 'session').replace(/[\\/:*?"<>|]+/g, '_').slice(0, 80) || 'session';
+		const filters = [{ name: kind.toUpperCase(), extensions: [kind] }];
+		const choice = await dialog.showSaveDialog(win, { defaultPath: `${baseName}.${kind}`, filters });
+		if (choice.canceled || !choice.filePath) return null;
+		return agentService.exportSession(choice.filePath, kind);
+	});
+	ipcMain.handle(IPC_CHANNELS.agentSessionTree, () => agentService.getSessionTree());
+	ipcMain.handle(IPC_CHANNELS.agentSwitchBranch, (_event, entryId: unknown) => {
+		if (typeof entryId !== 'string' || !entryId.trim()) throw new Error('目标条目无效');
+		return agentService.switchSessionBranch(entryId);
+	});
 	ipcMain.handle(IPC_CHANNELS.agentListSessions, async (_event, cwd?: string) => {
 		const targetCwd = cwd ?? activeWorkspace;
 		if (targetCwd && !(await listWorkspaces()).includes(targetCwd)) throw new Error('未知工作区');
@@ -630,6 +777,26 @@ export function registerIpc(options: {
 			await saveSessionMeta(meta);
 		});
 	});
+	const sessionTrash = createSessionTrash(() => join(app.getPath('userData'), 'session-trash'));
+	ipcMain.handle(IPC_CHANNELS.sessionDelete, async (event, path: unknown) => {
+		const win = invokingWindow(event);
+		if (event.senderFrame !== win.webContents.mainFrame) throw new Error('Invalid session-delete sender');
+		if (typeof path !== 'string' || !path.trim()) throw new Error('会话路径无效');
+		const target = resolve(path);
+		await requireSessionOwner(target);
+		if (automationExecutor.isSessionRunning(target)) throw new Error('自动化仍在运行，请结束后再删除会话');
+		// Deleting the loaded session is rejected: the renderer switches to a fresh one first (3.3).
+		const snapshot = await agentService.getSnapshot();
+		if (snapshot.sessionPath === target) throw new Error('不能删除当前打开的会话');
+		const trashed = sessionTrash.trashSession(target);
+		sessionOwnerByPath.delete(target);
+		await withSessionMeta(async (meta) => {
+			delete meta[target];
+			await saveSessionMeta(meta);
+		});
+		await sessionGroupService?.removeSession(target);
+		return trashed;
+	});
 	ipcMain.handle(IPC_CHANNELS.agentUpdateSessionOrders, async (_event, entries: { path: string; order: number | null }[]) => {
 		if (!Array.isArray(entries) || entries.length === 0 || entries.length > 500
 			|| !entries.every((entry) => isRecord(entry) && typeof entry.path === 'string' && entry.path.length > 0 && entry.path.length <= 32768 && !entry.path.includes('\0')
@@ -670,6 +837,12 @@ export function registerIpc(options: {
 	ipcMain.handle(IPC_CHANNELS.agentListProviderAuth, () => agentService.listProviderAuth());
 	ipcMain.handle(IPC_CHANNELS.agentSetProviderApiKey, (_event, provider: string, key: string) => agentService.setProviderApiKey(provider, key));
 	ipcMain.handle(IPC_CHANNELS.agentRemoveProviderCredential, (_event, provider: string) => agentService.removeProviderCredential(provider));
+	ipcMain.handle(IPC_CHANNELS.agentSetModelEnabled, (_event, provider: unknown, modelId: unknown, enabled: unknown) => {
+		if (typeof provider !== 'string' || !provider.trim() || provider.length > 80 || /[\u0000]/u.test(provider)
+			|| typeof modelId !== 'string' || !modelId.trim() || modelId.trim().length > 200 || /[\u0000]/u.test(modelId)
+			|| typeof enabled !== 'boolean') throw new Error('模型启用参数无效');
+		return agentService.setModelEnabled(provider, modelId.trim(), enabled);
+	});
 	ipcMain.handle(IPC_CHANNELS.agentListExtensions, () => agentService.listExtensions());
 	ipcMain.handle(IPC_CHANNELS.agentSetExtensionEnabled, (event, path: string, enabled: boolean) => {
 		requirePluginSender(event);
@@ -687,6 +860,13 @@ export function registerIpc(options: {
 	ipcMain.handle(IPC_CHANNELS.agentForkMessage, async (_event, entryId: string) => {
 		if (typeof entryId !== 'string' || !entryId.trim() || entryId.length > 512 || entryId.includes('\0')) throw new Error('消息标识无效');
 		await agentService.forkAssistantMessage(entryId);
+	});
+
+	ipcMain.handle(IPC_CHANNELS.agentUpdateQueuedMessage, async (_event, id: string, action: 'edit' | 'remove' | 'steer', text?: string) => {
+		if (typeof id !== 'string' || !id.trim() || id.length > 512 || id.includes('\0')) throw new Error('排队消息标识无效');
+		if (action !== 'edit' && action !== 'remove' && action !== 'steer') throw new Error('排队消息操作无效');
+		if (action === 'edit' && (typeof text !== 'string' || !text.trim() || text.length > 256 * 1024 || text.includes('\0'))) throw new Error('排队消息内容无效');
+		await agentService.updateQueuedMessage(id, action, action === 'edit' ? text : undefined);
 	});
 
 	ipcMain.handle(IPC_CHANNELS.agentGenerateCommitMessage, (_event, context: string) => {

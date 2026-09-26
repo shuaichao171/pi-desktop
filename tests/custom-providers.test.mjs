@@ -618,3 +618,46 @@ test('model discovery resolves saved credentials and draft overrides without per
     await f.cleanup();
   }
 });
+
+test('model preferences persist per-provider disabled ids and survive reloads', async () => {
+  const { loadModelPrefs, setModelDisabled, getCachedDisabledModels } = await import('../packages/agent/src/customProviders.ts');
+  const root = mkdtempSync(join(tmpdir(), 'pi-desktop-model-prefs-'));
+  try {
+    assert.deepEqual(await loadModelPrefs(root), {}, 'missing prefs start empty');
+    await setModelDisabled(root, 'deepseek', 'deepseek-chat', true);
+    await setModelDisabled(root, 'deepseek', 'deepseek-reasoner', true);
+    await setModelDisabled(root, 'kimi', 'moonshot-v1', true);
+    await setModelDisabled(root, 'deepseek', 'deepseek-chat', false);
+    assert.deepEqual(getCachedDisabledModels(), { deepseek: ['deepseek-reasoner'], kimi: ['moonshot-v1'] }, 'cache reflects the last write');
+    assert.deepEqual(JSON.parse(readFileSync(join(root, 'model-prefs.json'), 'utf8')), { disabled: { deepseek: ['deepseek-reasoner'], kimi: ['moonshot-v1'] } }, 'prefs persist to disk');
+    await loadModelPrefs(join(root, 'uncached'));
+    assert.deepEqual(await loadModelPrefs(root), { deepseek: ['deepseek-reasoner'], kimi: ['moonshot-v1'] }, 'a fresh cache reloads the same prefs from disk');
+    writeFileSync(join(root, 'model-prefs.json'), '{ not json');
+    await loadModelPrefs(join(root, 'uncached'));
+    assert.deepEqual(await loadModelPrefs(root), {}, 'corrupt prefs fall back to empty');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('model visibility changes lock every runtime and never hide an in-use model', async () => {
+  const f = await fixture();
+  try {
+    const current = f.service.getSnapshot();
+    assert.ok(current.modelProvider && current.model, 'fixture must select a current model');
+    await assert.rejects(f.service.setModelEnabled(current.modelProvider, current.model, false), /正在使用/);
+    const providers = await f.service.listModelProviders();
+    const candidate = providers.flatMap((provider) => provider.models).find((model) => model.provider !== current.modelProvider || model.id !== current.model);
+    assert.ok(candidate, 'fixture must expose another model for visibility preferences');
+    await f.service.setModelEnabled(candidate.provider, candidate.id, false);
+    let provider = (await f.service.listModelProviders()).find((item) => item.provider === candidate.provider);
+    assert.ok(provider.disabledModels?.includes(candidate.id));
+    assert.ok(!f.service.listModels().some((model) => model.provider === candidate.provider && model.id === candidate.id));
+    await f.service.setModelEnabled(candidate.provider, candidate.id, true);
+    provider = (await f.service.listModelProviders()).find((item) => item.provider === candidate.provider);
+    assert.ok(!provider.disabledModels?.includes(candidate.id));
+    f.assertOffline();
+  } finally {
+    await f.cleanup();
+  }
+});

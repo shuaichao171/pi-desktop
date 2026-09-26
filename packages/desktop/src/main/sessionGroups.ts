@@ -100,6 +100,21 @@ export class SessionGroupService {
 
 	list(): Promise<UiSessionGroup[]> { return this.enqueue(() => this.read()); }
 
+	/** Drops a session from every group (used when a conversation is deleted). */
+	removeSession(path: string): Promise<UiSessionGroup[]> {
+		return this.enqueue(async () => {
+			const groups = await this.read();
+			let changed = false;
+			const next = groups.map((group) => {
+				if (!group.sessionPaths.includes(path)) return group;
+				changed = true;
+				return { ...group, sessionPaths: group.sessionPaths.filter((entry) => entry !== path) };
+			});
+			if (changed) await writeStateFileAsync(this.path, next);
+			return next;
+		});
+	}
+
 	update(value: UiSidebarGroupChange): Promise<UiSessionGroup[]> {
 		return this.enqueue(async () => {
 			const change = normalizeChange(value);
