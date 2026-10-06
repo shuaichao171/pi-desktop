@@ -3,7 +3,7 @@ import type { UiSessionGroup, UiSidebarGroupChange } from '@pidesktop/shared';
 import { useChatStore } from '../store';
 import { useT } from '../i18n';
 import { managementCopy } from '../managementCopy';
-import { summarizeSessionStates } from '../managementState';
+import { sessionRuntimeKey, summarizeSessionStates } from '../managementState';
 import { operationFeedback } from '../operationFeedback';
 import type { ContextMenuPoint } from '../contextMenuPosition';
 import { changedSidebarOrders, moveSidebarProject, moveSidebarSession } from '../sidebarDrag';
@@ -11,6 +11,7 @@ import { isConversationWorkspace } from '../sidebarOrganization';
 import { SessionTrashDialog } from './SessionTrashDialog';
 import { SessionBulkTrashDialog, type SessionTrashTarget } from './SessionBulkTrashDialog';
 import { ProjectCreationDialog } from './ProjectCreationDialog';
+import { ProjectRemovalDialog, type ProjectRemovalSummary } from './ProjectRemovalDialog';
 import { buildSidebarGroups, buildSidebarProjectGroups, clearPinnedProjects, collectSidebarSessions, groupSessionsByDate, mergeSidebarProjectOrder, orderSidebarProjects, readPinnedProjects, readSidebarPreferences, reorderSidebarProjectPositions, saveSidebarPreferences, selectSidebarSessions, sidebarProjectPaths, sidebarWorkspaceKey, splitSidebarProjects, type SidebarPreferences, type SidebarSession } from '../sidebarOrganization';
 import { HoverTooltip } from './HoverTooltip';
 import { Icon } from './Icons';
@@ -82,6 +83,7 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, onNavig
 	const defaultWorkspace = useChatStore((s) => s.defaultWorkspace);
 	const sessionsByWorkspace = useChatStore((s) => s.sessionsByWorkspace);
 	const workspaceRequests = useChatStore((s) => s.workspaceSessionRequests);
+	const sessionRuntimes = useChatStore((s) => s.sessionRuntimes);
 	const switchWorkspace = useChatStore((s) => s.switchWorkspace);
 	const removeWorkspace = useChatStore((s) => s.removeWorkspace);
 	const newSession = useChatStore((s) => s.newSession);
@@ -108,6 +110,7 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, onNavig
 	const [popup, setPopup] = useState<Popup | null>(null);
 	const [creatingProject, setCreatingProject] = useState(false);
 	const [trashTarget, setTrashTarget] = useState<{ session: SidebarSession; anchor: HTMLElement; nextPath?: string } | null>(null);
+	const [projectRemovalTarget, setProjectRemovalTarget] = useState<{ summary: ProjectRemovalSummary; anchor: HTMLElement } | null>(null);
 	const trashFocus = useRef<{ path?: string; anchor?: HTMLElement } | null>(null);
 	const popupRef = useRef(popup);
 	popupRef.current = popup;
@@ -874,6 +877,15 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, onNavig
 			setCreatingProject(false);
 			if (opened) { preference({ mode: 'project', projectView: 'project' }); setArchived(false); onNavigate(); }
 		}} />}
+		{projectRemovalTarget && <ProjectRemovalDialog summary={projectRemovalTarget.summary} onRemove={async () => {
+			await removeWorkspace(projectRemovalTarget.summary.workspace);
+			setPinnedProjects((current) => current.filter((path) => sidebarWorkspaceKey(path) !== sidebarWorkspaceKey(projectRemovalTarget.summary.workspace)));
+		}} onClose={(removed) => {
+			const target = projectRemovalTarget;
+			setProjectRemovalTarget(null);
+			if (!removed) requestAnimationFrame(() => target.anchor.isConnected && target.anchor.focus());
+			else operationFeedback.show({ id: `project-remove:${target.summary.workspace}`, kind: 'success', title: t('sidebar.projectRemoved'), detail: target.summary.name });
+		}} />}
 		{trashTarget && <SessionTrashDialog title={titleOf(trashTarget.session)} workspace={trashTarget.session.workspace} onDelete={() => useChatStore.getState().deleteSession(trashTarget.session.path)} onClose={(deleted) => {
 			const target = trashTarget;
 			trashFocus.current = deleted ? { path: target.nextPath } : { path: target.session.path, anchor: target.anchor };
@@ -925,7 +937,17 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, onNavig
 					void perform(async () => { try { await switchWorkspace(workspace); } finally { navigationPending.current = false; setNavigating(false); } }, true);
 				}}>{t('sidebar.openProject')}</button>
 				<button type="button" role="menuitem" onClick={() => { const workspace = popup.workspace; setPopup(null); void perform(() => bridge ? bridge.openWorkspaceFolder(workspace) : Promise.resolve()); }}>{t('sidebar.projectReveal')}</button>
-				<hr /><button type="button" role="menuitem" disabled={pinSaving} onClick={() => { const workspace = popup.workspace; setPopup(null); void perform(async () => { await removeWorkspace(workspace); setPinnedProjects((current) => current.filter((path) => sidebarWorkspaceKey(path) !== sidebarWorkspaceKey(workspace))); }); }}>{t('sidebar.projectRemove')}</button>
+				<hr /><button type="button" role="menuitem" className="pd-sidebar-menu-danger" disabled={pinSaving} onClick={() => {
+					const workspace = popup.workspace;
+					const anchor = popup.trigger ?? popup.anchor;
+					const projectSessions = sessionsByWorkspace[workspace] ?? [];
+					const activeCount = projectSessions.filter((session) => {
+						const phase = sessionRuntimes[sessionRuntimeKey(workspace, session.path)]?.phase;
+						return phase === 'running' || phase === 'waiting-input' || phase === 'waiting-approval';
+					}).length + (workspace === cwd && !sessionPath && (status === 'busy' || status === 'starting') ? 1 : 0);
+					setProjectRemovalTarget({ summary: { workspace, name: workspaceName(workspace), sessionCount: projectSessions.length, activeCount }, anchor });
+					setPopup(null);
+				}}>{t('sidebar.projectRemove')}</button>
 			</>}
 			{popup.kind === 'group' && <><button type="button" role="menuitem" onClick={() => editGroup(popup.trigger ?? popup.anchor, popup.group)}>{t('sidebar.renameGroup')}</button><button type="button" role="menuitem" disabled={pending} onClick={() => { const group = popup.group; setPopup(null); void perform(async () => { await changeGroups({ type: 'delete', id: group.id }); }); }}>{t('sidebar.dissolveGroup')}</button><p className="pd-sidebar-menu-note">{t('sidebar.dissolveGroupHint')}</p></>}
 			{popup.kind === 'session' && <>

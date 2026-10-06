@@ -10,7 +10,7 @@ import { Icon } from './Icons';
 import { imageCapability } from '../modelCapabilities';
 import './modelCapabilities.css';
 
-type Picker = 'model' | 'thinking';
+type Picker = 'model' | 'thinking' | 'context';
 
 function tokenLabel(value: number): string {
 	if (value >= 1_000_000) return `${Number((value / 1_000_000).toFixed(1))}M`;
@@ -41,6 +41,7 @@ export function ComposerControls({ onOpenModelManagement, hasImages = false }: {
 	const refreshProviderAuth = useChatStore((s) => s.refreshProviderAuth);
 	const setModel = useChatStore((s) => s.setModel);
 	const setThinkingLevel = useChatStore((s) => s.setThinkingLevel);
+	const bridge = useChatStore((s) => s.bridge);
 	const [open, setOpen] = useState<Picker | null>(null);
 	const [search, setSearch] = useState('');
 	const [imagesOnly, setImagesOnly] = useState(false);
@@ -54,6 +55,9 @@ export function ComposerControls({ onOpenModelManagement, hasImages = false }: {
 	const searchRef = useRef<HTMLInputElement>(null);
 	const providerListRef = useRef<HTMLDivElement>(null);
 	const modelListRef = useRef<HTMLDivElement>(null);
+	const contextRef = useRef<HTMLButtonElement>(null);
+	const [compacting, setCompacting] = useState(false);
+	const [compactError, setCompactError] = useState<string | null>(null);
 	const focusModelsAfterProviderChange = useRef(false);
 	const pickerId = useId();
 	const generation = useRef(0);
@@ -94,7 +98,7 @@ export function ComposerControls({ onOpenModelManagement, hasImages = false }: {
 		pickerRevision.current += 1;
 		focusModelsAfterProviderChange.current = false;
 		setOpen(null);
-		if (focus === 'trigger') (open === 'model' ? modelRef : thinkingRef).current?.focus();
+		if (focus === 'trigger') (open === 'model' ? modelRef : open === 'context' ? contextRef : thinkingRef).current?.focus();
 		if (focus === 'input') document.querySelector<HTMLTextAreaElement>('.pd-composer-shell textarea')?.focus();
 	}
 
@@ -113,6 +117,20 @@ export function ComposerControls({ onOpenModelManagement, hasImages = false }: {
 		setOpen((current) => current === picker ? null : picker);
 	}
 
+	/** Actionable context panel (context-panel task): compact runs /compact like the recovery bar. */
+	async function runCompact() {
+		const state = useChatStore.getState();
+		if (!state.bridge || !cwd || !sessionId || compacting) return;
+		setCompacting(true);
+		setCompactError(null);
+		try {
+			await state.bridge.executeSlashCommand({ cwd, sessionId, name: 'compact' });
+			close('input');
+		} catch (error) {
+			setCompactError(error instanceof Error ? error.message : String(error));
+		} finally { setCompacting(false); }
+	}
+
 	function openManagement(target: ModelManagementTarget) {
 		close('trigger');
 		onOpenModelManagement(target);
@@ -129,7 +147,7 @@ export function ComposerControls({ onOpenModelManagement, hasImages = false }: {
 		}
 		const outside = (event: Event) => {
 			const target = event.target as Node;
-			if (!popoverRef.current?.contains(target) && !modelRef.current?.contains(target) && !thinkingRef.current?.contains(target)) {
+			if (!popoverRef.current?.contains(target) && !modelRef.current?.contains(target) && !contextRef.current?.contains(target) && !thinkingRef.current?.contains(target)) {
 				pickerRevision.current += 1;
 				setOpen(null);
 			}
@@ -167,7 +185,7 @@ export function ComposerControls({ onOpenModelManagement, hasImages = false }: {
 
 	useLayoutEffect(() => {
 		if (!open) return;
-		const anchor = (open === 'model' ? modelRef : thinkingRef).current;
+		const anchor = (open === 'model' ? modelRef : open === 'context' ? contextRef : thinkingRef).current;
 		const popover = popoverRef.current;
 		if (!anchor || !popover) return;
 		const updatePosition = (next: CSSProperties) => setPosition((current) =>
@@ -254,7 +272,7 @@ export function ComposerControls({ onOpenModelManagement, hasImages = false }: {
 	return <div className="pd-composer-config">
 		{hasImages && <HoverTooltip title={locale === 'zh-CN' ? imageCapability(currentModel) === 'supported' ? '当前模型支持图片输入' : imageCapability(currentModel) === 'unsupported' ? '当前模型不支持图片输入，请选择兼容模型' : '当前模型的图片能力未知，请确认或选择兼容模型' : imageCapability(currentModel) === 'supported' ? 'This model supports image input' : imageCapability(currentModel) === 'unsupported' ? 'This model does not support images. Choose a compatible model.' : 'Image support is unknown. Confirm compatibility or choose another model.'} disabled={open !== null}><button type="button" className={`pd-composer-control pd-model-image-notice is-${imageCapability(currentModel)}`} onClick={() => { if (open !== 'model') toggle('model'); setImagesOnly(true); }} aria-haspopup="dialog"><Icon name="image" width="14" height="14" /><span>{locale === 'zh-CN' ? imageCapability(currentModel) === 'supported' ? '支持图片' : imageCapability(currentModel) === 'unsupported' ? '需图片模型' : '能力未知' : imageCapability(currentModel) === 'supported' ? 'Images' : imageCapability(currentModel) === 'unsupported' ? 'Image model needed' : 'Unknown support'}</span></button></HoverTooltip>}
 		<HoverTooltip title={t('composer.contextTitle')} description={contextDescription} disabled={open !== null}>
-			<button type="button" className={`pd-composer-control pd-context-trigger${percent !== null && percent >= 90 ? ' is-warning' : ''}`} aria-label={capacity ? t(percent === null ? 'composer.contextCapacityOnly' : 'composer.contextSummary', { capacity: capacityLabel, percent: percentLabel }) : t('composer.contextTitle')}>
+			<button ref={contextRef} type="button" className={`pd-composer-control pd-context-trigger${percent !== null && percent >= 90 ? ' is-warning' : ''}`} onClick={() => toggle('context')} aria-label={capacity ? t(percent === null ? 'composer.contextCapacityOnly' : 'composer.contextSummary', { capacity: capacityLabel, percent: percentLabel }) : t('composer.contextTitle')} aria-haspopup="dialog" aria-expanded={open === 'context'} aria-controls={open === 'context' ? 'pd-composer-context-picker' : undefined}>
 				<svg width="18" height="18" viewBox="0 0 20 20" aria-hidden="true"><circle className="pd-context-ring-track" cx="10" cy="10" r="7" /><circle className="pd-context-ring-value" cx="10" cy="10" r="7" pathLength="100" strokeDasharray={`${Math.max(0, Math.min(100, percent ?? 0))} 100`} transform="rotate(-90 10 10)" /></svg>
 			</button>
 		</HoverTooltip>
@@ -268,8 +286,8 @@ export function ComposerControls({ onOpenModelManagement, hasImages = false }: {
 				<Icon name="brain" width="16" height="16" /><span>{thinkingLabel}</span>{canThink && <Icon name="chevronDown" width="12" height="12" />}
 			</button>
 		</HoverTooltip>
-		{open && createPortal(<div ref={popoverRef} id={`pd-composer-${open}-picker`} className={`pd-composer-config-popover is-${open}`} style={position ?? { visibility: 'hidden' }} role={open === 'model' ? 'dialog' : 'menu'} aria-label={t(open === 'model' ? 'composer.pickerLabel' : 'composer.pickerThinking')} onKeyDown={onPickerKeyDown}>
-			<div className="pd-composer-picker-head"><strong>{t(open === 'model' ? 'composer.pickerTitle' : 'composer.pickerThinking')}</strong><button type="button" onClick={() => close('trigger')} aria-label={t(open === 'model' ? 'composer.pickerClose' : 'composer.thinkingClose')}><Icon name="close" width="14" height="14" /></button></div>
+			{open && createPortal(<div ref={popoverRef} id={`pd-composer-${open}-picker`} className={`pd-composer-config-popover is-${open}`} style={position ?? { visibility: 'hidden' }} role={open === 'thinking' ? 'menu' : 'dialog'} aria-label={t(open === 'model' ? 'composer.pickerLabel' : open === 'context' ? 'composer.contextTitle' : 'composer.pickerThinking')} onKeyDown={onPickerKeyDown}>
+			<div className="pd-composer-picker-head"><strong>{t(open === 'model' ? 'composer.pickerTitle' : open === 'context' ? 'composer.contextTitle' : 'composer.pickerThinking')}</strong><button type="button" onClick={() => close('trigger')} aria-label={t(open === 'model' ? 'composer.pickerClose' : open === 'context' ? 'composer.contextClose' : 'composer.thinkingClose')}><Icon name="close" width="14" height="14" /></button></div>
 			{open === 'model' ? <>
 				<input ref={searchRef} className="pd-composer-picker-search" type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder={t('composer.pickerSearchPlaceholder')} aria-label={t('composer.pickerSearchLabel')} />
 				<label className="pd-model-image-filter"><input type="checkbox" checked={imagesOnly} onChange={event => setImagesOnly(event.target.checked)} />{locale === 'zh-CN' ? '仅显示支持图片的模型' : 'Show models that support images'}</label>
@@ -291,8 +309,16 @@ export function ComposerControls({ onOpenModelManagement, hasImages = false }: {
 					<button type="button" disabled={pending} onClick={() => openManagement({ kind: 'add-provider' })}><Icon name="plus" width="15" height="15" /><span>{t('settings.providerAdd')}</span></button>
 					<button type="button" disabled={pending} onClick={() => openManagement({ kind: 'manage' })}><Icon name="settings" width="15" height="15" /><span>{t('settings.modelManagement')}</span></button>
 				</div>
-			</> : <div className="pd-composer-thinking-options">
+			</> : open === 'thinking' ? <div className="pd-composer-thinking-options">
 				{levels.map((level: UiThinkingLevel) => <button key={level} data-picker-option type="button" role="menuitemradio" aria-checked={thinking === level} disabled={!canChange} onClick={() => void choose(() => setThinkingLevel(level))}><span>{t(`composer.thinking.${level}`)}</span>{thinking === level && <span aria-hidden="true">✓</span>}</button>)}
+			</div> : <div className="pd-context-panel">
+				<div className="pd-context-panel-row"><span>{t('composer.contextTokens')}</span><strong>{amount === null ? '—' : tokenLabel(amount)}</strong></div>
+				<div className="pd-context-panel-row"><span>{t('composer.contextWindowLabel')}</span><strong>{capacityLabel}</strong></div>
+				<div className="pd-context-panel-row"><span>{t('composer.contextPercent')}</span><strong>{percentLabel}{percent === null ? '' : '%'}</strong></div>
+				<div className="pd-context-progress" aria-hidden="true"><span style={{ width: `${Math.max(0, Math.min(100, percent ?? 0))}%` }} /></div>
+				{amount === null && percent === null ? <p className="pd-context-panel-note">{t('composer.contextPending')}</p> : null}
+				<button data-picker-option type="button" className="pd-context-compact" disabled={compacting || status !== 'idle' || preparingSession || !bridge || !cwd || !sessionId} onClick={() => void runCompact()}>{t(compacting ? 'composer.contextCompacting' : 'composer.contextCompact')}</button>
+				{compactError && <p className="pd-composer-picker-error" role="alert">{compactError}</p>}
 			</div>}
 			{error && <p className="pd-composer-picker-error" role="alert">{error}</p>}
 		</div>, document.body)}

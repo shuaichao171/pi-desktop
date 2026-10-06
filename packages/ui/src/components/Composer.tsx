@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ChangeEvent, type ClipboardEvent, type DragEvent, type KeyboardEvent, type ReactNode, type Ref } from 'react';
 import type { UiAttachment, UiContextRequest, UiSlashCommand } from '@pidesktop/shared';
 import { inspectAttachmentFile, MAX_ATTACHMENTS } from '../attachmentPolicy';
-import { appendFileAttachments, clearSubmittedDraft, restoreSubmittedDraft, type ComposerDraft } from '../composerDrafts';
+import { clearSubmittedDraft, restoreSubmittedDraft, type ComposerDraft } from '../composerDrafts';
 import { useT, type Translate } from '../i18n';
 import { useChatStore } from '../store';
 import { Icon } from './Icons';
@@ -25,6 +25,9 @@ import { PersistedComposerDrafts } from '../persistedDrafts';
 import { useBusyInputBehavior, type BusyInputBehavior as BusyBehavior } from '../busyInputBehavior';
 import { ConversationMetrics } from './ConversationMetrics';
 import { PromptHistoryCursor, promptHistoryDirection, readPromptHistory, savePromptHistory } from '../promptHistory';
+
+/** Per-item attachment read state (attachments task): 'reading' blocks send, 'failed' offers retry or dismiss. */
+type PendingAttachmentJob = { id: string; name: string; kind: 'file' | 'context'; state: 'reading' | 'failed'; error?: string };
 
 /** Plain text beyond this size pastes as a dated .txt attachment instead of flooding the editor (zcode LONG_PASTE_THRESHOLD). */
 const LONG_PASTE_THRESHOLD = 15 * 1024;
@@ -100,7 +103,8 @@ export function Composer({ header, onOpenModelManagement, changesSlotRef }: { he
 	const stopRequestsRef = useRef(new Map<string, { bridge: typeof bridge }>());
 	const [stopRequests, setStopRequests] = useState(() => new Map(stopRequestsRef.current));
 	const [retrying, setRetrying] = useState(false);
-	const [attaching, setAttaching] = useState(false);
+	const [attachmentJobs, setAttachmentJobs] = useState<PendingAttachmentJob[]>([]);
+	const attaching = attachmentJobs.some((job) => job.state === 'reading');
 	const [restoringDraft, setRestoringDraft] = useState(false);
 	const [submissionError, setSubmissionError] = useState<string | null>(null);
 	const [draftWarning, setDraftWarning] = useState(false);
@@ -126,7 +130,8 @@ export function Composer({ header, onOpenModelManagement, changesSlotRef }: { he
 	const draftsRef = useRef(new Map<string, ComposerDraft>([[draftKey, { text, attachments }]]));
 	const textEdits = useRef(new Map<string, number>());
 	const attachmentEdits = useRef(new Map<string, number>());
-	const pendingAttachmentsRef = useRef(0);
+	const attachmentJobsRef = useRef(new Map<string, PendingAttachmentJob>());
+	const attachmentJobRetry = useRef(new Map<string, () => Promise<void>>());
 	const pendingDraftRestoresRef = useRef(new Map<string, number>());
 	const sendingRef = useRef(false);
 	const currentKeyRef = useRef(draftKey);
@@ -156,7 +161,7 @@ export function Composer({ header, onOpenModelManagement, changesSlotRef }: { he
 	const hasContent = Boolean(text.trim() || attachments.length);
 	const showStop = busy && !hasContent;
 	const primaryActionLabel = t(showStop ? stopping ? 'composer.stopping' : 'composer.stopTitle' : 'composer.send');
-	const canSubmit = hasContent && !sending && !attaching && !restoringDraft && !unavailable && status !== 'error' && !missingAttachments.length;
+	const canSubmit = hasContent && !sending && attachmentJobs.length === 0 && !restoringDraft && !unavailable && status !== 'error' && !missingAttachments.length;
 	const slashCatalogKey = JSON.stringify([cwd, sessionId]);
 	const slashOpen = slashTrigger !== null;
 	const inputBridge = bridge as Partial<InputFeatureBridge> | null;
@@ -449,53 +454,71 @@ export function Composer({ header, onOpenModelManagement, changesSlotRef }: { he
 		if (hasContextSource(attachmentsRef.current, request)) { consumeDraftMention(key, original, mention); return; }
 		const target = { key };
 		attachmentTargets.current.add(target);
-		pendingAttachmentsRef.current += 1;
-		setAttaching(true);
 		setSubmissionError(null);
+		const label = request.path.split('/').pop() || request.path;
 		try {
-			if ((draftsRef.current.get(key)?.attachments.length ?? 0) >= MAX_ATTACHMENTS) throw new Error(t('composer.maxAttachments', { count: MAX_ATTACHMENTS }));
-			const attachment = await bridge.readContext(request);
-			const current = draftsRef.current.get(target.key)?.attachments ?? [];
-			if (!hasContextSource(current, request)) {
-				if (current.length >= MAX_ATTACHMENTS) throw new Error(t('composer.maxAttachments', { count: MAX_ATTACHMENTS }));
-				changeAttachments([...current, attachment], target.key);
-			}
-			consumeDraftMention(target.key, original, mention);
+			await runAttachmentJob({ id: crypto.randomUUID(), name: label, kind: 'context' }, async () => {
+				if ((draftsRef.current.get(target.key)?.attachments.length ?? 0) >= MAX_ATTACHMENTS) throw new Error(t('composer.maxAttachments', { count: MAX_ATTACHMENTS }));
+				const attachment = await bridge.readContext(request);
+				const current = draftsRef.current.get(target.key)?.attachments ?? [];
+				if (!hasContextSource(current, request)) {
+					if (current.length >= MAX_ATTACHMENTS) throw new Error(t('composer.maxAttachments', { count: MAX_ATTACHMENTS }));
+					changeAttachments([...current, attachment], target.key);
+				}
+				consumeDraftMention(target.key, original, mention);
+			});
+		} finally { attachmentTargets.current.delete(target); }
+	}
+
+	/** Per-item read lifecycle (attachments task): one failing item never aborts the rest; failures stay retryable. */
+	async function runAttachmentJob(job: Omit<PendingAttachmentJob, 'state'>, perform: () => Promise<void>): Promise<void> {
+		attachmentJobsRef.current.set(job.id, { ...job, state: 'reading' });
+		setAttachmentJobs([...attachmentJobsRef.current.values()]);
+		try {
+			await perform();
+			attachmentJobsRef.current.delete(job.id);
+			attachmentJobRetry.current.delete(job.id);
 		} catch (error) {
-			if (currentKeyRef.current === target.key) setSubmissionError(error instanceof Error ? error.message : String(error));
-		} finally {
-			attachmentTargets.current.delete(target);
-			pendingAttachmentsRef.current -= 1;
-			setAttaching(pendingAttachmentsRef.current > 0);
+			attachmentJobsRef.current.set(job.id, { ...job, state: 'failed', error: error instanceof Error ? error.message : String(error) });
+			attachmentJobRetry.current.set(job.id, () => runAttachmentJob(job, perform));
 		}
+		setAttachmentJobs([...attachmentJobsRef.current.values()]);
 	}
 
 	async function addFiles(files: File[]) {
 		if (!files.length) return;
 		const target = { key: currentKeyRef.current };
 		attachmentTargets.current.add(target);
-		pendingAttachmentsRef.current += 1;
-		setAttaching(true);
 		setSubmissionError(null);
-		try {
-			await appendFileAttachments(files, (file) => readFileAttachment(file, t, async (pdf) => {
-				if (!inputBridge?.processPdfInput) throw new Error(zh ? 'PDF处理服务尚未就绪' : 'PDF processing is not ready');
-				if (pdf.size > 20 * 1024 * 1024) throw new Error(zh ? 'PDF超过20 MiB限制' : 'PDF exceeds the 20 MiB limit');
-				const data = await new Promise<string>((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result).split(',')[1] ?? ''); reader.onerror = () => reject(reader.error); reader.readAsDataURL(pdf); });
-				const requestId = crypto.randomUUID(); pdfJobs.current.add(requestId); setPdfCount(pdfJobs.current.size);
-				try { const result = await inputBridge.processPdfInput({ requestId, name: pdf.name.toLowerCase().endsWith('.pdf') ? pdf.name.slice(-200) : `${pdf.name.slice(0, 196)}.pdf`, data }); return result.attachment; }
-				finally { pdfJobs.current.delete(requestId); setPdfCount(pdfJobs.current.size); }
-			}),
-				() => draftsRef.current.get(target.key)?.attachments ?? [],
-				(next) => changeAttachments(next, target.key),
-				() => new Error(t('composer.maxAttachments', { count: MAX_ATTACHMENTS })));
-		} catch (error) {
-			if (currentKeyRef.current === target.key) setSubmissionError(error instanceof Error ? error.message : String(error));
-		} finally {
-			attachmentTargets.current.delete(target);
-			pendingAttachmentsRef.current -= 1;
-			setAttaching(pendingAttachmentsRef.current > 0);
-		}
+		const queue = [...files];
+		const readPdf = async (pdf: File) => {
+			if (!inputBridge?.processPdfInput) throw new Error(zh ? 'PDF处理服务尚未就绪' : 'PDF processing is not ready');
+			if (pdf.size > 20 * 1024 * 1024) throw new Error(zh ? 'PDF超过20 MiB限制' : 'PDF exceeds the 20 MiB limit');
+			const data = await new Promise<string>((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result).split(',')[1] ?? ''); reader.onerror = () => reject(reader.error); reader.readAsDataURL(pdf); });
+			const requestId = crypto.randomUUID(); pdfJobs.current.add(requestId); setPdfCount(pdfJobs.current.size);
+			try { const result = await inputBridge.processPdfInput({ requestId, name: pdf.name.toLowerCase().endsWith('.pdf') ? pdf.name.slice(-200) : `${pdf.name.slice(0, 196)}.pdf`, data }); return result.attachment; }
+			finally { pdfJobs.current.delete(requestId); setPdfCount(pdfJobs.current.size); }
+		};
+		let limitReported = false;
+		const worker = async () => {
+			for (;;) {
+				const file = queue.shift();
+				if (!file) return;
+				// Once the cap failure is visible, drain quietly instead of adding one
+				// failed row per overflowing file.
+				if (limitReported && (draftsRef.current.get(target.key)?.attachments.length ?? 0) >= MAX_ATTACHMENTS) { queue.length = 0; return; }
+				await runAttachmentJob({ id: crypto.randomUUID(), name: file.name, kind: 'file' }, async () => {
+					if ((draftsRef.current.get(target.key)?.attachments.length ?? 0) >= MAX_ATTACHMENTS) { limitReported = true; throw new Error(t('composer.maxAttachments', { count: MAX_ATTACHMENTS })); }
+					const attachment = await readFileAttachment(file, t, readPdf);
+					const current = draftsRef.current.get(target.key)?.attachments ?? [];
+					if (current.length >= MAX_ATTACHMENTS) { limitReported = true; throw new Error(t('composer.maxAttachments', { count: MAX_ATTACHMENTS })); }
+					changeAttachments([...current, attachment], target.key);
+				});
+			}
+		};
+		// Bounded concurrency: a large drop still leaves the editor responsive.
+		try { await Promise.all(Array.from({ length: Math.min(3, files.length) }, () => worker())); }
+		finally { attachmentTargets.current.delete(target); }
 	}
 
 	function onFileChange(event: ChangeEvent<HTMLInputElement>) {
@@ -537,7 +560,7 @@ export function Composer({ header, onOpenModelManagement, changesSlotRef }: { he
 	async function submit(behavior?: BusyBehavior): Promise<void> {
 		const value = textRef.current.trim();
 		const submittedAttachments = attachmentsRef.current;
-		if ((!value && !submittedAttachments.length) || sendingRef.current || pendingAttachmentsRef.current > 0 || (pendingDraftRestoresRef.current.get(currentKeyRef.current) ?? 0) > 0 || unavailable || status === 'error' || missingAttachments.length) return;
+		if ((!value && !submittedAttachments.length) || sendingRef.current || attachmentJobsRef.current.size > 0 || (pendingDraftRestoresRef.current.get(currentKeyRef.current) ?? 0) > 0 || unavailable || status === 'error' || missingAttachments.length) return;
 		const submittedKey = currentKeyRef.current;
 		const submitted = { text: textRef.current, attachments: submittedAttachments };
 		// Sending commits the current draft choice even while background recovery
@@ -667,6 +690,19 @@ export function Composer({ header, onOpenModelManagement, changesSlotRef }: { he
 						<HoverTooltip title={attachment.name} description={attachment.kind === 'text' && attachment.source ? `${attachment.source.workspace}\n${attachment.source.path}${attachment.source.truncated ? `\n${t('composer.contextTruncated')}` : ''}` : attachmentLabel(attachment, t)}><span className="pd-composer-attachment-name" tabIndex={0}>{attachment.name}<small>{attachmentLabel(attachment, t)}{attachment.kind === 'text' && attachment.source?.truncated ? ` · ${t('composer.contextTruncatedShort')}` : ''}</small></span></HoverTooltip>
 						<button type="button" onClick={() => { changeAttachments(attachmentsRef.current.filter((_, itemIndex) => itemIndex !== index)); textareaRef.current?.focus(); }} aria-label={t('composer.removeAttachment', { name: attachment.name })}><Icon name="close" width="14" height="14" /></button>
 					</div>)}</div>}
+					{attachmentJobs.length > 0 && <div className="pd-composer-attachment-jobs" aria-label={t('composer.attachmentJobs')}>{attachmentJobs.map((job) => (
+						<div key={job.id} className={`pd-composer-attachment-job is-${job.state}`}>
+							<Icon name={job.state === 'reading' ? 'loader' : 'file'} width="14" height="14" />
+							<span className="pd-composer-attachment-job-name">{job.name}</span>
+							{job.state === 'reading'
+								? <span role="status">{t('composer.attachmentReading')}</span>
+								: <>
+									<span className="pd-composer-attachment-job-error">{job.error}</span>
+									<button type="button" onClick={() => { const retry = attachmentJobRetry.current.get(job.id); if (retry) void retry(); }}>{t('composer.attachmentRetry')}</button>
+									<button type="button" onClick={() => { attachmentJobsRef.current.delete(job.id); attachmentJobRetry.current.delete(job.id); setAttachmentJobs([...attachmentJobsRef.current.values()]); }} aria-label={t('composer.attachmentDismiss', { name: job.name })}><Icon name="close" width="14" height="14" /></button>
+								</>}
+						</div>
+					))}</div>}
 					<textarea ref={textareaRef} value={text} rows={2} placeholder={placeholder} aria-label={t('composer.messageLabel')} disabled={unavailable} onChange={(event) => { changeText(event.target.value); syncCompletions(event.target.value, event.target.selectionStart, event.target.selectionEnd); }} onSelect={(event) => syncCompletions(event.currentTarget.value, event.currentTarget.selectionStart, event.currentTarget.selectionEnd)} onCompositionStart={() => { composingRef.current = true; setContextPicker(null); setSlashTrigger(null); }} onCompositionEnd={(event) => { composingRef.current = false; syncCompletions(event.currentTarget.value, event.currentTarget.selectionStart, event.currentTarget.selectionEnd); }} onKeyDown={onKeyDown} onPaste={onPaste} />
 					<div className="pd-composer-toolbar">
 						{quotes.filter((item) => item.key === draftKey && text.includes(item.block)).map((item, index) => <button type="button" className="pd-quote-chip" key={`${item.source}:${index}`} onClick={() => { changeText(textRef.current.replace(item.block, '')); setQuotes((items) => items.filter((entry) => entry !== item)); }} aria-label={c('removeQuote')}>{item.source} ×</button>)}

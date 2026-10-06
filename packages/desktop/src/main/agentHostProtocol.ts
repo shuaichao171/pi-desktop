@@ -20,7 +20,7 @@ type SearchMethods = {
 export const AGENT_HOST_METHODS = [
  'checkPluginUpdate', 'getMcpSnapshot', 'saveMcpServer', 'removeMcpServer', 'connectMcpServer', 'disconnectMcpServer', 'testMcpServer',
  'getUsageReport', 'cancelUsageReport',
- 'submitInput', 'getInputQueue', 'mutateInputQueue', 'getFileCheckpoint', 'rewindFileCheckpoint',
+'submitInput', 'getInputQueue', 'mutateInputQueue', 'getFileCheckpoint', 'rewindFileCheckpoint', 'getEditRewindPreview',
  'searchSessionsPage', 'searchProjectFiles', 'rebuildSearchIndex', 'cancelDataSearch', 'getProjectSearchRules', 'setProjectSearchRules',
  'testProviderModel', 'cancelProviderModelTest', 'getProjectDefaults', 'saveProjectDefaults',
 	'getPersonalization',

@@ -17,6 +17,7 @@ import { createSettingsLeaveGuard, type SettingsDraftState as DraftState, type S
 import { useBusyInputBehavior } from '../busyInputBehavior';
 import { ConversationMetricsSettings } from './ConversationMetricsSettings';
 import { useTaskNotificationSoundEnabled } from '../taskNotificationSound';
+import { useExtensionNoticeDisplayEnabled } from '../extensionNoticeDisplay';
 import { ConversationStorageSettings } from './ConversationStorageSettings';
 import { EngineSettingsPanel } from './EngineSettingsPanel';
 
@@ -140,6 +141,8 @@ export function SettingsPanel({ initialPage = 'general', modelManagementTarget, 
 	const [busyInputSaveFailed, setBusyInputSaveFailed] = useState(false);
 	const [notificationSound, setNotificationSound] = useTaskNotificationSoundEnabled();
 	const [notificationSoundSaveFailed, setNotificationSoundSaveFailed] = useState(false);
+	const [extensionNotices, setExtensionNotices] = useExtensionNoticeDisplayEnabled();
+	const [extensionNoticesSaveFailed, setExtensionNoticesSaveFailed] = useState(false);
 	const [contentFonts, setContentFonts] = useState(() => ({ code: readContentFontSize('code'), command: readContentFontSize('command') }));
 	const [savingLeave, setSavingLeave] = useState(false);
 	const [leaveError, setLeaveError] = useState(false);
@@ -373,6 +376,14 @@ export function SettingsPanel({ initialPage = 'general', modelManagementTarget, 
 								onClick={() => setNotificationSoundSaveFailed(!setNotificationSound(false))}>{t('settings.notificationsOff')}</button>
 						</div>
 						{notificationSoundSaveFailed && <p className="pd-settings-feedback" role="status">{t('settings.notificationSoundSaveFailed')}</p>}
+					<div className="pd-settings-section-head"><h3>{t('settings.extensionNotices')}</h3><p>{t('settings.extensionNoticesDescription')}</p></div>
+					<div className="pd-language-options" data-setting="extension-notices" role="group" aria-label={t('settings.extensionNotices')}>
+						<button type="button" className={extensionNotices ? 'is-selected' : ''} aria-pressed={extensionNotices}
+							onClick={() => setExtensionNoticesSaveFailed(!setExtensionNotices(true))}>{t('settings.notificationsOn')}</button>
+						<button type="button" className={!extensionNotices ? 'is-selected' : ''} aria-pressed={!extensionNotices}
+							onClick={() => setExtensionNoticesSaveFailed(!setExtensionNotices(false))}>{t('settings.notificationsOff')}</button>
+					</div>
+					{extensionNoticesSaveFailed && <p className="pd-settings-feedback" role="status">{t('settings.extensionNoticesSaveFailed')}</p>}
 						{!paiMode && appInfo?.platform === 'win32' && desktopSettings && (
 							<>
 								<div className="pd-settings-section-head"><h3>{t('settings.closeBehavior')}</h3><p>{t('settings.closeBehaviorDescription')}</p></div>

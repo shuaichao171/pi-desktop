@@ -4,8 +4,8 @@ import { lstat, open, readdir, realpath } from 'node:fs/promises';
 import { isAbsolute, relative, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
 import type { ExtensionFactory, SessionManager } from '@earendil-works/pi-coding-agent';
-import type { UiFileChange } from '@pidesktop/shared';
-import { FileCheckpoint } from './fileCheckpoint.ts';
+import type { UiFileChange, UiFileCheckpoint } from '@pidesktop/shared';
+import { FileCheckpoint, editRewindSuffix, type CheckpointRecord } from './fileCheckpoint.ts';
 
 const execFileAsync = promisify(execFile);
 const ENTRY_TYPE = 'pi-desktop:file-changes-v1';
@@ -71,22 +71,79 @@ export class SessionFileChanges {
 	getCheckpoint() { return this.checkpoint.preview(); }
 	rewindCheckpoint(request: { id: string; version: string }) { return this.checkpoint.rewind(request); }
 
+	/** Historical-turn rewind preview for message editing (edit-rewind). */
+	async editRewindPreview(entryId: string): Promise<UiFileCheckpoint | null> {
+		if (typeof entryId !== 'string' || !entryId) return null;
+		const built = this.buildEditRewind(entryId);
+		if (!built || !built.files.length) return null;
+		return this.checkpoint.saveEditRewind(entryId, built.files, built.warning);
+	}
+	rewindEditCheckpoint(entryId: string, request: { id: string; version: string }) { return this.checkpoint.rewind(request, editRewindSuffix(entryId)); }
+
+	/** Parse and validate one persisted file-changes entry payload. */
+	private readEntryFiles(data: unknown): SavedFile[] {
+		if (!data || typeof data !== 'object') return [];
+		const files = (data as { files?: unknown }).files;
+		if (!Array.isArray(files) || files.length > MAX_SAVED_FILES) return [];
+		const result: SavedFile[] = [];
+		for (const value of files) {
+			if (!value || typeof value !== 'object') continue;
+			const record = value as SavedFile;
+			const path = relativeFilePath(this.cwd, record.path);
+			if (!path || path !== record.path || !validState(record.before) || !validState(record.after)) continue;
+			result.push({ path, before: { ...record.before }, after: { ...record.after } });
+		}
+		return result;
+	}
+
+	/** Synthesize per-file before/after states at a historical user entry from branch records. */
+	private buildEditRewind(entryId: string): { files: CheckpointRecord[]; warning?: string } | null {
+		const branch = this.manager.getBranch();
+		const target = branch.findIndex((entry) => entry.id === entryId && entry.type === 'message' && entry.message.role === 'user');
+		if (target < 0) return null;
+		const atEntry = new Map<string, string>();
+		const touched = new Map<string, CheckpointRecord>();
+		branch.forEach((entry, index) => {
+			const records = entry.type === 'custom' && entry.customType === ENTRY_TYPE ? this.readEntryFiles(entry.data) : [];
+			for (const record of records) {
+				if (index <= target) { atEntry.set(record.path, record.after.fingerprint); continue; }
+				const existing = touched.get(record.path);
+				if (existing) { existing.after = { ...record.after }; continue; }
+				// A contiguous edit chain crossing the entry hides the exact intermediate
+				// state; restoring the pre-chain baseline would discard work that
+				// predates the edit point.
+				const crossing = atEntry.get(record.path) === record.before.fingerprint;
+				touched.set(record.path, {
+					path: record.path,
+					before: { ...record.before },
+					after: { ...record.after },
+					...(crossing ? { reason: '编辑点位于连续修改链中间，无法精确还原该文件' } : {}),
+				});
+			}
+		});
+		const files = [...touched.values()].slice(0, 500);
+		for (const file of files) {
+			for (const state of [file.before, file.after]) {
+					if (state.text !== null && state.exists && createHash('sha256').update(Buffer.from(state.text)).digest('hex') !== state.fingerprint) {
+						state.text = null;
+						file.reason ??= '文本编码无法无损还原原始字节';
+					}
+			}
+			if (file.before.text === null || file.after.text === null) file.reason ??= '二进制、超大或未完整捕获的文件，无法自动还原';
+		}
+		return { files, ...(touched.size > 500 ? { warning: '超过 500 个文件，仅列出前 500 个；未列出的改动不在回退范围内。' } : {}) };
+	}
+
 	restore(): UiFileChange[] {
 		this.pending.clear();
 		this.files.clear();
 		this.previews.clear();
 		this.savedText = 0;
 		for (const entry of this.manager.getBranch()) {
-			if (entry.type !== 'custom' || entry.customType !== ENTRY_TYPE || !entry.data || typeof entry.data !== 'object') continue;
-			const data = entry.data as { files?: unknown };
-			if (!Array.isArray(data.files) || data.files.length > MAX_SAVED_FILES) continue;
-			for (const value of data.files) {
-				if (!value || typeof value !== 'object') continue;
-				const record = value as SavedFile;
-				const path = relativeFilePath(this.cwd, record.path);
-				if (!path || path !== record.path || !validState(record.before) || !validState(record.after)) continue;
-				if (!this.files.has(path) && this.files.size >= MAX_SAVED_FILES) continue;
-				this.saveRecord({ path, before: { ...record.before }, after: { ...record.after } });
+			if (entry.type !== 'custom' || entry.customType !== ENTRY_TYPE) continue;
+			for (const record of this.readEntryFiles(entry.data)) {
+				if (!this.files.has(record.path) && this.files.size >= MAX_SAVED_FILES) continue;
+				this.saveRecord(record);
 			}
 		}
 		for (const record of this.files.values()) this.updatePreview(record);

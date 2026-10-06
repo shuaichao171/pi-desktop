@@ -12,6 +12,7 @@ import { translate } from './i18n.ts';
 import { parseSlashCommand } from './composerSlash.ts';
 import { mergeRuntimeStates, sessionRuntimeKey, type WorkspaceSessionRequest } from './managementState.ts';
 import { mergeConversationRuns } from './conversationRuns.ts';
+import type { UiAgentError } from '@pidesktop/shared';
 import type {
 	AgentBridge,
 	AgentEventEnvelope,
@@ -80,6 +81,8 @@ interface ChatState {
 	queuedMessages: UiQueuedMessage[];
 	fileChanges: UiFileChange[];
 	error: string | null;
+	/** Structured evidence for the last agent failure; text-only errors stay null. */
+	errorInfo: UiAgentError | null;
 	appInfo: AppInfo | null;
 	/** Latest explicit project/session navigation intent; stale requests cannot overwrite it. */
 	navigationRequestId: number;
@@ -122,7 +125,7 @@ interface ChatState {
 	selectResidentSession(cwd: string, sessionId: string, sessionPath: string | null): Promise<boolean>;
 	send(text: string, behavior?: 'steer' | 'followUp', attachments?: UiAttachment[], inputId?: string): Promise<void>;
 	/** Rewind to a sent user message and resend the edited text (zcode-style edit). */
-	editMessage(entryId: string, text: string, attachments?: UiAttachment[]): Promise<void>;
+	editMessage(entryId: string, text: string, attachments?: UiAttachment[], fileMode?: 'keep' | 'rewind'): Promise<void>;
 	/** Rewind to the latest user message and resend it, keeping the old reply as a branch (3.4). */
 	regenerate(replyId?: string): Promise<void>;
 	/** Fork the conversation at an assistant message (rewinds the visible branch to it). */
@@ -261,6 +264,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 	queuedMessages: [],
 	fileChanges: [],
 	error: null,
+	errorInfo: null,
 	appInfo: null,
 	navigationRequestId: 0,
 	navigationPending: false,
@@ -343,6 +347,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 					fileChanges: snapshot.fileChanges ?? [],
 					historyTotal: snapshot.historyTotal ?? snapshot.messages.length + snapshot.activities.length,
 					error: snapshot.error,
+					errorInfo: snapshot.errorInfo ?? null,
 				});
 				bootstrapping = false;
 				for (const envelope of buffered) {
@@ -584,7 +589,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 								}
 							: m,
 					),
-					...(event.errorMessage ? { error: event.errorMessage } : {}),
+					...(event.errorMessage ? { error: event.errorMessage, errorInfo: event.error ?? null } : {}),
 				}));
 				return;
 			case 'tool': {
@@ -622,7 +627,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 				return;
 			}
 			case 'error':
-				set({ error: event.message });
+				set({ error: event.message, errorInfo: event.error ?? null });
 				return;
 		}
 	},
@@ -1062,7 +1067,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 		} finally { if (navigationRequest !== undefined) finishSessionNavigation(bridge, navigationRequest); }
 	},
 
-	async editMessage(entryId, text, attachments) {
+	async editMessage(entryId, text, attachments, fileMode) {
 		const { bridge, status, cwd, sessionId } = get();
 		const trimmed = text.trim();
 		const original = get().messages.find((message) => message.id === entryId);
@@ -1076,7 +1081,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 		try {
 			const message = get().messages.find((entry) => entry.id === entryId);
 			// An incomplete history preview is not an edited attachment list.
-			await bridge.editMessage(entryId, trimmed, message?.attachmentsOmitted ? undefined : attachments);
+			await bridge.editMessage(entryId, trimmed, message?.attachmentsOmitted ? undefined : attachments, ...(fileMode ? [fileMode] : []));
 		} catch (error) {
 			if (get().bridge === bridge && get().cwd === cwd && get().sessionId === sessionId) set({ error: errorMessage(error) });
 			throw error;

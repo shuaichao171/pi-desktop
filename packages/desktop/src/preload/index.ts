@@ -120,6 +120,7 @@ const bridge: AgentBridge = {
 	onWorkspaceTerminalEvent: listener => { const handler = (_event: Electron.IpcRendererEvent, value: import('@pidesktop/shared').WorkspaceTerminalEvent) => listener(value); ipcRenderer.on(WORKBENCH_FEATURE_CHANNELS.onWorkspaceTerminalEvent, handler); return () => ipcRenderer.removeListener(WORKBENCH_FEATURE_CHANNELS.onWorkspaceTerminalEvent, handler); },
 	getFileCheckpoint: (...args) => invoke(WORKBENCH_FEATURE_CHANNELS.getFileCheckpoint, ...args),
 	rewindFileCheckpoint: (...args) => invoke(WORKBENCH_FEATURE_CHANNELS.rewindFileCheckpoint, ...args),
+	getEditRewindPreview: (...args) => invoke(WORKBENCH_FEATURE_CHANNELS.getEditRewindPreview, ...args),
 	testProviderModel: (...args) => invoke(MANAGEMENT_FEATURE_CHANNELS.testProviderModel, ...args),
 	cancelProviderModelTest: (...args) => invoke(MANAGEMENT_FEATURE_CHANNELS.cancelProviderModelTest, ...args),
 	getProjectDefaults: (...args) => invoke(MANAGEMENT_FEATURE_CHANNELS.getProjectDefaults, ...args),

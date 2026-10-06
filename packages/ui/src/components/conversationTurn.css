@@ -13,10 +13,6 @@ button.pd-turn-summary:hover { color:var(--pd-text); background:var(--pd-surface
 .pd-turn-steps .pd-message-column { width:100%; }
 .pd-turn-steps .pd-thinking-activity { margin-bottom:0; }
 .pd-turn-steps .is-process-message>.pd-message-column>.pd-markdown { color:var(--pd-text); }
-.pd-turn-notices { display:flex; flex-direction:column; gap:6px; margin-top:10px; }
-.pd-turn-notices:empty { display:none; }
-.pd-turn-notices+.pd-turn-answer { margin-top:10px; }
-.pd-turn-notices.is-after { margin-top:2px; }
 .pd-turn-answer { margin-top:12px; }
 .pd-conversation-turn:not(:has(.pd-turn-summary)) .pd-turn-answer { margin-top:0; }
 .pd-turn-answer>.pd-message-row>.pd-message-column { width:100%; }

@@ -695,6 +695,7 @@ export function registerIpc(options: {
 	});
 	handleRendererInvoke(WORKBENCH_FEATURE_CHANNELS.getFileCheckpoint, () => agentService.getFileCheckpoint());
 	handleRendererInvoke(WORKBENCH_FEATURE_CHANNELS.rewindFileCheckpoint, (_event, request: Parameters<typeof agentService.rewindFileCheckpoint>[0]) => agentService.rewindFileCheckpoint(request));
+	handleRendererInvoke(WORKBENCH_FEATURE_CHANNELS.getEditRewindPreview, (_event, entryId: string) => agentService.getEditRewindPreview(entryId));
 	handleRendererInvoke(MANAGEMENT_FEATURE_CHANNELS.testProviderModel, (_event, request: Parameters<typeof agentService.testProviderModel>[0]) => agentService.testProviderModel(request));
 	handleRendererInvoke(MANAGEMENT_FEATURE_CHANNELS.cancelProviderModelTest, (_event, id: string) => agentService.cancelProviderModelTest(id));
 	handleRendererInvoke(MANAGEMENT_FEATURE_CHANNELS.getProjectDefaults, () => agentService.getProjectDefaults());

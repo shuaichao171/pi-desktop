@@ -43,6 +43,7 @@ import type {
 	AgentEventEnvelope,
 	AgentSnapshot,
 	AgentUiEvent,
+	UiAgentError,
 	UiAttachment,
 	UiContextSource,
 	UiContextUsage,
@@ -50,6 +51,7 @@ import type {
 	UiExtensionDialogResponse,
 	UiExtensionSummary,
 	UiFileChange,
+	UiFileCheckpoint,
 	UiMessage,
 	UiConversationRun,
 	UiModelSummary,
@@ -79,6 +81,7 @@ import type {
 	UiSaveInstructionRequest,
 	UiToolActivity,
 } from '@pidesktop/shared';
+import { createAgentError, normalizeAgentError } from '../../shared/src/agentErrors.ts';
 import { BUILTIN_SLASH_COMMANDS, expandSlashPrompt, validateSlashCommandRequest, validSlashCommandName } from './slashCommands.ts';
 import { commitProviderDocument, CUSTOM_PROVIDER_APIS, getCachedDisabledModels, getBuiltinProviderIds, isEditableProvider, literalApiKey, loadModelPrefs, mergeProvider, readProviderDocument, safeProviderUrl, setModelDisabled, validateDiscoveryRequest, validateProviderId, validateProviderRequest, validateProviderWithSdk, type ProviderDocument } from './customProviders.ts';
 import { discoverProviderModels, ProviderDiscoveryError } from './providerDiscovery.ts';
@@ -308,6 +311,7 @@ class SingleAgentService {
 		queuedMessages: [],
 		fileChanges: [],
 		error: null,
+		errorInfo: null,
 	};
 
 	cwd = '';
@@ -427,6 +431,12 @@ class SingleAgentService {
 	}
 
 	getFileCheckpoint() { const session = this.runtime?.session; return session ? this.fileChangeTrackers.get(session)?.getCheckpoint() ?? Promise.resolve(null) : Promise.resolve(null); }
+	/** Historical-turn file rewind preview for message editing (edit-rewind). */
+	getEditRewindPreview(entryId: string): Promise<UiFileCheckpoint | null> {
+		const session = this.runtime?.session;
+		if (!session || typeof entryId !== 'string' || !entryId) return Promise.resolve(null);
+		return this.fileChangeTrackers.get(session)?.editRewindPreview(entryId) ?? Promise.resolve(null);
+	}
 	async rewindFileCheckpoint(request: { id: string; version: string }) {
 		const session = this.requireIdleSession(), tracker = this.fileChangeTrackers.get(session);
 		if (!tracker) throw new Error('此会话没有可回退的文件检查点');
@@ -827,6 +837,25 @@ class SingleAgentService {
 		}
 	}
 
+	/** Host-authoritative send gate: the live catalog must still resolve the selected
+	 * model (and accept image attachments when present). Runs before the busy transition
+	 * and any ACK, so a blocked send never consumes the draft or the input queue. */
+	private assertPromptModelAvailable(session: PiRuntime['session'], attachments: UiAttachment[]): void {
+		const selected = this.state.model ? session.modelRuntime.getAvailableSnapshot()
+			.find((item) => item.provider === this.state.modelProvider && item.id === this.state.model) : undefined;
+		const disabled = selected ? getCachedDisabledModels()[selected.provider]?.includes(selected.id) : false;
+		if (!selected || disabled) {
+			const message = `当前模型不可用：${this.state.modelProvider || '?'}/${this.state.model || '?'}。请在模型设置中选择可用模型后重试。`;
+			this.fireError(createAgentError({ message, kind: 'model-unavailable' }));
+			throw createAgentError({ message, kind: 'model-unavailable' });
+		}
+		if (attachments.some((attachment) => attachment.kind === 'image') && !selected.input.includes('image')) {
+			const message = `当前模型 ${selected.name} 不支持图片输入，请移除图片或切换到支持视觉的模型。`;
+			this.fireError(createAgentError({ message, kind: 'model-unavailable' }));
+			throw createAgentError({ message, kind: 'model-unavailable' });
+		}
+	}
+
 	/** Pi clamps the requested level to the selected model's supported levels. */
 	async setThinkingLevel(level: UiThinkingLevel, persist = true): Promise<void> {
 		const session = this.requireIdleSession();
@@ -948,7 +977,7 @@ class SingleAgentService {
 					// Preserve the original initialization error for the user.
 				}
 			}
-			this.fire({ type: 'error', message: errorMessage(error) });
+			this.fireError(error);
 			this.fire({ type: 'status', status: 'error', message: errorMessage(error) });
 			throw error;
 		}
@@ -1005,6 +1034,9 @@ class SingleAgentService {
 		if (this.activePromptCalls > 0 && session.isIdle) {
 			throw new Error('上一条消息仍在接收中，请稍后重试');
 		}
+		// Host-authoritative send gate (model availability): must run before the
+		// busy transition and any ACK so a blocked send never consumes the draft.
+		this.assertPromptModelAvailable(session, attachments);
 		const promptText = withTextAttachments(text, attachments);
 		const images = imageAttachments(attachments);
 		const tracker = this.conversationRuns;
@@ -1034,8 +1066,9 @@ class SingleAgentService {
 			})).then(() => {
 				if (inputId) inputQueue?.completePrompt(inputId);
 			}).catch((error: unknown) => {
-				if (session.isIdle) { this.finishInterruptedAssistant(errorMessage(error)); tracker?.finish('failed'); }
-				this.fire({ type: 'error', message: errorMessage(error) });
+				const info = normalizeAgentError(error);
+				if (session.isIdle) { this.finishInterruptedAssistant(info.message, info); tracker?.finish('failed'); }
+				this.fire({ type: 'error', message: info.message, error: info });
 				if (!acknowledged) {
 					acknowledged = true;
 					reject(error);
@@ -1053,10 +1086,11 @@ class SingleAgentService {
 	}
 
 	/** Rewind the visible branch to just before a sent user message and resend the edited text. */
-	async editUserMessage(entryId: string, text: string, attachments?: UiAttachment[]): Promise<void> {
+	async editUserMessage(entryId: string, text: string, attachments?: UiAttachment[], fileMode?: 'keep' | 'rewind'): Promise<void> {
 		const runtime = this.runtime;
 		if (!runtime) throw new Error('Agent is not initialized');
 		this.requireIdleSession();
+		if (fileMode === 'rewind') await this.rewindEditFiles(entryId);
 		// History previews may omit heavy attachments. Read the originals before
 		// rewinding so an edit/regenerate never silently loses those attachments.
 		const entry = runtime.session.sessionManager.getEntry(entryId);
@@ -1064,6 +1098,28 @@ class SingleAgentService {
 		const result = await this.runExtensionSessionAction(runtime, () => runtime.session.navigateTree(entryId));
 		if (result.cancelled) return;
 		await this.prompt(text, undefined, preserved);
+	}
+
+	/** Restore files touched by rounds after the edited entry before the tree rewind (edit-rewind). */
+	private async rewindEditFiles(entryId: string): Promise<void> {
+		const runtime = this.runtime;
+		if (!runtime) return;
+		const tracker = this.fileChangeTrackers.get(runtime.session);
+		if (!tracker) return;
+		let view = await tracker.editRewindPreview(entryId);
+		if (!view) return;
+		if (view.files.some((file) => file.status === 'conflict')) {
+			throw new Error('部分文件在编辑点之后被外部修改，未做任何更改；请先处理冲突或选择保留文件模式。');
+		}
+		if (view.recovery) {
+			// Complete the interrupted restore first; the next rewind applies the target state.
+			view = await tracker.rewindEditCheckpoint(entryId, { id: view.id, version: view.version });
+		}
+		if (view.files.some((file) => file.status === 'ready')) {
+			const result = await tracker.rewindEditCheckpoint(entryId, { id: view.id, version: view.version });
+			this.fire({ type: 'file-changes', items: tracker.restore() });
+			if (!result.restored) throw new Error('文件回退未完成，请重试编辑或选择保留文件模式。');
+		}
 	}
 
 	/** Fork the conversation in place: move the visible branch leaf to an assistant message so the next prompt grows a new branch. */
@@ -1149,7 +1205,7 @@ class SingleAgentService {
 				// Keep the original error.
 			}
 			this.fire({ type: 'reset', cwd: this.cwd });
-			this.fire({ type: 'error', message: errorMessage(error) });
+			this.fireError(error);
 			this.fire({ type: 'status', status: 'error' });
 			throw error;
 		}
@@ -1185,7 +1241,7 @@ class SingleAgentService {
 				// Keep the original error.
 			}
 			this.fire({ type: 'reset', cwd: this.cwd });
-			this.fire({ type: 'error', message: errorMessage(error) });
+			this.fireError(error);
 			this.fire({ type: 'status', status: 'error' });
 			throw error;
 		}
@@ -1269,7 +1325,7 @@ class SingleAgentService {
 				const execution = this.slashCommandExecution.getStore();
 				if (execution && event === 'command' && extensionPath === `command:${execution.name}`) execution.error = message;
 				if (event === 'command') this.conversationRuns?.assistantEnd('error');
-				this.fire({ type: 'error', message });
+				this.fire({ type: 'error', message, error: normalizeAgentError(message, 'extension') });
 			},
 		});
 		if (this.inputQueueSession !== runtime.session) {
@@ -1282,7 +1338,7 @@ class SingleAgentService {
 					let image = 0; return { text: userText(message as MessageLike), attachments: (userAttachments(message as MessageLike) ?? []).map(({ kind, name, mimeType }) => ({ kind, mimeType, name: kind === 'image' ? names[image++]?.name ?? name : name })) };
 				},
 				changed: () => { const snapshot = this.inputQueue?.snapshot(); if (snapshot) this.fire({ type: 'queue', count: snapshot.items.length, items: snapshot.items }); },
-				error: (message) => this.fire({ type: 'error', message }),
+				error: (message) => this.fire({ type: 'error', message, error: normalizeAgentError(message) }),
 				resume: () => this.scheduleQueueResume(),
 			});
 		}
@@ -1294,7 +1350,7 @@ class SingleAgentService {
 		queueMicrotask(() => {
 			this.queueResumePending = false;
 			if (this.closing || this.lifecycleOperation || this.activePromptCalls || !this.runtime?.session.isIdle) return;
-			void this.inputQueue?.resumeIdle().catch((error: unknown) => this.fire({ type: 'error', message: errorMessage(error) }));
+			void this.inputQueue?.resumeIdle().catch((error: unknown) => this.fireError(error));
 		});
 	}
 
@@ -1428,6 +1484,12 @@ class SingleAgentService {
 	private fire(event: AgentUiEvent): void {
 		this.reduce(event);
 		this.emit({ sequence: ++this.sequence, event });
+	}
+	/** Normalize any failure through the structured renderer contract before emitting.
+	 * Strings (already-rendered diagnostics) classify by message evidence only. */
+	private fireError(error: unknown, source: UiAgentError['source'] = 'runtime'): void {
+		const info = normalizeAgentError(error, source);
+		this.fire({ type: 'error', message: info.message, error: info });
 	}
 
 	private fireReady(): void {
@@ -1646,8 +1708,9 @@ class SingleAgentService {
 						: undefined);
 					message.status = event.aborted || event.errorMessage ? 'error' : 'done';
 					message.errorMessage = event.errorMessage;
+					message.error = event.error ?? message.error;
 				}
-				if (event.errorMessage) this.state.error = event.errorMessage;
+				if (event.errorMessage) { this.state.error = event.errorMessage; this.state.errorInfo = event.error ?? null; }
 				break;
 			}
 			case 'tool': {
@@ -1668,6 +1731,7 @@ class SingleAgentService {
 				break;
 			case 'error':
 				this.state.error = event.message;
+				this.state.errorInfo = event.error ?? null;
 				break;
 		}
 	}
@@ -1703,13 +1767,13 @@ class SingleAgentService {
 		}, THINKING_UPDATE_INTERVAL_MS);
 	}
 
-	private finishInterruptedAssistant(failure?: string): void {
+	private finishInterruptedAssistant(failure?: string, info?: UiAgentError): void {
 		if (!this.assistantId) return;
 		const id = this.assistantId;
 		const message = this.state.messages.find((item) => item.id === id);
 		this.assistantId = null;
 		this.clearPendingThinking();
-		this.fire({ type: 'assistant-end', id, text: message?.text ?? '', aborted: !failure, errorMessage: failure,
+		this.fire({ type: 'assistant-end', id, text: message?.text ?? '', aborted: !failure, errorMessage: failure, error: info,
 			...(message?.thinkingStatus ? {
 				thinking: message.thinking ?? '', thinkingStatus: failure ? 'error' : 'interrupted',
 				thinkingTruncated: message.thinkingTruncated ?? false,
@@ -1772,7 +1836,7 @@ class SingleAgentService {
 					if (input?.queued && input.behavior === 'followUp' && this.conversationRuns?.active && this.conversationRuns.hasMessages) this.conversationRuns.finish();
 					const run = this.conversationRuns?.begin();
 					if (this.conversationRuns) this.conversationRuns.hasMessages = true;
-					try { this.inputQueue?.consumed(message, this.inputRequest.getStore()?.id); } catch (error) { this.fire({ type: 'error', message: `输入消费回执无法保存：${errorMessage(error)}。重启后需核对再恢复。` }); }
+					try { this.inputQueue?.consumed(message, this.inputRequest.getStore()?.id); } catch (error) { this.fireError(`输入消费回执无法保存：${errorMessage(error)}。重启后需核对再恢复。`); }
 					if (queuedMessageText(message) === '') {
 						const deliveredId = this.queuedPreviewIds.get(message);
 						const delivered = this.queuedMessages.find((record) => record.item.id === deliveredId);
@@ -1833,6 +1897,7 @@ class SingleAgentService {
 						...thinking,
 						aborted: event.message.stopReason === 'aborted',
 						errorMessage: event.message.stopReason === 'error' ? event.message.errorMessage || '模型调用失败' : undefined,
+						error: event.message.stopReason === 'error' ? normalizeAgentError(event.message.errorMessage || '模型调用失败', 'provider') : undefined,
 					});
 				}
 				return;
@@ -2345,9 +2410,10 @@ export class AgentService {
 	mutateInputQueue(request: UiInputQueueMutation): UiInputQueue { return this.requireActive().mutateInputQueue(request); }
 	getFileCheckpoint() { return this.requireActive().getFileCheckpoint(); }
 	rewindFileCheckpoint(request: { id: string; version: string }) { return this.requireActive().rewindFileCheckpoint(request); }
-	editUserMessage(entryId: string, text: string, attachments?: UiAttachment[]): Promise<void> {
+	getEditRewindPreview(entryId: string) { return this.requireActive().getEditRewindPreview(entryId); }
+	editUserMessage(entryId: string, text: string, attachments?: UiAttachment[], fileMode?: 'keep' | 'rewind'): Promise<void> {
 		if (this.pluginOperation) return Promise.reject(new Error('插件设置正在更新，请稍后发送消息'));
-		return this.requireActive().editUserMessage(entryId, text, attachments).finally(() => { void this.trimContexts(); });
+		return this.requireActive().editUserMessage(entryId, text, attachments, fileMode).finally(() => { void this.trimContexts(); });
 	}
 
 	forkAssistantMessage(entryId: string): Promise<void> {
@@ -2626,7 +2692,7 @@ export class AgentService {
 		});
 		this.fire({ type: 'status', status: snapshot.status, message: snapshot.statusMessage });
 		this.fire({ type: 'queue', count: snapshot.queuedCount, items: snapshot.queuedMessages });
-		if (snapshot.error) this.fire({ type: 'error', message: snapshot.error });
+		if (snapshot.error) this.fire({ type: 'error', message: snapshot.error, error: snapshot.errorInfo ?? undefined });
 	}
 
 	private fire(event: AgentUiEvent): void { this.emit({ sequence: ++this.sequence, event }); }
@@ -2893,6 +2959,7 @@ function historyTimeline(entries: SessionEntry[], liveRun?: UiConversationRun | 
 					...thinking,
 					status: message.stopReason === 'aborted' || errorMessage ? 'error' : 'done',
 					errorMessage,
+					...(errorMessage ? { error: normalizeAgentError(errorMessage, 'provider') } : {}),
 				});
 			}
 			const startedAt = timestampOf(entry.timestamp);

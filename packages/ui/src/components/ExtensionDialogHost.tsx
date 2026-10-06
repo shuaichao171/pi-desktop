@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import type { UiExtensionDialogRequest, UiExtensionDialogResponse } from '@pidesktop/shared';
 import { useChatStore } from '../store';
 import { useT } from '../i18n';
+import { useExtensionNoticeDisplayEnabled } from '../extensionNoticeDisplay';
 import { Icon } from './Icons';
 import { ExtensionNotifications } from './ExtensionNotifications';
 import { ApprovalCard } from './ApprovalCard';
@@ -75,6 +76,10 @@ export function ExtensionDialogHost({ children, chatVisible, notificationTarget 
 	const active = requests.find((request) => request.kind !== 'notify');
 	activeId.current = active?.id ?? null;
 	const notices = requests.filter((request) => request.kind === 'notify');
+	// The plugin-notice display setting governs toasts as well: turned off,
+	// transient notifications never surface; dismissal state is untouched.
+	const [noticesVisible] = useExtensionNoticeDisplayEnabled();
+	const shownNotices = noticesVisible ? notices : [];
 	const queuedCount = requests.filter((request) => request.kind !== 'notify').length - 1;
 
 	useEffect(() => {
@@ -255,7 +260,7 @@ export function ExtensionDialogHost({ children, chatVisible, notificationTarget 
 	useEffect(() => { publishPendingRequest(hasActiveRequest); return () => publishPendingRequest(false); }, [hasActiveRequest]);
 	return <ExtensionDialogContext.Provider value={hasActiveRequest && chatVisible && !modalTarget ? card : null}>
 		{children}
-		{notices.length > 0 && notificationTarget && createPortal(<ExtensionNotifications requests={notices} onDismiss={dismissNotice} />, notificationTarget)}
+		{shownNotices.length > 0 && notificationTarget && createPortal(<ExtensionNotifications requests={shownNotices} onDismiss={dismissNotice} />, notificationTarget)}
 		{card && modalTarget && createPortal(<div className="pd-extension-modal-slot">{card}</div>, modalTarget)}
 	</ExtensionDialogContext.Provider>;
 }

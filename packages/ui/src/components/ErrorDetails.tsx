@@ -1,15 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { UiDiagnosticEvent } from '@pidesktop/shared';
+import type { UiAgentError, UiDiagnosticEvent } from '@pidesktop/shared';
 import { useChatStore } from '../store';
 import { useT } from '../i18n';
 import { createErrorReport } from '../errorReport';
 import './errorRecovery.css';
 
-export function ErrorDetails({ error, scope = 'conversation', kind = 'operation-error', status }: { error: string; scope?: UiDiagnosticEvent['scope']; kind?: 'render-error' | 'operation-error'; status?: string }) {
+export function ErrorDetails({ error, scope = 'conversation', kind = 'operation-error', status, info }: { error: string; scope?: UiDiagnosticEvent['scope']; kind?: 'render-error' | 'operation-error'; status?: string; info?: UiAgentError | null }) {
   const { locale } = useT();
   const label = (zh: string, en: string) => locale === 'zh-CN' ? zh : en;
   const bridge = useChatStore(state => state.bridge);
-  const report = useMemo(() => createErrorReport(error, scope, kind, status), [error, scope, kind, status]);
+  const report = useMemo(() => createErrorReport(error, scope, kind, status, info), [error, scope, kind, status, info]);
   const current = useRef(report.id); current.current = report.id;
   const [notice, setNotice] = useState('');
   const [exporting, setExporting] = useState(false);

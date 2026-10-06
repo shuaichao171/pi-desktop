@@ -8,7 +8,8 @@ export type ConversationTimelineEntry = Extract<TimelineEntry, { kind: 'message'
 
 /** Users and system notices always stay visible, including steering within a run.
  * Plugin notices recorded inside a run join that run's turn so its process folds
- * as one block; they render beside the fold instead of splitting it in two. */
+ * as one block; they render inside the fold in chronological position and fold
+ * away with it once the run settles. */
 export function buildConversationTimeline(messages: UiMessage[], activities: UiToolActivity[], runs: UiConversationRun[]): ConversationTimelineEntry[] {
   const result: ConversationTimelineEntry[] = [];
   let anchor = 'history', inheritedRun: string | undefined;

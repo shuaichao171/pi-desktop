@@ -1,6 +1,7 @@
 import { memo, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import type { UiConversationRun, UiMessage, UiToolActivity } from '@pidesktop/shared';
 import { useT } from '../i18n';
+import { useExtensionNoticeDisplayEnabled } from '../extensionNoticeDisplay';
 import { formatRunDuration } from '../conversationRuns';
 import { turnAnswer, type ConversationTurnEntry } from '../conversationTimeline';
 import { useDisclosureChoice, useDisclosureRequest } from '../conversationDisclosure';
@@ -44,21 +45,23 @@ export const ConversationTurn = memo(function ConversationTurn({ entry, messages
   const answer = turnAnswer(entry, messages, running);
   const ownMessages = entry.entries.flatMap(item => item.kind === 'message' ? [messages[item.index]!] : []);
   const ownTools = entry.entries.flatMap(item => item.kind === 'tools' ? item.indices.map(index => activities[index]!) : []);
-  // Plugin notices stay visible beside the fold: they are neither process steps
-  // nor the answer, so a notice inside a run never splits or hides content.
-  // Notices after the final reply render below it to preserve chronology.
+  // Plugin notices ride inside the run's fold: while the run is live they are
+  // visible in chronological position among the steps, and once the run
+  // settles they fold away with the process instead of staying expanded
+  // beside the answer. The display setting hides them entirely.
+  const [noticesVisible] = useExtensionNoticeDisplayEnabled();
   const notices = ownMessages.filter(message => message.systemKind === 'extension-notice');
-  const noticesAfterAnswer = answer ? notices.filter(message => message.order >= answer.order) : [];
-  const noticesBeforeAnswer = notices.filter(message => !noticesAfterAnswer.includes(message));
+  const shownNotices = noticesVisible ? notices : [];
   const processMessages = ownMessages.filter(message => message.id !== answer?.id && message.systemKind !== 'extension-notice');
-  const hasProcess = ownTools.length > 0 || processMessages.some(message => message.text || message.thinking || message.thinkingStatus || message.status === 'error') || Boolean(answer?.thinking || answer?.thinkingStatus);
-  const searchExpands = Boolean(query && processMessages.some(message => `${message.text}\n${message.thinking ?? ''}`.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase())));
+  const foldMessages = noticesVisible ? [...processMessages, ...notices] : processMessages;
+  const hasProcess = ownTools.length > 0 || shownNotices.length > 0 || processMessages.some(message => message.text || message.thinking || message.thinkingStatus || message.status === 'error') || Boolean(answer?.thinking || answer?.thinkingStatus);
+  const searchExpands = Boolean(query && foldMessages.some(message => `${message.text}\n${message.thinking ?? ''}`.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase())));
   const expanded = hasProcess && (searchExpands || (choice ?? running));
   const mountedProcess = useRef(false);
   if (expanded) mountedProcess.current = true;
   useLayoutEffect(() => {
     if (reveal && ownMessages.some(message => message.id === reveal.id) && consumeReveal(reveal.request)
-      && processMessages.some(message => message.id === reveal.id)) setChoice(true);
+      && foldMessages.some(message => message.id === reveal.id)) setChoice(true);
     // A new navigation request opens a folded result; terminal updates still fold the run.
   }, [reveal?.request]);
   const status = run?.status ?? (running ? 'running' : ownMessages.some(message => message.status === 'error') ? 'failed' : 'completed');
@@ -88,7 +91,9 @@ export const ConversationTurn = memo(function ConversationTurn({ entry, messages
         {(running || mountedProcess.current) && <div className="pd-turn-steps">{entry.entries.map(item => {
           if (item.kind === 'tools') return <ToolActivityPanel key={`tools:${item.id}`} sourceActivities={activities} indices={item.indices} inline />;
           const message = messages[item.index]!;
-          if (message.systemKind === 'extension-notice') return null;
+          if (message.systemKind === 'extension-notice') return noticesVisible
+            ? <MessageItem key={message.id} message={message} process showHeading={false} highlighted={highlightedId === message.id} findMatch={findIds.has(message.id)} />
+            : null;
           if (message.id === answer?.id && !message.thinking && !message.thinkingStatus) return null;
           // Thinking and live prose share a stable position throughout the run.
           // Only the final answer moves out when the whole run has settled.
@@ -98,9 +103,7 @@ export const ConversationTurn = memo(function ConversationTurn({ entry, messages
           </div>;
         })}</div>}
       </ActivityDisclosure></div>}
-      {noticesBeforeAnswer.length > 0 && <div className="pd-turn-notices">{noticesBeforeAnswer.map(message => <MessageItem key={message.id} message={message} highlighted={highlightedId === message.id} findMatch={findIds.has(message.id)} />)}</div>}
       {answer && <div className="pd-turn-answer"><MessageItem message={answer} hideThinking hidePending showHeading={false} highlighted={highlightedId === answer.id} findMatch={findIds.has(answer.id)} canRegenerate={canRegenerateId === answer.id} /></div>}
-      {noticesAfterAnswer.length > 0 && <div className="pd-turn-notices is-after">{noticesAfterAnswer.map(message => <MessageItem key={message.id} message={message} highlighted={highlightedId === message.id} findMatch={findIds.has(message.id)} />)}</div>}
     </div>
   </section>;
 });

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { useT } from '../i18n';
+import { useExtensionNoticeDisplayEnabled } from '../extensionNoticeDisplay';
 import { useChatStore } from '../store';
 import { sessionOpenMetrics } from '../sessionOpenMetrics';
 import { bindingKeysFor, matchesShortcut } from '../shortcuts/bindings';
@@ -487,15 +488,17 @@ export function ChatView({ onToggleSidebar, onOpenModelManagement, searchTarget,
 		if (message.role === 'assistant' && (message.text.trim() || message.status === 'error')) { lastReplyId = message.id; break; }
 	}
 	const canRegenerateLatest = agentStatus === 'idle' && lastReplyId !== null;
+	// Idle plugin notices render as standalone cards; the display setting removes them.
+	const [noticesVisible] = useExtensionNoticeDisplayEnabled();
 	const renderEntry = (entry: ConversationTimelineEntry) => entry.kind === 'message'
-		? <MessageItem
+		? (messages[entry.index]!.systemKind === 'extension-notice' && !noticesVisible ? null : <MessageItem
 			key={`message-${entry.id}`}
 			message={messages[entry.index]!}
 			highlighted={(highlightedMessage?.sessionPath === sessionPath && highlightedMessage.messageId === entry.id) || activeFindId === entry.id}
 			findMatch={findOpen && entry.id !== activeFindId && findMatchSet.has(entry.id)}
 			showHeading={entry.showAssistantHeading}
 			canRegenerate={canRegenerateLatest && entry.id === lastReplyId}
-		/>
+		/>)
 		: <ConversationTurn key={`${disclosureScope}:${entry.id}`} entry={entry} messages={messages} activities={activities}
 			run={runs.find(run => run.id === entry.runId)} legacyRunning={agentStatus === 'busy' && entry === timeline.at(-1)}
 			highlightedId={activeFindId ?? (highlightedMessage?.sessionPath === sessionPath ? highlightedMessage.messageId : null)}

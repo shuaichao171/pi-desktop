@@ -24,11 +24,13 @@ export interface WorkbenchFeaturesBridge {
   onWorkspaceTerminalEvent(listener: (event: WorkspaceTerminalEvent) => void): () => void;
   getFileCheckpoint(): Promise<UiFileCheckpoint | null>;
   rewindFileCheckpoint(request: { id: string; version: string }): Promise<UiFileCheckpoint>;
+  /** Historical-turn file rewind preview for message editing (edit-rewind). */
+  getEditRewindPreview(entryId: string): Promise<UiFileCheckpoint | null>;
 }
 export const WORKBENCH_FEATURE_CHANNELS = {
   getWorkspaceCommitPreview: 'workbench:commit-preview', commitWorkspacePreview: 'workbench:commit-preview-apply',
   createTaskWorktree: 'workbench:task-worktree-create', listTaskWorktrees: 'workbench:task-worktree-list', bindTaskWorktree: 'workbench:task-worktree-bind',
   getGitDeliveryPreview: 'workbench:delivery-preview', pushWorkspaceBranch: 'workbench:push', createWorkspaceDraftPr: 'workbench:draft-pr',
   openWorkspaceTerminal: 'workbench:terminal-open', getWorkspaceTerminal: 'workbench:terminal-get', writeWorkspaceTerminal: 'workbench:terminal-write', resizeWorkspaceTerminal: 'workbench:terminal-resize', acknowledgeWorkspaceTerminal: 'workbench:terminal-ack', closeWorkspaceTerminal: 'workbench:terminal-close', onWorkspaceTerminalEvent: 'workbench:terminal-event',
-  getFileCheckpoint: 'agent:file-checkpoint', rewindFileCheckpoint: 'agent:file-checkpoint-rewind',
+  getFileCheckpoint: 'agent:file-checkpoint', rewindFileCheckpoint: 'agent:file-checkpoint-rewind', getEditRewindPreview: 'agent:edit-rewind-preview',
 } as const;

@@ -1,6 +1,8 @@
 import type { ManagementFeaturesBridge } from './managementFeatures';
 import type { UiDiagnosticEvent } from './uiDiagnostics';
 export * from './uiDiagnostics.ts';
+import type { UiAgentError } from './agentErrors';
+export * from './agentErrors.ts';
 import type { UiApprovalDetails, UiExtensionDialogResponse } from './approval';
 export * from './approval.ts';
 import type { PluginUpdatesBridge } from './pluginUpdates';
@@ -417,6 +419,7 @@ export interface UiMessage {
   thinkingTruncated?: boolean;
   status: 'streaming' | 'done' | 'error';
   errorMessage?: string;
+  error?: UiAgentError;
   attachments?: UiAttachment[];
   /** Historical attachments omitted from this transport payload; persisted content is retained. */
   attachmentsOmitted?: number;
@@ -547,13 +550,13 @@ export type AgentUiEvent =
   | { type: 'run'; run: UiConversationRun }
   | { type: 'assistant-delta'; id: string; delta: string }
   | ({ type: 'assistant-thinking'; id: string } & UiThinkingOutput)
-  | ({ type: 'assistant-end'; id: string; text: string; aborted?: boolean; errorMessage?: string } & Partial<UiThinkingOutput>)
+  | ({ type: 'assistant-end'; id: string; text: string; aborted?: boolean; errorMessage?: string; error?: UiAgentError } & Partial<UiThinkingOutput>)
   | { type: 'tool'; activity: UiToolActivity }
   | { type: 'queue'; count: number; items: UiQueuedMessage[] }
   | { type: 'file-changes'; items: UiFileChange[] }
   | { type: 'sessions-changed'; cwd: string }
   | { type: 'session-runtime'; cwd: string; path: string; runtime: UiSessionRuntimeState }
-  | { type: 'error'; message: string };
+  | { type: 'error'; message: string; error?: UiAgentError };
 
 export interface AgentEventEnvelope {
   sequence: number;
@@ -588,6 +591,7 @@ export interface AgentSnapshot {
   /** Full timeline entry count of the loaded branch; absent or equal to messages+activities means no older pages. */
   historyTotal?: number;
   error: string | null;
+  errorInfo?: UiAgentError | null;
 }
 
 /** One slice of a session branch's timeline, ordered oldest-first by `order`. */
@@ -731,6 +735,12 @@ export interface WorkspaceGitStatus {
 
 /** Network Git actions from the workbench (ZCode git action menu). */
 export type WorkspaceGitSyncAction = 'fetch' | 'pull' | 'push';
+
+/** Structured result for a branch switch. Known worktree blockers stay in-band so the UI can offer a safe recovery flow. */
+export interface WorkspaceGitCheckoutIssue { code: 'dirty' | 'branch-in-use' | 'conflict' | 'unknown'; message: string; paths: string[] }
+export type WorkspaceGitCheckoutResult =
+  | { ok: true; branch: string; previous: string | null; didChange: boolean }
+  | { ok: false; branch: string; previous: string | null; issue: WorkspaceGitCheckoutIssue };
 
 /** One commit in the workbench git history (4.5). */
 export interface WorkspaceGitLogEntry {
@@ -961,7 +971,7 @@ export interface AgentBridge extends InputFeatureBridge, DataFeaturesBridge, Wor
   /** Local branch list and current ref for the composer branch picker. */
   getWorkspaceBranches(): Promise<WorkspaceBranches>;
   /** Checks out an existing local branch in the active workspace. */
-  checkoutWorkspaceBranch(branch: string): Promise<void>;
+  checkoutWorkspaceBranch(branch: string): Promise<WorkspaceGitCheckoutResult>;
   /** Stages or unstages specific paths (4.5). */
   setWorkspaceGitStaged(paths: string[], staged: boolean): Promise<void>;
   /** Discards worktree changes; the caller confirms with the real diff first (4.5). */
@@ -1055,8 +1065,9 @@ export interface AgentBridge extends InputFeatureBridge, DataFeaturesBridge, Wor
   listExtensions(): Promise<UiExtensionSummary[]>;
   setExtensionEnabled(path: string, enabled: boolean): Promise<void>;
   prompt(text: string, behavior?: 'steer' | 'followUp', attachments?: UiAttachment[]): Promise<void>;
-  /** Rewind to a sent user message and resend the edited text (zcode-style edit). */
-  editMessage(entryId: string, text: string, attachments?: UiAttachment[]): Promise<void>;
+  /** Rewind to a sent user message and resend the edited text (zcode-style edit).
+   * fileMode 'rewind' also restores files touched by later rounds before resending. */
+  editMessage(entryId: string, text: string, attachments?: UiAttachment[], fileMode?: 'keep' | 'rewind'): Promise<void>;
   /** Fork the conversation at an assistant message: the visible branch rewinds to it and the next prompt grows a new branch (zcode-style fork). */
   forkAssistantMessage(entryId: string): Promise<void>;
   /** Edit, remove, or steer-early a queued instruction while the agent is busy (Codex-style queue management). */

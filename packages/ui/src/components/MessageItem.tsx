@@ -1,4 +1,4 @@
-import type { UiAttachment, UiMessage } from '@pidesktop/shared';
+import type { UiAttachment, UiFileCheckpoint, UiMessage } from '@pidesktop/shared';
 import { memo, useContext, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { createPortal } from 'react-dom';
 import { useT } from '../i18n';
@@ -72,6 +72,8 @@ const UserMessageItem = memo(function UserMessageItem({ message, highlighted, fi
 	const [editing, setEditing] = useState(false);
 	const [submitting, setSubmitting] = useState(false);
 	const [draft, setDraft] = useState(message.text);
+	const [fileMode, setFileMode] = useState<'keep' | 'rewind'>('keep');
+	const [rewindLookup, setRewindLookup] = useState<{ state: 'loading' } | { state: 'none' } | { state: 'error' } | { state: 'ready'; preview: UiFileCheckpoint; conflict: boolean } | null>(null);
 	const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 	const query = useContext(TranscriptSearchContext).trim().toLocaleLowerCase();
 	const queryInside = Boolean(query && message.text.toLocaleLowerCase().includes(query));
@@ -104,7 +106,7 @@ const UserMessageItem = memo(function UserMessageItem({ message, highlighted, fi
 		if (submitting || !draft.trim()) return;
 		setSubmitting(true);
 		try {
-			await useChatStore.getState().editMessage(message.id, draft, message.attachments);
+			await useChatStore.getState().editMessage(message.id, draft, message.attachments, fileMode === 'rewind' && rewindLookup?.state === 'ready' && !rewindLookup.conflict ? 'rewind' : 'keep');
 			setEditing(false);
 		} catch {
 			// The store surfaces the failure; keep the draft for corrections.
@@ -115,7 +117,23 @@ const UserMessageItem = memo(function UserMessageItem({ message, highlighted, fi
 
 	const startEdit = () => {
 		setDraft(message.text);
+		setFileMode('keep');
+		setRewindLookup(null);
 		setEditing(true);
+	};
+
+	const chooseFileMode = async (mode: 'keep' | 'rewind') => {
+		if (mode === fileMode || submitting) return;
+		if (mode === 'keep') { setFileMode('keep'); return; }
+		const bridge = useChatStore.getState().bridge;
+		if (!bridge?.getEditRewindPreview) { setRewindLookup({ state: 'none' }); return; }
+		setFileMode('rewind');
+		setRewindLookup({ state: 'loading' });
+		try {
+			const preview = await bridge.getEditRewindPreview(message.id);
+			if (!preview) { setRewindLookup({ state: 'none' }); setFileMode('keep'); return; }
+			setRewindLookup({ state: 'ready', preview, conflict: preview.files.some((file) => file.status === 'conflict') });
+		} catch { setRewindLookup({ state: 'error' }); setFileMode('keep'); }
 	};
 
 	const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -138,10 +156,36 @@ const UserMessageItem = memo(function UserMessageItem({ message, highlighted, fi
 						<textarea ref={textareaRef} value={draft} rows={2} onChange={(event) => { setDraft(event.target.value); syncHeight(); }} onKeyDown={onKeyDown} aria-label={t('message.editLabel')} disabled={submitting} />
 						{Boolean(message.attachments?.length) && <div className="pd-message-attachments">{message.attachments?.map((attachment, index) => <AttachmentPreview key={`${attachment.name}-${index}`} attachment={attachment} />)}</div>}
 						{Boolean(message.attachmentsOmitted) && <p className="pd-activity-note">{t('message.attachmentsOmitted', { count: String(message.attachmentsOmitted) })}</p>}
+						<div className="pd-message-edit-files" role="radiogroup" aria-label={t('message.editFileMode')}>
+							<label className={fileMode === 'keep' ? 'is-active' : undefined}>
+								<input type="radio" name={`edit-files-${message.id}`} checked={fileMode === 'keep'} onChange={() => void chooseFileMode('keep')} disabled={submitting} />
+								{t('message.editFileKeep')}
+							</label>
+							<label className={fileMode === 'rewind' ? 'is-active' : undefined}>
+								<input type="radio" name={`edit-files-${message.id}`} checked={fileMode === 'rewind'} onChange={() => void chooseFileMode('rewind')} disabled={submitting} />
+								{t('message.editFileRewind')}
+							</label>
+							{rewindLookup?.state === 'loading' && <span role="status">{t('message.editRewindLoading')}</span>}
+							{rewindLookup?.state === 'none' && <span>{t('message.editRewindNone')}</span>}
+							{rewindLookup?.state === 'error' && <span>{t('message.editRewindError')}</span>}
+							{rewindLookup?.state === 'ready' && (() => {
+								let ready = 0, blocked = 0, conflict = 0;
+								for (const file of rewindLookup.preview.files) {
+									if (file.status === 'ready') ready += 1;
+									else if (file.status === 'conflict') conflict += 1;
+									else blocked += 1;
+								}
+								return <details className="pd-message-edit-rewind">
+									<summary>{t('message.editRewindSummary', { ready: String(ready), blocked: String(blocked + conflict) })}</summary>
+									{(rewindLookup.conflict || rewindLookup.preview.warning) && <p className="pd-message-edit-rewind-warning">{rewindLookup.conflict ? t('message.editRewindConflict') : rewindLookup.preview.warning}</p>}
+									<ul>{rewindLookup.preview.files.slice(0, 50).map((file) => <li key={file.path}><code>{file.path}</code><span>{t(`message.editRewindFile.${file.status}`)}</span>{file.reason ? <small>{file.reason}</small> : null}</li>)}</ul>
+								</details>;
+							})()}
+						</div>
 						<div className="pd-message-edit-actions">
 							<span className="pd-message-edit-hint">{t('message.editHint')}</span>
 							<button type="button" className="pd-message-edit-cancel" onClick={() => setEditing(false)} disabled={submitting}>{t('message.editCancel')}</button>
-							<button type="button" className="pd-message-edit-submit" onClick={() => void submitEdit()} disabled={submitting || !draft.trim()}>{t(submitting ? 'message.editSubmitting' : 'message.editSubmit')}</button>
+							<button type="button" className="pd-message-edit-submit" onClick={() => void submitEdit()} disabled={submitting || !draft.trim() || (fileMode === 'rewind' && rewindLookup?.state === 'ready' && rewindLookup.conflict)}>{t(submitting ? 'message.editSubmitting' : 'message.editSubmit')}</button>
 						</div>
 					</div>
 				</div>

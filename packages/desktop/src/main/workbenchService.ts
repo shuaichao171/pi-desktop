@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
 import { detectEditors, launchEditor, type DetectedEditor } from './editorCatalog.ts';
-import type { WorkspaceBranches, WorkspaceCommandEvent, WorkspaceEntry, WorkspaceGitGraphCommit, WorkspaceGitLogEntry, WorkspaceGitStatus, WorkspaceOpener } from '@pidesktop/shared';
+import type { WorkspaceBranches, WorkspaceCommandEvent, WorkspaceEntry, WorkspaceGitCheckoutIssue, WorkspaceGitCheckoutResult, WorkspaceGitGraphCommit, WorkspaceGitLogEntry, WorkspaceGitStatus, WorkspaceOpener } from '@pidesktop/shared';
 
 const execFileAsync = promisify(execFile);
 const MAX_PREVIEW_BYTES = 1024 * 1024;
@@ -46,16 +46,30 @@ function runVsCodeCli(args: string[]): Promise<unknown> {
 	return execFileAsync(process.env.ComSpec || 'cmd.exe', ['/d', '/s', '/c', `"${commandLine}"`], { timeout: 15000, windowsHide: true, windowsVerbatimArguments: true });
 }
 
-/**
- * Branch-switch assist (ZCode git-branch-switcher): local edits that block a
- * checkout become an actionable message naming the files, instead of raw stderr.
- */
+/** Convert Git's branch-switch stderr into a bounded, structured blocker. */
+export function parseCheckoutFailure(stderr: string): WorkspaceGitCheckoutIssue {
+	const text = stderr.trim() || 'Git 未返回错误详情';
+	const lines = text.split(/\r?\n/);
+	const dirty = /would be overwritten by (?:checkout|switch)|untracked working tree files would be (?:overwritten|removed)/i.test(text);
+	const inUse = /already checked out at|is already used by worktree/i.test(text);
+	const conflict = /resolve your current index first|you need to resolve your current index/i.test(text);
+	let paths: string[] = [];
+	if (dirty) {
+		const marker = lines.findIndex((line) => /would be overwritten by (?:checkout|switch)|untracked working tree files would be (?:overwritten|removed)/i.test(line));
+		paths = lines.slice(marker + 1).map((line) => line.trim()).filter((line) => Boolean(line) && !/^(?:Please|Aborting|error:)/i.test(line)).slice(0, 200);
+	}
+	const code = dirty ? 'dirty' : inUse ? 'branch-in-use' : conflict ? 'conflict' : 'unknown';
+	const message = dirty
+		? `${paths.length ? `以下文件有未提交的修改，切换会覆盖它们：${paths.slice(0, 8).join('、')}${paths.length > 8 ? ` 等 ${paths.length} 个文件` : ''}。` : '有未提交的修改会被覆盖。'}请先提交后重试，或在终端中用 git stash 暂存。`
+		: inUse ? '目标分支已被另一个 Git 工作树使用，请先关闭或移除对应工作树。'
+			: conflict ? '仓库仍有未解决的合并冲突，请先解决冲突后再切换分支。'
+				: text;
+	return { code, message, paths };
+}
+
+/** Backwards-compatible display helper used by diagnostics and tests. */
 export function describeCheckoutFailure(stderr: string): string {
-	const blocked = /would be overwritten by (?:checkout|switch)|untracked working tree files would be (?:overwritten|removed)/i.test(stderr);
-	if (!blocked) return `切换分支失败：${stderr}`;
-	const files = stderr.split(/\r?\n/).filter((line) => /^\s+\S/.test(line) && !/^\s*(?:Please|Aborting)/i.test(line)).map((line) => line.trim());
-	const shown = files.slice(0, 8).join('、');
-	return `切换分支失败：${files.length ? `以下文件有未提交的修改，切换会覆盖它们：${shown}${files.length > 8 ? ` 等 ${files.length} 个文件` : ''}。` : '有未提交的修改会被覆盖。'}请先提交，或在终端中用 git stash 暂存后再切换。`;
+	return `切换分支失败：${parseCheckoutFailure(stderr).message}`;
 }
 
 function isWithin(root: string, candidate: string): boolean {
@@ -431,22 +445,24 @@ export class WorkbenchService {
 		}
 
 	/** Check out an existing local branch. Branch names are matched against
-		 * the real ref list, so odd-looking names can never become git flags. */
-	async gitCheckout(branch: string): Promise<void> {
+	 * the real ref list, so odd-looking names can never become git flags. */
+	async gitCheckout(branch: string): Promise<WorkspaceGitCheckoutResult> {
 		if (typeof branch !== 'string' || branch.length === 0 || branch.length > 250 || branch.includes('\0')) throw new Error('无效的分支名');
 		const listed = await this.gitBranches();
 		if (!listed.isRepository) throw new Error('当前工作区不是 git 仓库');
 		if (!listed.branches.includes(branch)) throw new Error('分支不存在');
+		if (listed.current === branch) return { ok: true, branch, previous: listed.current, didChange: false };
 		const root = await this.workspaceRoot();
 		const prefix = this.gitPrefix(root);
 		if (resolve(root) !== resolve(await this.workspaceRoot())) throw new Error('工作区已切换，请重试');
 		try {
 			// `git switch` has no pathspec semantics; names are whitelisted against real refs.
 			await execFileAsync('git', [...prefix, 'switch', branch], { timeout: 30000, maxBuffer: 1024 * 1024, env: SAFE_GIT_ENV });
+			return { ok: true, branch, previous: listed.current, didChange: true };
 		} catch (error) {
 			const raw = error instanceof Error ? (error as ExecFileException).stderr : undefined;
 			const detail = (typeof raw === 'string' ? raw : undefined)?.trim() || (error instanceof Error ? error.message : String(error));
-			throw new Error(describeCheckoutFailure(detail));
+			return { ok: false, branch, previous: listed.current, issue: parseCheckoutFailure(detail) };
 		}
 	}
 
