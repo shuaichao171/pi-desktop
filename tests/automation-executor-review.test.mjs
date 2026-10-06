@@ -5,7 +5,7 @@ import { test } from 'node:test';
 
 registerHooks({ resolve(specifier, context, nextResolve) {
   if (specifier === 'electron') return {
-    url: 'data:text/javascript,export const app={getAppPath:()=>"test-app"};export const utilityProcess={fork:()=>{globalThis.__automationReviewForks=(globalThis.__automationReviewForks??0)+1;return globalThis.__automationReviewHost;}};',
+    url: 'data:text/javascript,export const app={getAppPath:()=>"test-app"};export const shell={showItemInFolder:()=>{}};export const utilityProcess={fork:()=>{globalThis.__automationReviewForks=(globalThis.__automationReviewForks??0)+1;return globalThis.__automationReviewHost;}};',
     shortCircuit: true,
   };
   if (specifier === './agentClient') return nextResolve('./agentClient.ts', context);
@@ -196,6 +196,7 @@ test('automation IPC accepts only its current main renderer and starts schedulin
     electron: `
       const env=globalThis.__automationIpcReview;
       export const app={getPath:()=>'/automation-review'};
+    export const shell = { showItemInFolder: () => {} };
       export const BrowserWindow={getAllWindows:()=>[env.owner],fromWebContents:sender=>sender===env.owner.webContents?env.owner:undefined};
       export const dialog={showErrorBox(){}};
       export const ipcMain={handle:(channel,handler)=>env.handlers.set(channel,handler)};

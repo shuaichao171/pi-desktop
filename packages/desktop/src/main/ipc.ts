@@ -7,7 +7,7 @@ import { registerManagementIpc } from './managementIpc';
  * is a typed invoke against the contract in @pidesktop/shared.
  */
 
-import { app, BrowserWindow, dialog, type IpcMainInvokeEvent } from 'electron';
+import { app, BrowserWindow, dialog, shell, type IpcMainInvokeEvent } from 'electron';
 import { mkdirSync, statSync } from 'node:fs';
 import { lstat, rm, stat } from 'node:fs/promises';
 import { basename, dirname, join, resolve } from 'node:path';
@@ -476,11 +476,12 @@ async function setPinnedWorkspaces(value: unknown): Promise<string[]> {
 	});
 }
 
-type SessionMeta = Omit<UiSessionMetaPatch, 'name'>;
+type SessionMeta = Omit<UiSessionMetaPatch, 'name' | 'expectedUnreadAt'>;
 function sessionMetaPath(): string { return join(app.getPath('userData'), 'sessions-meta.json'); }
 function isSessionMeta(value: unknown): value is Record<string, SessionMeta> {
 	return isRecord(value) && Object.values(value).every((entry) => isRecord(entry)
 		&& ['pinned', 'archived', 'unread'].every((key) => entry[key] === undefined || typeof entry[key] === 'boolean')
+		&& (entry.unreadAt === undefined || (typeof entry.unreadAt === 'number' && Number.isSafeInteger(entry.unreadAt) && entry.unreadAt >= 0))
 		&& (entry.order === undefined || (typeof entry.order === 'number' && Number.isInteger(entry.order) && Math.abs(entry.order) <= 1e9)));
 }
 async function readSessionMeta(): Promise<Record<string, SessionMeta>> {
@@ -623,7 +624,9 @@ async function markSessionRead(path: string | null): Promise<void> {
 	if (!path) return;
 	await withSessionMeta(async (meta) => {
 		if (!meta[path]?.unread) return;
-		meta[path] = { ...meta[path], unread: false };
+		// zcode clearTaskUnreadIfMatches: opening a session clears unconditionally
+		// and drops the watermark so stale stamps never leak into summaries.
+		meta[path] = { ...meta[path], unread: false, unreadAt: undefined };
 		await saveSessionMeta(meta);
 	});
 }
@@ -893,11 +896,18 @@ export function registerIpc(options: {
 	agentService.onBackgroundActivity((_, path) => {
 		if (pendingUnreadPaths.has(path)) return;
 		pendingUnreadPaths.add(path);
-		void withSessionMeta(async (meta) => {
-			if (meta[path]?.unread) return;
-			meta[path] = { ...meta[path], unread: true };
-			await saveSessionMeta(meta);
-		}).catch((error: unknown) => {
+		void (async () => {
+			// A settle that fires just before this session becomes the open one must
+			// not leave a stale unread dot on the conversation the user is viewing.
+			if ((await agentService.getSnapshot()).sessionPath === path) return;
+			await withSessionMeta(async (meta) => {
+				// zcode unread_at/last_unread_at: every settle re-stamps a strictly
+				// increasing watermark so a stale clear can never wipe a newer unread.
+				const stamp = Math.max(Date.now(), (meta[path]?.unreadAt ?? 0) + 1);
+				meta[path] = { ...meta[path], unread: true, unreadAt: stamp };
+				await saveSessionMeta(meta);
+			});
+		})().catch((error: unknown) => {
 			console.error('Failed to save session activity metadata:', error);
 		}).finally(() => pendingUnreadPaths.delete(path));
 	});
@@ -1101,6 +1111,17 @@ export function registerIpc(options: {
 		if (await requireSessionOwner(request.path) !== request.workspace) throw new Error('会话不属于此工作区');
 		return agentService.readSessionContext(request.workspace, request.path);
 	});
+	// zcode session context menu: reveal the conversation file in the OS file
+	// manager. Only an existing file on disk is revealed; nothing is opened.
+	handleRendererInvoke(IPC_CHANNELS.sessionRevealFile, async (_event, path: string) => {
+		const target = normalizeSessionPath(path);
+		// Defense in depth on top of sender validation: conversation files are
+		// always .jsonl, so nothing else on disk may be revealed through this route.
+		if (!/\.jsonl$/i.test(target)) throw new Error('会话路径无效');
+		const info = await stat(target);
+		if (!info.isFile()) throw new Error('会话文件不存在');
+		shell.showItemInFolder(target);
+	});
 	handleRendererInvoke(IPC_CHANNELS.agentSwitchSession, (_event, path: string) => queueWorkspaceActivation(async () => {
 		path = normalizeSessionPath(path);
 		if (automationExecutor.isSessionRunning(path)) throw new Error('自动化仍在运行，请结束后再打开会话');
@@ -1116,16 +1137,25 @@ export function registerIpc(options: {
 			if (patch[key] !== undefined && typeof patch[key] !== 'boolean') throw new Error('会话状态无效');
 		}
 		if (patch.order !== undefined && patch.order !== null && (!Number.isInteger(patch.order) || Math.abs(patch.order) > 1e9)) throw new Error('会话顺序无效');
+		if (patch.expectedUnreadAt !== undefined && (!Number.isSafeInteger(patch.expectedUnreadAt) || patch.expectedUnreadAt < 0)) throw new Error('会话状态无效');
 		const owner = await requireSessionOwner(path, patch.name !== undefined);
 		if (patch.name !== undefined) await agentService.renameSession(path, patch.name, owner);
 		if (!metaKeys.some((key) => patch[key] !== undefined) && patch.order === undefined) return;
 		await withSessionMeta(async (meta) => {
 			const next: SessionMeta = { ...meta[path] };
+			// zcode clearTaskUnreadIfMatches: compare and write inside the same serialized
+			// meta transaction. A clear whose expected watermark is older than the
+			// persisted one (a fresher background unread arrived after the renderer's
+			// snapshot) misses and leaves the dot in place; other fields still apply.
+			const clearBlocked = patch.unread === false && patch.expectedUnreadAt !== undefined
+				&& (next.unreadAt ?? 0) > patch.expectedUnreadAt;
 			for (const key of metaKeys) {
+				if (key === 'unread' && clearBlocked) continue;
 				if (patch[key] !== undefined) {
 					next[key] = patch[key];
 				}
 			}
+			if (patch.unread === false && !clearBlocked) next.unreadAt = undefined;
 			if (patch.order === null) delete next.order;
 			else if (patch.order !== undefined) next.order = patch.order;
 			meta[path] = next;
@@ -1135,8 +1165,11 @@ export function registerIpc(options: {
 	const sessionTrash = createSessionTrash(() => join(app.getPath('userData'), 'session-trash'));
 	async function recoverableMetadata(path: string): Promise<RecoverableSessionMetadata> {
 		const meta = await withSessionMeta(value => ({ ...value[path] }));
+		// Keep the trash sidecar schema stable: the unread watermark is a live CAS
+		// stamp, not a recoverable flag (a restored unread re-stamps on next settle).
+		const { unreadAt: _unreadAt, ...flags } = meta ?? {};
 		const group = (await groups.list()).find(item => item.sessionPaths.includes(path));
-		return { ...meta, order: meta.order ?? undefined, ...(group ? { group: { id: group.id, name: group.name, index: group.sessionPaths.indexOf(path) } } : {}) };
+		return { ...flags, order: flags.order ?? undefined, ...(group ? { group: { id: group.id, name: group.name, index: group.sessionPaths.indexOf(path) } } : {}) };
 	}
 	const dataFeatures = registerDataFeaturesIpc({
 		userData: app.getPath('userData'), sessionsRoot: join(getAgentDir(), 'sessions'), trash: sessionTrash,

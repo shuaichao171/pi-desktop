@@ -9,6 +9,7 @@ import { test } from 'node:test';
 const stubs = {
   electron: `
     export const app = { getPath: () => globalThis.__ipcUserData, getVersion: () => '0.1.7-test' };
+    export const shell = { showItemInFolder: () => {} };
     export const Menu = { buildFromTemplate: () => ({}) };
     export const nativeImage = { createFromPath: () => ({ isEmpty: () => true }) };
     export const Tray = class {};
@@ -811,4 +812,75 @@ test('first launch creates a private conversation directory and failed initializ
   const persisted = JSON.parse(await readFile(join(root, 'workspace.json'), 'utf8'));
   assert.equal(persisted.cwd, initial, 'failed activation does not replace startup restore target');
   assert.ok(persisted.conversationWorkspaces.includes(failedDirectory), 'files from failed extensions remain registered and recoverable');
+});
+
+test('unread settles stamp a rising watermark and clears only against the matching version', async (t) => {
+  const temp = await realpath(tmpdir());
+  const root = await mkdtemp(join(temp, 'pi-ipc-unread-cas-'));
+  const project = join(root, 'project');
+  const home = join(root, 'PiDesktopWorkspace');
+  const sessionPath = join(root, 'home-session.jsonl');
+  await Promise.all([mkdir(project), mkdir(home), writeFile(sessionPath, '{}\n')]);
+  await writeFile(join(root, 'workspace.json'), JSON.stringify({ cwd: project, workspaces: [project] }));
+  let backgroundActivity = null;
+  let activeSession = null;
+  const main = createIpcWindow();
+  globalThis.__ipcUserData = root;
+  globalThis.__ipcWindows = [main];
+  globalThis.__ipcHandlers = new Map();
+  globalThis.__ipcAgent = {
+    onEvent() {},
+    onBackgroundActivity(callback) { backgroundActivity = callback; },
+    async dispose() {},
+    getSnapshot: async () => ({ sessionPath: activeSession }),
+    listSessions: async (cwd) => cwd === home ? [{ id: 'home-session', path: sessionPath }] : [],
+  };
+  const ipc = await import('../packages/desktop/src/main/ipc.ts?unread-cas');
+  const { IPC_CHANNELS } = await import('../packages/shared/src/index.ts');
+  t.after(async () => {
+    await ipc.disposeServices();
+    assert.equal(dirname(root), temp);
+    await rm(root, { recursive: true, force: true });
+  });
+  ipc.registerIpc();
+  const valid = { sender: main.webContents, senderFrame: main.webContents.mainFrame };
+  const listRow = async () => (await globalThis.__ipcHandlers.get(IPC_CHANNELS.agentListSessions)(valid, home))[0];
+  const updateMeta = (patch) => globalThis.__ipcHandlers.get(IPC_CHANNELS.agentUpdateSessionMeta)(valid, sessionPath, patch);
+
+  // First settle lights the dot and stamps a watermark (zcode unread_at).
+  await backgroundActivity(null, sessionPath);
+  const first = await listRow();
+  assert.equal(first.unread, true);
+  assert.equal(typeof first.unreadAt, 'number', 'settle stamps a numeric watermark');
+
+  // A second settle re-stamps strictly higher even within the same millisecond
+  // (zcode last_unread_at + 1 watermark semantics).
+  await backgroundActivity(null, sessionPath);
+  const second = await listRow();
+  assert.ok(second.unreadAt > first.unreadAt, 'watermark strictly increases per settle');
+
+  // A stale CAS clear — the watermark the renderer saw is older than the
+  // persisted one — misses and leaves the newer dot in place (zcode
+  // clearTaskUnreadIfMatches inside one serialized transaction).
+  await updateMeta({ unread: false, expectedUnreadAt: first.unreadAt });
+  const blocked = await listRow();
+  assert.equal(blocked.unread, true, 'stale clear is rejected');
+  assert.equal(blocked.unreadAt, second.unreadAt, 'rejected clear keeps the newer watermark');
+
+  // A CAS clear carrying the current watermark clears and drops the stamp.
+  await updateMeta({ unread: false, expectedUnreadAt: second.unreadAt });
+  const cleared = await listRow();
+  assert.notEqual(cleared.unread, true);
+  assert.equal(cleared.unreadAt, undefined, 'successful clear drops the watermark');
+
+  // Compat: a plain clear without an expectation still clears unconditionally,
+  // and a settle for the currently open session is suppressed outright so a
+  // queued background settle cannot re-light a dot on the viewed conversation.
+  await backgroundActivity(null, sessionPath);
+  assert.equal((await listRow()).unread, true);
+  await updateMeta({ unread: false });
+  assert.notEqual((await listRow()).unread, true);
+  activeSession = sessionPath;
+  await backgroundActivity(null, sessionPath);
+  assert.notEqual((await listRow()).unread, true, 'settle for the open session never lights the dot');
 });

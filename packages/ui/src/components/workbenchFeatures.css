@@ -15,3 +15,19 @@
 .pd-feature-dialog details { margin:12px 0; }
 .pd-feature-dialog .pd-workbench-reader { height:300px; }
 .pd-feature-worktree { display:flex; flex-direction:column; gap:6px; border-top:1px solid var(--pd-border); padding:12px 0; overflow-wrap:anywhere; }
+/* zcode terminal context menu: copy/paste/clear reachable from the pointer. */
+.pd-terminal-menu-backdrop { position:fixed; inset:0; z-index:60; }
+.pd-terminal-menu { position:fixed; min-width:150px; display:flex; flex-direction:column; gap:2px; padding:4px; background:var(--pd-bg); border:1px solid var(--pd-border); border-radius:var(--pd-radius-md); box-shadow:0 8px 24px var(--pd-overlay); }
+.pd-terminal-menu button { border:0; border-radius:var(--pd-radius-sm); padding:7px 10px; text-align:left; font-size:var(--pd-font-caption); background:transparent; color:inherit; cursor:pointer; }
+.pd-terminal-menu button:hover:not(:disabled), .pd-terminal-menu button:focus-visible:not(:disabled) { background:var(--pd-surface-hover); }
+.pd-terminal-menu button:disabled { opacity:0.45; cursor:default; }
+/* zcode ConversationFileRewindDialog: revert preview grouped by outcome. */
+.pd-checkpoint-tier { margin:12px 0; }
+.pd-checkpoint-tier h3 { font-size:var(--pd-font-sm); font-weight:600; margin:0 0 6px; }
+.pd-checkpoint-tier.is-safe h3 { color:var(--pd-success, #4bb788); }
+.pd-checkpoint-tier.is-skipped h3 { color:var(--pd-warning, #d0a24c); }
+.pd-checkpoint-tier details { border-top:1px solid var(--pd-border); padding:6px 0; }
+.pd-checkpoint-tier summary { display:flex; justify-content:space-between; gap:12px; align-items:baseline; cursor:pointer; list-style-position:inside; }
+.pd-checkpoint-file { font-family:var(--pd-font-mono, monospace); font-size:var(--pd-font-caption); overflow-wrap:anywhere; }
+.pd-checkpoint-status { flex:none; font-size:var(--pd-font-caption); opacity:0.85; }
+.pd-checkpoint-reason { margin:6px 0 0; font-size:var(--pd-font-caption); opacity:0.8; }

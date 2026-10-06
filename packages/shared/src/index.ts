@@ -71,6 +71,7 @@ export const IPC_CHANNELS = {
   agentListSessions: 'agent:list-sessions',
   agentSearchSessions: 'agent:search-sessions',
   agentSwitchSession: 'agent:switch-session',
+  sessionRevealFile: 'session:reveal-file',
   agentListWorkspaces: 'agent:list-workspaces',
   workspaceListConversations: 'workspace:list-conversations',
   conversationStoragePick: 'conversation-storage:pick',
@@ -656,6 +657,8 @@ export interface UiSessionSummary {
   pinned?: boolean;
   archived?: boolean;
   unread?: boolean;
+  /** Strictly increasing unread watermark (epoch ms). Present only while unread; used for compare-and-swap clears (zcode unread_at semantics). */
+  unreadAt?: number;
   /** Live runtime state; independent of persisted unread metadata. */
   runtime?: UiSessionRuntimeState;
   /** Manual sidebar position. Undefined entries keep their time-based sort. */
@@ -667,6 +670,10 @@ export interface UiSessionMetaPatch {
   pinned?: boolean;
   archived?: boolean;
   unread?: boolean;
+  /** Persisted unread watermark; written by the main process on every background settle, never by the renderer. */
+  unreadAt?: number;
+  /** Request-only CAS precondition for unread=false clears: skip the clear when the persisted watermark is newer (a fresher background unread arrived). Not persisted. */
+  expectedUnreadAt?: number;
   /** Manual sidebar position; null clears it back to time-based sorting. */
   order?: number | null;
 }
@@ -1023,6 +1030,8 @@ export interface AgentBridge extends InputFeatureBridge, DataFeaturesBridge, Wor
   listSessions(cwd?: string): Promise<UiSessionSummary[]>;
   searchSessions(query: string): Promise<{ sessions: UiSessionSearchResult[]; truncated: boolean; skipped?: number }>;
   switchSession(path: string): Promise<void>;
+  /** Reveals a conversation file in the OS file manager (zcode session context menu). */
+  revealSessionFile(path: string): Promise<void>;
   updateSessionMeta(path: string, patch: UiSessionMetaPatch): Promise<void>;
   /** Moves a conversation file to the app trash and clears its desktop metadata (3.3). */
   deleteSession(path: string): Promise<void>;

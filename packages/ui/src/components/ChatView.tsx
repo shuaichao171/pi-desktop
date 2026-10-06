@@ -218,9 +218,16 @@ export function ChatView({ onToggleSidebar, onOpenModelManagement, searchTarget,
 			}
 			if (matchesShortcut(event, bindingKeysFor('stopGeneration'))) {
 				const state = useChatStore.getState();
-				if (state.status !== 'busy' || document.querySelector('[role="dialog"][aria-modal="true"]')) return;
-				const target = event.target as HTMLElement | null;
-				if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) return;
+				if (state.status !== 'busy') return;
+				// zcode escapeStop: events whose path crosses an open dialog are
+				// ignored (the dialog itself consumes Esc to close). Focus inside the
+				// composer must NOT block stopping — typing while a run streams and
+				// pressing Esc is the most common stop path. The composer cancels a
+				// history recall first and stops propagation, so that Esc never gets here.
+				// (The global query at the top of this listener additionally keeps the
+				// old conservative gate: while any modal dialog is open, stop stays silent.)
+				const origin = event.target instanceof Element ? event.target : null;
+				if (origin?.closest('dialog[open], [role="dialog"][aria-modal="true"]')) return;
 				event.preventDefault();
 				void state.abort();
 			}

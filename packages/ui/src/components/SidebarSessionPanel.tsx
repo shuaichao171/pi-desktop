@@ -59,6 +59,10 @@ const groupKey = (id: string) => `group:${id}`;
 const projectKey = (path: string) => `project:${path}`;
 const UNGROUPED_KEY = 'ungrouped';
 const UNASSIGNED_KEY = 'unassigned';
+// zcode workspaceTaskPagination: each section shows a small first page and grows
+// on demand; a stored larger limit is never reset by the default page, and
+// collapsing a section clears its memory so the map cannot grow unbounded.
+const SECTION_PAGE_SIZE = 5;
 const DRAG_THRESHOLD = 5;
 const PROJECT_DRAG_THRESHOLD = 6;
 const EDGE_SCROLL_MARGIN = 28;
@@ -91,10 +95,16 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, onNavig
 	const [groupsLoading, setGroupsLoading] = useState(true);
 	const [groupsError, setGroupsError] = useState(false);
 	const [archived, setArchived] = useState(false);
+	// zcode pendingArchiveTaskId: a single row waits for a second click before
+	// its archive action commits (unarchive stays immediate — it is reversible).
+	const [archiveConfirm, setArchiveConfirm] = useState<string | null>(null);
+	const archiveConfirmRef = useRef<string | null>(null);
+	archiveConfirmRef.current = archiveConfirm;
 	const [archiveSelection, setArchiveSelection] = useState(() => new Set<string>());
 	const [bulkTrashTarget, setBulkTrashTarget] = useState<SessionTrashTarget[] | null>(null);
 	const archiveSelectAllRef = useRef<HTMLInputElement>(null);
 	const [refreshing, setRefreshing] = useState(false);
+	const [sectionLimits, setSectionLimits] = useState<Record<string, number>>({});
 	const [popup, setPopup] = useState<Popup | null>(null);
 	const [creatingProject, setCreatingProject] = useState(false);
 	const [trashTarget, setTrashTarget] = useState<{ session: SidebarSession; anchor: HTMLElement; nextPath?: string } | null>(null);
@@ -206,7 +216,30 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, onNavig
 			return projectOrder.length === current.projectOrder.length ? current : { ...current, projectOrder };
 		});
 	}, [projectPaths]);
-	useEffect(() => { if (!visible) setPopup(null); }, [visible]);
+	useEffect(() => { if (!visible) { setPopup(null); setArchiveConfirm(null); } }, [visible]);
+	// zcode: the pending confirm dies with its row — filtering, view switches or
+	// deletion that removes the session from the visible list clear the state.
+	useEffect(() => {
+		if (archiveConfirm && !sessions.some((session) => session.path === archiveConfirm)) setArchiveConfirm(null);
+	}, [sessions, archiveConfirm]);
+	// zcode inline-confirm dismissal: Escape anywhere or a press outside the
+	// confirming row cancels; presses inside the row (including the confirm
+	// button itself) keep waiting. Compare data-session-path instead of building
+	// a CSS selector — Windows paths contain characters selectors would escape.
+	useEffect(() => {
+		if (!archiveConfirm) return;
+		const onKeyDown = (event: KeyboardEvent) => { if (event.key === 'Escape') setArchiveConfirm(null); };
+		const onPointerDown = (event: PointerEvent) => {
+			const row = event.target instanceof Element ? event.target.closest('.pd-session-item') : null;
+			if (row?.getAttribute('data-session-path') !== archiveConfirm) setArchiveConfirm(null);
+		};
+		window.addEventListener('keydown', onKeyDown, true);
+		window.addEventListener('pointerdown', onPointerDown, true);
+		return () => {
+			window.removeEventListener('keydown', onKeyDown, true);
+			window.removeEventListener('pointerdown', onPointerDown, true);
+		};
+	}, [archiveConfirm]);
 	useEffect(() => {
 		if (!bridge || workspacePaths.length === 0 || pinSaving || pinWritePending.current) return;
 		let cancelled = false;
@@ -368,6 +401,7 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, onNavig
 			pressRef.current = null;
 			suppressDragClick.current = true;
 			setPopup(null);
+			setArchiveConfirm(null);
 			dragSnapshot.current = new Map(dragSections.map((section) => [section.key, section.sessions.map((session) => session.path)]));
 			projectDragOrder.current = press.item.kind === 'project' ? [...orderedWorkspaces] : null;
 			if (press.item.kind === 'project') {
@@ -429,7 +463,18 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, onNavig
 		}
 		const changes = changedSidebarOrders(snapshot, state.orders);
 		if (!changes.size) return;
-		const targetKey = [...state.orders.keys()].find((key) => state.orders.get(key)!.includes(item.path));
+		// Pagination interplay: a drop past a section's visible page must not land
+		// the row out of sight — expand that section's limit to cover the landing
+		// index (zcode paginates per workspace and expands the same way).
+		const landedKey = [...state.orders.keys()].find((key) => state.orders.get(key)!.includes(item.path));
+		const landedIndex = landedKey !== undefined ? state.orders.get(landedKey)!.indexOf(item.path) : -1;
+		if (landedKey !== undefined && landedIndex >= SECTION_PAGE_SIZE) {
+			setSectionLimits(current => {
+				const limit = current[landedKey] ?? SECTION_PAGE_SIZE;
+				return landedIndex >= limit ? { ...current, [landedKey]: landedIndex + 1 } : current;
+			});
+		}
+		const targetKey = landedKey;
 		const entries: { path: string; order: number }[] = [];
 		for (const paths of changes.values()) paths.forEach((path, index) => entries.push({ path, order: index }));
 		if (targetKey !== undefined && targetKey !== item.from) {
@@ -512,11 +557,24 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, onNavig
 	useEffect(() => {
 		finishDrag(false);
 		setSavingDrag(null);
+		setArchiveConfirm(null);
 	}, [visible, preferences.mode, preferences.projectView, preferences.filter, preferences.sort, archived, projectMembership, projectPins]);
 
 	function preference(patch: Partial<SidebarPreferences>) { setPreferences((current) => ({ ...current, ...patch })); }
 	function toggleSection(key: string) {
+		// zcode retainWorkspaceTaskVisibleLimits: collapsing a section clears its
+		// remembered "show more" extent; a stored limit never shrinks on its own.
+		if (!collapsed.has(key)) setSectionLimits((limits) => { if (!(key in limits)) return limits; const next = { ...limits }; delete next[key]; return next; });
 		setPreferences((current) => ({ ...current, collapsed: current.collapsed.includes(key) ? current.collapsed.filter((id) => id !== key) : [...current.collapsed, key] }));
+	}
+	const limitOf = (key: string) => sectionLimits[key] ?? SECTION_PAGE_SIZE;
+	function showMoreSessions(key: string) {
+		setSectionLimits((current) => ({ ...current, [key]: (current[key] ?? SECTION_PAGE_SIZE) + SECTION_PAGE_SIZE }));
+	}
+	function moreButton(key: string, total: number) {
+		const limit = limitOf(key);
+		if (total <= limit) return null;
+		return <button type="button" className="pd-session-more" onClick={() => showMoreSessions(key)}>{t('sidebar.showMore', { count: String(total - limit) })}</button>;
 	}
 	function toggleAll() {
 		setPreferences((current) => ({ ...current, collapsed: allExpanded ? [...new Set([...current.collapsed, ...sectionKeys])] : current.collapsed.filter((key) => !sectionKeys.includes(key)) }));
@@ -587,7 +645,9 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, onNavig
 			try {
 				if (!await selectSession(session.workspace, session.path)) return;
 				onNavigate();
-				if (session.unread) await updateSessionMeta(session.path, { unread: false });
+				// CAS clear: pass the watermark this row last saw so a fresher background
+				// unread that landed after the snapshot keeps its dot (zcode mark-read).
+				if (session.unread) await updateSessionMeta(session.path, { unread: false, expectedUnreadAt: session.unreadAt });
 			} finally { navigationPending.current = false; setNavigating(false); }
 		});
 	}
@@ -611,7 +671,8 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, onNavig
 		const active = session.workspace === cwd && session.path === sessionPath;
 		const title = titleOf(session);
 		const pinLabel = t(session.pinned ? 'sidebar.unpinSession' : 'sidebar.pinSession');
-		const archiveLabel = t(session.archived ? 'sidebar.unarchiveSession' : 'sidebar.archiveSession');
+		const confirmingArchive = !session.archived && archiveConfirm === session.path;
+		const archiveLabel = t(confirmingArchive ? 'sidebar.confirmArchive' : session.archived ? 'sidebar.unarchiveSession' : 'sidebar.archiveSession');
 		const menuOpen = (popup?.kind === 'session' || popup?.kind === 'move') && popup.session.path === session.path;
 		const dragItem = drag?.item;
 		const isDragSource = dragItem?.kind === 'session' && dragItem.path === session.path;
@@ -625,13 +686,29 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, onNavig
 				? { kind: 'waiting' as const, label: session.runtime?.message ? `${copy[phase]} · ${session.runtime.message}` : copy[phase] }
 			: null;
 		const togglePin = (event: ReactMouseEvent<HTMLButtonElement>) => sessionAction(session, event.currentTarget, () => updateSessionMeta(session.path, { pinned: !session.pinned }));
+		const toggleArchive = (event: ReactMouseEvent<HTMLButtonElement>) => {
+			// zcode inline confirm: unarchive is reversible and stays immediate;
+			// the destructive direction commits only on a second click of the same row.
+			if (session.archived) {
+				sessionAction(session, event.currentTarget, () => updateSessionMeta(session.path, { archived: false }));
+				return;
+			}
+			if (archiveConfirmRef.current !== session.path) {
+				setArchiveConfirm(session.path);
+				return;
+			}
+			setArchiveConfirm(null);
+			sessionAction(session, event.currentTarget, () => updateSessionMeta(session.path, { archived: true }));
+		};
 		const pinButton = (className: string) => <HoverTooltip title={pinLabel} side="right"><button type="button" className={className} data-session-action="pin" aria-label={`${pinLabel}: ${title}`} aria-pressed={Boolean(session.pinned)} onClick={togglePin}><Icon name="pin" width="14" height="14" /></button></HoverTooltip>;
-		return <div className={`pd-session-item${active ? ' is-active' : ''}${isDragSource ? ' is-drag-source' : ''}${session.pinned ? ' is-pinned' : ''}${indicator ? ' has-indicator' : ''}${archived ? ' has-archive-selection' : ''}${archived && archiveSelection.has(session.path) ? ' is-selected-for-trash' : ''}`} key={session.path} data-session-path={session.path}
+		return <div className={`pd-session-item${active ? ' is-active' : ''}${isDragSource ? ' is-drag-source' : ''}${session.pinned ? ' is-pinned' : ''}${indicator ? ' has-indicator' : ''}${confirmingArchive ? ' is-archive-confirming' : ''}${archived ? ' has-archive-selection' : ''}${archived && archiveSelection.has(session.path) ? ' is-selected-for-trash' : ''}`} key={session.path} data-session-path={session.path}
 			data-drag-path={container && dragMode ? session.path : undefined} onPointerDown={container && dragMode ? (event) => beginDrag({ kind: 'session', path: session.path, from: container }, event) : undefined}
 			onContextMenu={(event) => {
 				if (renaming === session.path) return;
 				event.preventDefault();
 				event.stopPropagation();
+				// zcode: opening the row menu cancels a pending inline archive confirm.
+				setArchiveConfirm(null);
 				const anchor = event.currentTarget.querySelector<HTMLButtonElement>('.pd-session-row');
 				if (anchor) setPopup({ kind: 'session', anchor, point: { x: event.clientX, y: event.clientY }, session });
 			}}>
@@ -648,7 +725,8 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, onNavig
 					<button type="button" className="pd-session-row" onClick={() => openSession(session)} disabled={status === 'starting' || navigating} aria-current={active ? 'page' : undefined} aria-haspopup="menu" aria-expanded={menuOpen} onKeyDown={(event) => {
 						if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) {
 							event.preventDefault();
-							event.stopPropagation();
+						event.stopPropagation();
+						setArchiveConfirm(null);
 							setPopup({ kind: 'session', anchor: event.currentTarget, session });
 						}
 					}}>
@@ -662,13 +740,14 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, onNavig
 				{!archived && pinButton('pd-session-pin')}
 				<div className="pd-session-actions">
 					{archived && pinButton('pd-session-action pd-icon-button')}
-					<HoverTooltip title={archiveLabel} side="right"><button type="button" className="pd-session-action pd-icon-button" data-session-action="archive" aria-label={`${archiveLabel}: ${title}`} onClick={(event) => sessionAction(session, event.currentTarget, () => updateSessionMeta(session.path, { archived: !session.archived }))}><Icon name={session.archived ? 'rotateCcw' : 'archive'} width="15" height="15" /></button></HoverTooltip>
+					<HoverTooltip title={archiveLabel} side="right"><button type="button" className={`pd-session-action pd-icon-button${confirmingArchive ? ' is-confirming' : ''}`} data-session-action="archive" aria-label={`${archiveLabel}: ${title}`} onClick={toggleArchive}><Icon name={confirmingArchive ? 'check' : session.archived ? 'rotateCcw' : 'archive'} width="15" height="15" /></button></HoverTooltip>
 				</div>
 			</>}
 		</div>;
 	}
 	function renderOrdered(key: string) {
-		return previewOrder(key).map((path) => sessionByPath.get(path)).filter((session): session is SidebarSession => Boolean(session)).map((session) => renderSession(session, key));
+		const ordered = previewOrder(key).map((path) => sessionByPath.get(path)).filter((session): session is SidebarSession => Boolean(session));
+		return <>{ordered.slice(0, limitOf(key)).map((session) => renderSession(session, key))}{moreButton(key, ordered.length)}</>;
 	}
 	function unsaved() {
 		return <div className="pd-session-item is-active"><div className="pd-session-row" aria-current="page"><span className="pd-session-leading" aria-hidden="true" /><span className="pd-session-copy"><strong>{t('sidebar.newSession')}</strong></span><span className="pd-session-unsaved">{t('sidebar.current')}</span></div></div>;
@@ -677,7 +756,8 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, onNavig
 		const items = projectByWorkspace.get(workspace)?.sessions ?? [];
 		return section(projectKey(workspace), workspaceName(workspace), <>
 			{showUnsaved && workspace === unsavedProject && unsaved()}
-			{items.map(session => renderSession(session, null))}
+			{items.slice(0, limitOf(projectKey(workspace))).map(session => renderSession(session, null))}
+			{moreButton(projectKey(workspace), items.length)}
 			{!items.length && !(showUnsaved && workspace === unsavedProject) && workspaceRequests[workspace]?.phase !== 'error' && <div className="pd-session-empty">{t(!workspaceRequests[workspace] || workspaceRequests[workspace]?.phase === 'loading' ? 'sidebar.loading' : filtered ? 'sidebar.noMatches' : 'sidebar.noSessions')}</div>}
 		</>, { icon: 'folder', workspace });
 	}
@@ -754,13 +834,14 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, onNavig
 			<button type="button" data-action="delete-selected-archived" disabled={!selectedArchiveSessions.length || !bridge || navigating || workspaceNavigationPending} onClick={() => { setPopup(null); setBulkTrashTarget(selectedArchiveSessions.map(session => ({ path: session.path, title: titleOf(session) }))); }}>{t('sidebar.deleteSelected')}</button>
 		</div>}
 		<div className="pd-project-list pd-organized-list" ref={scrollRef} tabIndex={-1} aria-label={t('sidebar.sessions')} onScroll={() => setPopup(null)}>
+			{(refreshing || loadingSessions) && sessions.length > 0 && <div className="pd-session-loading-hint" role="status"><Icon name="loader" className="pd-session-spinner" width="14" height="14" />{t('sidebar.refreshing')}</div>}
 			{hasPinned && section('pinned', t('sidebar.pinned'), <>
 				{grouped.pinned.map(session => renderSession(session, null))}
 				{projectPartitions.pinned.map(renderProject)}
 			</>, { icon: 'pin' })}
 			{archived || (preferences.mode === 'project' && preferences.projectView === 'timeline') ? <>
 				{showBodyUnsaved && unsaved()}
-				{dates.map((date) => section(`${archived ? 'archive' : 'date'}:${date.id}`, t(`sidebar.${date.id}`), date.sessions.map((s) => renderSession(s, null)), { icon: 'clock' }))}
+				{dates.map((date) => { const key = `${archived ? 'archive' : 'date'}:${date.id}`; return section(key, t(`sidebar.${date.id}`), <>{date.sessions.slice(0, limitOf(key)).map((s) => renderSession(s, null))}{moreButton(key, date.sessions.length)}</>, { icon: 'clock' }); })}
 				{!dates.length && !showBodyUnsaved && !hasPinned && <div className="pd-session-empty">{t(loadingSessions ? 'sidebar.loading' : filtered ? 'sidebar.noMatches' : archived ? 'sidebar.noArchived' : 'sidebar.noSessions')}</div>}
 			</> : preferences.mode === 'grouped' ? groupsLoading ? <div className="pd-session-empty">{t('sidebar.loading')}</div> : groupsError ? <button type="button" className="pd-sidebar-retry" disabled={refreshing} onClick={() => void perform(refresh)}>{t('sidebar.retryGroups')}</button> : <>
 				{orderedGroupIds.map((id) => {
@@ -781,7 +862,8 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, onNavig
 				{projectPartitions.unpinned.map(renderProject)}
 				{section(UNASSIGNED_KEY, t('sidebar.unassigned'), <>
 					{showUnsaved && !unsavedProject && unsaved()}
-					{projectGroups.unassigned.map(session => renderSession(session, null))}
+					{projectGroups.unassigned.slice(0, limitOf(UNASSIGNED_KEY)).map(session => renderSession(session, null))}
+					{moreButton(UNASSIGNED_KEY, projectGroups.unassigned.length)}
 					{!projectGroups.unassigned.length && !(showUnsaved && !unsavedProject) && <div className="pd-session-empty">{t(loadingSessions ? 'sidebar.loading' : filtered ? 'sidebar.noMatches' : 'sidebar.noSessions')}</div>}
 				</>)}
 			</>}
@@ -798,7 +880,7 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, onNavig
 			setTrashTarget(null);
 			if (deleted) operationFeedback.show({ id: `session-trash:${target.session.path}`, kind: 'success', title: copy.deleted, detail: titleOf(target.session) });
 		}} />}
-		{bulkTrashTarget && <SessionBulkTrashDialog sessions={bulkTrashTarget} onDelete={path => useChatStore.getState().deleteSession(path)} onClose={() => {
+		{bulkTrashTarget && <SessionBulkTrashDialog sessions={bulkTrashTarget} onDelete={paths => useChatStore.getState().deleteSessions(paths, { expectArchived: true })} onClose={() => {
 			trashFocus.current = { anchor: archiveSelectAllRef.current ?? undefined };
 			setBulkTrashTarget(null);
 		}} />}
@@ -850,7 +932,9 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, onNavig
 				<button type="button" role="menuitem" onClick={() => { renameCancelled.current = false; setRenaming(popup.session.path); setRenameDraft(titleOf(popup.session)); setPopup(null); }}>{t('sidebar.rename')}</button>
 				<button type="button" role="menuitem" onClick={() => { const s = popup.session; sessionAction(s, popup.anchor, () => updateSessionMeta(s.path, { pinned: !s.pinned })); }}>{t(popup.session.pinned ? 'sidebar.unpin' : 'sidebar.pin')}</button>
 				<button type="button" role="menuitem" disabled={groupsLoading || groupsError || pending} onClick={() => setPopup({ ...popup, kind: 'move' })}>{t('sidebar.moveToGroup')}<Icon name="chevronRight" width="13" height="13" /></button>
-				<button type="button" role="menuitem" onClick={() => { const s = popup.session; sessionAction(s, popup.anchor, () => updateSessionMeta(s.path, { unread: !s.unread })); }}>{t(popup.session.unread ? 'sidebar.markRead' : 'sidebar.markUnread')}</button>
+				<button type="button" role="menuitem" onClick={() => { const s = popup.session; setPopup(null); void perform(() => navigator.clipboard.writeText(s.path)); }}>{t('sidebar.copySessionPath')}</button>
+				<button type="button" role="menuitem" disabled={!bridge?.revealSessionFile} onClick={() => { const s = popup.session; setPopup(null); void perform(() => bridge!.revealSessionFile(s.path)); }}>{t('sidebar.revealSessionFile')}</button>
+				<button type="button" role="menuitem" onClick={() => { const s = popup.session; sessionAction(s, popup.anchor, () => updateSessionMeta(s.path, s.unread ? { unread: false, expectedUnreadAt: s.unreadAt } : { unread: true })); }}>{t(popup.session.unread ? 'sidebar.markRead' : 'sidebar.markUnread')}</button>
 				<hr /><button type="button" role="menuitem" onClick={() => { const s = popup.session; sessionAction(s, popup.anchor, () => updateSessionMeta(s.path, { archived: !s.archived })); }}>{t(popup.session.archived ? 'sidebar.unarchive' : 'sidebar.archive')}</button>
 				<button type="button" role="menuitem" className="pd-sidebar-menu-danger" onClick={() => {
 					const s = popup.session;

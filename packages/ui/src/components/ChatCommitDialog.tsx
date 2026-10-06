@@ -21,7 +21,7 @@ export function ChatCommitDialog({ onClose }: { onClose(): void }) {
 	const actionLock = useRef(false);
 	const generation = useRef(0), closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 	const [loading, setLoading] = useState(true);
-	const [working, setWorking] = useState<'generate' | 'commit' | null>(null);
+	const [working, setWorking] = useState<'generate' | 'commit' | 'push' | null>(null);
 	const [done, setDone] = useState(false);
 	const [message, setMessage] = useState('');
 	const [notice, setNotice] = useState<{ tone: 'error' | 'info'; text: string } | null>(null);
@@ -78,8 +78,14 @@ export function ChatCommitDialog({ onClose }: { onClose(): void }) {
 		}
 	}
 
-	async function submit() {
+	// zcode commit dialog: commit, commit-and-push, and push-only share one scoped
+	// tree; a push after the commit reuses the same success/error channel.
+	async function submit(withPush = false) {
 		if (!api || !canCommit || !preview || actionLock.current) return;
+		if (withPush && typeof api.syncWorkspaceGit !== 'function') {
+			setNotice({ tone: 'error', text: t('chat.pushUnavailable') });
+			return;
+		}
 		const token = generation.current, current = () => token === generation.current && useChatStore.getState().cwd === cwd && useChatStore.getState().bridge === bridge;
 		actionLock.current = true;
 		setWorking('commit');
@@ -87,11 +93,44 @@ export function ChatCommitDialog({ onClose }: { onClose(): void }) {
 		try {
 			const hash = await api.commitWorkspacePreview({ id: preview.id, message });
 			if (!current()) return;
-			setNotice({ tone: 'info', text: t('chat.commitDone', { hash }) });
+			if (withPush) {
+				setNotice({ tone: 'info', text: t('chat.commitPushing', { hash }) });
+				try {
+					await api.syncWorkspaceGit('push');
+				} catch (cause: unknown) {
+					// The commit already succeeded — report it precisely and keep the
+					// dialog open so the standalone push action can retry.
+					if (current()) setNotice({ tone: 'error', text: t('chat.commitPushFailedAfter', { hash, message: errorText(cause) }) });
+					return;
+				}
+				if (!current()) return;
+				setNotice({ tone: 'info', text: t('chat.commitPushDone', { hash }) });
+			} else {
+				setNotice({ tone: 'info', text: t('chat.commitDone', { hash }) });
+			}
 			setDone(true);
 			closeTimer.current = setTimeout(() => { if (current()) onClose(); }, 1400);
 		} catch (cause: unknown) {
 			if (current()) setNotice({ tone: 'error', text: t('chat.commitFailed', { message: errorText(cause) }) });
+		} finally {
+			if (current()) { actionLock.current = false; setWorking(null); }
+		}
+	}
+
+	async function pushOnly() {
+		if (!api || busy || actionLock.current || typeof api.syncWorkspaceGit !== 'function') return;
+		const token = generation.current, current = () => token === generation.current && useChatStore.getState().cwd === cwd && useChatStore.getState().bridge === bridge;
+		actionLock.current = true;
+		setWorking('push');
+		setNotice(null);
+		try {
+			await api.syncWorkspaceGit('push');
+			if (!current()) return;
+			setNotice({ tone: 'info', text: t('chat.pushDone') });
+			setDone(true);
+			closeTimer.current = setTimeout(() => { if (current()) onClose(); }, 1400);
+		} catch (cause: unknown) {
+			if (current()) setNotice({ tone: 'error', text: t('chat.pushFailed', { message: errorText(cause) }) });
 		} finally {
 			if (current()) { actionLock.current = false; setWorking(null); }
 		}
@@ -143,21 +182,28 @@ export function ChatCommitDialog({ onClose }: { onClose(): void }) {
 						value={message}
 						disabled={busy}
 						rows={4}
-						placeholder={t('chat.commitPlaceholder')}
-						onChange={(event) => setMessage(event.target.value)}
-					/>
+					placeholder={t('chat.commitPlaceholder')}
+					onChange={(event) => setMessage(event.target.value)}
+					onKeyDown={(event) => { if (event.key === 'Enter' && (event.ctrlKey || event.metaKey) && !event.nativeEvent.isComposing) { event.preventDefault(); void submit(); } }}
+				/>
 				</>}
 				{notice && <p className={notice.tone === 'error' ? 'pd-commit-status pd-commit-warning' : 'pd-commit-status pd-commit-ok'}>{notice.text}</p>}
 				<footer className="pd-commit-actions">
 					<button type="button" className="pd-commit-secondary" disabled={busy} onClick={onClose}>{t('chat.commitCancel')}</button>
-					{status?.isRepository && entries.length > 0 && <>
-						<button type="button" className="pd-commit-secondary" disabled={busy} onClick={() => { void generate(); }}>
-							{working === 'generate' ? t('chat.commitGenerating') : t('chat.commitGenerate')}
-						</button>
-						<button type="button" className="pd-commit-primary" disabled={!canCommit} onClick={() => { void submit(); }}>
-							{working === 'commit' ? t('chat.commitSubmitting') : t('chat.commitSubmit')}
-						</button>
-					</>}
+				{status?.isRepository && entries.length > 0 && <>
+					<button type="button" className="pd-commit-secondary" disabled={busy || typeof api?.syncWorkspaceGit !== 'function'} onClick={() => { void pushOnly(); }}>
+						{working === 'push' ? t('chat.pushing') : t('chat.pushOnly')}
+					</button>
+					<button type="button" className="pd-commit-secondary" disabled={busy} onClick={() => { void generate(); }}>
+						{working === 'generate' ? t('chat.commitGenerating') : t('chat.commitGenerate')}
+					</button>
+					<button type="button" className="pd-commit-primary" disabled={!canCommit || typeof api?.syncWorkspaceGit !== 'function'} onClick={() => { void submit(true); }}>
+						{working === 'commit' ? t('chat.commitSubmitting') : t('chat.commitAndPush')}
+					</button>
+					<button type="button" className="pd-commit-primary" disabled={!canCommit} onClick={() => { void submit(); }}>
+						{working === 'commit' ? t('chat.commitSubmitting') : t('chat.commitSubmit')}
+					</button>
+				</>}
 				</footer>
 			</section>
 		</div>

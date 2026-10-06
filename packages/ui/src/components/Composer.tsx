@@ -26,6 +26,9 @@ import { useBusyInputBehavior, type BusyInputBehavior as BusyBehavior } from '..
 import { ConversationMetrics } from './ConversationMetrics';
 import { PromptHistoryCursor, promptHistoryDirection, readPromptHistory, savePromptHistory } from '../promptHistory';
 
+/** Plain text beyond this size pastes as a dated .txt attachment instead of flooding the editor (zcode LONG_PASTE_THRESHOLD). */
+const LONG_PASTE_THRESHOLD = 15 * 1024;
+
 function draftStorageKey(cwd: string, sessionPath: string | null): string {
 	return `pi-desktop:draft:${encodeURIComponent(cwd)}:${encodeURIComponent(sessionPath ?? 'new')}`;
 }
@@ -514,10 +517,21 @@ export function Composer({ header, onOpenModelManagement, changesSlotRef }: { he
 	}
 
 	function onPaste(event: ClipboardEvent<HTMLTextAreaElement>) {
-		const images = Array.from(event.clipboardData.files).filter((file) => file.type.startsWith('image/'));
-		if (!images.length) return;
-		event.preventDefault();
-		void addFiles(images);
+		// zcode: any clipboard file becomes an attachment through the normal
+		// validation path (images are just the common case); extra-long plain
+		// text is wrapped into a dated .txt File so the editor stays responsive.
+		const files = Array.from(event.clipboardData.files);
+		if (files.length) {
+			event.preventDefault();
+			void addFiles(files);
+			return;
+		}
+		const text = event.clipboardData.getData('text/plain');
+		if (text.length > LONG_PASTE_THRESHOLD) {
+			event.preventDefault();
+			const stamp = new Date().toISOString().slice(0, 19).replace('T', '_').replaceAll(':', '-');
+			void addFiles([new File([text], `pasted_${stamp}.txt`, { type: 'text/plain' })]);
+		}
 	}
 
 	async function submit(behavior?: BusyBehavior): Promise<void> {

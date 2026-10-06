@@ -104,6 +104,8 @@ interface ChatState {
 	updateSessionMeta(path: string, patch: UiSessionMetaPatch): Promise<void>;
 	/** Moves a conversation to the app trash after a confirmation; active sessions switch away first (3.3). */
 	deleteSession(path: string): Promise<void>;
+	/** Trash several conversations in one batch: sequential bridge calls with independent failures (one bad path never rolls back the rest), a pre-flight re-validation of the selection, and a single cache refresh for the whole batch. */
+	deleteSessions(paths: string[], options?: { expectArchived?: boolean }): Promise<{ deleted: string[]; failed: Record<string, string>; skipped: Record<string, string> }>;
 	updateSessionOrders(entries: { path: string; order: number | null }[]): Promise<void>;
 	refreshModels(): Promise<void>;
 	refreshModelProviders(): Promise<void>;
@@ -743,9 +745,19 @@ export const useChatStore = create<ChatState>((set, get) => ({
 		if (!bridge) return;
 		const workspace = Object.entries(get().sessionsByWorkspace).find(([, sessions]) => sessions.some((session) => session.path === path))?.[0] ?? cwd;
 		const isCurrent = () => currentSessionNavigation(bridge, navigationRequestId) && get().cwd === cwd && get().sessionId === sessionId;
-		// Editors own mutation errors and retain their drafts. Do not turn a
-		// failed title/metadata edit into a chat failure, especially after switching.
-		await bridge.updateSessionMeta(path, patch);
+		// zcode setOverlay semantics: boolean flags flip in the cached lists
+		// immediately, persistence converges through the authoritative refetch,
+		// and a failed write restores the captured rows (runtime events merge
+		// onto cached entries, so an in-flight overlay survives them).
+		const overlay = applySessionMetaOverlay(path, patch);
+		try {
+			// Editors own mutation errors and retain their drafts. Do not turn a
+			// failed title/metadata edit into a chat failure, especially after switching.
+			await bridge.updateSessionMeta(path, patch);
+		} catch (error) {
+			restoreSessionMetaOverlay(overlay);
+			throw error;
+		}
 		if (get().bridge !== bridge) return;
 		if (workspace) await refreshSessionCache(workspace, isCurrent());
 	},
@@ -769,6 +781,56 @@ export const useChatStore = create<ChatState>((set, get) => ({
 			set({ error: errorMessage(error) });
 			throw error;
 		}
+	},
+	
+	async deleteSessions(paths, options) {
+		const { bridge } = get();
+		const targets = [...new Set(paths)].filter(Boolean);
+		if (!bridge || !targets.length) return { deleted: [], failed: {}, skipped: {} };
+		set({ error: null });
+		const failed: Record<string, string> = {};
+		const skipped: Record<string, string> = {};
+		const deleted: string[] = [];
+		const dropFromCache = (path: string) => set((state) => ({
+			sessionsByWorkspace: Object.fromEntries(Object.entries(state.sessionsByWorkspace)
+				.map(([workspace, sessions]) => [workspace, sessions.filter((session) => session.path !== path)])),
+			sessions: state.sessions.filter((session) => session.path !== path),
+		}));
+		try {
+			// zcode deleteArchivedTask guards on archived===1 inside the delete transaction:
+			// the selection may go stale while the confirmation sits open. Re-validate the
+			// whole selection against one authoritative listSessions snapshot up front and
+			// report changed paths as skipped instead of hard-failing them.
+			let candidates = targets;
+			if (options?.expectArchived) {
+				const workspace = get().cwd;
+				const sessions = await bridge.listSessions(workspace);
+				const byPath = new Map(sessions.map((session) => [session.path, session]));
+				candidates = targets.filter((path) => {
+					const session = byPath.get(path);
+					if (!session) { skipped[path] = '会话已不存在'; return false; }
+					if (!session.archived) { skipped[path] = '会话已移出归档'; return false; }
+					return true;
+				});
+			}
+			// zcode deleteArchivedTasks: per-item deletion stays sequential and independent —
+			// one failure must neither roll back earlier successes nor hide later ones.
+			if (candidates.includes(get().sessionPath ?? '')) await get().newSession();
+			for (const path of candidates) {
+				try {
+					await bridge.deleteSession(path);
+					deleted.push(path);
+					dropFromCache(path);
+				} catch (cause) { failed[path] = cause instanceof Error ? cause.message : String(cause); }
+			}
+			// One refresh for the whole batch instead of one per deletion (zcode emits a
+			// single workspace event after the batch loop, not one per item).
+			const workspace = Object.keys(get().sessionsByWorkspace).find((cwd) => cwd === get().cwd);
+			if (workspace) await get().refreshWorkspaceSessions(workspace);
+		} catch (error) {
+			set({ error: errorMessage(error) });
+		}
+		return { deleted, failed, skipped };
 	},
 
 	async updateSessionOrders(entries) {
@@ -1332,6 +1394,59 @@ async function refreshSessionCache(cwd: string, reportError = true): Promise<voi
 		if (reportError && currentSessionNavigation(bridge, navigationRequestId) && sessionListRequests.get(cwd) === request) useChatStore.setState({ error: errorMessage(error) });
 	}
 }
+/** Cached rows captured before an optimistic metadata overlay; [] when nothing was flipped. */
+type SessionMetaOverlay = { workspace: string; entry: UiSessionSummary }[];
+
+/**
+ * Flip boolean metadata flags across every cached workspace list at once
+ * (zcode setOverlay): the sidebar re-filters instantly while persistence is
+ * still in flight. Name and order edits keep their non-optimistic flow.
+ */
+function applySessionMetaOverlay(path: string, patch: UiSessionMetaPatch): SessionMetaOverlay {
+	const flags = (['pinned', 'archived', 'unread'] as const).filter((key) => typeof patch[key] === 'boolean');
+	if (!flags.length) return [];
+	const overlay: SessionMetaOverlay = [];
+	useChatStore.setState((state) => {
+		let changed = false;
+		const sessionsByWorkspace = { ...state.sessionsByWorkspace };
+		for (const [workspace, sessions] of Object.entries(state.sessionsByWorkspace)) {
+			const index = sessions.findIndex((session) => session.path === path);
+			if (index < 0) continue;
+			overlay.push({ workspace, entry: sessions[index]! });
+			const entry: UiSessionSummary = { ...sessions[index]! };
+			for (const key of flags) entry[key] = patch[key];
+			const next = [...sessions];
+			next[index] = entry;
+			sessionsByWorkspace[workspace] = next;
+			changed = true;
+		}
+		if (!changed) return state;
+		return { sessionsByWorkspace, ...(state.cwd && sessionsByWorkspace[state.cwd] ? { sessions: sessionsByWorkspace[state.cwd] } : {}) };
+	});
+	return overlay;
+}
+
+/**
+ * Roll an optimistic overlay back after a failed write: restore the captured
+ * rows verbatim (the write never reached the main process). Lists that no
+ * longer hold the session — deleted or refreshed meanwhile — are left alone.
+ */
+function restoreSessionMetaOverlay(overlay: SessionMetaOverlay): void {
+	if (!overlay.length) return;
+	useChatStore.setState((state) => {
+		let changed = false;
+		const sessionsByWorkspace = { ...state.sessionsByWorkspace };
+		for (const { workspace, entry } of overlay) {
+			const sessions = sessionsByWorkspace[workspace];
+			if (!sessions?.some((session) => session.path === entry.path)) continue;
+			sessionsByWorkspace[workspace] = sessions.map((session) => session.path === entry.path ? entry : session);
+			changed = true;
+		}
+		if (!changed) return state;
+		return { sessionsByWorkspace, ...(state.cwd && sessionsByWorkspace[state.cwd] ? { sessions: sessionsByWorkspace[state.cwd] } : {}) };
+	});
+}
+
 
 function sameInputScope(first: UiInputScope, second?: UiInputScope): boolean {
 	return first.cwd === second?.cwd && first.sessionPath === second?.sessionPath;

@@ -16,6 +16,8 @@
 | 11 | Git 提交图 | 工作台 → Git → 提交历史 | `git-graph/layoutAlgorithm.ts` |
 | 12 | 查找范围切换 | 会话内查找条（Ctrl+F） | `quickpick/conversationFindSearch.ts` |
 | 13 | 搜索历史 | 全局搜索空态「最近搜索」 | `command-center/commandCenterSearchHistory.ts` |
+| 14 | 归档两击确认＋乐观元数据更新 | 侧栏会话行归档按钮 | `TaskList.tsx`/`TaskListItem.tsx`、`zcodeTaskServiceAdapter.ts`（setOverlay） |
+| 15 | 批量删除单刷新＋预检跳过＋未读 CAS 水位线 | 归档视图多选删除、后台未读标记 | `zcodeTaskServiceAdapter.ts`（deleteArchivedTasks）、`taskIndexRepo.ts`（clearTaskUnreadIfMatches/last_unread_at） |
 
 ## 行为细节
 
@@ -38,6 +40,10 @@
 **查找范围（12）**：查找条新增「对话/变更」切换（仅有差异记录时显示）。变更范围用 `changesFind.ts` 在 `UiFileChange.diff` 与路径上做大小写不敏感字面匹配，计数显示「N 个文件 · M 处匹配」；Enter/上下按钮逐文件循环并直接打开对应审查窗口（`ComposerChanges` 暴露的命令式句柄）；切换回对话范围恢复原高亮绘制，两范围互不干扰。
 
 **搜索历史（13）**：`searchHistory.ts`（localStorage，上限 8 条，置顶去重）；选中任一命令/会话/文件结果时记录当前搜索词；空态首屏展示「最近搜索」，支持单条移除与一键清除。
+
+**归档两击确认＋乐观更新（14）**：侧栏归档按钮首次点击进入待确认态（行 `is-archive-confirming`，按钮变 destructive「确认归档」，无需悬停也持续可见），二次点击同行才执行；Esc 或行外任意按压取消，会话离开可见列表／打开行菜单／开始拖拽／切换视图时自动清除；取消归档方向可逆，保持单击立即执行。写路径对齐 zcode setOverlay：`updateSessionMeta` 对 pinned/archived/unread 布尔标记先在所有工作区缓存（含 `sessions` 镜像）同步翻转，IPC 成功后由 `refreshSessionCache` 收敛到权威状态，失败则按快照回滚（运行时事件只合并 runtime，不会冲掉 overlay）。验证：`tests/fixtures/sidebar-titles/archive-confirm.mjs` 六步真实渲染器场景（待确认态、Esc／外点取消、两击提交、归档视图单击恢复、失败回滚）全部通过并出三张截图。
+
+**批量删除与未读一致性（15）**：三处对齐。① 归档视图多选删除改为 `deleteSessions` 批量接口（对齐 deleteArchivedTasks）：逐条桥接调用保持顺序独立（一项失败不回滚其它），批次只做一次预检 `listSessions` 与一次收尾刷新，替代旧实现 N 条会话 N 次全量重拉；当前会话在批次内时仅切一次新会话。② 预检复验选择有效性（对齐 deleteArchivedTask 同事务 `archived===1` 守卫）：确认框停留期间若某会话被移出归档或已不存在，该条以「已跳过」报告而非报错，对话框保持打开供阅读，其余照常删除。③ 未读标记加版本水位线（对齐 `unread_at`/`last_unread_at` 与 `clearTaskUnreadIfMatches`）：每次后台终态盖严格递增的 `unreadAt` 戳（同毫秒 +1），清除分两级——打开会话无条件清（用户正在看），侧栏／菜单的「标记已读」携带渲染层快照的 `expectedUnreadAt` 做 CAS，戳更新则拒绝清除保留圆点；打开会话后迟到的排队终态直接抑制不亮灯；回收站快照剔除该戳保持边车 schema 稳定，旧布尔数据无戳时退化为原行为。验证：`tests/agent-ipc.test.mjs` 新增七断言单元测试（盖戳递增、旧戳拒清、当前戳清、打开抑制）；`tests/fixtures/sidebar-titles/bulk-delete.mjs` 真实渲染器场景覆盖单刷新计数（恰好预检+收尾两次）、跳过与删除并存、关闭后视图收敛。
 
 ## 依赖说明
 

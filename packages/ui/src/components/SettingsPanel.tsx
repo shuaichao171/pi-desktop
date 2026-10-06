@@ -20,6 +20,10 @@ import { useTaskNotificationSoundEnabled } from '../taskNotificationSound';
 import { ConversationStorageSettings } from './ConversationStorageSettings';
 import { EngineSettingsPanel } from './EngineSettingsPanel';
 
+// Public source repository. window.open is intercepted by the main process,
+// which opens http(s) links in the system browser.
+const PROJECT_REPOSITORY_URL = 'https://github.com/shuaichao171/pi-desktop';
+
 export type ThemePreference = 'system' | 'dark' | 'light';
 type SettingsPage = 'general' | 'appearance' | 'personalization' | 'model' | 'engine' | 'shortcuts' | 'updates' | 'data' | 'mcp';
 type DraftFocus = { element: HTMLElement; selection?: { start: number; end: number; direction: 'forward' | 'backward' | 'none' } };
@@ -419,6 +423,7 @@ export function SettingsPanel({ initialPage = 'general', modelManagementTarget, 
 								<div className="pd-update-actions">
 									<button type="button" data-action="check-updates" className="pd-extension-refresh" onClick={() => void checkForUpdates()} disabled={!bridge || updateBusy || !updateState || !['idle', 'up-to-date', 'available', 'error'].includes(updateState.phase)}>{t('settings.updateCheck')}</button>
 									<button type="button" data-action="install-update" className="pd-extension-refresh" onClick={() => void installUpdate()} disabled={!bridge || updateBusy || !updateAvailable}>{t(updateState?.phase === 'ready' ? 'settings.updateInstall' : 'settings.updateNow')}</button>
+									<button type="button" data-action="open-project" className="pd-extension-refresh" onClick={() => window.open(PROJECT_REPOSITORY_URL, '_blank', 'noopener')}>{t('settings.updateOpenProject')}</button>
 								</div>
 							</div>
 						</>}

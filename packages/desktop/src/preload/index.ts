@@ -233,6 +233,7 @@ const bridge: AgentBridge = {
 	listSessions: (cwd) => invoke(IPC_CHANNELS.agentListSessions, cwd),
 	searchSessions: (query) => invoke(IPC_CHANNELS.agentSearchSessions, query),
 	switchSession: (path) => invoke(IPC_CHANNELS.agentSwitchSession, path),
+	revealSessionFile: (path) => invoke(IPC_CHANNELS.sessionRevealFile, path),
 	updateSessionMeta: (path, patch) => invoke(IPC_CHANNELS.agentUpdateSessionMeta, path, patch),
 	deleteSession: (path) => invoke(IPC_CHANNELS.sessionDelete, path),
 	listSessionGroups: () => invoke(IPC_CHANNELS.agentListSessionGroups),
