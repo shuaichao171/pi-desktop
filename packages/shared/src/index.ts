@@ -484,14 +484,41 @@ export interface UiQueuedMessage {
   attachments?: UiQueuedAttachment[];
 }
 
-/** Changes made during this session, relative to the file just before its first tool edit. */
+/** Changes made during one conversation turn (run) or the whole session,
+ * relative to the file just before its first tool edit in that scope.
+ * The diff itself is computed on demand via getFileChangeDiffs (lazy loading). */
 export interface UiFileChange {
   path: string;
   kind: 'added' | 'modified' | 'deleted';
   additions: number | null;
   deletions: number | null;
+  preview?: 'binary' | 'too-large' | 'unavailable';
+}
+
+/** Lazily computed diff for one changed file within a scope. */
+export interface UiFileDiff {
+  path: string;
   diff: string | null;
   preview?: 'binary' | 'too-large' | 'unavailable';
+}
+
+/** Files changed within one conversation run; runId null groups changes
+ * recorded before run tracking existed (legacy sessions). */
+export interface UiFileChangeTurn {
+  runId: string | null;
+  items: UiFileChange[];
+}
+
+/** Scope for lazy diff loading: the whole session or one run's turn. */
+export type UiFileDiffScope =
+  | { kind: 'conversation' }
+  | { kind: 'turn'; runId: string };
+
+/** Full change view published with every file-changes update. */
+export interface UiFileChangesView {
+  items: UiFileChange[];
+  turns: UiFileChangeTurn[];
+  activeRunId: string | null;
 }
 
 export interface UiExtensionDialogRequest {
@@ -541,7 +568,7 @@ export interface UiToolActivity {
 export type AgentUiEvent =
   | { type: 'reset'; cwd: string }
   | { type: 'status'; status: AgentStatus; message?: string; attempt?: number; maxAttempts?: number }
-  | { type: 'ready'; resumeKind?: 'cold' | 'warm'; model: string; modelName?: string | null; modelProvider: string; thinkingLevel: UiThinkingLevel; availableThinkingLevels: UiThinkingLevel[]; contextUsage: UiContextUsage | null; cwd: string; sessionId: string; sessionPath: string | null; messages: UiMessage[]; activities: UiToolActivity[]; fileChanges: UiFileChange[]; historyTotal?: number; runs?: UiConversationRun[] }
+  | { type: 'ready'; resumeKind?: 'cold' | 'warm'; model: string; modelName?: string | null; modelProvider: string; thinkingLevel: UiThinkingLevel; availableThinkingLevels: UiThinkingLevel[]; contextUsage: UiContextUsage | null; cwd: string; sessionId: string; sessionPath: string | null; messages: UiMessage[]; activities: UiToolActivity[]; fileChanges: UiFileChange[]; fileChangeTurns?: UiFileChangeTurn[]; fileChangeActiveRunId?: string | null; historyTotal?: number; runs?: UiConversationRun[] }
   | { type: 'model'; model: string; modelName?: string | null; modelProvider: string; thinkingLevel: UiThinkingLevel; availableThinkingLevels: UiThinkingLevel[]; contextUsage: UiContextUsage | null }
   | { type: 'context-usage'; contextUsage: UiContextUsage | null }
   | { type: 'thinking-level'; level: UiThinkingLevel }
@@ -553,7 +580,7 @@ export type AgentUiEvent =
   | ({ type: 'assistant-end'; id: string; text: string; aborted?: boolean; errorMessage?: string; error?: UiAgentError } & Partial<UiThinkingOutput>)
   | { type: 'tool'; activity: UiToolActivity }
   | { type: 'queue'; count: number; items: UiQueuedMessage[] }
-  | { type: 'file-changes'; items: UiFileChange[] }
+  | { type: 'file-changes'; items: UiFileChange[]; turns: UiFileChangeTurn[]; activeRunId: string | null }
   | { type: 'sessions-changed'; cwd: string }
   | { type: 'session-runtime'; cwd: string; path: string; runtime: UiSessionRuntimeState }
   | { type: 'error'; message: string; error?: UiAgentError };
@@ -588,6 +615,10 @@ export interface AgentSnapshot {
   queuedCount: number;
   queuedMessages: UiQueuedMessage[];
   fileChanges: UiFileChange[];
+  /** Per-turn change groups for turn-level settlement cards (runId null = legacy). */
+  fileChangeTurns: UiFileChangeTurn[];
+  /** The run whose changes are accumulating while the agent is busy. */
+  fileChangeActiveRunId: string | null;
   /** Full timeline entry count of the loaded branch; absent or equal to messages+activities means no older pages. */
   historyTotal?: number;
   error: string | null;

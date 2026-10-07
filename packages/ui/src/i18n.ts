@@ -16,6 +16,7 @@ export const translations: Record<string, { 'zh-CN': string; 'en-US': string }> 
   'changes.files': { 'zh-CN': '本次对话修改的文件', 'en-US': 'Files changed in this conversation' },
   'changes.description': { 'zh-CN': '显示本次对话中工具执行所记录的更改。', 'en-US': 'Changes recorded during tool execution in this conversation.' },
   'changes.diffFor': { 'zh-CN': '{path} 的修改内容', 'en-US': 'Changes in {path}' },
+  'changes.loadingDiff': { 'zh-CN': '正在载入差异…', 'en-US': 'Loading diff…' },
   'changes.added': { 'zh-CN': '新增文件', 'en-US': 'Added file' },
   'changes.modified': { 'zh-CN': '修改文件', 'en-US': 'Modified file' },
   'changes.deleted': { 'zh-CN': '删除文件', 'en-US': 'Deleted file' },

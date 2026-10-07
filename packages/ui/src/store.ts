@@ -23,6 +23,7 @@ import type {
 	UiAttachment,
 	UiInputScope,
 	UiFileChange,
+	UiFileChangeTurn,
 	UiContextUsage,
 	UiMessage,
 	UiConversationRun,
@@ -80,6 +81,10 @@ interface ChatState {
 	queuedCount: number;
 	queuedMessages: UiQueuedMessage[];
 	fileChanges: UiFileChange[];
+	/** Per-turn change groups for turn-level settlement cards (runId null = legacy). */
+	fileChangeTurns: UiFileChangeTurn[];
+	/** The run whose changes are accumulating while the agent is busy. */
+	fileChangeActiveRunId: string | null;
 	error: string | null;
 	/** Structured evidence for the last agent failure; text-only errors stay null. */
 	errorInfo: UiAgentError | null;
@@ -263,6 +268,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
 	queuedCount: 0,
 	queuedMessages: [],
 	fileChanges: [],
+	fileChangeTurns: [],
+	fileChangeActiveRunId: null,
 	error: null,
 	errorInfo: null,
 	appInfo: null,
@@ -345,6 +352,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
 					queuedCount: snapshot.queuedCount,
 					queuedMessages: snapshot.queuedMessages ?? [],
 					fileChanges: snapshot.fileChanges ?? [],
+					fileChangeTurns: snapshot.fileChangeTurns ?? [],
+					fileChangeActiveRunId: snapshot.fileChangeActiveRunId ?? null,
 					historyTotal: snapshot.historyTotal ?? snapshot.messages.length + snapshot.activities.length,
 					error: snapshot.error,
 					errorInfo: snapshot.errorInfo ?? null,
@@ -449,6 +458,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
 					queuedCount: 0,
 					queuedMessages: [],
 					fileChanges: [],
+					fileChangeTurns: [],
+					fileChangeActiveRunId: null,
 					error: null,
 				});
 				return;
@@ -508,6 +519,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
 					queuedCount: 0,
 					queuedMessages: [],
 					fileChanges: event.fileChanges ?? [],
+					fileChangeTurns: event.fileChangeTurns ?? [],
+					fileChangeActiveRunId: event.fileChangeActiveRunId ?? null,
 					error: null,
 				});
 				// agent_settled resyncs re-send only the newest window; restore pages the user already opened.
@@ -610,7 +623,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 				set({ queuedCount: event.count, queuedMessages: event.items ?? [] });
 				return;
 			case 'file-changes':
-				set({ fileChanges: event.items });
+				set({ fileChanges: event.items, fileChangeTurns: event.turns, fileChangeActiveRunId: event.activeRunId });
 				return;
 			case 'sessions-changed':
 				void get().refreshWorkspaceSessions(event.cwd);
@@ -803,16 +816,31 @@ export const useChatStore = create<ChatState>((set, get) => ({
 		}));
 		try {
 			// zcode deleteArchivedTask guards on archived===1 inside the delete transaction:
-			// the selection may go stale while the confirmation sits open. Re-validate the
-			// whole selection against one authoritative listSessions snapshot up front and
-			// report changed paths as skipped instead of hard-failing them.
+			// the selection may go stale while the confirmation sits open. Re-validate each
+			// path against its owning workspace's authoritative listSessions snapshot up
+			// front and report changed paths as skipped instead of hard-failing them. The
+			// archive view aggregates conversations from every workspace, so validating only
+			// the active cwd would mark every foreign-workspace selection stale.
 			let candidates = targets;
 			if (options?.expectArchived) {
-				const workspace = get().cwd;
-				const sessions = await bridge.listSessions(workspace);
-				const byPath = new Map(sessions.map((session) => [session.path, session]));
+				const cached = get().sessionsByWorkspace;
+				const workspaceOf = (path: string) => Object.entries(cached)
+					.find(([, sessions]) => sessions.some((session) => session.path === path))?.[0] ?? get().cwd;
+				const snapshots = new Map<string, Map<string, UiSessionSummary>>();
+				for (const workspace of [...new Set(targets.map(workspaceOf))].filter(Boolean)) {
+					try {
+						const sessions = await bridge.listSessions(workspace);
+						snapshots.set(workspace, new Map(sessions.map((session) => [session.path, session])));
+					} catch (cause) {
+						// One workspace's listing failure must not sink the whole batch: those paths
+						// surface as per-path failures so the dialog can show the actual reason.
+						const reason = cause instanceof Error ? cause.message : String(cause);
+						for (const path of targets) if (workspaceOf(path) === workspace) failed[path] = reason;
+					}
+				}
 				candidates = targets.filter((path) => {
-					const session = byPath.get(path);
+					if (failed[path]) return false;
+					const session = snapshots.get(workspaceOf(path))?.get(path);
 					if (!session) { skipped[path] = '会话已不存在'; return false; }
 					if (!session.archived) { skipped[path] = '会话已移出归档'; return false; }
 					return true;
@@ -1260,7 +1288,7 @@ function prepareConversation(kind: SessionPreparation['kind'], options?: { cwd?:
 	sessionPreparation = preparing;
 	useChatStore.setState(state => ({ sessionPreparation: { requestId: request, draftScope }, cwd: options?.cwd ?? '', sessionId: null, sessionPath: null,
 		status: 'idle', statusMessage: undefined, retryAttempt: undefined, retryMaxAttempts: undefined,
-		messages: [], activities: [], runs: [], fileChanges: [], contextUsage: null,
+		messages: [], activities: [], runs: [], fileChanges: [], fileChangeTurns: [], fileChangeActiveRunId: null, contextUsage: null,
 		queuedMessages: [], queuedCount: 0, historyTotal: 0, loadingOlder: false, sessionLoading: false,
 		timelineRevision: state.timelineRevision + 1, historyGeneration: state.historyGeneration + 1 }));
 	return preparing.promise;
@@ -1268,9 +1296,11 @@ function prepareConversation(kind: SessionPreparation['kind'], options?: { cwd?:
 
 function conversationView(state: ChatState): Partial<ChatState> {
 	const { cwd, sessionId, sessionPath, status, statusMessage, messages, activities, runs, fileChanges,
+		fileChangeTurns, fileChangeActiveRunId,
 		contextUsage, queuedMessages, queuedCount, historyTotal, model, modelName, modelProvider, thinkingLevel,
 		availableThinkingLevels, sessions, retryAttempt, retryMaxAttempts } = state;
 	return { cwd, sessionId, sessionPath, status, statusMessage, messages, activities, runs, fileChanges,
+		fileChangeTurns, fileChangeActiveRunId,
 		contextUsage, queuedMessages, queuedCount, historyTotal, model, modelName, modelProvider, thinkingLevel,
 		availableThinkingLevels, sessions, retryAttempt, retryMaxAttempts };
 }

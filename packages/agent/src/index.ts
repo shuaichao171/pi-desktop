@@ -50,8 +50,10 @@ import type {
 	UiExtensionDialogRequest,
 	UiExtensionDialogResponse,
 	UiExtensionSummary,
-	UiFileChange,
+	UiFileChangesView,
 	UiFileCheckpoint,
+	UiFileDiff,
+	UiFileDiffScope,
 	UiMessage,
 	UiConversationRun,
 	UiModelSummary,
@@ -199,7 +201,7 @@ function createRuntimeFactory(
 	requestProjectTrust: RequestProjectTrust,
 	projectTrustByCwd: Map<string, boolean>,
 	trackFileChanges: (session: PiRuntime['session'], tracker: SessionFileChanges) => void,
-	publishFileChanges: (sessionId: string, changes: UiFileChange[]) => void,
+	publishFileChanges: (sessionId: string, view: UiFileChangesView) => void,
 	mcp: McpManager,
 ): CreateAgentSessionRuntimeFactory {
 	return async ({ cwd, agentDir, sessionManager, sessionStartEvent }) => {
@@ -310,6 +312,8 @@ class SingleAgentService {
 		queuedCount: 0,
 		queuedMessages: [],
 		fileChanges: [],
+		fileChangeTurns: [],
+		fileChangeActiveRunId: null,
 		error: null,
 		errorInfo: null,
 	};
@@ -327,7 +331,7 @@ class SingleAgentService {
 		this.projectTrustByCwd = projectTrustByCwd;
 		this.createRuntime = createRuntimeFactory(requestProjectTrust, this.projectTrustByCwd,
 			(session, tracker) => { this.fileChangeTrackers.set(session, tracker); },
-			(sessionId, items) => { if (this.runtime?.session.sessionId === sessionId) this.fire({ type: 'file-changes', items }); }, mcp);
+			(sessionId, view) => { if (this.runtime?.session.sessionId === sessionId) this.fireFileChanges(view); }, mcp);
 		this.requestExtensionDialog = requestExtensionDialog;
 		this.reserveSessionSwitch = reserveSessionSwitch;
 	}
@@ -381,6 +385,8 @@ class SingleAgentService {
 			runs: this.state.runs?.map(run => ({ ...run })),
 			queuedMessages: this.state.queuedMessages.map(cloneQueuedMessage),
 			fileChanges: this.state.fileChanges.map((file) => ({ ...file })),
+			fileChangeTurns: this.state.fileChangeTurns.map((turn) => ({ runId: turn.runId, items: turn.items.map((file) => ({ ...file })) })),
+			fileChangeActiveRunId: this.state.fileChangeActiveRunId,
 		};
 	}
 	getSessionBranchHead(): { path: string; leafId: string | null } | null { const manager = this.runtime?.session.sessionManager; const path = this.runtime?.session.sessionFile; return manager && path ? { path, leafId: manager.getLeafId() } : null; }
@@ -437,11 +443,19 @@ class SingleAgentService {
 		if (!session || typeof entryId !== 'string' || !entryId) return Promise.resolve(null);
 		return this.fileChangeTrackers.get(session)?.editRewindPreview(entryId) ?? Promise.resolve(null);
 	}
+
+	/** Lazily computed diffs for one turn or the whole conversation (turn settlement). */
+	getFileChangeDiffs(scope: UiFileDiffScope): UiFileDiff[] {
+		if (!scope || typeof scope !== 'object') return [];
+		if (scope.kind === 'turn' ? typeof scope.runId !== 'string' || !scope.runId : scope.kind !== 'conversation') return [];
+		const session = this.runtime?.session;
+		return session ? this.fileChangeTrackers.get(session)?.diffs(scope) ?? [] : [];
+	}
 	async rewindFileCheckpoint(request: { id: string; version: string }) {
 		const session = this.requireIdleSession(), tracker = this.fileChangeTrackers.get(session);
 		if (!tracker) throw new Error('此会话没有可回退的文件检查点');
 		return this.runLifecycle(async () => { const result = await tracker.rewindCheckpoint(request);
-			this.fire({ type: 'file-changes', items: tracker.restore() }); return result; });
+			this.fireFileChanges(tracker.restore()); return result; });
 	}
 
 	/** Writes the visible branch to disk in the requested format. */
@@ -1117,7 +1131,7 @@ class SingleAgentService {
 		}
 		if (view.files.some((file) => file.status === 'ready')) {
 			const result = await tracker.rewindEditCheckpoint(entryId, { id: view.id, version: view.version });
-			this.fire({ type: 'file-changes', items: tracker.restore() });
+			this.fireFileChanges(tracker.restore());
 			if (!result.restored) throw new Error('文件回退未完成，请重试编辑或选择保留文件模式。');
 		}
 	}
@@ -1492,9 +1506,14 @@ class SingleAgentService {
 		this.fire({ type: 'error', message: info.message, error: info });
 	}
 
+	/** Publish a full change view; the renderer and snapshot state share one shape. */
+	private fireFileChanges(view: UiFileChangesView): void {
+		this.fire({ type: 'file-changes', items: view.items, turns: view.turns, activeRunId: view.activeRunId });
+	}
 	private fireReady(): void {
 		const session = this.runtime?.session;
 		if (!session) return;
+		const changes = this.fileChangeTrackers.get(session)?.restore();
 		this.clearPendingThinking();
 		this.assistantId = null;
 		this.toolTitles.clear();
@@ -1512,7 +1531,9 @@ class SingleAgentService {
 			messages: recent.messages,
 			activities: recent.activities,
 			runs: recent.runs,
-			fileChanges: this.fileChangeTrackers.get(session)?.restore() ?? [],
+			fileChanges: changes?.items ?? [],
+			fileChangeTurns: changes?.turns ?? [],
+			fileChangeActiveRunId: changes?.activeRunId ?? null,
 			historyTotal: recent.historyTotal,
 		});
 		this.publishQueue({ steering: session.getSteeringMessages(), followUp: session.getFollowUpMessages() });
@@ -1621,6 +1642,8 @@ class SingleAgentService {
 					queuedCount: 0,
 					queuedMessages: [],
 					fileChanges: [],
+					fileChangeTurns: [],
+					fileChangeActiveRunId: null,
 					error: null,
 				};
 				break;
@@ -1650,6 +1673,8 @@ class SingleAgentService {
 					queuedCount: 0,
 					queuedMessages: [],
 					fileChanges: event.fileChanges.map((file) => ({ ...file })),
+					fileChangeTurns: (event.fileChangeTurns ?? []).map((turn) => ({ runId: turn.runId, items: turn.items.map((file) => ({ ...file })) })),
+					fileChangeActiveRunId: event.fileChangeActiveRunId ?? null,
 					historyTotal: event.historyTotal ?? event.messages.length + event.activities.length,
 					error: null,
 				};
@@ -1728,6 +1753,8 @@ class SingleAgentService {
 				break;
 			case 'file-changes':
 				this.state.fileChanges = event.items.map((file) => ({ ...file }));
+				this.state.fileChangeTurns = event.turns.map((turn) => ({ runId: turn.runId, items: turn.items.map((file) => ({ ...file })) }));
+				this.state.fileChangeActiveRunId = event.activeRunId;
 				break;
 			case 'error':
 				this.state.error = event.message;
@@ -2030,7 +2057,7 @@ export class AgentService {
 		return snapshot ? { ...snapshot, sequence: this.sequence, sessionRuntimes } : {
 			sequence: this.sequence, status: 'uninitialized', model: '', modelName: null, modelProvider: '',
 			thinkingLevel: 'off', availableThinkingLevels: ['off'], contextUsage: null, cwd: '', sessionId: null,
-			sessionPath: null, messages: [], activities: [], queuedCount: 0, queuedMessages: [], fileChanges: [], error: null,
+			sessionPath: null, messages: [], activities: [], queuedCount: 0, queuedMessages: [], fileChanges: [], fileChangeTurns: [], fileChangeActiveRunId: null, error: null,
 		};
 	}
 
@@ -2411,6 +2438,7 @@ export class AgentService {
 	getFileCheckpoint() { return this.requireActive().getFileCheckpoint(); }
 	rewindFileCheckpoint(request: { id: string; version: string }) { return this.requireActive().rewindFileCheckpoint(request); }
 	getEditRewindPreview(entryId: string) { return this.requireActive().getEditRewindPreview(entryId); }
+	getFileChangeDiffs(scope: UiFileDiffScope) { return this.requireActive().getFileChangeDiffs(scope); }
 	editUserMessage(entryId: string, text: string, attachments?: UiAttachment[], fileMode?: 'keep' | 'rewind'): Promise<void> {
 		if (this.pluginOperation) return Promise.reject(new Error('插件设置正在更新，请稍后发送消息'));
 		return this.requireActive().editUserMessage(entryId, text, attachments, fileMode).finally(() => { void this.trimContexts(); });

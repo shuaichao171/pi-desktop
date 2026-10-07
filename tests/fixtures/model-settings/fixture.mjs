@@ -35,6 +35,7 @@ export function installModelSettingsFixture(options = {}) {
   };
   const methods = {
     getAgentSnapshot: () => clone(state.snapshot),
+    getFileChangeDiffs: (scope) => clone(state.fileDiffByScope?.[JSON.stringify(scope)] ?? state.fileDiffs ?? []),
     getSessionStats: () => clone(state.sessionStats ?? { sessionId: state.snapshot.sessionId, userMessages: 0, assistantMessages: 0, toolCalls: 0, toolResults: 0, totalMessages: 0, tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 }, cost: 0, timing: { sampledAt: Date.now(), durationMs: state.snapshot.messages.length ? null : 0, running: false, latestRun: null } }),
     getAppInfo: () => ({ appVersion: '0.1.5-review', nodeVersion: '24', electronVersion: 'renderer-fixture', platform: 'win32' }),
     notifyRendererReady: () => { state.ready = true; },
@@ -94,7 +95,7 @@ export function installModelSettingsFixture(options = {}) {
     recordUiDiagnostic: () => undefined,
     exportDiagnostics: () => ({ path: '/fixture/diagnostics.zip', entries: 1, skipped: [] }),
   };
-  const subscriptions = ['onAgentEvent', 'onUpdateStateChanged', 'onAppCommand', 'onWindowChromeStateChanged', 'onExtensionDialog', 'onExtensionDialogClosed', 'onWorkspaceCommandEvent', 'onAutomationChanged'];
+  const subscriptions = ['onAgentEvent', 'onUpdateStateChanged', 'onAppCommand', 'onWindowChromeStateChanged', 'onExtensionDialog', 'onExtensionDialogClosed', 'onWorkspaceCommandEvent', 'onAutomationChanged', 'onWorkspaceChanged'];
   const bridge = {};
   for (const name of subscriptions) bridge[name] = (listener) => {
     if (!listeners.has(name)) listeners.set(name, new Set());

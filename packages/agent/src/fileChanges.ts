@@ -4,8 +4,9 @@ import { lstat, open, readdir, realpath } from 'node:fs/promises';
 import { isAbsolute, relative, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
 import type { ExtensionFactory, SessionManager } from '@earendil-works/pi-coding-agent';
-import type { UiFileChange, UiFileCheckpoint } from '@pidesktop/shared';
+import type { UiFileChange, UiFileChangesView, UiFileCheckpoint, UiFileDiff, UiFileDiffScope } from '@pidesktop/shared';
 import { FileCheckpoint, editRewindSuffix, type CheckpointRecord } from './fileCheckpoint.ts';
+import { activeRunIdFromEntries, readConversationRuns } from './conversationRuns.ts';
 
 const execFileAsync = promisify(execFile);
 const ENTRY_TYPE = 'pi-desktop:file-changes-v1';
@@ -44,15 +45,19 @@ function validState(value: unknown): value is FileState {
 export class SessionFileChanges {
 	private readonly cwd: string;
 	private readonly manager: SessionManager;
-	private readonly changed: (items: UiFileChange[]) => void;
+	private readonly changed: (view: UiFileChangesView) => void;
 	private readonly files = new Map<string, SavedFile>();
 	private readonly pending = new Map<string, ToolBaseline>();
 	private workspaceReal: string | null = null;
 	private savedText = 0;
-	private previews = new Map<string, UiFileChange>();
+	/** Per-turn aggregates in first-change order; runId null groups pre-run-tracking records. */
+	private readonly turns: { runId: string | null; files: Map<string, SavedFile> }[] = [];
+	private readonly turnsByRun = new Map<string, { runId: string | null; files: Map<string, SavedFile> }>();
+	private readonly statsCache = new WeakMap<SavedFile, UiFileChange>();
+	private readonly diffCache = new WeakMap<SavedFile, UiFileDiff>();
 	private readonly checkpoint: FileCheckpoint;
 
-	constructor(cwd: string, manager: SessionManager, changed: (items: UiFileChange[]) => void) {
+	constructor(cwd: string, manager: SessionManager, changed: (view: UiFileChangesView) => void) {
 		this.cwd = cwd;
 		this.manager = manager;
 		this.changed = changed;
@@ -134,24 +139,82 @@ export class SessionFileChanges {
 		return { files, ...(touched.size > 500 ? { warning: '超过 500 个文件，仅列出前 500 个；未列出的改动不在回退范围内。' } : {}) };
 	}
 
-	restore(): UiFileChange[] {
+	restore(): UiFileChangesView {
 		this.pending.clear();
 		this.files.clear();
-		this.previews.clear();
+		this.turns.length = 0;
+		this.turnsByRun.clear();
 		this.savedText = 0;
-		for (const entry of this.manager.getBranch()) {
+		const branch = this.manager.getBranch();
+		const { entryRuns } = readConversationRuns(branch);
+		for (const entry of branch) {
 			if (entry.type !== 'custom' || entry.customType !== ENTRY_TYPE) continue;
+			const runId = entryRuns.get(entry.id) ?? null;
 			for (const record of this.readEntryFiles(entry.data)) {
 				if (!this.files.has(record.path) && this.files.size >= MAX_SAVED_FILES) continue;
-				this.saveRecord(record);
+				// Persisted records store the merged conversation baseline. The raw
+				// per-tool preimage is recovered from chain contiguity so every turn
+				// replays with its own starting state (legacy entries included).
+				const previous = this.files.get(record.path);
+				const rawBefore = previous && previous.before.fingerprint === record.before.fingerprint ? previous.after : record.before;
+				this.applyTurn(this.saveRecord(record), rawBefore, runId);
 			}
 		}
-		for (const record of this.files.values()) this.updatePreview(record);
-		return this.snapshot();
+		return this.view();
 	}
 
 	snapshot(): UiFileChange[] {
-		return [...this.previews.values()].map((item) => ({ ...item })).sort((a, b) => a.path.localeCompare(b.path));
+		return this.itemsOf(this.files);
+	}
+
+	/** Conversation summary plus per-turn groups for turn-level settlement cards. */
+	view(): UiFileChangesView {
+		return {
+			items: this.itemsOf(this.files),
+			turns: this.turns
+				.map((bucket) => ({ runId: bucket.runId, items: this.itemsOf(bucket.files) }))
+				.filter((turn) => turn.items.length > 0),
+			activeRunId: activeRunIdFromEntries(this.manager.getBranch()),
+		};
+	}
+
+	/** Lazily computed diffs for one scope; patch text is never pushed with events. */
+	diffs(scope: UiFileDiffScope): UiFileDiff[] {
+		const files = scope.kind === 'conversation' ? this.files : this.turnsByRun.get(scope.runId)?.files;
+		if (!files) return [];
+		const diffs: UiFileDiff[] = [];
+		for (const record of files.values()) {
+			if (record.before.fingerprint === record.after.fingerprint) continue;
+			let diff = this.diffCache.get(record);
+			if (!diff) this.diffCache.set(record, diff = toDiff(record));
+			diffs.push({ ...diff });
+		}
+		return diffs.sort((a, b) => a.path.localeCompare(b.path));
+	}
+
+	private itemsOf(files: Map<string, SavedFile>): UiFileChange[] {
+		const items: UiFileChange[] = [];
+		for (const record of files.values()) {
+			if (record.before.fingerprint === record.after.fingerprint) continue;
+			let stats = this.statsCache.get(record);
+			if (!stats) this.statsCache.set(record, stats = toStats(record));
+			items.push({ ...stats });
+		}
+		return items.sort((a, b) => a.path.localeCompare(b.path));
+	}
+
+	/** Turn-scoped aggregate: the conversation rule, with the chain restarting each turn. */
+	private applyTurn(record: SavedFile, rawBefore: FileState, runId: string | null): void {
+		const key = runId ?? '';
+		let bucket = this.turnsByRun.get(key);
+		if (!bucket) {
+			bucket = { runId, files: new Map<string, SavedFile>() };
+			this.turnsByRun.set(key, bucket);
+			this.turns.push(bucket);
+		}
+		const previous = bucket.files.get(record.path);
+		const initial = previous?.after.fingerprint === rawBefore.fingerprint ? previous.before : rawBefore;
+		bucket.files.set(record.path, { path: record.path, before: { ...initial }, after: record.after });
 	}
 
 	async beforeTool(id: string, tool: string, args: unknown): Promise<void> {
@@ -178,6 +241,7 @@ export class SessionFileChanges {
 			const paths = baseline.broad ? [...new Set([...baseline.files.keys(), ...(await this.listFiles()).paths])] : [...baseline.files.keys()];
 			const after = await this.capture(paths);
 			if (baseline.sessionId !== this.manager.getSessionId()) return;
+			const runId = activeRunIdFromEntries(this.manager.getBranch());
 			const updates: SavedFile[] = [];
 			for (const path of paths) {
 				if (!baseline.files.has(path) && baseline.candidates.has(path)) continue;
@@ -193,19 +257,15 @@ export class SessionFileChanges {
 				// actor changed the file between tools, rebase before attributing new edits.
 				const initial = previous?.after.fingerprint === before.fingerprint ? previous.before : before;
 				const record = this.saveRecord({ path, before: { ...initial }, after: current });
-				this.updatePreview(record);
+				this.applyTurn(record, before, runId);
 				updates.push(record);
 			}
 			if (!updates.length) return;
 			this.manager.appendCustomEntry(ENTRY_TYPE, { files: updates });
-			this.changed(this.snapshot());
+			this.changed(this.view());
 		} catch { /* A failed preview must not replace the actual tool result. */ }
 	}
 
-	private updatePreview(record: SavedFile): void {
-		if (record.before.fingerprint === record.after.fingerprint) this.previews.delete(record.path);
-		else this.previews.set(record.path, toUiChange(record));
-	}
 
 	private saveRecord(record: SavedFile): SavedFile {
 		const previous = this.files.get(record.path);
@@ -309,17 +369,23 @@ export class SessionFileChanges {
 	}
 }
 
-function toUiChange({ path, before, after }: SavedFile): UiFileChange {
+function toStats({ path, before, after }: SavedFile): UiFileChange {
 	const kind = !before.exists ? 'added' : !after.exists ? 'deleted' : 'modified';
-	if (before.text === null || after.text === null) return { path, kind, additions: null, deletions: null, diff: null, preview: before.preview ?? after.preview ?? 'unavailable' };
+	if (before.text === null || after.text === null) return { path, kind, additions: null, deletions: null, preview: before.preview ?? after.preview ?? 'unavailable' };
+	const patch = lineDiff(before.text, after.text, false);
+	return { path, kind, additions: patch.additions, deletions: patch.deletions };
+}
+
+function toDiff({ path, before, after }: SavedFile): UiFileDiff {
+	if (before.text === null || after.text === null) return { path, diff: null, preview: before.preview ?? after.preview ?? 'unavailable' };
 	const patch = lineDiff(before.text, after.text);
 	const diff = `--- ${before.exists ? `a/${path}` : '/dev/null'}\n+++ ${after.exists ? `b/${path}` : '/dev/null'}\n${patch.lines.join('\n')}\n`;
-	if (diff.length > MAX_DIFF_CHARS) return { path, kind, additions: patch.additions, deletions: patch.deletions, diff: null, preview: 'too-large' };
-	return { path, kind, additions: patch.additions, deletions: patch.deletions, diff };
+	if (diff.length > MAX_DIFF_CHARS) return { path, diff: null, preview: 'too-large' };
+	return { path, diff };
 }
 
 /** A bounded LCS yields ordinary unified line diffs without subprocesses or temp files. */
-function lineDiff(before: string, after: string): { lines: string[]; additions: number; deletions: number } {
+function lineDiff(before: string, after: string, buildPatch = true): { lines: string[]; additions: number; deletions: number } {
 	const lines = (text: string) => {
 		if (!text) return [];
 		const result = text.replace(/\r\n/g, '\n').replace(/\n$/, '').split('\n');
@@ -340,15 +406,16 @@ function lineDiff(before: string, after: string): { lines: string[]; additions: 
 		for (let i = old.length - 1; i >= 0; i--) for (let j = next.length - 1; j >= 0; j--) table[i * width + j] = old[i] === next[j] ? table[(i + 1) * width + j + 1]! + 1 : Math.max(table[(i + 1) * width + j]!, table[i * width + j + 1]!);
 		let i = 0, j = 0;
 		while (i < old.length || j < next.length) {
-			if (i < old.length && j < next.length && old[i] === next[j]) { changes.push(...render(old[i++]!, ' ')); j++; }
-			else if (j < next.length && (i === old.length || table[i * width + j + 1]! > table[(i + 1) * width + j]!)) { changes.push(...render(next[j++]!, '+')); additions++; }
-			else { changes.push(...render(old[i++]!, '-')); deletions++; }
+			if (i < old.length && j < next.length && old[i] === next[j]) { if (buildPatch) changes.push(...render(old[i++]!, ' ')); else i++; j++; }
+			else if (j < next.length && (i === old.length || table[i * width + j + 1]! > table[(i + 1) * width + j]!)) { if (buildPatch) changes.push(...render(next[j++]!, '+')); else j++; additions++; }
+			else { if (buildPatch) changes.push(...render(old[i++]!, '-')); else i++; deletions++; }
 		}
 	} else {
-		for (const line of old) changes.push(...render(line, '-'));
-		for (const line of next) changes.push(...render(line, '+'));
+		if (buildPatch) for (const line of old) changes.push(...render(line, '-'));
+		if (buildPatch) for (const line of next) changes.push(...render(line, '+'));
 		deletions = old.length; additions = next.length;
 	}
+	if (!buildPatch) return { additions, deletions, lines: [] };
 	const start = Math.max(0, prefix - 3), end = Math.min(3, suffix);
 	const contextBefore = a.slice(start, prefix).flatMap((line) => render(line, ' '));
 	const contextAfter = suffix ? a.slice(a.length - suffix, a.length - suffix + end).flatMap((line) => render(line, ' ')) : [];

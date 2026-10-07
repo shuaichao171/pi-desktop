@@ -1,10 +1,9 @@
 // Prepare only: node tests/fixtures/file-changes/scenarios.mjs --check
 // Run after the renderer build: node tests/fixtures/model-settings/run.mjs --run --scenario=../file-changes/scenarios.mjs
-// This scenario uses cumulative conversation snapshots. It never invokes Git or edits workspace files.
+// Turn-level settlement: one card per completed run, lazy diffs via getFileChangeDiffs. It never invokes Git or edits workspace files.
 export default async function fileChangesScenarios(review) {
   const card = '.pd-conversation-changes';
   const row = path => `${card} .pd-composer-changes-file[title=${JSON.stringify(path)}]`;
-  const lastPath = 'packages/feature-24/nested/component-with-a-long-name.ts';
   const selected = path => `document.querySelector('.pd-changes-file.is-selected')?.title === ${JSON.stringify(path)}`;
   const visibleRows = `[...document.querySelectorAll('${card} .pd-composer-changes-file')].filter(window.__changesReview.visible)`;
   const diffControl = label => `[...document.querySelectorAll('.pd-changes-diff button')].find(button => new RegExp(${JSON.stringify(label)}, 'i').test([button.getAttribute('aria-label'),button.title,button.textContent].join(' ')))`;
@@ -16,24 +15,40 @@ export default async function fileChangesScenarios(review) {
     const state = window.__changesReview = { path: fixture.snapshot.sessionPath, copied: null };
     state.visible = node => !!node && !node.closest('[hidden],[inert],[aria-hidden="true"]') && node.getClientRects().length > 0 && getComputedStyle(node).visibility !== 'hidden' && getComputedStyle(node).display !== 'none';
     Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async text => { state.copied = text; } } });
-    state.textFile = (path, index = 0) => ({ path, kind: 'modified', additions: index + 2, deletions: 1,
-      diff: '--- a/' + path + '\\n+++ b/' + path + '\\n@@ -1,2 +1,2 @@\\n context line\\n-old value\\n+new value ' + index + ' ' + 'long output '.repeat(25) + '\\n' });
+    state.textFile = (path, index = 0) => ({ path, kind: 'modified', additions: index + 2, deletions: 1 });
+    state.diffFor = (path, index = 0) => ({ path, diff: '--- a/' + path + '\\n+++ b/' + path + '\\n@@ -1,2 +1,2 @@\\n context line\\n-old value\\n+new value ' + index + ' ' + 'long output '.repeat(25) + '\\n' });
     state.firstPath = 'src/engine.ts'; state.binaryPath = 'assets/header.png'; state.unknownPath = 'generated/catalog.json';
     state.items = [state.textFile(state.firstPath),
-      { path: state.binaryPath, kind: 'modified', additions: null, deletions: null, diff: null, preview: 'binary' },
-      { path: state.unknownPath, kind: 'modified', additions: null, deletions: null, diff: null, preview: 'too-large' },
+      { path: state.binaryPath, kind: 'modified', additions: null, deletions: null, preview: 'binary' },
+      { path: state.unknownPath, kind: 'modified', additions: null, deletions: null, preview: 'too-large' },
       ...Array.from({length:25}, (_, index) => state.textFile('packages/feature-' + String(index).padStart(2,'0') + '/nested/component-with-a-long-name.ts', index + 3))];
     state.lastPath = state.items.at(-1).path;
-    state.ready = (path, items, status = 'idle', sessionId = 'shared-changes-session') => {
+    state.diffsFor = items => items.map(item => item.preview ? { path: item.path, diff: null, preview: item.preview } : state.diffFor(item.path, item.additions));
+    state.fileDiffs = state.diffsFor(state.items);
+    // The fixture bridge serves getFileChangeDiffs from window.__modelReview.
+    fixture.fileDiffs = structuredClone(state.fileDiffs);
+    state.apply = (items, turns, activeRunId) => {
+      Object.assign(fixture.snapshot, { fileChanges: structuredClone(items), fileChangeTurns: structuredClone(turns), fileChangeActiveRunId: activeRunId });
+      fixture.emitAgent({ type: 'file-changes', items: structuredClone(items), turns: structuredClone(turns), activeRunId });
+    };
+    state.ready = (path, items, status = 'idle', sessionId = 'shared-changes-session', runId = 'changes-run') => {
       const busy = status === 'busy', now = Date.now();
-      const run = {id:'changes-run',startedAt:now-12000,finishedAt:busy ? null : now,status:busy ? 'running' : 'completed'};
-      const messages = [{id:'changes-user',runId:run.id,order:0,role:'user',status:'done',text:'审查本次对话修改的文件'},
-        {id:'changes-answer',runId:run.id,order:1,role:'assistant',status:busy ? 'streaming' : 'done',text:'修改已记录。这里展示本次对话累计的文件变更。'}];
-      Object.assign(fixture.snapshot, { sessionId, sessionPath:path, messages, activities:[], runs:[run], fileChanges:structuredClone(items), status, error:null, historyTotal:2, queuedCount:0, queuedMessages:[] });
+      const run = {id:runId,startedAt:now-12000,finishedAt:busy ? null : now,status:busy ? 'running' : 'completed'};
+      const messages = [{id:'changes-user',runId:run.id,order:0,role:'user',status:'done',text:'审查本轮修改的文件'},
+        {id:'changes-answer',runId:run.id,order:1,role:'assistant',status:busy ? 'streaming' : 'done',text:'修改已记录。这一轮的文件变更汇总在下方。'}];
+      const turns = items.length ? [{ runId: run.id, items: structuredClone(items) }] : [];
+      Object.assign(fixture.snapshot, { sessionId, sessionPath:path, messages, activities:[], runs:[run], fileChanges:structuredClone(items), fileChangeTurns:structuredClone(turns), fileChangeActiveRunId:busy ? run.id : null, status, error:null, historyTotal:2, queuedCount:0, queuedMessages:[] });
       fixture.emitAgent({...structuredClone(fixture.snapshot),type:'ready'});
       fixture.emitAgent({type:'status',status});
     };
-    state.publish = items => { fixture.snapshot.fileChanges=structuredClone(items); fixture.emitAgent({type:'file-changes',items:structuredClone(items)}); };
+    state.publish = items => {
+      const busy = fixture.snapshot.status === 'busy';
+      const runId = fixture.snapshot.runs.at(-1)?.id ?? 'changes-run';
+      state.apply(items, items.length ? [{ runId, items }] : [], busy ? runId : null);
+    };
+    state.publishLegacy = items => {
+      state.apply(items, items.length ? [{ runId: null, items }] : [], null);
+    };
     state.status = status => {
       fixture.snapshot.status=status;
       if (status === 'idle') {
@@ -43,6 +58,7 @@ export default async function fileChangesScenarios(review) {
         for (const run of fixture.snapshot.runs) if (run.status === 'running') {
           run.status='completed'; run.finishedAt=Date.now(); fixture.emitAgent({type:'run',run:structuredClone(run)});
         }
+        fixture.snapshot.fileChangeActiveRunId = null;
       }
       fixture.emitAgent({type:'status',status});
     };
@@ -56,12 +72,13 @@ export default async function fileChangesScenarios(review) {
     state.ready(state.path,state.items.slice(0,2),'busy');
   })()`);
 
+  // Running turn: compact summary above the input shows the active run's changes.
   await review.waitFor('Boolean(document.querySelector(".pd-composer-changes.is-running"))');
-  await review.assert('!document.querySelector(".pd-transcript .pd-conversation-changes") && [...document.querySelectorAll(".pd-composer-changes.is-running .pd-composer-changes-file")].filter(window.__changesReview.visible).length === 0', 'Running changes use a compact composer summary rather than duplicating the idle resource card');
+  await review.assert('!document.querySelector(".pd-transcript .pd-conversation-changes") && [...document.querySelectorAll(".pd-composer-changes.is-running .pd-composer-changes-file")].filter(window.__changesReview.visible).length === 0', 'A running turn settles nothing yet: the compact composer summary is the only entry');
   await review.screenshot('changes-running-dark-1440');
   await review.click('.pd-composer-changes-toggle');
   await review.waitFor('window.__changesReview.visible(document.querySelector(".pd-changes-live-popover"))');
-  await review.assert('document.querySelector(".pd-composer-changes-toggle").getAttribute("aria-expanded") === "true" && [...document.querySelectorAll(".pd-changes-live-popover .pd-composer-changes-file")].filter(window.__changesReview.visible).length === 2 && !document.querySelector(".pd-changes-dialog")', 'Running summary expands its current files without opening the review dialog');
+  await review.assert('document.querySelector(".pd-composer-changes-toggle").getAttribute("aria-expanded") === "true" && [...document.querySelectorAll(".pd-changes-live-popover .pd-composer-changes-file")].filter(window.__changesReview.visible).length === 2 && document.querySelector(".pd-changes-live-scope")?.textContent.includes("本轮") && !document.querySelector(".pd-changes-dialog")', 'The running popover lists the active turn\'s files under a turn scope label');
   await review.screenshot('changes-running-popover-dark-1440');
   await review.key('Escape');
   await review.waitFor('!document.querySelector(".pd-changes-live-popover")');
@@ -69,38 +86,42 @@ export default async function fileChangesScenarios(review) {
   await review.click('.pd-composer-changes-toggle');
   await review.click('.pd-changes-live-popover .pd-composer-changes-file[title="assets/header.png"]');
   await review.waitFor(selected('assets/header.png'));
-  await review.assert('document.querySelector(".pd-changes-dialog")?.open === true && !document.querySelector(".pd-changes-live-popover")', 'Choosing a running file opens that file in the review dialog and closes the popover');
+  await review.waitFor('document.querySelector(".pd-changes-diff")?.textContent.includes("二进制")');
+  await review.assert('document.querySelector(".pd-changes-dialog")?.open === true && !document.querySelector(".pd-changes-live-popover")', 'Choosing a running file lazily loads its diff and shows the binary limitation');
   await review.key('Escape');
   await review.waitFor('!document.querySelector(".pd-changes-dialog") && document.activeElement === document.querySelector(".pd-changes-live-main")');
   await review.assert('window.__changesReview.visible(document.activeElement) && !document.activeElement.closest("[inert]")', 'Closing a review opened from a removed popover row restores usable focus to the running summary');
   await review.click('.pd-composer-changes-toggle');
   await review.evaluate('document.querySelector(".pd-changes-live-popover .pd-composer-changes-file").focus(); window.__changesReview.status("idle")');
-  await review.waitFor('Boolean(document.querySelector(".pd-conversation-changes")) && !document.querySelector(".pd-composer-changes.is-running") && (document.activeElement?.matches(".pd-changes-card-main,.pd-composer-shell textarea") ?? false)');
-  await review.assert('window.__changesReview.visible(document.activeElement) && !document.activeElement.closest("[inert]") && !document.querySelector(".pd-changes-dialog")', 'Completing a run while a popover file has keyboard focus restores focus to the settled card or composer');
+  await review.waitFor('Boolean(document.querySelector(".pd-conversation-turn .pd-conversation-changes")) && !document.querySelector(".pd-composer-changes.is-running") && (document.activeElement?.matches(".pd-changes-card-main,.pd-composer-shell textarea") ?? false)');
+  await review.assert('window.__changesReview.visible(document.activeElement) && !document.activeElement.closest("[inert]") && !document.querySelector(".pd-changes-dialog")', 'Completing the run while a popover file has keyboard focus restores focus to the settled turn card or composer');
   await review.evaluate('window.__changesReview.ready(window.__changesReview.path,window.__changesReview.items.slice(0,2),"busy")');
   await review.waitFor('Boolean(document.querySelector(".pd-composer-changes.is-running"))');
   await review.click('.pd-composer-changes.is-running .pd-composer-changes-review');
   await review.waitFor('document.querySelector(".pd-changes-dialog")?.open === true');
   await review.evaluate('window.__changesReview.dialog = document.querySelector(".pd-changes-dialog"); window.__changesReview.runningTrigger=document.querySelector(".pd-composer-changes.is-running .pd-composer-changes-review"); window.__changesReview.publish(window.__changesReview.items)');
   await review.waitFor('document.querySelectorAll(".pd-changes-file").length === window.__changesReview.items.length');
-  await review.assert('document.querySelector(".pd-changes-dialog") === window.__changesReview.dialog && document.querySelector(".pd-changes-file.is-selected").title === window.__changesReview.firstPath', 'Appending cumulative file snapshots updates the same open dialog without losing its selection');
+  await review.assert('document.querySelector(".pd-changes-dialog") === window.__changesReview.dialog && document.querySelector(".pd-changes-file.is-selected").title === window.__changesReview.firstPath', 'Appending snapshots to the running turn updates the same open dialog without losing its selection');
   await review.evaluate('window.__changesReview.status("idle")');
-  await review.waitFor('Boolean(document.querySelector(".pd-transcript .pd-conversation-changes")) && !document.querySelector(".pd-composer-changes.is-running")');
-  await review.assert('document.querySelector(".pd-changes-dialog") === window.__changesReview.dialog && window.__changesReview.dialog.open', 'Busy-to-idle moves the entry card into the transcript without unmounting an open review dialog');
+  await review.waitFor('Boolean(document.querySelector(".pd-conversation-turn .pd-conversation-changes")) && !document.querySelector(".pd-composer-changes.is-running")');
+  await review.assert('document.querySelector(".pd-changes-dialog") === window.__changesReview.dialog && window.__changesReview.dialog.open', 'Busy-to-idle swaps the live strip for the turn card without unmounting the open review dialog');
   await review.key('Escape');
   await review.waitFor('!document.querySelector(".pd-changes-dialog")');
   await review.assert('!window.__changesReview.runningTrigger.isConnected && document.activeElement?.isConnected && !document.activeElement.closest("[inert]") && (document.activeElement.matches(".pd-composer-shell textarea") || Boolean(document.activeElement.closest(".pd-conversation-changes")))', 'Escape returns to a usable fallback when the original running trigger was removed');
-  await review.assert(`${visibleRows}.length === 3 && /本次对话|conversation/i.test(document.querySelector('${card}').textContent)`, 'Completed conversation card names its cumulative scope and initially shows only three files');
+
+  // Settled turn card: sits inside the turn that produced the changes.
+  await review.assert(`Boolean(document.querySelector(".pd-conversation-turn .pd-turn-changes")) && /本轮|this turn/i.test(document.querySelector('${card}').textContent)`, 'The settled card labels its turn scope');
+  await review.assert(`${visibleRows}.length === 3`, 'The turn card initially shows only three files');
   await review.assert(`!document.querySelector('${row('assets/header.png')} .pd-change-stats') && !document.querySelector('${row('generated/catalog.json')} .pd-change-stats')`, 'Binary and unknown file sizes never claim fabricated zero additions or deletions');
-  await review.assert('(() => { const card=document.querySelector(".pd-conversation-changes")?.getBoundingClientRect(), answer=document.querySelector(".pd-message-row.is-assistant > .pd-message-column")?.getBoundingClientRect(); return !!card && !!answer && Math.abs(card.left-answer.left)<=1 && Math.abs(card.right-answer.right)<=1; })()', 'Wide completed card aligns both horizontal edges with the assistant message column');
-  await review.screenshot('changes-card-dark-1440');
+  await review.assert('(() => { const card=document.querySelector(".pd-turn-changes")?.getBoundingClientRect(), answer=document.querySelector(".pd-turn-answer")?.getBoundingClientRect(); return !!card && !!answer && Math.abs(card.left-answer.left)<=1 && Math.abs(card.right-answer.right)<=1; })()', 'The wide turn card aligns both horizontal edges with the turn answer column');
+  await review.screenshot('changes-turn-card-dark-1440');
 
   // The main card button and the explicit review action both open the same review UI.
   await review.click(`${card} .pd-changes-card-main`);
-  await review.waitFor('document.querySelector(".pd-changes-dialog")?.open === true');
+  await review.waitFor('document.querySelector(".pd-changes-dialog")?.open === true && Boolean(document.querySelector(".pd-changes-diff .pd-changes-code"))');
   await review.key('Escape');
   await review.click(`${card} .pd-composer-changes-review`);
-  await review.waitFor('document.querySelector(".pd-changes-dialog")?.open === true');
+  await review.waitFor('document.querySelector(".pd-changes-dialog")?.open === true && Boolean(document.querySelector(".pd-changes-diff .pd-changes-code"))');
   await review.screenshot('changes-dialog-dark-1440');
   await review.key('Escape');
   await review.click(`${card} .pd-changes-show-more`);
@@ -109,6 +130,7 @@ export default async function fileChangesScenarios(review) {
   await review.waitFor(`${visibleRows}.length === 3`);
   await review.click(`${card} .pd-changes-show-more`);
   await review.evaluate(`(() => { const node=[...document.querySelectorAll('${card} .pd-composer-changes-file')].find(item=>item.title===window.__changesReview.lastPath);node.scrollIntoView({block:'center'}); })()`);
+  const lastPath = 'packages/feature-24/nested/component-with-a-long-name.ts';
   await review.click(row(lastPath));
   await review.waitFor('document.querySelector(".pd-changes-file.is-selected")?.title === window.__changesReview.lastPath && window.__changesReview.selectionVisible()');
   await review.assert('document.querySelector(".pd-changes-file-list").scrollTop > 0', 'Opening a later file automatically scrolls the selected sidebar entry into view');
@@ -125,7 +147,7 @@ export default async function fileChangesScenarios(review) {
 
   // Copy operates on the selected raw diff; wrap is a reading control, not a data mutation.
   await review.evaluate(`(() => { const button=${diffControl('复制差异|copy diff')}; if(!button) throw new Error('Diff copy control missing');button.click(); })()`);
-  await review.waitFor('window.__changesReview.copied === window.__changesReview.items.at(-1).diff');
+  await review.waitFor('window.__changesReview.copied === window.__changesReview.fileDiffs.at(-1).diff');
   await review.evaluate(`(() => { const button=${diffControl('换行|wrap')}; if(!button) throw new Error('Diff wrap control missing');window.__changesReview.wrapBefore=button.getAttribute('aria-pressed');button.click(); })()`);
   await review.assert(`(${diffControl('换行|wrap')})?.getAttribute('aria-pressed') !== window.__changesReview.wrapBefore && document.querySelector('.pd-changes-file.is-selected').title === window.__changesReview.lastPath`, 'Wrap toggle changes reading state without changing the selected file');
   await review.key('Escape');
@@ -143,7 +165,7 @@ export default async function fileChangesScenarios(review) {
   // A session ID can be reused across imports; the file path remains part of isolation.
   await review.click(`${card} .pd-composer-changes-review`);
   await review.waitFor('document.querySelector(".pd-changes-dialog")?.open === true');
-  await review.evaluate('window.__changesReview.ready(window.__changesReview.path+"-other",[window.__changesReview.textFile("other-session/only.ts")],"idle","shared-changes-session")');
+  await review.evaluate('window.__changesReview.ready(window.__changesReview.path+"-other",[window.__changesReview.textFile("other-session/only.ts")],"idle","shared-changes-session","other-run")');
   await review.waitFor('!document.querySelector(".pd-changes-dialog") && document.querySelector(".pd-conversation-changes")?.textContent.includes("only.ts")');
   await review.assert(`!document.querySelector('${card}').textContent.includes('engine.ts') && ${visibleRows}.length === 0 && !document.querySelector('${card} .pd-changes-show-more')`, 'Same ID with a new session path closes stale review state and renders a single-file title without duplicate file rows');
   await review.click(`${card} .pd-changes-card-main`);
@@ -155,6 +177,11 @@ export default async function fileChangesScenarios(review) {
   await review.evaluate('window.__changesReview.publish(window.__changesReview.items.slice(1,3))');
   await review.waitFor(`${visibleRows}.length === 2`);
   await review.assert(`!document.querySelector('${card} .pd-change-stats')`, 'A card containing only binary or unknown files does not present an invented zero-line total');
+
+  // Legacy records without a run settle once at the transcript end under a conversation label.
+  await review.evaluate('window.__changesReview.publishLegacy(window.__changesReview.items.slice(0,3))');
+  await review.waitFor(`document.querySelector('.pd-transcript-end.pd-transcript-changes .pd-conversation-changes')?.textContent.includes('本次对话')`);
+  await review.screenshot('changes-legacy-card-dark-1440');
 
   // Verify both themes at wide and narrow widths through the real appearance setting.
   await review.evaluate('window.__changesReview.ready(window.__changesReview.path,window.__changesReview.items)');

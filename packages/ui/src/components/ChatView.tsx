@@ -6,12 +6,15 @@ import { useChatStore } from '../store';
 import { sessionOpenMetrics } from '../sessionOpenMetrics';
 import { bindingKeysFor, matchesShortcut } from '../shortcuts/bindings';
 import type { ModelManagementTarget } from '../modelManagement';
+import type { UiFileDiffScope } from '@pidesktop/shared';
 import { buildConversationTimeline, entryContainsMessage, type ConversationTimelineEntry } from '../conversationTimeline';
 import { ConversationDisclosureProvider } from '../conversationDisclosure';
 import { ConversationRail } from './ConversationRail';
 import { useExtensionRequestPending } from './ExtensionDialogHost';
 import { Composer } from './Composer';
-import { ComposerChanges, type ComposerChangesHandle } from './ComposerChanges';
+import { ChangesCard, LiveChangesSummary } from './ComposerChanges';
+import { ChangesDialog } from './ChangesDialog';
+import { useFileChangeDiffs } from '../fileChangeDiffs';
 import { findChangeMatches } from '../changesFind';
 import { RunStatusBar } from './RunStatusBar';
 import { ComposerContextBar } from './ComposerContextBar';
@@ -78,6 +81,14 @@ export function ChatView({ onToggleSidebar, onOpenModelManagement, searchTarget,
 	const fileChanges = useChatStore((s) => s.fileChanges);
 	const [changesDock, setChangesDock] = useState<HTMLDivElement | null>(null);
 	const changesRegionRef = useRef<HTMLDivElement>(null);
+	const fileChangeTurns = useChatStore((s) => s.fileChangeTurns);
+	const fileChangeActiveRunId = useChatStore((s) => s.fileChangeActiveRunId);
+	// Turn-level settlement: each completed run's changes render at that turn's tail.
+	const changesByRun = useMemo(() => new Map(fileChangeTurns.map(turn => [turn.runId, turn.items])), [fileChangeTurns]);
+	const liveChanges = fileChangeActiveRunId
+		? changesByRun.get(fileChangeActiveRunId) ?? []
+		: changesByRun.get(null) ?? fileChanges;
+	const legacyChanges = changesByRun.get(null) ?? [];
 	const sessions = useChatStore((s) => s.sessions);
 	const sessionPath = useChatStore((s) => s.sessionPath);
 	const sessionId = useChatStore((s) => s.sessionId);
@@ -174,9 +185,21 @@ export function ChatView({ onToggleSidebar, onOpenModelManagement, searchTarget,
 	const [findScope, setFindScope] = useState<'conversation' | 'changes'>('conversation');
 	// -1: no file opened yet, so the first step lands on the first (or last) match.
 	const [changesFindFile, setChangesFindFile] = useState(-1);
-	const changesReviewRef = useRef<ComposerChangesHandle>(null);
-	const changesFindable = useMemo(() => fileChanges.some(change => change.diff), [fileChanges]);
-	const changesFind = useMemo(() => findScope === 'changes' && findOpen ? findChangeMatches(fileChanges, findQuery) : null, [findScope, findOpen, fileChanges, findQuery]);
+	// One shared review dialog serves cards, the live summary and find stepping.
+	const [changesReview, setChangesReview] = useState<{ scope: UiFileDiffScope; path: string; trigger: HTMLElement | null } | null>(null);
+	const openChangesReview = useCallback((scope: UiFileDiffScope, path: string, trigger?: HTMLElement | null) => {
+		setChangesReview({ scope, path, trigger: trigger ?? null });
+	}, []);
+	const reviewItems = useMemo(() => {
+		if (!changesReview) return [];
+		if (changesReview.scope.kind === 'conversation') return fileChanges;
+		return changesByRun.get(changesReview.scope.runId) ?? [];
+	}, [changesReview, fileChanges, changesByRun]);
+	useEffect(() => { if (changesReview && reviewItems.length === 0) setChangesReview(null); }, [changesReview, reviewItems.length]);
+	const reviewDiffs = useFileChangeDiffs(changesReview?.scope ?? null);
+	const findDiffs = useFileChangeDiffs(findOpen && findScope === 'changes' ? { kind: 'conversation' } : null);
+	const changesFindable = fileChanges.length > 0;
+	const changesFind = useMemo(() => findScope === 'changes' && findOpen ? findChangeMatches(fileChanges, findQuery, findDiffs) : null, [findScope, findOpen, fileChanges, findQuery, findDiffs]);
 	useEffect(() => { setChangesFindFile(-1); }, [findQuery]);
 	useEffect(() => { if (changesFind && changesFindFile >= changesFind.files.length) setChangesFindFile(-1); }, [changesFind, changesFindFile]);
 	const stepChangesFind = (delta: 1 | -1, files = changesFind?.files ?? [], current = changesFindFile) => {
@@ -185,8 +208,13 @@ export function ChatView({ onToggleSidebar, onOpenModelManagement, searchTarget,
 			? (delta > 0 ? 0 : files.length - 1)
 			: (current + delta + files.length) % files.length;
 		setChangesFindFile(next);
-		changesReviewRef.current?.openReview(files[next]!.path);
+		openChangesReview({ kind: 'conversation' }, files[next]!.path);
 	};
+	// Lazy diffs arrive after the scope switches; land on the first match then.
+	useEffect(() => {
+		if (!findDiffs || !findOpen || findScope !== 'changes' || changesFindFile >= 0) return;
+		if (changesFind?.files.length) stepChangesFind(1);
+	}, [findDiffs]);
 	const findIndex = Math.max(0, findMatches.findIndex((item) => item.key === findKey));
 	const activeFind = findOpen ? findMatches[findIndex] : undefined;
 	const activeFindId = activeFind?.messageId ?? null;
@@ -500,7 +528,7 @@ export function ChatView({ onToggleSidebar, onOpenModelManagement, searchTarget,
 			canRegenerate={canRegenerateLatest && entry.id === lastReplyId}
 		/>)
 		: <ConversationTurn key={`${disclosureScope}:${entry.id}`} entry={entry} messages={messages} activities={activities}
-			run={runs.find(run => run.id === entry.runId)} legacyRunning={agentStatus === 'busy' && entry === timeline.at(-1)}
+			run={runs.find(run => run.id === entry.runId)} changes={entry.runId && entry.lastForRun ? changesByRun.get(entry.runId) : undefined} changesReview={openChangesReview} legacyRunning={agentStatus === 'busy' && entry === timeline.at(-1)}
 			highlightedId={activeFindId ?? (highlightedMessage?.sessionPath === sessionPath ? highlightedMessage.messageId : null)}
 			findIds={findOpen ? findMatchSet : new Set()} query={findOpen ? findQuery : ''} reveal={revealMessage?.scope === disclosureScope ? revealMessage : null}
 			canRegenerateId={canRegenerateLatest ? lastReplyId : null} />;
@@ -535,8 +563,6 @@ export function ChatView({ onToggleSidebar, onOpenModelManagement, searchTarget,
 							onScopeChange={(next) => {
 								setFindScope(next);
 								setChangesFindFile(-1);
-								// changesFind is still null in this render; match against the diffs directly.
-								if (next === 'changes') stepChangesFind(1, findChangeMatches(fileChanges, findQuery).files, -1);
 							}}
 							hasChanges={changesFindable}
 							changesSummary={changesFind ? { files: changesFind.files.length, total: changesFind.total } : null}
@@ -561,7 +587,10 @@ export function ChatView({ onToggleSidebar, onOpenModelManagement, searchTarget,
 									: timeline.map((entry) => renderEntry(entry))}
 							</div>
 						)}
-							<div ref={changesRegionRef} className="pd-transcript-end pd-transcript-changes">{!sessionLoading && <ComposerChanges ref={changesReviewRef} key={`changes:${disclosureScope}`} items={fileChanges} running={agentStatus === 'busy'} liveTarget={changesDock} />}</div>
+							<div ref={changesRegionRef} className="pd-transcript-end pd-transcript-changes">{!sessionLoading && <>
+								{agentStatus === 'busy' && liveChanges.length > 0 && <LiveChangesSummary items={liveChanges} scope={fileChangeActiveRunId ? { kind: 'turn', runId: fileChangeActiveRunId } : { kind: 'conversation' }} target={changesDock} review={openChangesReview} />}
+								{agentStatus !== 'busy' && legacyChanges.length > 0 && <ChangesCard key={`legacy:${disclosureScope}`} items={legacyChanges} scope={{ kind: 'conversation' }} variant="conversation" review={openChangesReview} />}
+							</>}</div>
 						{awaitingResponse && <div className="pd-transcript-end"><div className="pd-message-column"><div className="pd-response-pending" role="status"><ActivityLabel active>{t('message.preparing')}</ActivityLabel></div></div></div>}
 						{error && <div className="pd-transcript-end">
 							{navigationError
@@ -580,6 +609,13 @@ export function ChatView({ onToggleSidebar, onOpenModelManagement, searchTarget,
 				<Composer header={isNewConversation ? <ComposerContextBar /> : undefined} onOpenModelManagement={onOpenModelManagement} changesSlotRef={setChangesDock} />
 			</div>
 			{commitOpen && <ChatCommitDialog onClose={() => setCommitOpen(false)} />}
+			{changesReview !== null && reviewItems.length > 0 && <ChangesDialog
+				key={`${changesReview.scope.kind}:${changesReview.scope.kind === 'turn' ? changesReview.scope.runId : ''}:${changesReview.path}`}
+				items={reviewItems} diffs={changesReview.scope.kind === 'conversation' && findOpen && findScope === 'changes' ? findDiffs : reviewDiffs}
+				initialPath={changesReview.path} returnFocus={changesReview.trigger}
+				getReturnFocus={() => document.querySelector<HTMLElement>('.pd-conversation-changes .pd-changes-card-main, .pd-composer-changes.is-running .pd-changes-live-main') ?? document.querySelector<HTMLTextAreaElement>('.pd-composer-shell textarea')}
+				onClose={() => setChangesReview(null)} />}
+
 		</main>
 	);
 }

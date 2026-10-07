@@ -107,31 +107,38 @@ beforeEach(() => {
 });
 
 test('conversation file changes hydrate, replay newer events, and reset across sessions and bridges', async () => {
-  const first = { path: 'src/app.ts', kind: 'modified', additions: 2, deletions: 1, diff: '@@ -1 +1,2 @@\n-before\n+after\n+new\n' };
-  const latest = { ...first, additions: 3, diff: 'updated diff' };
+  const first = { path: 'src/app.ts', kind: 'modified', additions: 2, deletions: 1 };
+  const latest = { ...first, additions: 3 };
+  const turn = { runId: 'run-1', items: [latest] };
   const pending = deferred();
   const host = createBridge({ snapshot: pending.promise });
   useChatStore.getState().setBridge(host.bridge);
-  host.emit(2, { type: 'file-changes', items: [latest] });
+  host.emit(2, { type: 'file-changes', items: [latest], turns: [turn], activeRunId: 'run-1' });
   pending.resolve({ ...baseSnapshot, fileChanges: [first] });
   await settle();
   assert.deepEqual(useChatStore.getState().fileChanges, [latest]);
+  assert.deepEqual(useChatStore.getState().fileChangeTurns, [turn]);
+  assert.equal(useChatStore.getState().fileChangeActiveRunId, 'run-1');
   host.emit(3, { type: 'status', status: 'idle' });
   assert.deepEqual(useChatStore.getState().fileChanges, [latest]);
-  host.emit(4, { ...baseSnapshot, type: 'ready', fileChanges: [first], sessionId: 'restored' });
+  host.emit(4, { ...baseSnapshot, type: 'ready', fileChanges: [first], fileChangeTurns: [{ runId: null, items: [first] }], fileChangeActiveRunId: null, sessionId: 'restored' });
   assert.deepEqual(useChatStore.getState().fileChanges, [first]);
-  host.emit(5, { type: 'file-changes', items: [] });
+  assert.deepEqual(useChatStore.getState().fileChangeTurns, [{ runId: null, items: [first] }]);
+  host.emit(5, { type: 'file-changes', items: [], turns: [], activeRunId: null });
   assert.deepEqual(useChatStore.getState().fileChanges, []);
-  host.emit(6, { type: 'file-changes', items: [latest] });
+  host.emit(6, { type: 'file-changes', items: [latest], turns: [turn], activeRunId: 'run-1' });
   host.emit(7, { type: 'reset', cwd: 'C:\\second-project' });
   assert.deepEqual(useChatStore.getState().fileChanges, []);
+  assert.deepEqual(useChatStore.getState().fileChangeTurns, []);
+  assert.equal(useChatStore.getState().fileChangeActiveRunId, null);
   host.emit(8, { ...baseSnapshot, type: 'ready', fileChanges: [first] });
   const replacement = createBridge();
   useChatStore.getState().setBridge(replacement.bridge);
   assert.deepEqual(useChatStore.getState().fileChanges, []);
-  host.emit(9, { type: 'file-changes', items: [latest] });
+  host.emit(9, { type: 'file-changes', items: [latest], turns: [turn], activeRunId: 'run-1' });
   await settle();
   assert.deepEqual(useChatStore.getState().fileChanges, []);
+  assert.deepEqual(useChatStore.getState().fileChangeTurns, []);
 });
 
 test('thinking projections survive bootstrap and finalization without leaking across sessions or hosts', async () => {

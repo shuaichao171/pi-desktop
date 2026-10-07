@@ -1,3 +1,4 @@
+import type { UiFileDiff, UiFileDiffScope } from './index';
 export type CommitScope = 'all' | 'stagedOnly';
 export interface WorkspaceCommitPreview { id: string; cwd: string; scope: CommitScope; branch: string | null; head: string | null; files: { path: string; status: string }[]; context: string; truncated: boolean; createdAt: string }
 export interface TaskWorktree { id: string; project: string; cwd: string; branch: string; ref: string; commit: string; createdAt: string; sessionPath?: string; sessionMissing?: boolean; missing?: boolean }
@@ -26,6 +27,8 @@ export interface WorkbenchFeaturesBridge {
   rewindFileCheckpoint(request: { id: string; version: string }): Promise<UiFileCheckpoint>;
   /** Historical-turn file rewind preview for message editing (edit-rewind). */
   getEditRewindPreview(entryId: string): Promise<UiFileCheckpoint | null>;
+  /** Lazily computed diffs for the recorded changes of a scope (turn or conversation). */
+  getFileChangeDiffs(scope: UiFileDiffScope): Promise<UiFileDiff[]>;
 }
 export const WORKBENCH_FEATURE_CHANNELS = {
   getWorkspaceCommitPreview: 'workbench:commit-preview', commitWorkspacePreview: 'workbench:commit-preview-apply',
@@ -33,4 +36,5 @@ export const WORKBENCH_FEATURE_CHANNELS = {
   getGitDeliveryPreview: 'workbench:delivery-preview', pushWorkspaceBranch: 'workbench:push', createWorkspaceDraftPr: 'workbench:draft-pr',
   openWorkspaceTerminal: 'workbench:terminal-open', getWorkspaceTerminal: 'workbench:terminal-get', writeWorkspaceTerminal: 'workbench:terminal-write', resizeWorkspaceTerminal: 'workbench:terminal-resize', acknowledgeWorkspaceTerminal: 'workbench:terminal-ack', closeWorkspaceTerminal: 'workbench:terminal-close', onWorkspaceTerminalEvent: 'workbench:terminal-event',
   getFileCheckpoint: 'agent:file-checkpoint', rewindFileCheckpoint: 'agent:file-checkpoint-rewind', getEditRewindPreview: 'agent:edit-rewind-preview',
+  getFileChangeDiffs: 'agent:file-change-diffs',
 } as const;

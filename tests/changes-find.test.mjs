@@ -3,16 +3,24 @@ import { test } from 'node:test';
 
 import { countOccurrences, findChangeMatches } from '../packages/ui/src/changesFind.ts';
 
-function change(path, diff) {
-  return { path, kind: 'modified', additions: 1, deletions: 0, diff };
+function change(path) {
+  return { path, kind: 'modified', additions: 1, deletions: 0 };
 }
 
-test('matches inside diffs and paths, case-insensitively', () => {
+function diffs(entries) {
+  return new Map(entries.map(([path, diff]) => [path, { path, diff }]));
+}
+
+test('matches inside lazily loaded diffs and paths, case-insensitively', () => {
   const result = findChangeMatches([
-    change('src/app.ts', '+const retryCount = 2;\n-const retryCount = 1;'),
-    change('docs/README.md', 'No hits here'),
-    change('lib/retry.ts', '+// retry logic'),
-  ], 'RETRY');
+    change('src/app.ts'),
+    change('docs/README.md'),
+    change('lib/retry.ts'),
+  ], 'RETRY', diffs([
+    ['src/app.ts', '+const retryCount = 2;\n-const retryCount = 1;'],
+    ['docs/README.md', 'No hits here'],
+    ['lib/retry.ts', '+// retry logic'],
+  ]));
   // src/app.ts: two diff hits; lib/retry.ts: one path hit + one diff hit.
   assert.equal(result.total, 4);
   assert.deepEqual(result.files.map(file => file.path), ['src/app.ts', 'lib/retry.ts']);
@@ -20,12 +28,18 @@ test('matches inside diffs and paths, case-insensitively', () => {
 });
 
 test('empty or blank queries return no matches', () => {
-  assert.deepEqual(findChangeMatches([change('a.ts', '+retry')], '   '), { files: [], total: 0 });
-  assert.deepEqual(findChangeMatches([change('a.ts', '+retry')], ''), { files: [], total: 0 });
+  assert.deepEqual(findChangeMatches([change('a.ts')], '   ', diffs([['a.ts', '+retry']])), { files: [], total: 0 });
+  assert.deepEqual(findChangeMatches([change('a.ts')], '', diffs([['a.ts', '+retry']])), { files: [], total: 0 });
 });
 
-test('changes without diffs still match on their path', () => {
-  const result = findChangeMatches([{ path: 'images/logo.png', kind: 'added', additions: null, deletions: null, diff: null, preview: 'binary' }], 'logo');
+test('null diffs (still loading) match on paths only', () => {
+  const result = findChangeMatches([change('lib/retry.ts'), change('docs/README.md')], 'retry', null);
+  assert.equal(result.total, 1);
+  assert.equal(result.files[0].path, 'lib/retry.ts');
+});
+
+test('changes without readable diffs still match on their path', () => {
+  const result = findChangeMatches([{ path: 'images/logo.png', kind: 'added', additions: null, deletions: null, preview: 'binary' }], 'logo', diffs([['images/logo.png', null]]));
   assert.equal(result.total, 1);
   assert.equal(result.files[0].path, 'images/logo.png');
 });

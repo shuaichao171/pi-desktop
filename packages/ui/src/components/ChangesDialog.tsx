@@ -1,22 +1,23 @@
 import { useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { createPortal } from 'react-dom';
-import type { UiFileChange } from '@pidesktop/shared';
+import type { UiFileChange, UiFileDiff } from '@pidesktop/shared';
 import { useT } from '../i18n';
 import { parseUnifiedDiff } from '../unifiedDiff';
 import { ChangeStats, FileLabel } from './FileChangePresentation';
 import { Icon } from './Icons';
 import './changesDialog.css';
 
-function DiffPreview({ item, wrap }: { item: UiFileChange; wrap: boolean }) {
+function DiffPreview({ item, diff, wrap }: { item: UiFileChange; diff?: UiFileDiff; wrap: boolean }) {
   const { t } = useT();
-  const lines = useMemo(() => parseUnifiedDiff(item.diff ?? ''), [item.diff]);
+  const raw = diff?.diff ?? '';
+  const lines = useMemo(() => parseUnifiedDiff(raw), [raw]);
   return <>
-    {item.preview && <p className="pd-changes-notice" role="status">{t(`changes.preview.${item.preview}`)}</p>}
+    {diff?.preview && <p className="pd-changes-notice" role="status">{t(`changes.preview.${diff.preview}`)}</p>}
     {lines.length > 0 ? <div className={`pd-changes-code${wrap ? ' is-wrapped' : ''}`} tabIndex={0} role="region" aria-label={t('changes.diffFor', { path: item.path })}>
       <pre>{lines.map((line, index) => <span className={`pd-diff-line is-${line.kind}`} key={index}>
         <span className="pd-diff-number" aria-hidden="true">{line.oldLine}</span><span className="pd-diff-number" aria-hidden="true">{line.newLine}</span><span className="pd-diff-text">{line.text || ' '}</span>
       </span>)}</pre>
-    </div> : !item.preview && <p className="pd-changes-notice">{t('changes.emptyFile')}</p>}
+    </div> : !diff?.preview && <p className="pd-changes-notice">{t('changes.emptyFile')}</p>}
   </>;
 }
 
@@ -27,6 +28,8 @@ function canRestoreFocus(element: HTMLElement | null | undefined): element is HT
 
 export interface ChangesDialogProps {
   items: UiFileChange[];
+  /** Lazily loaded diffs keyed by path; null while the scope is still loading. */
+  diffs: Map<string, UiFileDiff> | null;
   initialPath: string;
   returnFocus: HTMLElement | null;
   getReturnFocus?(): HTMLElement | null;
@@ -34,7 +37,7 @@ export interface ChangesDialogProps {
 }
 
 /** The diff is the recorded conversation snapshot, never a fresh workspace/Git read. */
-export function ChangesDialog({ items, initialPath, returnFocus, getReturnFocus, onClose }: ChangesDialogProps) {
+export function ChangesDialog({ items, diffs, initialPath, returnFocus, getReturnFocus, onClose }: ChangesDialogProps) {
   const { t, locale } = useT(), zh = locale === 'zh-CN';
   const dialogRef = useRef<HTMLDialogElement>(null), closeRef = useRef<HTMLButtonElement>(null);
   const fileButtons = useRef(new Map<string, HTMLButtonElement>());
@@ -123,11 +126,13 @@ export function ChangesDialog({ items, initialPath, returnFocus, getReturnFocus,
         <div className="pd-changes-diff-header"><span title={selected.path}>{selected.path}</span><ChangeStats items={[selected]} /></div>
         <div className="pd-changes-diff-tools">
           <button type="button" onClick={() => void copy(selected.path, 'path')}><Icon name="copy" width="13" height="13" />{zh ? '复制路径' : 'Copy path'}</button>
-          <button type="button" disabled={!selected.diff} onClick={() => void copy(selected.diff!, 'diff')}><Icon name="copy" width="13" height="13" />{zh ? '复制差异' : 'Copy diff'}</button>
+          <button type="button" disabled={!diffs?.get(selected.path)?.diff} onClick={() => void copy(diffs?.get(selected.path)?.diff ?? '', 'diff')}><Icon name="copy" width="13" height="13" />{zh ? '复制差异' : 'Copy diff'}</button>
           <button type="button" aria-pressed={wrap} onClick={() => setWrap(value => !value)}>{zh ? '自动换行' : 'Wrap lines'}</button>
         </div>
         {notice && <p className={`pd-changes-feedback${notice.error ? ' is-error' : ''}`} role={notice.error ? 'alert' : 'status'}>{notice.text}</p>}
-        <DiffPreview key={selected.path} item={selected} wrap={wrap} />
+        {diffs === null
+          ? <p className="pd-changes-notice" role="status">{t('changes.loadingDiff')}</p>
+          : <DiffPreview key={selected.path} item={selected} diff={diffs.get(selected.path)} wrap={wrap} />}
       </section> : <p className="pd-changes-notice" role="status">{zh ? '当前没有记录到文件更改。' : 'No file changes are currently recorded.'}</p>}
     </div>
   </dialog>, document.body);

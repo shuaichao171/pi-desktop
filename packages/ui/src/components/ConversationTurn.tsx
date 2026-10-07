@@ -1,5 +1,5 @@
 import { memo, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
-import type { UiConversationRun, UiMessage, UiToolActivity } from '@pidesktop/shared';
+import type { UiConversationRun, UiFileChange, UiMessage, UiToolActivity } from '@pidesktop/shared';
 import { useT } from '../i18n';
 import { useExtensionNoticeDisplayEnabled } from '../extensionNoticeDisplay';
 import { formatRunDuration } from '../conversationRuns';
@@ -11,6 +11,7 @@ import { ThinkingActivity } from './ThinkingActivity';
 import { ToolActivityPanel } from './ToolActivity';
 import { Icon } from './Icons';
 import './conversationTurn.css';
+import { ChangesCard, type ChangesReviewApi } from './ComposerChanges';
 import { countToolGroup, isExplorationGroup, toolGroupSummaryParts } from '../toolGroupSummary';
 
 function RunDuration({ run }: { run: UiConversationRun }) {
@@ -30,8 +31,12 @@ function RunDuration({ run }: { run: UiConversationRun }) {
   return <span className="pd-turn-duration" data-elapsed-ms={elapsed}>{formatRunDuration(elapsed, locale)}</span>;
 }
 
-export const ConversationTurn = memo(function ConversationTurn({ entry, messages, activities, run, legacyRunning, highlightedId, findIds, query, reveal, canRegenerateId }: {
+export const ConversationTurn = memo(function ConversationTurn({ entry, messages, activities, run, changes, changesReview, legacyRunning, highlightedId, findIds, query, reveal, canRegenerateId }: {
   entry: ConversationTurnEntry; messages: UiMessage[]; activities: UiToolActivity[]; run?: UiConversationRun;
+  /** This run's recorded file changes; rendered as the turn's settlement card. */
+  changes?: UiFileChange[];
+  /** Shared review dialog API (owned by ChatView). */
+  changesReview: ChangesReviewApi;
   legacyRunning: boolean; highlightedId: string | null; findIds: Set<string>; query: string;
   reveal: { id: string; request: number } | null; canRegenerateId: string | null;
 }) {
@@ -104,6 +109,7 @@ export const ConversationTurn = memo(function ConversationTurn({ entry, messages
         })}</div>}
       </ActivityDisclosure></div>}
       {answer && <div className="pd-turn-answer"><MessageItem message={answer} hideThinking hidePending showHeading={false} highlighted={highlightedId === answer.id} findMatch={findIds.has(answer.id)} canRegenerate={canRegenerateId === answer.id} /></div>}
+      {!running && changes && changes.length > 0 && entry.runId && <div className="pd-turn-changes"><ChangesCard items={changes} scope={{ kind: 'turn', runId: entry.runId }} variant="turn" review={changesReview} /></div>}
     </div>
   </section>;
 });

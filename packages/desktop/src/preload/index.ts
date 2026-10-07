@@ -121,6 +121,7 @@ const bridge: AgentBridge = {
 	getFileCheckpoint: (...args) => invoke(WORKBENCH_FEATURE_CHANNELS.getFileCheckpoint, ...args),
 	rewindFileCheckpoint: (...args) => invoke(WORKBENCH_FEATURE_CHANNELS.rewindFileCheckpoint, ...args),
 	getEditRewindPreview: (...args) => invoke(WORKBENCH_FEATURE_CHANNELS.getEditRewindPreview, ...args),
+	getFileChangeDiffs: (...args) => invoke(WORKBENCH_FEATURE_CHANNELS.getFileChangeDiffs, ...args),
 	testProviderModel: (...args) => invoke(MANAGEMENT_FEATURE_CHANNELS.testProviderModel, ...args),
 	cancelProviderModelTest: (...args) => invoke(MANAGEMENT_FEATURE_CHANNELS.cancelProviderModelTest, ...args),
 	getProjectDefaults: (...args) => invoke(MANAGEMENT_FEATURE_CHANNELS.getProjectDefaults, ...args),

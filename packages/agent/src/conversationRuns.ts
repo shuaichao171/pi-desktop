@@ -35,6 +35,17 @@ export function readConversationRuns(entries: SessionEntry[], live?: UiConversat
   return { runs: [...runs.values()].map(run => run.status === 'running' && run.id !== live?.id ? { ...run, status: 'interrupted', finishedAt: null } : run), entryRuns };
 }
 
+/** The run whose record is nearest the branch end; its id while still running.
+ * Tools only execute inside runs, so the last record names the enclosing turn. */
+export function activeRunIdFromEntries(entries: readonly SessionEntry[]): string | null {
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const entry = entries[index]!;
+    if (entry.type !== 'custom' || entry.customType !== CONVERSATION_RUN_ENTRY) continue;
+    return storedRun(entry)?.status === 'running' ? storedRun(entry)!.id : null;
+  }
+  return null;
+}
+
 /** A preflight/handled-command result may have no transcript row to anchor it. */
 export function latestUnassociatedRunId(timeline: { runs?: UiConversationRun[]; messages: UiMessage[]; activities: UiToolActivity[] }): string | undefined {
   const last = timeline.runs?.at(-1);
