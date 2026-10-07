@@ -3,6 +3,7 @@ import { mkdtempSync, mkdirSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve, sep } from 'node:path';
 import { test } from 'node:test';
+import { seedTestModel } from './helpers/testModel.mjs';
 
 const marker = '\n\n<!-- pi-desktop:attachments-v1 -->\n';
 const settle = () => new Promise((done) => setImmediate(done));
@@ -12,6 +13,7 @@ test('context attachments survive prompt events and persisted Pi history', async
   const workspace = join(root, 'workspace');
   mkdirSync(workspace);
   const environment = new Map(['PI_CODING_AGENT_DIR', 'PI_OFFLINE'].map((name) => [name, process.env[name]]));
+  seedTestModel(join(root, 'agent'));
   process.env.PI_CODING_AGENT_DIR = join(root, 'agent');
   process.env.PI_OFFLINE = '1';
   let service;

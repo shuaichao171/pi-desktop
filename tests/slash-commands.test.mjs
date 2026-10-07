@@ -3,6 +3,7 @@ import { existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync,
 import { tmpdir } from 'node:os';
 import { join, resolve, sep } from 'node:path';
 import { test } from 'node:test';
+import { seedTestModel } from './helpers/testModel.mjs';
 import { expandSlashPrompt } from '../packages/agent/src/slashCommands.ts';
 
 const settle = () => new Promise((done) => setImmediate(done));
@@ -66,6 +67,7 @@ test('desktop slash commands use current SDK resources, enforce session ownershi
   writeFileSync(join(promptDirectory, 'desktop-note.md'), '---\ndescription: Summarize an item\n---\nSummary: $1');
   writeFileSync(join(skillDirectory, 'SKILL.md'), '---\nname: desktop-skill\ndescription: Desktop skill probe\n---\nSkill instructions to preserve.');
   const environment = new Map(['PI_CODING_AGENT_DIR', 'PI_OFFLINE'].map((name) => [name, process.env[name]]));
+  seedTestModel(join(root, 'agent'));
   process.env.PI_CODING_AGENT_DIR = join(root, 'agent');
   process.env.PI_OFFLINE = '1';
   let service;

@@ -1048,14 +1048,19 @@ class SingleAgentService {
 		if (this.activePromptCalls > 0 && session.isIdle) {
 			throw new Error('上一条消息仍在接收中，请稍后重试');
 		}
-		// Host-authoritative send gate (model availability): must run before the
-		// busy transition and any ACK so a blocked send never consumes the draft.
-		this.assertPromptModelAvailable(session, attachments);
+		// Attachment validation is local and model-independent, so malformed
+		// input reports its precise error even when no model is available yet.
 		const promptText = withTextAttachments(text, attachments);
 		const images = imageAttachments(attachments);
 		const tracker = this.conversationRuns;
 		const inputQueue = this.inputQueue, inputId = this.inputRequest.getStore()?.id;
-		const startedRun = session.isIdle && !tracker?.active ? tracker?.begin() : undefined;
+		const startsRun = session.isIdle && !tracker?.active;
+		// Host-authoritative send gate (model availability): a send that starts a
+		// new run needs a usable model before the busy transition and any ACK so
+		// a blocked send never consumes the draft. Queueing onto a running session
+		// defers model use to delivery and must stay available meanwhile.
+		if (startsRun) this.assertPromptModelAvailable(session, attachments);
+		const startedRun = startsRun ? tracker?.begin() : undefined;
 		if (this.state.status === 'idle') this.fire({ type: 'status', status: 'busy' });
 		this.activePromptCalls += 1;
 		await new Promise<void>((resolve, reject) => {

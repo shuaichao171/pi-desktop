@@ -4,10 +4,12 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
+import { seedTestModel } from './helpers/testModel.mjs';
 
 test('real pinned SDK keeps duplicate-text images and rejects consumed targets without rebuilding input handlers', async () => {
   const root = mkdtempSync(join(tmpdir(), 'pi-sdk-transaction-')); const cwd = join(root, 'workspace'); mkdirSync(cwd);
   const saved = { dir: process.env.PI_CODING_AGENT_DIR, offline: process.env.PI_OFFLINE };
+  seedTestModel(join(root, 'agent'));
   process.env.PI_CODING_AGENT_DIR = join(root, 'agent'); process.env.PI_OFFLINE = '1';
   let service, session;
   try {
@@ -48,6 +50,7 @@ test('real pinned SDK keeps duplicate-text images and rejects consumed targets w
 test('queue scopes reject stale reads and writes after navigation and preserve held edits in cached sessions', async () => {
   const root = mkdtempSync(join(tmpdir(), 'pi-sdk-queue-scope-')); const cwd = join(root, 'workspace'); mkdirSync(cwd);
   const saved = { dir: process.env.PI_CODING_AGENT_DIR, offline: process.env.PI_OFFLINE };
+  seedTestModel(join(root, 'agent'));
   process.env.PI_CODING_AGENT_DIR = join(root, 'agent'); process.env.PI_OFFLINE = '1';
   let service, session;
   try {
@@ -96,6 +99,7 @@ test('completed extension commands and handled inputs never become recoverable q
     });
   }`);
   const saved = { dir: process.env.PI_CODING_AGENT_DIR, offline: process.env.PI_OFFLINE, calls: globalThis.__handledInputCalls };
+  seedTestModel(join(root, 'agent'));
   process.env.PI_CODING_AGENT_DIR = join(root, 'agent'); process.env.PI_OFFLINE = '1'; globalThis.__handledInputCalls = 0;
   let service;
   try {
