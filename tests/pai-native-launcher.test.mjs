@@ -89,9 +89,18 @@ async function captured(directory, count) {
 test('native pai opens the current folder and supports repeated launches with safe arguments', { skip: process.platform !== 'win32' }, async (t) => {
   const parent = realpathSync.native(tmpdir());
   const root = mkdtempSync(join(parent, 'pi-pai-native-'));
-  t.after(() => {
+  t.after(async () => {
     assert.equal(dirname(resolve(root)), parent);
-    rmSync(root, { recursive: true, force: true });
+    // Windows keeps a just-exited capture exe briefly locked; retry deletion.
+    for (let attempt = 0; ; attempt++) {
+      try {
+        rmSync(root, { recursive: true, force: true });
+        return;
+      } catch (error) {
+        if (attempt >= 10) throw error;
+        await setTimeout(250);
+      }
+    }
   });
   mkdirSync(join(root, 'scripts'));
   copyFileSync(new URL('../scripts/pai-launcher.cs', import.meta.url), join(root, 'scripts', 'pai-launcher.cs'));

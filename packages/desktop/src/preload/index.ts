@@ -5,7 +5,7 @@ import { WORKBENCH_FEATURE_CHANNELS } from '@pidesktop/shared/workbenchFeatures'
 import { DATA_FEATURE_CHANNELS } from '@pidesktop/shared/dataFeatures';
 import { INPUT_FEATURE_CHANNELS } from '@pidesktop/shared/inputFeatures';
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
-import { IPC_CHANNELS, type AgentBridge, type AgentEventEnvelope, type UiAppCommand, type UiAutomationSnapshot, type UiExtensionDialogRequest, type UiUpdateState, type WindowChromeState, type WorkspaceChangeEvent, type WorkspaceCommandEvent } from '@pidesktop/shared';
+import { CLOUD_SYNC_FEATURE_CHANNELS, DEBUG_API_CHANNELS, IPC_CHANNELS, type AgentBridge, type AgentEventEnvelope, type UiAppCommand, type UiAutomationSnapshot, type UiCloudSyncState, type UiDebugApiConfig, type UiDebugApiState, type UiExtensionDialogRequest, type UiUpdateState, type WindowChromeState, type WorkspaceChangeEvent, type WorkspaceCommandEvent } from '@pidesktop/shared';
 import { unwrapIpcError } from './ipcErrors';
 
 /**
@@ -132,6 +132,20 @@ const bridge: AgentBridge = {
 	getStorageSnapshot: (...args) => invoke(MANAGEMENT_FEATURE_CHANNELS.getStorageSnapshot, ...args),
 	previewStorageCleanup: (...args) => invoke(MANAGEMENT_FEATURE_CHANNELS.previewStorageCleanup, ...args),
 	executeStorageCleanup: (...args) => invoke(MANAGEMENT_FEATURE_CHANNELS.executeStorageCleanup, ...args),
+
+	getCloudSyncState: () => invoke(CLOUD_SYNC_FEATURE_CHANNELS.getState),
+	saveCloudSyncConfig: (config) => invoke(CLOUD_SYNC_FEATURE_CHANNELS.saveConfig, config),
+	testCloudSyncConnection: (config) => invoke(CLOUD_SYNC_FEATURE_CHANNELS.testConnection, config),
+	uploadCloudSyncBackup: () => invoke(CLOUD_SYNC_FEATURE_CHANNELS.upload),
+	inspectCloudSyncBackup: () => invoke(CLOUD_SYNC_FEATURE_CHANNELS.inspect),
+	restoreCloudSyncBackup: () => invoke(CLOUD_SYNC_FEATURE_CHANNELS.restore),
+	getDebugApiState: () => invoke(DEBUG_API_CHANNELS.getState) as Promise<UiDebugApiState>,
+	setDebugApiConfig: (config: UiDebugApiConfig) => invoke(DEBUG_API_CHANNELS.setConfig, config) as Promise<UiDebugApiState>,
+	onCloudSyncChanged: (listener) => {
+		const wrapped = (_event: Electron.IpcRendererEvent, state: UiCloudSyncState) => listener(state);
+		ipcRenderer.on(CLOUD_SYNC_FEATURE_CHANNELS.changed, wrapped);
+		return () => ipcRenderer.removeListener(CLOUD_SYNC_FEATURE_CHANNELS.changed, wrapped);
+	},
 
 	getPersonalization: () => invoke(IPC_CHANNELS.personalizationRead),
 	saveInstruction: (request) => invoke(IPC_CHANNELS.personalizationSave, request),

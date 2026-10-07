@@ -55,13 +55,37 @@ export async function readProviderDocument(path: string): Promise<ProviderDocume
 		throw new Error('无法读取 models.json，未修改供应商配置');
 	}
 	try {
-		if (raw.length > 8_000_000) throw new Error('Too large');
-		const data: unknown = JSON.parse(withoutComments(raw.replace(/^\uFEFF/, '')));
-		if (!record(data) || !record(data.providers) || Object.values(data.providers).some((provider) => !record(provider)
-			|| (provider.models !== undefined && (!Array.isArray(provider.models) || provider.models.some((model) => !record(model) || typeof model.id !== 'string' || !model.id.trim())))
-			|| ['name', 'baseUrl', 'api', 'apiKey'].some((key) => provider[key] !== undefined && (typeof provider[key] !== 'string' || !provider[key])))) throw new Error('Invalid document');
-		return { raw, data: data as ProviderDocument['data'] };
+		return parseProviderDocumentText(raw);
 	} catch { throw new Error('models.json 格式无效，请先修复原配置；未覆盖文件'); }
+}
+
+/** Validates models.json text (JSONC-tolerant) without touching the file. */
+export function parseProviderDocumentText(raw: string): ProviderDocument {
+	if (raw.length > 8_000_000) throw new Error('Too large');
+	const data: unknown = JSON.parse(withoutComments(raw.replace(/^\uFEFF/, '')));
+	if (!record(data) || !record(data.providers) || Object.values(data.providers).some((provider) => !record(provider)
+		|| (provider.models !== undefined && (!Array.isArray(provider.models) || provider.models.some((model) => !record(model) || typeof model.id !== 'string' || !model.id.trim())))
+		|| ['name', 'baseUrl', 'api', 'apiKey'].some((key) => provider[key] !== undefined && (typeof provider[key] !== 'string' || !provider[key])))) throw new Error('Invalid document');
+	return { raw, data: data as ProviderDocument['data'] };
+}
+
+/** Counts providers, models, and credential-store entries for backup summaries. */
+export function describeProviderDatabase(modelsJson: string | null, authJson: string | null): { providers: number; models: number; credentials: number } {
+	const document = modelsJson === null ? { data: { providers: {} } } : parseProviderDocumentText(modelsJson);
+	let providers = 0, models = 0;
+	for (const config of Object.values(document.data.providers)) {
+		providers += 1;
+		if (Array.isArray(config.models)) models += config.models.length;
+	}
+	let credentials = 0;
+	if (authJson !== null) {
+		if (authJson.length > 8_000_000) throw new Error('Too large');
+		const data: unknown = JSON.parse(authJson);
+		if (!record(data) || Object.entries(data).some(([provider, credential]) =>
+			typeof provider !== 'string' || !provider.trim() || provider.length > 80 || !record(credential))) throw new Error('Invalid auth.json');
+		credentials = Object.keys(data).length;
+	}
+	return { providers, models, credentials };
 }
 
 export function safeProviderUrl(value: unknown): string | null {
@@ -215,6 +239,60 @@ export async function commitProviderDocument(path: string, previous: ProviderDoc
 
 /** Desktop-only model visibility preferences: models hidden from pickers, kept out of models.json. */
 export interface ModelPrefsDocument { disabled: Record<string, string[]> }
+
+/** The three files that make up the desktop provider database. */
+export interface ProviderBackupFiles { modelsJson: string; authJson: string | null; modelPrefsJson: string | null }
+
+/**
+ * Validates a downloaded cloud backup and installs it atomically: current files
+ * are saved to *.pi-desktop-backup first, and a failed write rolls everything
+ * back so a partial restore never replaces the local database.
+ */
+export async function restoreProviderBackupFiles(directory: string, files: ProviderBackupFiles): Promise<{ providers: number; models: number; credentials: number }> {
+	const summary = (() => {
+		try { return describeProviderDatabase(files.modelsJson, files.authJson); }
+		catch { throw new Error('备份中的 models.json 或 auth.json 格式无效，已取消恢复'); }
+	})();
+	if (files.modelPrefsJson !== null) {
+		try { parseModelPrefs(files.modelPrefsJson); }
+		catch { throw new Error('备份中的 model-prefs.json 格式无效，已取消恢复'); }
+	}
+	const modelsPath = join(directory, 'models.json');
+	const authPath = join(directory, 'auth.json');
+	const prefsPath = join(directory, 'model-prefs.json');
+	await mkdir(directory, { recursive: true });
+	const readOptional = async (path: string): Promise<string | null> => {
+		try { return await readFile(path, 'utf8'); }
+		catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null; throw error; }
+	};
+	const [previousModels, previousAuth, previousPrefs] = await Promise.all([readOptional(modelsPath), readOptional(authPath), readOptional(prefsPath)]);
+	const removeIfPresent = async (path: string, previous: string | null): Promise<void> => {
+		if (previous === null) { await unlink(path).catch((error) => { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }); }
+	};
+	try {
+		// Back up the outgoing database first so users can always undo a restore.
+		if (previousModels !== null) await atomicWrite(`${modelsPath}.pi-desktop-backup`, previousModels);
+		if (previousAuth !== null) await atomicWrite(`${authPath}.pi-desktop-backup`, previousAuth);
+		if (previousPrefs !== null) await atomicWrite(`${prefsPath}.pi-desktop-backup`, previousPrefs);
+		if (files.authJson === null) await removeIfPresent(authPath, previousAuth);
+		else await atomicWrite(authPath, files.authJson);
+		if (files.modelPrefsJson === null) await removeIfPresent(prefsPath, previousPrefs);
+		else await atomicWrite(prefsPath, files.modelPrefsJson);
+		await atomicWrite(modelsPath, files.modelsJson);
+	} catch {
+		// Put the local database back so a failed restore never wins.
+		const rollback = async (path: string, previous: string | null): Promise<void> => {
+			try { if (previous === null) await unlink(path).catch(() => {}); else await atomicWrite(path, previous); } catch { /* keep going; the backup copy still exists */ }
+		};
+		await rollback(modelsPath, previousModels);
+		await rollback(authPath, previousAuth);
+		await rollback(prefsPath, previousPrefs);
+		throw new Error('恢复备份失败，本地配置已恢复原状');
+	}
+	cachedDisabledModels = {};
+	cachedModelPrefsPath = null;
+	return summary;
+}
 
 let cachedDisabledModels: Record<string, string[]> = {};
 let cachedModelPrefsPath: string | null = null;

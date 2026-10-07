@@ -15,9 +15,13 @@ export * from './managementFeatures.ts';
 import type { InputFeatureBridge, UiInputScope } from './inputFeatures';
 import type { DataFeaturesBridge } from './dataFeatures';
 import type { WorkbenchFeaturesBridge } from './workbenchFeatures';
+import type { CloudSyncFeaturesBridge } from './cloudSync';
+import type { UiDebugApiConfig, UiDebugApiState } from './debugApi';
 export * from './inputFeatures.ts';
 export * from './dataFeatures.ts';
 export * from './workbenchFeatures.ts';
+export * from './cloudSync.ts';
+export * from './debugApi.ts';
 /**
  * @pidesktop/shared — IPC contract shared between the Electron main process,
  * the preload bridge, and the React renderer.
@@ -899,6 +903,8 @@ export interface UiDesktopSettings {
   conversationStorageDirectory: string;
   /** Which Pi engine drives the agent host (restart to apply). */
   piEngine: UiPiEngineSelection;
+  /** Loopback AI debug endpoint settings; omitted on older state files. */
+  debugApi?: UiDebugApiConfig;
 }
 
 /** Which Pi engine the agent host should load: the bundled SDK or a user-managed install. */
@@ -934,7 +940,7 @@ export interface UiAppearanceState {
 /** Main → renderer commands (tray menu, notification clicks). */
 export type UiAppCommand = { type: 'new-session' } | { type: 'switch-session'; path: string; cwd?: string } | { type: 'open-settings' } | { type: 'appearance-changed'; appearance: UiAppearanceState };
 
-export interface AgentBridge extends InputFeatureBridge, DataFeaturesBridge, WorkbenchFeaturesBridge, ManagementFeaturesBridge, PluginUpdatesBridge, McpFeaturesBridge, ResultFilesBridge {
+export interface AgentBridge extends InputFeatureBridge, DataFeaturesBridge, WorkbenchFeaturesBridge, ManagementFeaturesBridge, PluginUpdatesBridge, McpFeaturesBridge, ResultFilesBridge, CloudSyncFeaturesBridge {
   getPersonalization(): Promise<UiInstructionDocument[]>;
   saveInstruction(request: UiSaveInstructionRequest): Promise<UiSaveInstructionResult>;
   getPluginCatalog(cwd: string): Promise<UiPluginCatalog>;
@@ -963,6 +969,8 @@ export interface AgentBridge extends InputFeatureBridge, DataFeaturesBridge, Wor
   onUpdateStateChanged(listener: (state: UiUpdateState) => void): () => void;
   getDesktopSettings(): Promise<UiDesktopSettings>;
   setDesktopSettings(patch: Partial<UiDesktopSettings>): Promise<UiDesktopSettings>;
+  getDebugApiState(): Promise<UiDebugApiState>;
+  setDebugApiConfig(config: UiDebugApiConfig): Promise<UiDebugApiState>;
   probePiEngine(path: string): Promise<UiPiEngineProbe>;
   getPiEngineStatus(): Promise<UiPiEngineStatus>;
   pickPiEngineDirectory(): Promise<string | null>;

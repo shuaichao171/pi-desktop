@@ -15,6 +15,32 @@ export interface DesktopSettings {
 	conversationStorageDirectory: string;
 	/** Which Pi SDK drives the agent host: bundled or a user-managed install (restart to apply). */
 	piEngine: UiPiEngineSelection;
+	/** Loopback AI debug endpoint; defaults when absent from stored settings. */
+	debugApi?: DesktopDebugApiSettings;
+}
+
+/** Loopback AI debug endpoint preferences (see debugServer.ts). */
+export interface DesktopDebugApiSettings {
+	enabled: boolean;
+	port: number;
+	authEnabled: boolean;
+	token: string;
+}
+
+export const DEFAULT_DEBUG_API_SETTINGS: DesktopDebugApiSettings = {
+	enabled: false,
+	port: 47899,
+	authEnabled: false,
+	token: '',
+};
+
+export function isValidDesktopDebugApiSettings(value: unknown): value is DesktopDebugApiSettings {
+	if (typeof value !== 'object' || value === null) return false;
+	const candidate = value as Partial<DesktopDebugApiSettings>;
+	return typeof candidate.enabled === 'boolean'
+		&& typeof candidate.authEnabled === 'boolean'
+		&& typeof candidate.token === 'string' && candidate.token.length <= 200 && !/[\u0000-\u001f\u007f]/.test(candidate.token)
+		&& typeof candidate.port === 'number' && Number.isInteger(candidate.port) && candidate.port >= 1 && candidate.port <= 65535;
 }
 
 export function isValidDesktopSettings(value: unknown): value is DesktopSettings {
@@ -23,19 +49,22 @@ export function isValidDesktopSettings(value: unknown): value is DesktopSettings
 	return typeof candidate.notificationsEnabled === 'boolean'
 		&& (candidate.closeBehavior === 'tray' || candidate.closeBehavior === 'quit')
 		&& (candidate.conversationStorageDirectory === undefined || isConversationStorageDirectory(candidate.conversationStorageDirectory))
-		&& (candidate.piEngine === undefined || isValidPiEngineSelection(candidate.piEngine));
+		&& (candidate.piEngine === undefined || isValidPiEngineSelection(candidate.piEngine))
+		&& (candidate.debugApi === undefined || isValidDesktopDebugApiSettings(candidate.debugApi));
 }
 
 export const DEFAULT_DESKTOP_SETTINGS: DesktopSettings = {
 	notificationsEnabled: true, closeBehavior: 'tray', conversationStorageDirectory: join(homedir(), 'PiDesktopWorkspace'),
 	piEngine: { mode: 'builtin' },
+	debugApi: DEFAULT_DEBUG_API_SETTINGS,
 };
 
 /** Reads desktop-level preferences; corrupt or missing files fall back to defaults (4.1/4.2). */
 export function readDesktopSettings(path: string, defaultStorageDirectory = DEFAULT_DESKTOP_SETTINGS.conversationStorageDirectory): DesktopSettings {
-	const defaults = { ...DEFAULT_DESKTOP_SETTINGS, conversationStorageDirectory: defaultStorageDirectory };
+	const defaults = { ...DEFAULT_DESKTOP_SETTINGS, conversationStorageDirectory: defaultStorageDirectory, debugApi: DEFAULT_DEBUG_API_SETTINGS };
 	try {
-		return { ...defaults, ...readStateFile(path, () => defaults, isValidDesktopSettings) };
+		const stored = readStateFile(path, () => defaults, isValidDesktopSettings);
+		return { ...defaults, ...stored, debugApi: stored.debugApi ?? DEFAULT_DEBUG_API_SETTINGS };
 	} catch (error) {
 		if (!(error instanceof CorruptStateFileError)) throw error;
 		// Do not allow a later settings write to overwrite bytes we could not preserve.

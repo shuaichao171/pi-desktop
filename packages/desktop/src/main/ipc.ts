@@ -1,5 +1,7 @@
 import { MCP_FEATURE_CHANNELS, PLUGIN_UPDATE_CHANNELS } from '@pidesktop/shared';
 import { registerManagementIpc } from './managementIpc';
+import { registerCloudSyncIpc } from './cloudSyncIpc';
+import { registerDebugApiIpc } from './debugApiIpc';
 /**
  * IPC wiring: renderer ⇄ main ⇄ AgentService.
  *
@@ -71,6 +73,8 @@ let notifyInputRequest: ((request: UiExtensionDialogRequest) => void) | null = n
 let workbenchService: WorkbenchService | null = null;
 let workbenchFeatures: ReturnType<typeof registerWorkbenchFeatureIpc> | null = null;
 let managementFeatures: ReturnType<typeof registerManagementIpc> | null = null;
+let cloudSync: ReturnType<typeof registerCloudSyncIpc> | null = null;
+let debugApi: ReturnType<typeof registerDebugApiIpc> | null = null;
 let inputFeatures: ReturnType<typeof registerInputAttachmentIpc> | null = null;
 let disposingServices = false;
 let serviceShutdown: Promise<void> | null = null;
@@ -710,6 +714,13 @@ export function registerIpc(options: {
 		return agentService.saveInstruction(request);
 	});
 	managementFeatures = registerManagementIpc(agentService, listWorkspaces);
+	cloudSync = registerCloudSyncIpc(agentService, requirePluginSender);
+debugApi = registerDebugApiIpc({
+	settingsPath: desktopSettingsPath(),
+	cloudSync: () => cloudSync?.service ?? null,
+	appVersion: () => app.getVersion(),
+	requireTrustedSender: (event) => { requirePluginSender(event); },
+});
 	const automations = createAutomationService({
 		filePath: join(app.getPath('userData'), 'automations.json'),
 		execute: (task, signal, dispatch) => automationExecutor.execute(task, signal, dispatch),
@@ -1281,8 +1292,15 @@ export function registerIpc(options: {
 		requirePluginSender(event);
 		return agentService.discoverProviderModels(request);
 	});
-	handleRendererInvoke(IPC_CHANNELS.agentSaveCustomProvider, (_event, request: Parameters<typeof agentService.saveCustomProvider>[0]) => agentService.saveCustomProvider(request));
-	handleRendererInvoke(IPC_CHANNELS.agentRemoveCustomProvider, (_event, provider: string) => agentService.removeCustomProvider(provider));
+	handleRendererInvoke(IPC_CHANNELS.agentSaveCustomProvider, async (_event, request: Parameters<typeof agentService.saveCustomProvider>[0]) => {
+		await agentService.saveCustomProvider(request);
+		// Auto-sync mirrors cc-switch: every provider-database change re-uploads.
+		cloudSync?.service.onProviderDatabaseChanged();
+	});
+	handleRendererInvoke(IPC_CHANNELS.agentRemoveCustomProvider, async (_event, provider: string) => {
+		await agentService.removeCustomProvider(provider);
+		cloudSync?.service.onProviderDatabaseChanged();
+	});
 	handleRendererInvoke(IPC_CHANNELS.agentListSlashCommands, () => agentService.listSlashCommands());
 	handleRendererInvoke(IPC_CHANNELS.agentExecuteSlashCommand, (event, request: UiSlashCommandRequest) => {
 		if (request?.name === 'reload') {
@@ -1294,13 +1312,20 @@ export function registerIpc(options: {
 	handleRendererInvoke(IPC_CHANNELS.agentSetModel, (_event, provider: string, id: string) => agentService.setModel(provider, id));
 	handleRendererInvoke(IPC_CHANNELS.agentSetThinkingLevel, (_event, level: UiThinkingLevel) => agentService.setThinkingLevel(level));
 	handleRendererInvoke(IPC_CHANNELS.agentListProviderAuth, () => agentService.listProviderAuth());
-	handleRendererInvoke(IPC_CHANNELS.agentSetProviderApiKey, (_event, provider: string, key: string) => agentService.setProviderApiKey(provider, key));
-	handleRendererInvoke(IPC_CHANNELS.agentRemoveProviderCredential, (_event, provider: string) => agentService.removeProviderCredential(provider));
-	handleRendererInvoke(IPC_CHANNELS.agentSetModelEnabled, (_event, provider: unknown, modelId: unknown, enabled: unknown) => {
+	handleRendererInvoke(IPC_CHANNELS.agentSetProviderApiKey, async (_event, provider: string, key: string) => {
+		await agentService.setProviderApiKey(provider, key);
+		cloudSync?.service.onProviderDatabaseChanged();
+	});
+	handleRendererInvoke(IPC_CHANNELS.agentRemoveProviderCredential, async (_event, provider: string) => {
+		await agentService.removeProviderCredential(provider);
+		cloudSync?.service.onProviderDatabaseChanged();
+	});
+	handleRendererInvoke(IPC_CHANNELS.agentSetModelEnabled, async (_event, provider: unknown, modelId: unknown, enabled: unknown) => {
 		if (typeof provider !== 'string' || !provider.trim() || provider.length > 80 || /[\u0000]/u.test(provider)
 			|| typeof modelId !== 'string' || !modelId.trim() || modelId.trim().length > 200 || /[\u0000]/u.test(modelId)
 			|| typeof enabled !== 'boolean') throw new Error('模型启用参数无效');
-		return agentService.setModelEnabled(provider, modelId.trim(), enabled);
+		await agentService.setModelEnabled(provider, modelId.trim(), enabled);
+		cloudSync?.service.onProviderDatabaseChanged();
 	});
 	handleRendererInvoke(IPC_CHANNELS.agentListExtensions, () => agentService.listExtensions());
 	handleRendererInvoke(IPC_CHANNELS.agentSetExtensionEnabled, (event, path: string, enabled: boolean) => {
@@ -1364,6 +1389,11 @@ export function disposeServices(): Promise<void> {
 		// A pending move may still need the agent to validate session ownership.
 		await sessionGroupService?.flush();
 		inputFeatures?.dispose();
+		// Flush a pending auto-sync upload before the agent host goes away.
+		await cloudSync?.dispose();
+		cloudSync = null;
+		await debugApi?.dispose();
+		debugApi = null;
 		const results = await Promise.allSettled([agentService.dispose(), workbenchService?.dispose(), workbenchFeatures?.dispose(), automationService?.dispose()]);
 		// A failed service must not let app.quit interrupt another service's
 		// cleanup or metadata that was queued by its final activity events.

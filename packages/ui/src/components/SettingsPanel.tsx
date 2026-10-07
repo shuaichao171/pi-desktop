@@ -1,11 +1,12 @@
 import { McpSettingsPanel } from './McpSettingsPanel';
 import { DataManagementPanel } from './DataManagementPanel';
 import { useCallback, useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
-import type { UiDesktopSettings, UiProviderAuthStatus, UiUpdateState } from '@pidesktop/shared';
+import type { UiDebugApiConfig, UiDebugApiState, UiDesktopSettings, UiProviderAuthStatus, UiUpdateState } from '@pidesktop/shared';
 import { useChatStore } from '../store';
 import { useT, type Translate } from '../i18n';
 import { Icon } from './Icons';
 import { ModelSettingsPanel } from './ModelSettingsPanel';
+import { CloudSyncPanel } from './CloudSyncPanel';
 import { CONTENT_FONT_MIN, CONTENT_FONT_MAX, DEFAULT_CONTENT_FONT_SIZE, readContentFontSize, saveContentFontSize, type ContentFontKind } from '../contentFontSize';
 import { ShortcutSettings } from './ShortcutSettings';
 import { ColorThemeSettings } from './ColorThemeSettings';
@@ -26,7 +27,7 @@ import { EngineSettingsPanel } from './EngineSettingsPanel';
 const PROJECT_REPOSITORY_URL = 'https://github.com/shuaichao171/pi-desktop';
 
 export type ThemePreference = 'system' | 'dark' | 'light';
-type SettingsPage = 'general' | 'appearance' | 'personalization' | 'model' | 'engine' | 'shortcuts' | 'updates' | 'data' | 'mcp';
+type SettingsPage = 'general' | 'appearance' | 'personalization' | 'model' | 'backup' | 'debug' | 'engine' | 'shortcuts' | 'updates' | 'data' | 'mcp';
 type DraftFocus = { element: HTMLElement; selection?: { start: number; end: number; direction: 'forward' | 'backward' | 'none' } };
 type PendingLeave = SettingsLeaveRequest<SettingsPage, DraftFocus | null>;
 
@@ -235,6 +236,43 @@ export function SettingsPanel({ initialPage = 'general', modelManagementTarget, 
 		return () => { active = false; };
 	}, [bridge]);
 
+	const [debugApiState, setDebugApiState] = useState<UiDebugApiState | null>(null);
+	const [debugApiPortDraft, setDebugApiPortDraft] = useState('47899');
+	const [debugApiTokenDraft, setDebugApiTokenDraft] = useState('');
+	const [debugApiBusy, setDebugApiBusy] = useState(false);
+	const [debugApiError, setDebugApiError] = useState<string | null>(null);
+	const debugApiPending = useRef(false);
+	const saveDebugApiConfig = useCallback(async (patch: Partial<UiDebugApiConfig>): Promise<void> => {
+		if (!bridge?.setDebugApiConfig || !debugApiState || debugApiPending.current) return;
+		const port = Number(debugApiPortDraft);
+		if (!Number.isInteger(port) || port < 1 || port > 65535) {
+			setDebugApiError(locale === 'zh-CN' ? '端口必须是 1-65535 的整数' : 'Port must be an integer between 1 and 65535');
+			return;
+		}
+		debugApiPending.current = true;
+		setDebugApiBusy(true);
+		setDebugApiError(null);
+		try {
+			const next = await bridge.setDebugApiConfig({ enabled: debugApiState.enabled, port, authEnabled: debugApiState.authEnabled, token: debugApiTokenDraft, ...patch });
+			setDebugApiState(next);
+			setDebugApiPortDraft(String(next.port));
+			setDebugApiTokenDraft(next.token);
+		}
+		catch (error) { setDebugApiError(error instanceof Error ? error.message : String(error)); }
+		finally { debugApiPending.current = false; setDebugApiBusy(false); }
+	}, [bridge, debugApiState, debugApiPortDraft, debugApiTokenDraft, locale]);
+	useEffect(() => {
+		if (!bridge?.getDebugApiState) return;
+		let active = true;
+		void bridge.getDebugApiState().then((next) => {
+			if (!active) return;
+			setDebugApiState(next);
+			setDebugApiPortDraft(String(next.port));
+			setDebugApiTokenDraft(next.token);
+		}).catch(() => { /* older host without the debug API */ });
+		return () => { active = false; };
+	}, [bridge]);
+
 	useEffect(() => {
 		if (!bridge || paiMode) return;
 		let active = true;
@@ -332,6 +370,8 @@ export function SettingsPanel({ initialPage = 'general', modelManagementTarget, 
 						<button type="button" className={page === 'appearance' ? 'is-active' : ''} aria-current={page === 'appearance' ? 'page' : undefined} onClick={() => selectPage('appearance')}>{t('settings.appearance')}</button>
 						<button type="button" className={page === 'personalization' ? 'is-active' : ''} aria-current={page === 'personalization' ? 'page' : undefined} onClick={() => selectPage('personalization')}>{t('settings.personalization')}</button>
 						<button type="button" className={page === 'model' ? 'is-active' : ''} aria-current={page === 'model' ? 'page' : undefined} onClick={() => selectPage('model')}>{t('settings.modelManagement')}</button>
+				<button type="button" className={page === 'backup' ? 'is-active' : ''} aria-current={page === 'backup' ? 'page' : undefined} onClick={() => selectPage('backup')}>{t('settings.cloudBackup')}</button>
+				<button type="button" className={page === 'debug' ? 'is-active' : ''} aria-current={page === 'debug' ? 'page' : undefined} onClick={() => selectPage('debug')}>{t('settings.debugApi')}</button>
 						<button type="button" className={page === 'engine' ? 'is-active' : ''} aria-current={page === 'engine' ? 'page' : undefined} onClick={() => selectPage('engine')}>{t('settings.engine')}</button>
 						<button type="button" className={page === 'shortcuts' ? 'is-active' : ''} aria-current={page === 'shortcuts' ? 'page' : undefined} onClick={() => selectPage('shortcuts')}>{t('settings.shortcuts')}</button>
 						{!paiMode && <button type="button" className={page === 'updates' ? 'is-active' : ''} aria-current={page === 'updates' ? 'page' : undefined} onClick={() => selectPage('updates')}>{t('settings.updates')}</button>}
@@ -418,6 +458,33 @@ export function SettingsPanel({ initialPage = 'general', modelManagementTarget, 
 							<ColorThemeSettings themePreference={themePreference} preferences={colorPreferences} onChange={onColorPreferencesChange} saveFailed={colorSaveFailed} />
 						</>}
 						{page === 'model' && <ModelSettingsPanel key={cwd} initialTarget={modelTarget} onDraftStateChange={reportDraftState} renderCredential={(provider: UiProviderAuthStatus, onDraftStateChange?: (state: DraftState) => void, onRemoveRequest?: (remove: () => void) => void) => <ProviderCredentialRow key={provider.provider} {...provider} onDraftStateChange={onDraftStateChange} onRemoveRequest={onRemoveRequest} />} />}
+						{page === 'backup' && <>
+							<div className="pd-settings-section-head"><h2>{t('settings.cloudBackup')}</h2><p>{t('settings.cloudBackupDescription')}</p></div>
+							<CloudSyncPanel disabled={false} />
+						</>}
+						{page === 'debug' && <>
+							<div className="pd-settings-section-head"><h2>{t('settings.debugApi')}</h2><p>{t('settings.debugApiDescription')}</p></div>
+							{debugApiState && (
+								<div className="pd-language-options" data-setting="debug-api" role="group" aria-label={t('settings.debugApi')}>
+									<label className="pd-debug-field"><span>{t('settings.debugApiPort')}</span>
+										<input type="number" min={1} max={65535} value={debugApiPortDraft} onChange={(event) => setDebugApiPortDraft(event.target.value)} /></label>
+									<button type="button" className={debugApiState.enabled ? 'is-selected' : ''} aria-pressed={debugApiState.enabled} disabled={debugApiBusy}
+										onClick={() => { void saveDebugApiConfig({ enabled: !debugApiState.enabled }); }}>{t(debugApiState.enabled ? 'settings.debugApiStop' : 'settings.debugApiStart')}</button>
+									<button type="button" className={debugApiState.authEnabled ? 'is-selected' : ''} aria-pressed={debugApiState.authEnabled} disabled={debugApiBusy}
+										onClick={() => { void saveDebugApiConfig({ authEnabled: !debugApiState.authEnabled }); }}>{t('settings.debugApiAuth')} · {t(debugApiState.authEnabled ? 'settings.debugApiOn' : 'settings.debugApiOff')}</button>
+								</div>
+							)}
+							{debugApiState?.authEnabled && (
+								<div className="pd-language-options" data-setting="debug-api-token" role="group" aria-label={t('settings.debugApiToken')}>
+									<label className="pd-debug-field pd-debug-token"><span>{t('settings.debugApiToken')}</span>
+										<input type="text" value={debugApiTokenDraft} onChange={(event) => setDebugApiTokenDraft(event.target.value)} /></label>
+									<button type="button" disabled={debugApiBusy} onClick={() => { void saveDebugApiConfig({}); }}>{t('settings.debugApiApply')}</button>
+									<button type="button" disabled={debugApiBusy} onClick={() => { setDebugApiTokenDraft(''); void saveDebugApiConfig({ token: '' }); }}>{t('settings.debugApiGenerateToken')}</button>
+								</div>
+							)}
+							{debugApiState && <p className="pd-settings-feedback" role="status">{debugApiState.running ? t('settings.debugApiRunning', { url: debugApiState.baseUrl ?? '' }) : t('settings.debugApiStopped')}</p>}
+							{debugApiError && <p className="pd-settings-feedback" role="alert">{debugApiError}</p>}
+						</>}
 						{page === 'engine' && <EngineSettingsPanel onDraftStateChange={reportDraftState} />}
 						{page === 'shortcuts' && <>
 							<div className="pd-settings-section-head"><h2>{t('settings.shortcuts')}</h2><p>{t('settings.shortcutsDescription')}</p></div>

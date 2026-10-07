@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, 'feature/**']
   pull_request:
   workflow_dispatch:
 
@@ -79,6 +79,8 @@ jobs:
           }
 
   package-macos:
+    # Full packaging stays on main and pull requests; feature branches use the verify job.
+    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
     strategy:
       fail-fast: false
       matrix:
@@ -133,6 +135,7 @@ jobs:
           test "$("$esbuild_binary" --version)" = "$esbuild_version"
 
   package-linux:
+    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4

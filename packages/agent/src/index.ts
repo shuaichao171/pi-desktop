@@ -85,7 +85,7 @@ import type {
 } from '@pidesktop/shared';
 import { createAgentError, normalizeAgentError } from '../../shared/src/agentErrors.ts';
 import { BUILTIN_SLASH_COMMANDS, expandSlashPrompt, validateSlashCommandRequest, validSlashCommandName } from './slashCommands.ts';
-import { commitProviderDocument, CUSTOM_PROVIDER_APIS, getCachedDisabledModels, getBuiltinProviderIds, isEditableProvider, literalApiKey, loadModelPrefs, mergeProvider, readProviderDocument, safeProviderUrl, setModelDisabled, validateDiscoveryRequest, validateProviderId, validateProviderRequest, validateProviderWithSdk, type ProviderDocument } from './customProviders.ts';
+import { commitProviderDocument, CUSTOM_PROVIDER_APIS, getCachedDisabledModels, getBuiltinProviderIds, isEditableProvider, literalApiKey, loadModelPrefs, mergeProvider, parseProviderDocumentText, readProviderDocument, restoreProviderBackupFiles, safeProviderUrl, setModelDisabled, validateDiscoveryRequest, validateProviderId, validateProviderRequest, validateProviderWithSdk, type ProviderBackupFiles, type ProviderDocument } from './customProviders.ts';
 import { discoverProviderModels, ProviderDiscoveryError } from './providerDiscovery.ts';
 import { bindProviderNetwork, runWithProviderNetwork } from './providerNetwork.ts';
 export { configureProviderNetwork } from './providerNetwork.ts';
@@ -2361,6 +2361,51 @@ export class AgentService {
 	}
 	async removeCustomProvider(provider: string): Promise<void> {
 		await this.updateCustomProvider(validateProviderId(provider));
+	}
+	/** Applies a provider-database backup downloaded from cloud sync (cc-switch-style restore). */
+	async restoreProviderBackup(files: ProviderBackupFiles): Promise<{ providers: number; models: number; credentials: number }> {
+		if (files === null || typeof files !== 'object' || Array.isArray(files)) throw new Error('备份内容无效');
+		const modelsJson = files.modelsJson;
+		const authJson = files.authJson ?? null;
+		const modelPrefsJson = files.modelPrefsJson ?? null;
+		if (typeof modelsJson !== 'string' || !modelsJson.trim() || modelsJson.length > 8_000_000) throw new Error('备份中的 models.json 无效');
+		if (authJson !== null && (typeof authJson !== 'string' || authJson.length > 8_000_000)) throw new Error('备份中的 auth.json 无效');
+		if (modelPrefsJson !== null && (typeof modelPrefsJson !== 'string' || modelPrefsJson.length > 1_000_000)) throw new Error('备份中的 model-prefs.json 无效');
+		const service = this.requireActive();
+		if (this.transition || this.credentialOperation || this.trimOperation) throw new Error('会话正在切换或设置正在更新，请稍后再恢复备份');
+		let result: { providers: number; models: number; credentials: number } | undefined;
+		const contexts = [...this.contexts.values()];
+		const releases: (() => void)[] = [];
+		try { for (const context of contexts) releases.push(context.lockProviderConfiguration(false)); }
+		catch (error) { for (const release of releases) release(); throw error; }
+		const operation: Promise<void> = Promise.resolve().then(async () => {
+			const directory = service.agentDirectory;
+			// A wholesale restore must not rip providers out from under live turns.
+			for (const context of contexts) {
+				const status = context.getSnapshot().status;
+				if (status === 'busy' || status === 'starting') throw new Error('仍有会话在运行，请等待结束后再恢复备份');
+			}
+			const previous = await readProviderDocument(join(directory, 'models.json'));
+			let next: ReturnType<typeof parseProviderDocumentText>;
+			try { next = parseProviderDocumentText(modelsJson); }
+			catch { throw new Error('备份中的 models.json 格式无效，已取消恢复'); }
+			const previousIds = new Set(Object.keys(previous.data.providers));
+			const nextIds = new Set(Object.keys(next.data.providers));
+			for (const context of contexts) {
+				const selected = context.getSnapshot();
+				if (previousIds.has(selected.modelProvider) && !nextIds.has(selected.modelProvider)) throw new Error(`会话仍在使用将删除的供应商 ${selected.modelProvider}，请先切换模型`);
+			}
+			result = await restoreProviderBackupFiles(directory, { modelsJson, authJson, modelPrefsJson });
+			// Refresh every provider whose existence changed, mirroring single saves.
+			for (const provider of [...previousIds].filter((id) => !nextIds.has(id))) await this.refreshCustomProviderContexts(contexts, provider, false);
+			for (const provider of nextIds) await this.refreshCustomProviderContexts(contexts, provider);
+		});
+		this.providerOperation = operation;
+		try { await operation; return result!; }
+		finally {
+			for (const release of releases) release();
+			if (this.providerOperation === operation) this.providerOperation = null;
+		}
 	}
 	listSlashCommands(): UiSlashCommand[] { return this.active?.listSlashCommands() ?? []; }
 	async executeSlashCommand(request: UiSlashCommandRequest): Promise<void> {

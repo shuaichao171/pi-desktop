@@ -849,7 +849,7 @@ div.pd-hover-tooltip:has(.pd-update-notes-body) { max-width: min(400px, calc(100
 .is-frameless:has(.pd-chat-title.is-editing) :is(.pd-sidebar-toolbar, .pd-chat-header, .pd-chat-heading) { -webkit-app-region: no-drag; }
 /* While a popover is open the drag regions (title strip etc.) must not
    swallow the outside press that dismisses it. pd-popover-open lives on
-   <html>, is-frameless on the shell div — so scope via html + :is(). */
+   <html>, is-frameless on the shell div 鈥?so scope via html + :is(). */
 html.pd-popover-open :is(.pd-sidebar-toolbar, .pd-chat-header, .pd-chat-heading, .pd-workbench-header) { -webkit-app-region: no-drag; }
 .is-frameless .pd-settings-overlay { top: 56px; }
 .is-frameless .pd-settings-dialog { max-height: min(740px, calc(100vh - 104px)); }
@@ -873,6 +873,10 @@ html.pd-popover-open :is(.pd-sidebar-toolbar, .pd-chat-header, .pd-chat-heading,
 .pd-font-size-value { min-width: 42px; color: var(--pd-text); font-variant-numeric: tabular-nums; }
 .pd-font-size-reset { display: inline-flex; flex: 0 0 auto; align-items: center; justify-content: center; min-height: 28px; padding: 3px 10px; border: 1px solid var(--pd-border); border-radius: var(--pd-radius-sm); background: var(--pd-surface); color: var(--pd-text-subtle); font-size: var(--pd-font-caption); line-height: 1.2; }
 .pd-font-size-reset:hover { background: var(--pd-surface-hover); color: var(--pd-text); }
+.pd-language-options .pd-debug-field { display: inline-flex; align-items: center; gap: 8px; }
+.pd-language-options .pd-debug-field input { width: 8.5rem; padding: 4px 8px; }
+.pd-language-options .pd-debug-field.pd-debug-token input { width: 20rem; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; }
+
 .pd-language-options { display: flex; gap: 8px; }
 .pd-language-options button { min-width: 120px; min-height: 34px; padding: 0 12px; border: 1px solid var(--pd-border); border-radius: var(--pd-radius-sm); background: var(--pd-surface); color: var(--pd-text); font-size: var(--pd-font-caption); }
 .pd-language-options button:hover, .pd-language-options button.is-selected { border-color: var(--pd-brand); background: var(--pd-selected); color: var(--pd-text); }
