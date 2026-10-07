@@ -40,3 +40,13 @@
 - 隔离无界面 Electron 验证（`out/zcode3-review-run.mjs`，忽略目录 `out/`）：真实组件 + 模拟 bridge，覆盖路径链接、两类摘要、打开方式菜单与启动、监听订阅与静默刷新、拖拽属性与「添加到对话」、「..」菜单、选区引用行号、领先落后徽标与推送；深浅主题截图 `out/review-ui/zcode3-*.png`，无控制台错误。
 
 测试使用模拟数据与本地临时仓库，不涉及真实远程或凭据。
+
+## 后续修复（2026-10-07）
+
+**路径链接在对话完成瞬间点击无响应**：新会话的第一轮回答完成时，settle 重同步会首次带上会话文件路径（`sessionPath` 由 `null` 变为实际路径），并把回答从运行中的过程折叠迁移到轮尾答案位。此前两处把这次重同步当作上下文切换：`ResultFilePreviewDialog` 的 store 订阅立即关闭已打开的预览，`ResultFileLink` 自持的预览状态随链接重挂载丢失；同时浏览器只在 mousedown/mouseup 命中同一元素时才派发 click，跨过重排的点击被静默吞掉。修复分三层（对照 ZCode：其链接按消息携带 workspace 身份、入口位置从运行到终态不变，点击目标不移动）：
+
+- `resultFileContext.ts`：`sameResultFileSession` 把「同会话首次获得文件路径」视为同一上下文（bridge/cwd/sessionId/navigationRequestId 仍须一致），预览对话框与链接的焦点恢复不再被它打断。
+- `resultFilePreviewStore.ts` + `ResultFilePreviewDialogRoot`（AppShell 挂载）：预览对话框提升为应用级单例，链接重挂载（轮键含 `disclosureScope`、历史分页、settle 重排）不再关闭已打开的预览。
+- `resultFilePressRescue.ts`：全局记录落在 `.pd-result-file-link` 上的左键按压，若松开时位移很小且未产生 click（节点在按压期间被替换），按记录的 href 重新打开预览；拖选（位移超阈值）不触发。
+
+回归场景：`tests/fixtures/file-changes/resultFileLinks.mjs`（运行中打开→首次 settle 存活；settle 后关闭/重开；跨 settle 的点击经救援打开；后续轮次 settle 不受影响）。全量 `pnpm test` 884 项通过。

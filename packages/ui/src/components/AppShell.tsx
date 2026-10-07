@@ -14,6 +14,8 @@ import { ExtensionDialogHost, useExtensionRequestPending } from './ExtensionDial
 import { UpdateNotice } from './UpdateNotice';
 import { OperationFeedback } from './OperationFeedback';
 import { FolderProjectDropZone } from './FolderProjectDropZone';
+import { ResultFilePreviewDialogRoot } from './ResultFilePreviewDialog';
+import { installResultFilePressRescue } from '../resultFilePressRescue';
 import { clampWorkbenchWidth } from '../workbenchReading';
 import { WorkbenchSidePane, type WorkbenchOpenRequest } from './WorkbenchSidePane';
 import { useChatStore } from '../store';
@@ -92,6 +94,7 @@ export function AppShell() {
 	const [workbenchResizing, setWorkbenchResizing] = useState(false);
 	const workbenchOverlay = viewportWidth <= 1100;
 	useEffect(() => { const resize = () => setViewportWidth(window.innerWidth); window.addEventListener('resize', resize); return () => window.removeEventListener('resize', resize); }, []);
+	useEffect(() => { installResultFilePressRescue(); }, []);
 	const agentStatus = useChatStore((state) => state.status);
 	const previousStatusRef = useRef(agentStatus);
 	useEffect(() => {
@@ -429,6 +432,7 @@ export function AppShell() {
 			{searchOpen && <SearchDialog commands={searchCommands} onClose={() => setSearchOpen(false)} onSelectSession={selectSearchSession} onSelectFile={selectSearchFile} />}
 			{isWindows && <WindowControls />}
 			<FolderProjectDropZone onAdded={revealAddedProjects} />
+			<ResultFilePreviewDialogRoot />
 		</div>
 		</ExtensionDialogHost>
 	);
