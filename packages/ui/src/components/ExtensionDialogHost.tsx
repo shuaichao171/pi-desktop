@@ -4,6 +4,7 @@ import type { UiExtensionDialogRequest, UiExtensionDialogResponse } from '@pides
 import { useChatStore } from '../store';
 import { useT } from '../i18n';
 import { useExtensionNoticeDisplayEnabled } from '../extensionNoticeDisplay';
+import { useQuestionAutoResolutionEnabled, isQuestionAutoResolutionKind, planQuestionAutoResolution, formatQuestionCountdown } from '../extensionQuestionTimeout';
 import { Icon } from './Icons';
 import { ExtensionNotifications } from './ExtensionNotifications';
 import { ApprovalCard } from './ApprovalCard';
@@ -16,10 +17,11 @@ const ExtensionDialogContext = createContext<ReactNode>(null);
 // provider, so a context-only signal could never reach its own hook call.
 // One host per window keeps the module state unambiguous.
 let pendingRequest = false;
+let anyPendingRequest = false;
 const pendingListeners = new Set<() => void>();
-function publishPendingRequest(value: boolean): void {
-	if (pendingRequest === value) return;
-	pendingRequest = value;
+function publishPendingRequests(current: boolean, any: boolean): void {
+	pendingRequest = current;
+	anyPendingRequest = any;
 	for (const notify of pendingListeners) notify();
 }
 function subscribePendingRequest(listener: () => void): () => void {
@@ -27,9 +29,23 @@ function subscribePendingRequest(listener: () => void): () => void {
 	return () => { pendingListeners.delete(listener); };
 }
 
-/** True while a plugin/extension question waits for an answer. */
+/** True while a plugin/extension question for the OPEN conversation waits for an answer. */
 export function useExtensionRequestPending(): boolean {
 	return useSyncExternalStore(subscribePendingRequest, () => pendingRequest, () => false);
+}
+
+/** True while any conversation has a question waiting (attention chime; zcode per-task pending interactions). */
+export function useAnyExtensionRequestPending(): boolean {
+	return useSyncExternalStore(subscribePendingRequest, () => anyPendingRequest, () => false);
+}
+
+/** zcode per-task interactions: a question shows only while its conversation is open. */
+function requestBelongsToConversation(request: UiExtensionDialogRequest, scope: { cwd: string; sessionId: string | null; sessionPath: string | null }): boolean {
+	if (!request.scope) return true;
+	if (request.scope.cwd !== scope.cwd) return false;
+	if (request.scope.sessionPath && scope.sessionPath) return request.scope.sessionPath === scope.sessionPath;
+	// The sessionId is stable across fresh-session persistence (sessionPath null → real path).
+	return request.scope.sessionId == null || request.scope.sessionId === scope.sessionId;
 }
 
 function getActiveModal(): HTMLElement | null {
@@ -73,14 +89,26 @@ export function ExtensionDialogHost({ children, chatVisible, notificationTarget 
 	const titleId = useId();
 	const messageId = useId();
 	const bodyId = useId();
-	const active = requests.find((request) => request.kind !== 'notify');
+	const conversationCwd = useChatStore((s) => s.cwd);
+	const conversationSessionId = useChatStore((s) => s.sessionId);
+	const conversationSessionPath = useChatStore((s) => s.sessionPath);
+	const belongsHere = (request: UiExtensionDialogRequest) => requestBelongsToConversation(request, { cwd: conversationCwd, sessionId: conversationSessionId, sessionPath: conversationSessionPath });
+	const active = requests.find((request) => request.kind !== 'notify' && belongsHere(request));
 	activeId.current = active?.id ?? null;
 	const notices = requests.filter((request) => request.kind === 'notify');
 	// The plugin-notice display setting governs toasts as well: turned off,
 	// transient notifications never surface; dismissal state is untouched.
 	const [noticesVisible] = useExtensionNoticeDisplayEnabled();
 	const shownNotices = noticesVisible ? notices : [];
-	const queuedCount = requests.filter((request) => request.kind !== 'notify').length - 1;
+	const queuedCount = requests.filter((request) => request.kind !== 'notify' && belongsHere(request)).length - 1;
+	// Question auto-resolution (zcode): only requests armed on arrival count;
+	// turning the preference off disarms everything currently waiting.
+	const [questionAutoResolution] = useQuestionAutoResolutionEnabled();
+	const questionAutoResolutionRef = useRef(questionAutoResolution);
+	questionAutoResolutionRef.current = questionAutoResolution;
+	const autoEligibleIds = useRef(new Set<string>());
+	const [autoCancelRemaining, setAutoCancelRemaining] = useState<number | null>(null);
+	const respondRef = useRef((_id: string, _response: UiExtensionDialogResponse) => {});
 
 	useEffect(() => {
 		const onFocus = () => { focusVersion.current += 1; };
@@ -128,13 +156,19 @@ export function ExtensionDialogHost({ children, chatVisible, notificationTarget 
 		let mounted = true;
 		const isCurrent = () => mounted && scope === generation.current && currentBridge.current === bridge;
 		const unsubscribe = bridge.onExtensionDialog((request) => {
+			if (questionAutoResolutionRef.current && isQuestionAutoResolutionKind(request.kind)) autoEligibleIds.current.add(request.id);
 			if (isCurrent() && !closedIds.current.has(request.id)) setQueue((current) => ({ bridge, requests: mergeRequests(current.bridge === bridge ? current.requests : [], [request]) }));
 		});
 		const unsubscribeClosed = bridge.onExtensionDialogClosed((id) => {
 			if (isCurrent()) closeRequest(id, scope);
 		});
 		void bridge.getPendingExtensionDialogs().then((pendingRequests) => {
-			if (isCurrent()) setQueue((current) => ({ bridge, requests: mergeRequests(current.bridge === bridge ? current.requests : [], pendingRequests.filter((request) => !closedIds.current.has(request.id))) }));
+			if (isCurrent()) {
+				for (const request of pendingRequests) {
+					if (questionAutoResolutionRef.current && isQuestionAutoResolutionKind(request.kind)) autoEligibleIds.current.add(request.id);
+				}
+				setQueue((current) => ({ bridge, requests: mergeRequests(current.bridge === bridge ? current.requests : [], pendingRequests.filter((request) => !closedIds.current.has(request.id))) }));
+			}
 		}).catch(() => {});
 		return () => {
 			mounted = false;
@@ -184,6 +218,53 @@ export function ExtensionDialogHost({ children, chatVisible, notificationTarget 
 		return () => window.clearTimeout(timer);
 	}, [active?.id, active?.timeout, bridge]);
 
+	useEffect(() => {
+		// zcode semantics: the preference off cancels every pending countdown;
+		// re-enabling only arms questions that arrive afterwards.
+		if (!questionAutoResolution) {
+			autoEligibleIds.current.clear();
+			setAutoCancelRemaining(null);
+		}
+	}, [questionAutoResolution]);
+
+	useEffect(() => {
+		const request = active;
+		if (!request || !bridge || !questionAutoResolution || !autoEligibleIds.current.has(request.id)) { setAutoCancelRemaining(null); return; }
+		const startedAt = Date.now();
+		let snoozed = false;
+		let ticker: number | undefined;
+		const stop = () => {
+			if (ticker !== undefined) window.clearInterval(ticker);
+			ticker = undefined;
+			setAutoCancelRemaining(null);
+		};
+		const tick = () => {
+			if (snoozed) return;
+			const plan = planQuestionAutoResolution(Date.now() - startedAt);
+			if (plan.state === 'expired') {
+				stop();
+				void Promise.resolve(respondRef.current(request.id, null)).catch(() => {});
+				return;
+			}
+			setAutoCancelRemaining(plan.state === 'countdown' ? plan.remainingMs : null);
+		};
+		tick();
+		ticker = window.setInterval(tick, 500);
+		// The first interaction with the question permanently pauses its countdown.
+		const onInteract = (event: Event) => {
+			if (snoozed) return;
+			const node = event.target;
+			if (node instanceof Node && cardRef.current?.contains(node)) { snoozed = true; stop(); }
+		};
+		document.addEventListener('pointerdown', onInteract, true);
+		document.addEventListener('focusin', onInteract, true);
+		return () => {
+			stop();
+			document.removeEventListener('pointerdown', onInteract, true);
+			document.removeEventListener('focusin', onInteract, true);
+		};
+	}, [active?.id, bridge, questionAutoResolution]);
+
 	async function respond(id: string, response: UiExtensionDialogResponse) {
 		if (!bridge || pendingId.current !== null || activeId.current !== id || closedIds.current.has(id)) return;
 		const scope = generation.current;
@@ -201,6 +282,7 @@ export function ExtensionDialogHost({ children, chatVisible, notificationTarget 
 			if (scope === generation.current && currentBridge.current === bridge && pendingId.current === id) { pendingId.current = null; pendingFocus.current = null; setPending(false); }
 		}
 	}
+	respondRef.current = respond;
 
 	function dismissNotice(id: string) {
 		if (!bridge || closedIds.current.has(id)) return;
@@ -237,6 +319,7 @@ export function ExtensionDialogHost({ children, chatVisible, notificationTarget 
 			<Icon name="message" width="16" height="16" />
 			<div className="pd-extension-request-heading"><span>{t('extension.request')}</span><h2 id={titleId}>{active.title}</h2></div>
 			{queuedCount > 0 && <span className="pd-extension-request-count">{t('extension.queued', { count: queuedCount })}</span>}
+			{autoCancelRemaining !== null && <span className="pd-extension-request-count" data-auto-cancel="question" title={t('extension.autoCancelTitle')}>{t('extension.autoCancelIn', { time: formatQuestionCountdown(autoCancelRemaining) })}</span>}
 			<button type="button" className="pd-extension-request-toggle" aria-label={t(collapsed ? 'extension.expand' : 'extension.collapse')} aria-expanded={!collapsed} aria-controls={bodyId} onClick={() => setCollapsed((current) => !current)}><Icon name={collapsed ? 'chevronDown' : 'chevronUp'} width="16" height="16" /></button>
 		</header>
 		<div id={bodyId} className="pd-extension-request-body" hidden={collapsed}>
@@ -257,7 +340,8 @@ export function ExtensionDialogHost({ children, chatVisible, notificationTarget 
 	// it; the pending signal stays independent of chatVisible so AppShell can
 	// return to the conversation even while the card is hidden.
 	const hasActiveRequest = Boolean(active);
-	useEffect(() => { publishPendingRequest(hasActiveRequest); return () => publishPendingRequest(false); }, [hasActiveRequest]);
+	const hasAnyRequest = requests.some((request) => request.kind !== 'notify');
+	useEffect(() => { publishPendingRequests(hasActiveRequest, hasAnyRequest); return () => publishPendingRequests(false, false); }, [hasActiveRequest, hasAnyRequest]);
 	return <ExtensionDialogContext.Provider value={hasActiveRequest && chatVisible && !modalTarget ? card : null}>
 		{children}
 		{shownNotices.length > 0 && notificationTarget && createPortal(<ExtensionNotifications requests={shownNotices} onDismiss={dismissNotice} />, notificationTarget)}

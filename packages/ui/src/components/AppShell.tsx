@@ -10,7 +10,7 @@ import { Sidebar } from './Sidebar';
 import { Icon } from './Icons';
 import { HoverTooltip } from './HoverTooltip';
 import { WindowControls } from './WindowControls';
-import { ExtensionDialogHost, useExtensionRequestPending } from './ExtensionDialogHost';
+import { ExtensionDialogHost, useExtensionRequestPending, useAnyExtensionRequestPending } from './ExtensionDialogHost';
 import { UpdateNotice } from './UpdateNotice';
 import { OperationFeedback } from './OperationFeedback';
 import { FolderProjectDropZone } from './FolderProjectDropZone';
@@ -102,19 +102,28 @@ export function AppShell() {
 		previousStatusRef.current = agentStatus;
 		if (shouldPlayTaskCompletionSound(previous, agentStatus, document.hasFocus())) void playTaskNotificationSound();
 	}, [agentStatus]);
-	// Extension questions only render above the chat composer; when one arrives
-	// while another view is showing, return to the conversation instead of popping up.
+	// Extension questions only render above the chat composer; when one for the OPEN
+	// conversation arrives while another view is showing, return to it instead of
+	// popping up. Questions from other conversations never switch the view — their
+	// sidebar row already holds the waiting indicator (zcode per-task attention).
 	const extensionRequestPending = useExtensionRequestPending();
+	const anyExtensionRequestPending = useAnyExtensionRequestPending();
 	const previousExtensionPendingRef = useRef(false);
+	const previousAnyExtensionPendingRef = useRef(false);
 	useEffect(() => {
 		const previous = previousExtensionPendingRef.current;
 		previousExtensionPendingRef.current = extensionRequestPending;
 		// Only the rising edge switches: browsing plugins while a question waits
 		// must not yank the user back on every render.
 		if (!previous && extensionRequestPending && !paiMode) setMainView('chat');
-		// A run waiting on approval stalls silently in the background; chime like a finished task.
-		if (!previous && extensionRequestPending && !document.hasFocus()) void playTaskNotificationSound();
 	}, [extensionRequestPending, paiMode]);
+	useEffect(() => {
+		const previous = previousAnyExtensionPendingRef.current;
+		previousAnyExtensionPendingRef.current = anyExtensionRequestPending;
+		// A run waiting on a question stalls silently in the background — in ANY
+		// conversation; chime like a finished task without stealing the view.
+		if (!previous && anyExtensionRequestPending && !document.hasFocus()) void playTaskNotificationSound();
+	}, [anyExtensionRequestPending]);
 	useEffect(() => { if (!paiMode) writeStoredPreference('pi-desktop.workbench-width', String(workbenchWidth)); }, [paiMode, workbenchWidth]);
 	useEffect(() => { if (workbenchOpen && narrow) setSidebarOpen(false); }, [workbenchOpen, narrow]);
 	const resizeStart = useRef<{ x: number; width: number } | null>(null);

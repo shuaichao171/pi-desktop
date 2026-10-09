@@ -534,6 +534,8 @@ export interface UiExtensionDialogRequest {
   timeout?: number;
   notificationType?: 'info' | 'warning' | 'error';
   approval?: UiApprovalDetails;
+  /** Conversation that raised the question (zcode per-task interactions). The renderer only shows the card while that conversation is open; absent means legacy/global. */
+  scope?: { cwd: string; sessionPath: string | null; sessionId: string | null };
 }
 
 export interface UiToolActivity {

@@ -2633,7 +2633,13 @@ export class AgentService {
 		const service: SingleAgentService = new SingleAgentService(
 			(cwd) => this.withRuntimeWait(service, { phase: 'waiting-approval' }, () => this.requestProjectTrust(cwd)),
 			(request, signal) => request.kind === 'notify' ? this.requestExtensionDialog(request, signal)
-				: this.withRuntimeWait(service, { phase: request.kind === 'confirm' ? 'waiting-approval' : 'waiting-input', message: request.title }, () => this.requestExtensionDialog(request, signal)),
+			: this.withRuntimeWait(service, { phase: request.kind === 'confirm' ? 'waiting-approval' : 'waiting-input', message: request.title }, () => {
+				// zcode per-task interactions: carry the asking conversation so the
+				// renderer shows the card only while that conversation is open. Captured at
+				// raise time; the sessionId is the stable key across fresh-session persistence.
+				const snapshot = service.getSnapshot();
+				return this.requestExtensionDialog({ ...request, scope: { cwd: service.cwd, sessionPath: snapshot.sessionPath, sessionId: snapshot.sessionId } }, signal);
+			}),
 			this.projectTrustByCwd, (path) => {
 			if (this.transition || this.isSessionReserved(path)) throw new Error('会话正在切换或删除，请稍后重试');
 			if ([...this.contexts.values()].some((context) => context !== service && context.getSnapshot().sessionPath === path)) {
