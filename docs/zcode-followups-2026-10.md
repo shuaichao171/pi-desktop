@@ -19,6 +19,7 @@
 | 14 | 归档两击确认＋乐观元数据更新 | 侧栏会话行归档按钮 | `TaskList.tsx`/`TaskListItem.tsx`、`zcodeTaskServiceAdapter.ts`（setOverlay） |
 | 15 | 批量删除单刷新＋预检跳过＋未读 CAS 水位线 | 归档视图多选删除、后台未读标记 | `zcodeTaskServiceAdapter.ts`（deleteArchivedTasks）、`taskIndexRepo.ts`（clearTaskUnreadIfMatches/last_unread_at） |
 | 16 | 快速切换对话（导航点击永不拒绝） | 侧栏会话行、「新对话」、项目「＋」与菜单 | `useWorkspaceTaskNavigation.ts`（handleSelectTask 同步本地选中）、`AgentService.runTransition`（最新者胜队列） |
+| 17 | 运行层置顶稳定排序（消除多会话并发时行跳动） | 侧栏会话列表排序 | `taskListOrdering.ts`（两层排序：运行层禁用 updatedAt）、`taskListRowActivity.ts` |
 
 ## 行为细节
 
@@ -47,6 +48,8 @@
 **批量删除与未读一致性（15）**：三处对齐。① 归档视图多选删除改为 `deleteSessions` 批量接口（对齐 deleteArchivedTasks）：逐条桥接调用保持顺序独立（一项失败不回滚其它），批次只做一次预检 `listSessions` 与一次收尾刷新，替代旧实现 N 条会话 N 次全量重拉；当前会话在批次内时仅切一次新会话。② 预检复验选择有效性（对齐 deleteArchivedTask 同事务 `archived===1` 守卫）：确认框停留期间若某会话被移出归档或已不存在，该条以「已跳过」报告而非报错，对话框保持打开供阅读，其余照常删除。③ 未读标记加版本水位线（对齐 `unread_at`/`last_unread_at` 与 `clearTaskUnreadIfMatches`）：每次后台终态盖严格递增的 `unreadAt` 戳（同毫秒 +1），清除分两级——打开会话无条件清（用户正在看），侧栏／菜单的「标记已读」携带渲染层快照的 `expectedUnreadAt` 做 CAS，戳更新则拒绝清除保留圆点；打开会话后迟到的排队终态直接抑制不亮灯；回收站快照剔除该戳保持边车 schema 稳定，旧布尔数据无戳时退化为原行为。验证：`tests/agent-ipc.test.mjs` 新增七断言单元测试（盖戳递增、旧戳拒清、当前戳清、打开抑制）；`tests/fixtures/sidebar-titles/bulk-delete.mjs` 真实渲染器场景覆盖单刷新计数（恰好预检+收尾两次）、跳过与删除并存、关闭后视图收敛。
 
 **快速切换对话（16）**：对齐 zcode「选择是本地即时操作」的语义，消除切换期忙碌卡死。zcode 的 `handleSelectTask` 同步完成本地选中（仅拦模型运行时重建的短暂窗口），对话内容由持久化快照首屏、`resumeTask` 复用 workspace 级进程后台补齐。三层改造：① 渲染层解除点击门闩——`openSession` 不再忽略导航中的新点击，点击当前会话短路（仅清未读）；会话行、「新对话」、项目「＋」与「打开项目」菜单去掉 `status === 'starting' || navigating` 禁用，慢切换期间侧栏永远可点。② agent 侧 `runTransition` 导航类操作（switchSession/newSession/switchWorkspace/activateResidentSession//new）改为「最新者胜」队列：正在运行的切换不可中断（其上下文加载完仍留作热缓存，切回即命中 warm 激活），新导航排队等待，更新的导航取代还在排队的旧导航（旧请求以「已有更新的切换请求」明确拒绝，渲染端导航代次静默吞掉）；init、删除、移除项目保持严格拒绝，避免破坏性/启动操作被静默取消；交接处同步接管切换槽并复检 closing/plugin/provider，不留异步空隙。③ `switchSession`/`newSession` 的 cwd 改在切换体执行时读取：排在其它导航后面时工作区可能已被更新点击换过，旧工作区会话应按「不属于当前工作区」拒绝而非误激活。既有 keep-warm 预览与 `MAX_LOADED_CONTEXTS` 缓存不变。验证：`tests/agent.test.mjs` 新增队列测试（慢切换中排队、取代拒绝、init 仍严格拒绝、最终收敛与 warm 激活）；`tests/fixtures/session-switch-race/scenarios.mjs` 真实渲染器场景（导航滞留期间行不禁用、第二次点击仍发出导航、释放后最后点击胜出）。
+
+**运行层置顶稳定排序（17）**：对齐 zcode `taskListOrdering.ts` 的两层排序，消除多会话并发时侧栏行不断换位。根因：`runtimeModified` 在每个轮次边界（busy/idle 状态事件）刷新，任何一条会话开始或结束一轮都会触发 `sessions-changed` → 列表按 `modified` 降序重排，并发运行的多条会话彼此以及与空闲会话之间反复换位。zcode 的解法：运行中任务整体置顶成一层，层内绝不允许读 updatedAt（包括次级排序），用 createdAt 降序＋taskId 稳定决胜；非运行层才服从用户时间偏好。落地：① `UiSessionSummary` 新增可选 `created`（会话头部 timestamp），磁盘摘要从 SessionInfo.created 带出，运行中上下文从 sessionManager 头部带出，乐观更新继承既有字段；② `selectSidebarSessions` 改两层比较器——`runtime.phase === 'running'` 的行置顶，层内按 created 降序、无 created 的排在有 created 之后保持插入序，waiting/failed/idle 留在时间层（waiting 停靠不再触发状态事件，不会抖动；运行层成员口径与 zcode 一致只认 running）；`oldest` 偏好只翻转时间层，运行层排序不受影响。效果：会话开始运行时一次性跳到顶，运行期间任何轮次边界都不再换位；结束时一次性回到时间层新位置。验证：`tests/sidebar-organization.test.mjs` 新增测试（运行层 created 序、waiting 归层、oldest 偏好不变运行层、modified 抖动不动、落定后单次归位）。
 
 ## 依赖说明
 

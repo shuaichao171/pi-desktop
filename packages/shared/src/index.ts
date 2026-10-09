@@ -690,6 +690,8 @@ export interface UiSessionSummary {
   name?: string;
   firstMessage: string;
   modified: string;
+  /** Session creation time (header timestamp). Stable key for the running tier — unlike modified it never advances while a turn streams (zcode createdAt semantics). */
+  created?: string;
   messageCount: number;
   pinned?: boolean;
   archived?: boolean;
@@ -898,6 +900,10 @@ export interface UiSaveInstructionResult {
 export interface UiDesktopSettings {
   notificationsEnabled: boolean;
   closeBehavior: 'tray' | 'quit';
+  /** Keep the OS awake (powerSaveBlocker) while a task or automation run is active. */
+  keepAwakeWhileRunning: boolean;
+  /** Periodic update checks download and install automatically (updates page toggle). */
+  autoInstallUpdates: boolean;
   conversationStorageDirectory: string;
   /** Which Pi engine drives the agent host (restart to apply). */
   piEngine: UiPiEngineSelection;
@@ -1076,7 +1082,7 @@ export interface AgentBridge extends InputFeatureBridge, DataFeaturesBridge, Wor
   /** Reveals a conversation file in the OS file manager (zcode session context menu). */
   revealSessionFile(path: string): Promise<void>;
   updateSessionMeta(path: string, patch: UiSessionMetaPatch): Promise<void>;
-  /** Moves a conversation file to the app trash and clears its desktop metadata (3.3). */
+  /** Permanently deletes a conversation file (native pi semantics) and clears its desktop metadata. */
   deleteSession(path: string): Promise<void>;
   listSessionGroups(): Promise<UiSessionGroup[]>;
   updateSessionGroups(change: UiSidebarGroupChange): Promise<UiSessionGroup[]>;

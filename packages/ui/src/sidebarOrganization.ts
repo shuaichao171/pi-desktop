@@ -175,8 +175,22 @@ export function selectSidebarSessions(
     .filter((session) => Boolean(session.archived) === options.archived
       && (options.filter !== 'unread' || session.unread)
       && (options.filter !== 'pinned' || session.pinned))
-    .map((session, index) => ({ session, index, time: Date.parse(session.modified) }))
+    .map((session, index) => ({ session, index, time: Date.parse(session.modified), created: Date.parse(session.created ?? '') }))
     .sort((left, right) => {
+      // zcode two-tier ordering (taskListOrdering): running conversations float to the
+      // top as one tier and that tier NEVER reads modified — concurrent runs bump it
+      // on every turn boundary and would swap rows mid-stream. Creation time is the
+      // stable key; entries without it keep insertion order.
+      const leftRunning = left.session.runtime?.phase === 'running';
+      const rightRunning = right.session.runtime?.phase === 'running';
+      if (leftRunning !== rightRunning) return leftRunning ? -1 : 1;
+      if (leftRunning) {
+        const leftCreated = Number.isFinite(left.created);
+        const rightCreated = Number.isFinite(right.created);
+        if (leftCreated !== rightCreated) return leftCreated ? -1 : 1;
+        if (leftCreated && left.created !== right.created) return right.created - left.created;
+        return left.index - right.index;
+      }
       const leftValid = Number.isFinite(left.time);
       const rightValid = Number.isFinite(right.time);
       if (leftValid !== rightValid) return leftValid ? -1 : 1;

@@ -151,7 +151,7 @@ async function listWorkspaceSessions(cwd: string) {
 async function workspaceSessions(cwd: string): Promise<UiSessionSummary[]> {
 	return (await listWorkspaceSessions(cwd)).map((session) => ({
 		path: session.path, id: session.id, name: session.name,
-		firstMessage: session.firstMessage, modified: session.modified.toISOString(),
+		firstMessage: session.firstMessage, modified: session.modified.toISOString(), created: session.created.toISOString(),
 		messageCount: session.messageCount,
 	}));
 }
@@ -367,7 +367,7 @@ class SingleAgentService {
 		const firstMessage = firstUser?.type === 'message' && firstUser.message.role === 'user'
 			? userText(firstUser.message) : this.state.messages.find((message) => message.role === 'user')?.text ?? '';
 		return { path: this.state.sessionPath, id: this.state.sessionId, name: manager?.getSessionName(), firstMessage,
-			modified: this.runtimeModified, messageCount: this.state.messages.length, runtime };
+			modified: this.runtimeModified, ...(manager ? { created: manager.getHeader()?.timestamp } : {}), messageCount: this.state.messages.length, runtime };
 	}
 
 	matchesSession(scope: { cwd: string; sessionId: string; sessionPath: string | null }): boolean {

@@ -304,3 +304,30 @@ test('date groups remain on calendar dates across spring and fall DST transition
   });
   assert.equal(result.status, 0, result.stderr || result.stdout);
 });
+
+test('running sessions form a stable top tier ordered by creation, never by modified (zcode two-tier)', () => {
+  const sessions = [
+    session('idle-old', { modified: '2026-09-20T08:00:00Z', created: '2026-09-01T08:00:00Z' }),
+    session('run-new', { modified: '2026-09-24T09:00:00Z', created: '2026-09-10T08:00:00Z', runtime: { phase: 'running' } }),
+    session('idle-new', { modified: '2026-09-24T10:00:00Z', created: '2026-09-05T08:00:00Z' }),
+    session('waiting', { modified: '2026-09-24T12:00:00Z', created: '2026-09-02T08:00:00Z', runtime: { phase: 'waiting-input' } }),
+    session('run-old', { modified: '2026-09-24T07:00:00Z', created: '2026-09-15T08:00:00Z', runtime: { phase: 'running' } }),
+    session('run-nocreated', { modified: '2026-09-24T11:00:00Z', runtime: { phase: 'running' } }),
+  ];
+  // Running tier floats to the top and sorts by created desc (entries without
+  // created keep insertion order after the dated ones); waiting stays in the
+  // time tier; idle sorts by modified desc as before.
+  assert.deepEqual(paths(selectActive(sessions)), ['run-old', 'run-new', 'run-nocreated', 'waiting', 'idle-new', 'idle-old']);
+  // The oldest preference only flips the time tier; the running tier keeps its
+  // stable creation ordering either way.
+  assert.deepEqual(paths(selectActive(sessions, { sort: 'oldest' })), ['run-old', 'run-new', 'run-nocreated', 'idle-old', 'idle-new', 'waiting']);
+  // Regression: turn-boundary modified bumps on any running conversation must
+  // never reorder the list while several conversations run concurrently.
+  const churned = sessions.map((entry) => entry.runtime?.phase === 'running'
+    ? { ...entry, modified: '2026-09-24T23:59:59Z' } : entry);
+  assert.deepEqual(paths(selectActive(churned)), ['run-old', 'run-new', 'run-nocreated', 'waiting', 'idle-new', 'idle-old'],
+    'modified churn on running rows does not move them');
+  // When a run settles it re-enters the time tier exactly once, at its new position.
+  const settled = churned.map((entry) => entry.path === 'run-new' ? { ...entry, runtime: undefined } : entry);
+  assert.deepEqual(paths(selectActive(settled)), ['run-old', 'run-nocreated', 'run-new', 'waiting', 'idle-new', 'idle-old']);
+});
