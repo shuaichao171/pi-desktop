@@ -289,8 +289,10 @@ export interface UiDiscoveredProviderModel {
   maxTokens?: number;
   reasoning?: boolean;
   input?: ('text' | 'image')[];
-  /** Only present when advertised by the provider, never inferred from its name. */
+  /** Present when advertised by the provider, or filled from builtin rules (see inferred). */
   thinkingLevels?: UiThinkingLevel[];
+  /** True when reasoning/thinkingLevels were filled by builtin rules, not advertised by the provider. */
+  inferred?: boolean;
 }
 
 export interface UiProviderModelDiscovery {

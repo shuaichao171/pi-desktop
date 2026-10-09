@@ -1,4 +1,5 @@
 import type { UiDiscoveredProviderModel, UiProviderApi, UiProviderModelDiscovery, UiThinkingLevel } from '@pidesktop/shared';
+import { guessContextWindow, guessReasoning } from './modelReasoningRules.ts';
 
 export interface DiscoverProviderModelsOptions {
 	baseUrl: string;
@@ -31,6 +32,9 @@ const MAX_TOTAL_BYTES = 8_000_000;
 // Slow proxy tunnels can need 15s+ just for the upstream handshake, so a manual
 // fetch must outlive them; failures still surface through the network errors.
 const TIMEOUT_MS = 45_000;
+// Routers that whitelist known CLI clients still see an honest agent name here;
+// users can override it with a custom User-Agent header when a proxy demands one.
+const DEFAULT_USER_AGENT = 'pi-desktop model-discovery';
 const record = (value: unknown): value is JsonObject => value !== null && typeof value === 'object' && !Array.isArray(value);
 const safeText = (value: unknown, maximum = 200): string | undefined => typeof value === 'string' && value.trim().length > 0 && value.trim().length <= maximum && !/[\u0000-\u001f\u007f]/u.test(value) ? value.trim() : undefined;
 const positiveInteger = (...values: unknown[]): number | undefined => values.find((value) => Number.isSafeInteger(value) && Number(value) > 0 && Number(value) <= 100_000_000) as number | undefined;
@@ -75,7 +79,9 @@ function requestHeaders(options: DiscoverProviderModelsOptions): Headers {
 			const name = options.api === 'anthropic-messages' ? 'x-api-key' : options.api === 'google-generative-ai' ? 'x-goog-api-key' : 'authorization';
 			if (!headers.has(name)) headers.set(name, name === 'authorization' ? `Bearer ${key}` : key);
 		}
+		// Default node/curl agents are blocked by some proxy routers; never override a custom UA.
 		if (options.api === 'anthropic-messages' && !headers.has('anthropic-version')) headers.set('anthropic-version', '2023-06-01');
+		if (!headers.has('user-agent')) headers.set('user-agent', DEFAULT_USER_AGENT);
 		return headers;
 	} catch { throw new ProviderDiscoveryError('invalid_request', '模型发现请求头或 API Key 无效'); }
 }
@@ -85,12 +91,14 @@ function thinkingLevels(value: JsonObject): UiThinkingLevel[] | undefined {
 	const effort = object(capabilities.effort);
 	const thinking = object(capabilities.thinking);
 	const candidates = [value.thinkingLevels, value.thinking_levels, value.supportedThinkingLevels, value.reasoning_efforts,
-		value.supported_reasoning_efforts, effort.levels, effort.supported_levels, thinking.levels];
+		value.supported_reasoning_efforts, value.supported_reasoning_levels, value.reasoning_levels, effort.levels, effort.supported_levels, thinking.levels];
 	const advertised = candidates.find(Array.isArray) as unknown[] | undefined;
 	const result = new Set<UiThinkingLevel>();
 	for (const item of advertised ?? []) {
-		if (item === 'none') result.add('off');
-		else if (LEVELS.includes(item as UiThinkingLevel)) result.add(item as UiThinkingLevel);
+		// Codex-style providers (e.g. Zhipu) advertise levels as objects: {effort: "low"}.
+		const level = typeof item === 'string' ? item : safeText(object(item).effort ?? object(item).level, 40);
+		if (level === 'none') result.add('off');
+		else if (level !== undefined && LEVELS.includes(level as UiThinkingLevel)) result.add(level as UiThinkingLevel);
 	}
 	// Anthropic advertises supported effort levels as booleans on capabilities.effort.
 	if (effort.supported !== false) for (const level of LEVELS) if (effort[level] === true) result.add(level);
@@ -100,7 +108,7 @@ function thinkingLevels(value: JsonObject): UiThinkingLevel[] | undefined {
 function parseModel(value: unknown, api: UiProviderApi): DiscoveredProviderModel | null {
 	if (!record(value)) return null;
 	const google = api === 'google-generative-ai';
-	const id = safeText(google ? (typeof value.name === 'string' ? value.name.replace(/^models\//u, '') : value.id) : value.id);
+	const id = safeText(google ? (typeof value.name === 'string' ? value.name.replace(/^models\//u, '') : value.id) : (value.id ?? value.slug));
 	if (!id) return null;
 	// Gemini includes embedding-only models, which cannot serve generateContent requests.
 	if (google && Array.isArray(value.supportedGenerationMethods) && !value.supportedGenerationMethods.some((method) => method === 'generateContent' || method === 'streamGenerateContent')) return null;
@@ -108,18 +116,23 @@ function parseModel(value: unknown, api: UiProviderApi): DiscoveredProviderModel
 	const name = safeText(value.display_name ?? value.displayName ?? (google ? undefined : value.name));
 	if (name) result.name = name;
 	const topProvider = object(value.top_provider);
-	const context = positiveInteger(value.contextWindow, value.context_window, value.context_length, value.max_context_length, value.max_input_tokens, value.inputTokenLimit, topProvider.context_length);
+	const context = positiveInteger(value.contextWindow, value.context_window, value.context_length, value.max_context_length, value.max_context_window, value.max_input_tokens, value.inputTokenLimit, topProvider.context_length);
 	const output = positiveInteger(value.maxTokens, value.max_tokens, value.max_output_tokens, value.outputTokenLimit, topProvider.max_completion_tokens);
 	if (context !== undefined) result.contextWindow = context;
 	// Some APIs (notably Gemini) report independent input and output limits.
 	// Preserve both advertised numbers; configuration validation owns their use.
 	if (output !== undefined) result.maxTokens = output;
 	const capabilities = object(value.capabilities);
-	const reasoning = boolean(value.reasoning, value.supports_reasoning, value.supportsThinking, value.thinking, capabilities.reasoning, object(capabilities.reasoning).supported, capabilities.thinking, object(capabilities.thinking).supported);
+	const reasoning = boolean(value.reasoning, value.supports_reasoning, value.supportsThinking, value.thinking, value.supports_reasoning_summaries, capabilities.reasoning, object(capabilities.reasoning).supported, capabilities.thinking, object(capabilities.thinking).supported);
 	const levels = thinkingLevels(value);
 	if (levels) result.thinkingLevels = levels;
 	if (reasoning !== undefined) result.reasoning = reasoning;
 	else if (levels?.some((level) => level !== 'off') || (Array.isArray(value.supported_parameters) && value.supported_parameters.some((parameter) => parameter === 'reasoning' || parameter === 'reasoning_effort'))) result.reasoning = true;
+	else {
+		// Codex-style responses expose the default effort instead of a reasoning boolean.
+		const defaultLevel = safeText(value.default_reasoning_level, 40);
+		if (defaultLevel !== undefined && !['none', 'disabled', 'off'].includes(defaultLevel)) result.reasoning = true;
+	}
 	const modalities = [value.input, value.input_modalities, object(value.architecture).input_modalities].find(Array.isArray) as unknown[] | undefined;
 	if (modalities?.includes('text')) result.input = modalities.includes('image') ? ['text', 'image'] : ['text'];
 	return result;
@@ -181,7 +194,8 @@ async function fetchPage(url: URL, headers: Headers, signal: AbortSignal, fetchI
 		}
 		if (!response.ok) {
 			await response.body?.cancel();
-			throw new ProviderDiscoveryError('http', `获取模型列表失败（HTTP ${response.status}）`, response.status);
+			const hint = response.status === 401 || response.status === 403 ? '；部分中转站只允许特定客户端 User-Agent，可在自定义请求头中添加' : '';
+			throw new ProviderDiscoveryError('http', `获取模型列表失败（HTTP ${response.status}）${hint}`, response.status);
 		}
 		return response;
 	}
@@ -199,7 +213,8 @@ async function discover(options: DiscoverProviderModelsOptions, url: URL, header
 	if (anthropic) url.searchParams.set('limit', '1000');
 	for (let page = 0; page < MAX_PAGES; page += 1) {
 		const json = await readJson(await fetchPage(url, headers, signal, fetchImpl), budget);
-		const entries = google ? json.models : json.data;
+		// OpenAI-style lists use data; Codex-style (e.g. Zhipu) use a top-level models array.
+		const entries = google ? json.models : (Array.isArray(json.data) ? json.data : json.models);
 		if (!Array.isArray(entries)) throw new ProviderDiscoveryError('invalid_response', '供应商返回的模型列表格式无效');
 		for (const entry of entries) {
 			const model = parseModel(entry, options.api);
@@ -215,12 +230,26 @@ async function discover(options: DiscoverProviderModelsOptions, url: URL, header
 		cursors.add(cursor);
 		url.searchParams.set(google ? 'pageToken' : 'after_id', cursor);
 	}
+	// Rule-based fallback: builtin families fill only what the provider did not advertise,
+	// so a later discovery returning real data always overrides these guesses.
+	let inferredCount = 0;
+	for (const model of models.values()) {
+		const guess = guessReasoning(model.id);
+		const guessWindow = guessContextWindow(model.id);
+		if (!guess && guessWindow === undefined) continue;
+		let filled = false;
+		if (guess && model.reasoning === undefined) { model.reasoning = guess.reasoning; filled = true; }
+		if (model.reasoning === true && model.thinkingLevels === undefined && guess?.levels) { model.thinkingLevels = guess.levels; filled = true; }
+		if (model.contextWindow === undefined && guessWindow !== undefined) { model.contextWindow = guessWindow; filled = true; }
+		if (filled) { model.inferred = true; inferredCount += 1; }
+	}
 	if ([...models.values()].some((model) => model.contextWindow === undefined || model.maxTokens === undefined || model.reasoning === undefined)) {
-		warnings.add('部分模型未返回完整的上下文、输出限额或思考能力，请在保存前确认；未根据模型名称推测能力。');
+		warnings.add('部分模型未返回完整的上下文、输出限额或思考能力，请在保存前确认。');
 	}
 	if ([...models.values()].some((model) => model.reasoning === true && model.thinkingLevels === undefined)) {
 		warnings.add('部分模型支持思考，但接口未返回支持的思考强度，请手动确认可用级别。');
 	}
+	if (inferredCount > 0) warnings.add(`已按内置规则为 ${inferredCount} 个模型推测思考能力/上下文窗口（标记为“推测”）；重新获取且供应商播报真实数据后将自动覆盖。`);
 	return { models: [...models.values()], warnings: [...warnings] };
 }
 

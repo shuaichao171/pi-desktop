@@ -384,6 +384,13 @@ button:focus-visible, textarea:focus-visible, input:focus-visible { outline: 2px
 @keyframes pd-session-loading-pulse { 0%, 100% { opacity: .35; } 50% { opacity: .75; } }
 @media (prefers-reduced-motion: reduce) { .pd-session-loading-mark { animation: none; opacity: .55; } }
 
+/* Slim switch indicator (zcode no-blank-out): overlays the kept conversation. */
+.pd-session-switching { position: absolute; z-index: 6; top: 0; left: 0; right: 0; display: flex; justify-content: center; padding: 6px 16px 0; pointer-events: none; }
+.pd-session-switching-track { width: min(280px, 60%); height: 3px; border-radius: var(--pd-radius-pill); background: var(--pd-border-soft); overflow: hidden; }
+.pd-session-switching-fill { display: block; height: 100%; width: 40%; border-radius: inherit; background: var(--pd-brand); animation: pd-session-switching-slide 1.1s ease-in-out infinite; }
+@keyframes pd-session-switching-slide { 0% { transform: translateX(-110%); } 100% { transform: translateX(285%); } }
+@media (prefers-reduced-motion: reduce) { .pd-session-switching-fill { animation: none; width: 100%; opacity: .6; } }
+
 .pd-tool-panel { margin-top: 12px; border: 1px solid var(--pd-border); border-radius: var(--pd-radius-md); background: var(--pd-surface); }
 .pd-tool-summary { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 35px; padding: 0 11px; border: 0; background: transparent; color: var(--pd-text); font-size: var(--pd-font-caption); text-align: left; }
 .pd-tool-summary:hover { color: var(--pd-text); }

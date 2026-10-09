@@ -68,6 +68,16 @@ function SessionLoading() {
 	);
 }
 
+/** Slim top progress bar shown while a switch keeps the previous conversation visible (zcode no-blank-out). */
+function SessionSwitchingBar() {
+	const { t } = useT();
+	return (
+		<div className="pd-session-switching" role="status" aria-label={t('chat.loadingSession')}>
+			<span className="pd-session-switching-track" aria-hidden="true"><span className="pd-session-switching-fill" /></span>
+		</div>
+	);
+}
+
 export interface SearchMessageTarget { sessionPath: string; messageId: string; snippet?: string; requestId: number }
 
 export function ChatView({ onToggleSidebar, onOpenModelManagement, searchTarget, historyControls, navigationError, compact = false, active = true }: { onToggleSidebar(): void; onOpenModelManagement(target: ModelManagementTarget): void; searchTarget?: SearchMessageTarget | null; historyControls?: ReactNode; navigationError?: string | null; compact?: boolean; /** False while another main view hides the chat; rising edges re-apply the remembered reading position (12). */ active?: boolean }) {
@@ -544,6 +554,8 @@ export function ChatView({ onToggleSidebar, onOpenModelManagement, searchTarget,
 
 			<div ref={bodyRef} className={`pd-conversation-body${isEmpty ? ' is-empty' : ''}${extensionRequestPending ? ' has-extension-request' : ''}`}>
 				<div className="pd-chat-content">
+					{/* zcode-style slim switch indicator: overlays the kept conversation instead of blanking it. */}
+					{!isEmpty && layoutPending && <SessionSwitchingBar />}
 					{findOpen && <div className="pd-transcript-find-anchor">
 						<TranscriptFind
 							query={findQuery}
@@ -575,7 +587,8 @@ export function ChatView({ onToggleSidebar, onOpenModelManagement, searchTarget,
 					<div ref={scrollRef} className="pd-transcript" onScroll={handleScroll} onWheel={cancelScrollAnimation} onTouchStart={cancelScrollAnimation} onPointerDown={cancelScrollAnimation} onKeyDown={(event) => {
 						if (['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' '].includes(event.key)) cancelScrollAnimation();
 					}}>
-						{sessionLoading ? <SessionLoading /> : isEmpty ? <EmptyState /> : (
+						{/* zcode no-blank-out: the previous conversation stays visible while the target loads; the full-screen placeholder is only for the very first load when there is no previous content to keep showing. */}
+						{isEmpty ? (sessionLoading ? <SessionLoading /> : <EmptyState />) : (
 							<div ref={messageListRef} className="pd-message-list" style={virtualize ? { display: 'block', position: 'relative', height: `${virtualizer.getTotalSize()}px` } : undefined}>
 								{virtualize && hasOlderHistory && <div className="pd-load-older" role="status"><ActivityLabel active={loadingOlder}>{t(loadingOlder ? 'chat.loadingOlder' : 'chat.hasOlder')}</ActivityLabel></div>}
 								{virtualize

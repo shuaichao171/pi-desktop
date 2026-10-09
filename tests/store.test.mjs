@@ -128,9 +128,11 @@ test('conversation file changes hydrate, replay newer events, and reset across s
   assert.deepEqual(useChatStore.getState().fileChanges, []);
   host.emit(6, { type: 'file-changes', items: [latest], turns: [turn], activeRunId: 'run-1' });
   host.emit(7, { type: 'reset', cwd: 'C:\\second-project' });
-  assert.deepEqual(useChatStore.getState().fileChanges, []);
-  assert.deepEqual(useChatStore.getState().fileChangeTurns, []);
-  assert.equal(useChatStore.getState().fileChangeActiveRunId, null);
+  // zcode no-blank-out: reset re-scopes but keeps the previous content;
+  // the paired ready replaces it wholesale.
+  assert.deepEqual(useChatStore.getState().fileChanges, [latest]);
+  assert.deepEqual(useChatStore.getState().fileChangeTurns, [turn]);
+  assert.equal(useChatStore.getState().fileChangeActiveRunId, 'run-1');
   host.emit(8, { ...baseSnapshot, type: 'ready', fileChanges: [first] });
   const replacement = createBridge();
   useChatStore.getState().setBridge(replacement.bridge);
@@ -550,7 +552,9 @@ test('pending instructions do not leak across session or bridge replacement', as
   oldHost.emit(3, { type: 'queue', count: 1, items: [newItem] });
   assert.deepEqual(useChatStore.getState().queuedMessages, [newItem]);
   oldHost.emit(4, { type: 'reset', cwd: 'C:\\other-project' });
-  assert.deepEqual(useChatStore.getState().queuedMessages, []);
+  // zcode no-blank-out: the queue survives the reset gap like the transcript
+  // and is replaced by the destination session's ready (or a bridge swap).
+  assert.deepEqual(useChatStore.getState().queuedMessages, [newItem]);
   const replacement = createBridge();
   useChatStore.getState().setBridge(replacement.bridge);
   await settle();
@@ -1098,4 +1102,83 @@ test('selecting the current workspace supersedes an in-flight switch to another 
   assert.equal(useChatStore.getState().navigationPending, false);
   await useChatStore.getState().switchWorkspace(baseSnapshot.cwd);
   assert.equal(calls.length, 2, 'selecting the settled current workspace remains a no-op');
+});
+
+test('switching back to a recently left session paints the keep-warm preview before the host resolves', async () => {
+  const userMessage = { id: 'a-user', order: 0, runId: null, role: 'user', text: 'first question', status: 'done' };
+  const aPath = 'C:\sessions\a.jsonl';
+  const bPath = 'C:\sessions\b.jsonl';
+  const host = createBridge({ snapshot: { ...baseSnapshot, sessionId: 'session-a', sessionPath: aPath, messages: [userMessage] } });
+  useChatStore.getState().setBridge(host.bridge);
+  await settle();
+  assert.equal(useChatStore.getState().messages.length, 1);
+
+  const replies = new Map();
+  host.bridge.switchSession = (path) => new Promise((resolve) => replies.set(path, resolve));
+  const toB = useChatStore.getState().switchSession(bPath);
+  await settle();
+  host.emit(2, { type: 'reset', cwd: baseSnapshot.cwd });
+  host.emit(3, { ...baseSnapshot, type: 'ready', sessionId: 'session-b', sessionPath: bPath, messages: [], activities: [] });
+  replies.get(bPath)();
+  await toB;
+  assert.equal(useChatStore.getState().sessionPath, bPath);
+  assert.equal(useChatStore.getState().messages.length, 0, 'session B is empty; its ready replaced the retained A content');
+
+  // Switch back: the cached A conversation must be painted before the RPC resolves.
+  const backToA = useChatStore.getState().switchSession(aPath);
+  await settle();
+  const previewed = useChatStore.getState();
+  assert.deepEqual(previewed.messages, [userMessage], 'keep-warm preview paints the cached conversation instantly');
+  assert.equal(previewed.sessionPath, bPath, 'identity fields stay on the source session until reset/ready re-scope them');
+  assert.equal(previewed.navigationPending, true);
+  host.emit(4, { type: 'reset', cwd: baseSnapshot.cwd });
+  host.emit(5, { ...baseSnapshot, type: 'ready', sessionId: 'session-a', sessionPath: aPath, messages: [userMessage], activities: [] });
+  replies.get(aPath)();
+  await backToA;
+  const settled = useChatStore.getState();
+  assert.equal(settled.sessionPath, aPath);
+  assert.deepEqual(settled.messages, [userMessage]);
+  assert.equal(settled.navigationPending, false);
+
+  // Move off A, delete it, then try to switch back: the evicted preview must not
+  // paint, so only the authoritative ready content ever appears.
+  const away = useChatStore.getState().switchSession(bPath);
+  await settle();
+  host.emit(6, { type: 'reset', cwd: baseSnapshot.cwd });
+  host.emit(7, { ...baseSnapshot, type: 'ready', sessionId: 'session-b2', sessionPath: bPath, messages: [], activities: [] });
+  replies.get(bPath)();
+  await away;
+  host.bridge.deleteSession = async () => {};
+  await useChatStore.getState().deleteSession(aPath);
+  const deleted = useChatStore.getState().switchSession(aPath);
+  await settle();
+  assert.equal(useChatStore.getState().messages.length, 0, 'an evicted preview must not paint the deleted conversation');
+  host.emit(8, { type: 'reset', cwd: baseSnapshot.cwd });
+  host.emit(9, { ...baseSnapshot, type: 'ready', sessionId: 'session-a2', sessionPath: aPath, messages: [userMessage], activities: [] });
+  replies.get(aPath)();
+  await deleted;
+  assert.equal(useChatStore.getState().messages.length, 1);
+});
+
+test('keep-warm previews never cross a bridge replacement', async () => {
+  const userMessage = { id: 'a-user', order: 0, runId: null, role: 'user', text: 'stale question', status: 'done' };
+  const aPath = 'C:\sessions\a.jsonl';
+  const bPath = 'C:\sessions\b.jsonl';
+  const host = createBridge({ snapshot: { ...baseSnapshot, sessionId: 'session-a', sessionPath: aPath, messages: [userMessage] } });
+  useChatStore.getState().setBridge(host.bridge);
+  await settle();
+  host.bridge.switchSession = async () => {};
+  await useChatStore.getState().switchSession(bPath);
+  host.emit(2, { type: 'reset', cwd: baseSnapshot.cwd });
+  host.emit(3, { ...baseSnapshot, type: 'ready', sessionId: 'session-b', sessionPath: bPath, messages: [], activities: [] });
+  assert.equal(useChatStore.getState().messages.length, 0);
+
+  const replacement = createBridge({ snapshot: { ...baseSnapshot, sessionId: 'session-b', sessionPath: bPath, messages: [] } });
+  useChatStore.getState().setBridge(replacement.bridge);
+  await settle();
+  const backToA = useChatStore.getState().switchSession(aPath);
+  await settle();
+  // No preview may be applied from the previous host's cache.
+  assert.equal(useChatStore.getState().messages.length, 0);
+  await backToA;
 });

@@ -292,6 +292,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
 		historyLoadRequest += 1;
 		const generation = bridgeGeneration;
 		sessionListRequests.clear();
+		// A new host may not share session files; keep-warm previews never cross bridges.
+		sessionConversationPreviews.clear();
 		resetSettingsRequests();
 		set({
 			...useChatStore.getInitialState(),
@@ -448,18 +450,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
 					sessionId: null,
 					sessionPath: null,
 					sessions: get().sessionsByWorkspace[event.cwd] ?? [],
-					messages: [],
-					activities: [],
-					runs: [],
-					timelineRevision: get().timelineRevision + 1,
+					// zcode no-blank-out: reset only re-scopes the view. The previous
+					// conversation, its queue and change cards stay rendered until the
+					// paired ready replaces them wholesale — clearing here made every
+					// switch flash a blank transcript.
 					historyGeneration: get().historyGeneration + 1,
-					historyTotal: 0,
 					loadingOlder: false,
-					queuedCount: 0,
-					queuedMessages: [],
-					fileChanges: [],
-					fileChangeTurns: [],
-					fileChangeActiveRunId: null,
 					error: null,
 				});
 				return;
@@ -654,6 +650,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
 		const { bridge, cwd, sessionId, sessionPath, navigationRequestId } = get();
 		if (!bridge || get().loadingOlder || !Number.isInteger(pageSize) || pageSize < 1) return false;
 		if (get().historyTotal <= get().messages.length + get().activities.length) return false;
+		// A keep-warm preview may be painted while the host still holds the source
+		// session; paging against it would fetch the wrong conversation's history.
+		if (get().navigationPending || get().sessionLoading) return false;
 		const request = ++historyLoadRequest;
 		const isCurrentSession = () => {
 			const current = get();
@@ -727,7 +726,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
 			await bridge.switchWorkspace(cwd, options?.fresh === undefined ? undefined : { fresh: options.fresh });
 			sessionOpenMetrics.rpc(request);
 			if (!currentSessionNavigation(bridge, request)) return;
-			await Promise.all([get().refreshWorkspaces(), get().refreshWorkspaceSessions(cwd)]);
+			// List refreshes feed the sidebar, not the conversation view; keep them
+			// off the workspace-switch critical path (zcode keeps navigation local).
+			void get().refreshWorkspaces();
+			void get().refreshWorkspaceSessions(cwd);
 		} catch (error) {
 			if (currentSessionNavigation(bridge, request)) set({ error: errorMessage(error) });
 			throw error;
@@ -788,6 +790,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
 			// The main process rejects deleting the open session; switch to a fresh one first.
 			if (get().sessionPath === path) await get().newSession();
 			await bridge.deleteSession(path);
+			// Deleted conversations must not resurface from the keep-warm cache.
+			sessionConversationPreviews.delete(path);
 			set((state) => ({
 				sessionsByWorkspace: Object.fromEntries(Object.entries(state.sessionsByWorkspace)
 					.map(([workspace, sessions]) => [workspace, sessions.filter((session) => session.path !== path)])),
@@ -854,6 +858,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
 					await bridge.deleteSession(path);
 					deleted.push(path);
 					dropFromCache(path);
+					// Deleted conversations must not resurface from the keep-warm cache.
+					sessionConversationPreviews.delete(path);
 				} catch (cause) { failed[path] = cause instanceof Error ? cause.message : String(cause); }
 			}
 			// One refresh for the whole batch instead of one per deletion (zcode emits a
@@ -1006,11 +1012,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
 		if (!bridge) return;
 		const request = beginSessionNavigation({ cwd: get().cwd, path });
 		const loadingGeneration = beginSessionLoadIndicator(set);
+		// Keep-warm hit: paint the cached conversation before the host loads it.
+		applySessionConversationPreview(path);
 		try {
 			await bridge.switchSession(path);
 			sessionOpenMetrics.rpc(request);
 			if (!currentSessionNavigation(bridge, request)) return;
-			await get().refreshSessions();
+			// Sidebar list refresh stays off the switch critical path (zcode keeps
+			// navigation local): switchSession resolves after the conversation events
+			// were applied, so the refresh only feeds the sidebar and converges later.
+			void get().refreshSessions();
 		} catch (error) {
 			if (currentSessionNavigation(bridge, request)) set({ error: errorMessage(error) });
 			throw error;
@@ -1022,6 +1033,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
 		if (!bridge?.activateResidentSession) return false;
 		const request = beginSessionNavigation({ cwd, path: sessionPath, sessionId });
 		const generation = beginSessionLoadIndicator(set);
+		// Keep-warm hit: paint the cached conversation before activation resolves.
+		if (sessionPath) applySessionConversationPreview(sessionPath);
 		try {
 			const selected = await bridge.activateResidentSession({ cwd, sessionId, sessionPath });
 			sessionOpenMetrics.rpc(request);
@@ -1040,6 +1053,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
 		if (!bridge || !cwd || !path) return false;
 		const request = beginSessionNavigation({ cwd, path });
 		const loadingGeneration = beginSessionLoadIndicator(set);
+		// Keep-warm hit: paint the cached conversation before the host loads it.
+		applySessionConversationPreview(path);
 		const workspaceChanged = get().cwd !== cwd;
 		try {
 			if (workspaceChanged) {
@@ -1049,7 +1064,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
 			await bridge.switchSession(path);
 			sessionOpenMetrics.rpc(request);
 			if (!currentSessionNavigation(bridge, request)) return false;
-			await Promise.all([get().refreshWorkspaceSessions(cwd), ...(workspaceChanged ? [get().refreshWorkspaces()] : [])]);
+			// List refreshes only feed the sidebar (zcode keeps them off the switch
+			// critical path): the conversation itself is already loaded because
+			// switchSession resolves after its reset/ready events were applied.
+			void get().refreshWorkspaceSessions(cwd);
+			if (workspaceChanged) void get().refreshWorkspaces();
 			return currentSessionNavigation(bridge, request);
 		} catch (error) {
 			if (!currentSessionNavigation(bridge, request)) return false;
@@ -1096,11 +1115,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
 	},
 
 	async editMessage(entryId, text, attachments, fileMode) {
-		const { bridge, status, cwd, sessionId } = get();
+		const { bridge, status, cwd, sessionId, navigationPending, sessionLoading } = get();
 		const trimmed = text.trim();
 		const original = get().messages.find((message) => message.id === entryId);
 		if (!bridge || (!trimmed && !attachments?.length && !original?.attachmentsOmitted)) return;
-		if (status !== 'idle') {
+		if (status !== 'idle' || navigationPending || sessionLoading) {
 			const error = new Error(translate('store.sessionBusy'));
 			set({ error: error.message });
 			throw error;
@@ -1136,9 +1155,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
 	},
 
 	async forkMessage(entryId) {
-		const { bridge, status, cwd, sessionId } = get();
+		const { bridge, status, cwd, sessionId, navigationPending, sessionLoading } = get();
 		if (!bridge || !entryId) return;
-		if (status !== 'idle') {
+		// A keep-warm preview may be painted while the host still holds the source
+		// session; entry ids from it must not be forked against the wrong session.
+		if (status !== 'idle' || navigationPending || sessionLoading) {
 			const error = new Error(translate('store.sessionBusy'));
 			set({ error: error.message });
 			throw error;
@@ -1153,9 +1174,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
 	},
 
 	async updateQueuedMessage(id, action, text) {
-		const { bridge, cwd, sessionId } = get();
+		const { bridge, cwd, sessionId, navigationPending, sessionLoading } = get();
 		if (!bridge || !id) return;
 		const trimmed = action === 'edit' ? (text ?? '').trim() : undefined;
+		// Queue entries belong to one session; block edits aimed at a preview of
+		// another conversation while its switch is still in flight.
+		if (navigationPending || sessionLoading) return;
 		set({ error: null });
 		try {
 			await bridge.updateQueuedMessage(id, action, trimmed);
@@ -1492,6 +1516,63 @@ function rememberRecoverableNewDraft(preparing: SessionPreparation): void {
 		recoverableNewDrafts.push({ bridge: preparing.bridge, cwd: preparing.options?.cwd, scope: preparing.draftScope });
 	}
 }
+/** Conversation snapshot kept when navigating away (zcode SessionDataLayer keep-warm). */
+interface SessionConversationPreview {
+	at: number;
+	messages: UiMessage[];
+	activities: UiToolActivity[];
+	runs: UiConversationRun[];
+	fileChanges: UiFileChange[];
+	fileChangeTurns: UiFileChangeTurn[];
+	fileChangeActiveRunId: string | null;
+	historyTotal: number;
+}
+const sessionConversationPreviews = new Map<string, SessionConversationPreview>();
+const SESSION_PREVIEW_TTL_MS = 60_000;
+const SESSION_PREVIEW_LIMIT = 8;
+
+/** Capture the conversation being left so a quick switch back paints instantly. */
+function stashSessionConversationPreview(): void {
+	const { sessionPath, messages, activities, runs, fileChanges, fileChangeTurns, fileChangeActiveRunId, historyTotal } = useChatStore.getState();
+	if (!sessionPath || messages.length + activities.length === 0) return;
+	sessionConversationPreviews.delete(sessionPath);
+	sessionConversationPreviews.set(sessionPath, { at: Date.now(), messages, activities, runs, fileChanges, fileChangeTurns, fileChangeActiveRunId, historyTotal });
+	while (sessionConversationPreviews.size > SESSION_PREVIEW_LIMIT) {
+		const oldest = sessionConversationPreviews.keys().next();
+		if (oldest.done) break;
+		sessionConversationPreviews.delete(oldest.value);
+	}
+}
+
+/**
+ * Paint a cached snapshot of the target conversation before the host RPC
+ * resolves. The authoritative ready replaces it wholesale (never merges), so
+ * staleness self-heals; identity fields (sessionId/sessionPath/cwd) stay on the
+ * source session until reset/ready re-scope them.
+ */
+function applySessionConversationPreview(path: string): boolean {
+	if (useChatStore.getState().sessionPath === path) return false;
+	const preview = sessionConversationPreviews.get(path);
+	if (!preview) return false;
+	if (Date.now() - preview.at > SESSION_PREVIEW_TTL_MS) {
+		sessionConversationPreviews.delete(path);
+		return false;
+	}
+	sessionConversationPreviews.delete(path);
+	sessionConversationPreviews.set(path, preview);
+	useChatStore.setState((state) => ({
+		messages: preview.messages,
+		activities: preview.activities,
+		runs: preview.runs,
+		fileChanges: preview.fileChanges,
+		fileChangeTurns: preview.fileChangeTurns,
+		fileChangeActiveRunId: preview.fileChangeActiveRunId,
+		historyTotal: preview.historyTotal,
+		timelineRevision: state.timelineRevision + 1,
+	}));
+	return true;
+}
+
 
 function beginSessionNavigation(target: { cwd?: string; path?: string | null; sessionId?: string } = {}, retainedDraftScope?: UiInputScope): number {
 	const abandoned = sessionPreparation;
@@ -1500,10 +1581,13 @@ function beginSessionNavigation(target: { cwd?: string; path?: string | null; se
 		rememberRecoverableNewDraft(abandoned);
 	}
 	cancelPreparedInput();
+	// Keep-warm: capture the conversation being left before any state changes,
+	// so navigating back to it within the TTL paints instantly from the cache.
 	const request = useChatStore.getState().navigationRequestId + 1;
 	const state = useChatStore.getState(), bridge = state.bridge;
 	sessionOpenMetrics.begin(request, target, event => { void Promise.resolve().then(() => bridge?.recordUiDiagnostic?.(event)).catch(() => {}); },
 		state.sessionId ? { cwd: state.cwd, path: state.sessionPath, sessionId: state.sessionId } : undefined);
+	stashSessionConversationPreview();
 	useChatStore.setState({ navigationRequestId: request, navigationPending: true, sessionPreparation: null, draftTransfer: null, error: null });
 	return request;
 }

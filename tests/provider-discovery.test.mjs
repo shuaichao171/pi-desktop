@@ -211,3 +211,55 @@ test('the whole discovery has a deadline even when a fetch implementation ignore
   await rejected;
   assert.equal(signal.aborted, true);
 });
+
+test('Codex-style top-level models arrays parse slugs, object efforts, and default levels', async (t) => {
+  const fixture = await server(t, (_request, response) => json(response, { models: [
+    { slug: 'glm-5.3', display_name: 'GLM-5.3', context_window: 1048576, input_modalities: ['text', 'image'],
+      supported_reasoning_levels: [{ description: 'Light reasoning', effort: 'low' }, { description: 'Enhanced reasoning', effort: 'high' }, { description: 'Deep reasoning', effort: 'max' }],
+      default_reasoning_level: 'max', supports_reasoning_summaries: true },
+    { slug: 'glm-5-turbo', context_window: 204800, default_reasoning_level: 'max' },
+  ] }));
+  const result = await discoverProviderModels(options(fixture.url, 'openai-responses', { apiKey: 'codex-fixture' }));
+  assert.deepEqual(result.models, [
+    { id: 'glm-5.3', name: 'GLM-5.3', contextWindow: 1048576, reasoning: true, input: ['text', 'image'], thinkingLevels: ['low', 'high', 'max'] },
+    { id: 'glm-5-turbo', contextWindow: 204800, reasoning: true, thinkingLevels: ['off', 'low', 'high', 'max'], inferred: true },
+  ]);
+  assert(result.warnings.some((warning) => warning.includes('推测')));
+});
+
+test('builtin rules fill only missing capabilities and advertised data always wins', async (t) => {
+  const fixture = await server(t, (_request, response) => json(response, { data: [
+    { id: 'moonshotai/Kimi-K3' },
+    { id: 'gpt-4o' },
+    { id: 'zai-org/GLM-5.3', supported_reasoning_levels: [{ effort: 'minimal' }] },
+    { id: 'mystery-model' },
+    { id: 'glm-5.3[1m]' },
+    { id: 'claude-opus-5', context_window: 777 },
+  ] }));
+  const result = await discoverProviderModels(options(fixture.url));
+  assert.deepEqual(result.models[0], { id: 'moonshotai/Kimi-K3', reasoning: true, thinkingLevels: ['off', 'low', 'medium', 'high'], contextWindow: 1048576, inferred: true });
+  assert.deepEqual(result.models[1], { id: 'gpt-4o', reasoning: false, contextWindow: 128000, inferred: true });
+  assert.deepEqual(result.models[2], { id: 'zai-org/GLM-5.3', reasoning: true, thinkingLevels: ['minimal'], contextWindow: 1000000, inferred: true });
+  assert.deepEqual(result.models[3], { id: 'mystery-model' });
+  assert.deepEqual(result.models[4], { id: 'glm-5.3[1m]', reasoning: true, thinkingLevels: ['off', 'low', 'high', 'max'], contextWindow: 1000000, inferred: true });
+  assert.deepEqual(result.models[5], { id: 'claude-opus-5', contextWindow: 777, reasoning: true, thinkingLevels: ['off', 'low', 'medium', 'high'], inferred: true });
+  assert(result.warnings.some((warning) => warning.includes('推测')));
+  assert(result.warnings.some((warning) => warning.includes('保存前确认')));
+});
+
+test('a default User-Agent identifies discovery unless the user supplies one', async (t) => {
+  const fixture = await server(t, (_request, response) => json(response, { data: [{ id: 'ua-model' }] }));
+  await discoverProviderModels(options(fixture.url));
+  assert.equal(fixture.requests[0].headers['user-agent'], 'pi-desktop model-discovery');
+  await discoverProviderModels(options(fixture.url, 'openai-completions', { headers: { 'User-Agent': 'codex_cli_rs/0.45.0' } }));
+  assert.equal(fixture.requests[1].headers['user-agent'], 'codex_cli_rs/0.45.0');
+});
+
+test('auth failures mention the client User-Agent whitelist escape hatch', async (t) => {
+  const fixture = await server(t, (_request, response) => json(response, { message: 'unauthorized client detected' }, 401));
+  await assert.rejects(discoverProviderModels(options(fixture.url)), (error) => {
+    assert.equal(error.code, 'http');
+    assert(String(error).includes('User-Agent'));
+    return true;
+  });
+});

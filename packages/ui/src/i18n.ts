@@ -1038,6 +1038,8 @@ export const translations: Record<string, { 'zh-CN': string; 'en-US': string }> 
   'settings.providerImportDefaultOutput': { 'zh-CN': '最大输出 {count}（默认值）', 'en-US': 'Max output {count} (default)' },
   'settings.providerImportDefaultsHint': { 'zh-CN': '服务未提供标为“默认值”的容量。请按供应商说明检查并修改。', 'en-US': 'The service did not report limits marked “default”. Review and edit them using the provider’s documentation.' },
   'settings.providerImportCapabilitiesHint': { 'zh-CN': '部分能力未由服务提供，未确认的思考或图片支持默认关闭，可手动调整。', 'en-US': 'Some capabilities were not reported. Unconfirmed thinking or image support defaults to off and can be edited.' },
+  'settings.providerImportInferred': { 'zh-CN': '能力推测', 'en-US': 'Inferred' },
+  'settings.providerImportInferredHint': { 'zh-CN': '思考能力或上下文窗口由内置规则推测，保存前请确认；重新获取且供应商播报真实数据后将自动覆盖。', 'en-US': 'Reasoning or context window was guessed from builtin rules. Verify before saving; a later discovery with advertised data overrides it.' },
   'settings.providerManualModel': { 'zh-CN': '手动添加一个模型', 'en-US': 'Add a model manually' },
   'settings.providerChooseModels': { 'zh-CN': '请获取并选择至少一个模型，或手动填写模型。', 'en-US': 'Fetch and select at least one model, or enter a model manually.' },
   'settings.providerDefaultUrl': { 'zh-CN': '使用供应商默认地址', 'en-US': 'Provider default endpoint' },

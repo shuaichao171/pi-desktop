@@ -31,7 +31,7 @@ const DEFAULT_CONTEXT = 128000;
 const DEFAULT_OUTPUT = 8192;
 type ModelDraft = { id: string; name: string; contextWindow: string; maxTokens: string; reasoning: boolean; image: boolean; thinkingLevelMap?: UiCustomProviderModel['thinkingLevelMap']; thinkingLevels?: UiThinkingLevel[] };
 type HeaderDraft = { key: number; name: string; value: string; stored: boolean };
-type ImportedDraft = { id: string; draft: ModelDraft; selected: boolean; defaultContext: boolean; defaultOutput: boolean; unknownCapabilities: boolean };
+type ImportedDraft = { id: string; draft: ModelDraft; selected: boolean; defaultContext: boolean; defaultOutput: boolean; unknownCapabilities: boolean; inferred: boolean };
 type DraftState = import('../settingsLeaveGuard').SettingsDraftState;
 type DraftSaver = () => Promise<boolean>;
 
@@ -74,7 +74,7 @@ function advertisedThinkingMap(levels: UiThinkingLevel[]): NonNullable<UiCustomP
 
 function discoveredDraft(model: UiDiscoveredProviderModel): ImportedDraft {
 	const draft = modelDraft({ ...model, ...(model.thinkingLevels ? { thinkingLevelMap: advertisedThinkingMap(model.thinkingLevels), reasoning: model.reasoning ?? model.thinkingLevels.some((level) => level !== 'off') } : {}) });
-	return { id: model.id, draft, selected: true, defaultContext: model.contextWindow === undefined, defaultOutput: model.maxTokens === undefined, unknownCapabilities: model.reasoning === undefined || model.input === undefined };
+	return { id: model.id, draft, selected: true, defaultContext: model.contextWindow === undefined, defaultOutput: model.maxTokens === undefined, unknownCapabilities: model.reasoning === undefined || model.input === undefined, inferred: model.inferred === true };
 }
 
 function modelValue(draft: ModelDraft, api?: string | null): UiCustomProviderModel | null {
@@ -296,8 +296,8 @@ function ProviderEditor({ provider, template, disabled, onSave, onCancel, autoDi
 				<input className="pd-model-provider-search" type="search" value={importSearch} onChange={(event) => setImportSearch(event.target.value)} aria-label={t('composer.pickerSearchLabel')} placeholder={t('composer.pickerSearchPlaceholder')} />
 				<div className="pd-model-import-list">{matchingImports.map((item) => <div key={item.id} className="pd-model-import-item" data-import-model={item.id}>
 					<div className="pd-model-import-row"><label className="pd-model-import-selection"><input type="checkbox" checked={item.selected} disabled={busy} onChange={(event) => setImports(imports.map((entry) => entry.id === item.id ? { ...entry, selected: event.target.checked } : entry))} /><span><strong>{item.draft.name || item.id}</strong><code>{item.id}</code></span></label><button type="button" className="pd-model-settings-button" disabled={busy} aria-expanded={expandedImport === item.id} aria-label={`${t('settings.customModelEdit')} ${item.id}`} onClick={() => setExpandedImport(expandedImport === item.id ? null : item.id)}>{t('settings.modelSettingsEdit')}<Icon name={expandedImport === item.id ? 'chevronDown' : 'chevronRight'} width="12" height="12" /></button></div>
-					<div className="pd-model-import-meta"><span>{t(item.defaultContext ? 'settings.providerImportDefaultContext' : 'settings.providerImportContext', { count: item.draft.contextWindow })}</span><span>{t(item.defaultOutput ? 'settings.providerImportDefaultOutput' : 'settings.providerImportOutput', { count: item.draft.maxTokens })}</span></div>
-					{expandedImport === item.id && <div className="pd-model-import-fields">{(item.defaultContext || item.defaultOutput) && <p className="pd-model-settings-notice">{t('settings.providerImportDefaultsHint')}</p>}{item.unknownCapabilities && <p className="pd-model-settings-notice">{t('settings.providerImportCapabilitiesHint')}</p>}<ModelFields draft={item.draft} disabled={busy || !item.selected} t={t} idReadOnly onChange={(draft) => setImports(imports.map((entry) => entry.id === item.id ? { ...entry, draft, defaultContext: entry.defaultContext && draft.contextWindow === entry.draft.contextWindow, defaultOutput: entry.defaultOutput && draft.maxTokens === entry.draft.maxTokens } : entry))} /></div>}
+					<div className="pd-model-import-meta"><span>{t(item.defaultContext ? 'settings.providerImportDefaultContext' : 'settings.providerImportContext', { count: item.draft.contextWindow })}</span><span>{t(item.defaultOutput ? 'settings.providerImportDefaultOutput' : 'settings.providerImportOutput', { count: item.draft.maxTokens })}</span>{item.inferred && <span className="pd-model-import-inferred">{t('settings.providerImportInferred')}</span>}</div>
+					{expandedImport === item.id && <div className="pd-model-import-fields">{(item.defaultContext || item.defaultOutput) && <p className="pd-model-settings-notice">{t('settings.providerImportDefaultsHint')}</p>}{item.unknownCapabilities && <p className="pd-model-settings-notice">{t('settings.providerImportCapabilitiesHint')}</p>}{item.inferred && <p className="pd-model-settings-notice">{t('settings.providerImportInferredHint')}</p>}<ModelFields draft={item.draft} disabled={busy || !item.selected} t={t} idReadOnly onChange={(draft) => setImports(imports.map((entry) => entry.id === item.id ? { ...entry, draft, defaultContext: entry.defaultContext && draft.contextWindow === entry.draft.contextWindow, defaultOutput: entry.defaultOutput && draft.maxTokens === entry.draft.maxTokens } : entry))} /></div>}
 				</div>)}</div>
 				{!matchingImports.length && <p className="pd-model-settings-notice">{t('settings.modelNoMatch')}</p>}
 			</>}

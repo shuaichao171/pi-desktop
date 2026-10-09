@@ -166,12 +166,14 @@ export default async function runScenarios(review) {
   await review.evaluate('delete window.__modelReview.modelTestOk');
 
   // Discovery preserves existing models, deduplicates new ids, imports selection.
-  await review.evaluate(`window.__modelReview.discovery = {models: [{id:'review-reasoner',name:'不应覆盖已有名称',contextWindow:2,maxTokens:1}, {id:'import-selected',name:'本次选择导入',contextWindow:128000,maxTokens:8192,input:['text'],reasoning:false}, {id:'import-skipped',name:'本次不导入',contextWindow:128000,maxTokens:8192,input:['text'],reasoning:false}, {id:'import-selected',name:'重复目录项',contextWindow:128000,maxTokens:8192,input:['text'],reasoning:false}],warnings:[]}`);
+  await review.evaluate(`window.__modelReview.discovery = {models: [{id:'review-reasoner',name:'不应覆盖已有名称',contextWindow:2,maxTokens:1}, {id:'import-selected',name:'本次选择导入',contextWindow:128000,maxTokens:8192,input:['text'],reasoning:false}, {id:'import-skipped',name:'本次不导入',contextWindow:128000,maxTokens:8192,input:['text'],reasoning:false}, {id:'import-selected',name:'重复目录项',contextWindow:128000,maxTokens:8192,input:['text'],reasoning:true,thinkingLevels:['off','low','medium','high'],inferred:true}],warnings:['已按内置规则为 1 个模型推测思考能力（标记为“推测”）；重新获取且供应商播报真实数据后将自动覆盖。']}`);
   const beforeDiscoverySaves = await review.evaluate(`${saveCalls}.length`);
   await review.click('[data-action="discover-models"]');
   await review.waitFor('document.querySelectorAll("dialog[open][data-model-dialog=discover] [data-import-model]").length === 2');
   await dialogCentered('discover');
   await review.assert('document.querySelector("dialog[open] [data-import-model=review-reasoner]") === null', 'Discovery excludes existing ids from import candidates');
+  await review.assert('document.querySelector("dialog[open] [data-import-model=import-selected] .pd-model-import-inferred") !== null', 'Inferred models carry the guess badge in the import list');
+  await review.assert('document.querySelector("dialog[open] [data-import-model=import-skipped] .pd-model-import-inferred") === null', 'Advertised models do not carry the guess badge');
   await review.assert(`${saveCalls}.length === ${beforeDiscoverySaves}`, 'Discovery itself does not save');
   await review.click('dialog[open] [data-import-model="import-skipped"] input[type="checkbox"]');
   await review.screenshot('03-discovery-selection');

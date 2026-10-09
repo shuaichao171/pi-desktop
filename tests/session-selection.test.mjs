@@ -95,44 +95,44 @@ test('a superseded search selection cannot open its session after an older works
   assert.equal(useChatStore.getState().navigationPending, false);
 });
 
-test('search selection keeps one navigation intent pending until its final refresh and highlight', async () => {
+test('search selection settles once the conversation loads; the sidebar refresh converges later', async () => {
   const host = fixture();
   const search = mountSearch();
   const refresh = deferred();
   host.bridge.listSessions = () => refresh.promise;
   const selecting = search.select({ cwd: 'D:/other', path: 'D:/other/target.jsonl', messageId: 'match', snippet: 'found' });
-  await new Promise((resolve) => setImmediate(resolve));
+  await selecting;
   assert.deepEqual(host.calls, [['workspace', 'D:/other'], ['session', 'D:/other/target.jsonl']]);
   assert.equal(useChatStore.getState().navigationRequestId, 1);
-  assert.equal(useChatStore.getState().navigationPending, true);
-  assert.deepEqual(search.updates, []);
-  refresh.resolve([]);
-  await selecting;
-  assert.equal(useChatStore.getState().navigationPending, false);
+  assert.equal(useChatStore.getState().navigationPending, false, 'the switch itself is done; only the sidebar refresh is still outstanding');
   assert.ok(search.updates.includes('chat'), 'a completed search selection returns from automations to the conversation');
   const highlights = search.updates.filter((value) => value && typeof value === 'object' && 'messageId' in value);
   assert.equal(highlights.length, 1);
   assert.equal(highlights[0].messageId, 'match');
+  refresh.resolve([]);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(useChatStore.getState().sessionsByWorkspace['D:/other'], [], 'the background refresh still converges');
+  assert.equal(search.updates.filter((value) => value && typeof value === 'object' && 'messageId' in value).length, 1, 'the late refresh must not replay the highlight');
 });
 
 test('superseded selections discard late refresh completion, stale errors and replacement-bridge effects', async () => {
-  for (const stage of ['refresh', 'workspace-error', 'replacement']) {
+  for (const stage of ['session', 'workspace-error', 'replacement']) {
     useChatStore.setState(useChatStore.getInitialState(), true);
     const host = fixture();
     const search = mountSearch();
     const pending = deferred();
-    if (stage === 'refresh') host.bridge.listSessions = () => pending.promise;
+    if (stage === 'session') host.bridge.switchSession = () => pending.promise;
     else host.bridge.switchWorkspace = () => pending.promise;
     const selecting = search.select({ cwd: 'D:/other', path: 'D:/other/old.jsonl', snippet: 'old match' });
     await new Promise((resolve) => setImmediate(resolve));
     if (stage === 'replacement') { useChatStore.setState(useChatStore.getInitialState(), true); fixture(); }
     else {
-      host.bridge.listSessions = async () => [];
+      host.bridge.switchSession = async () => {};
       await useChatStore.getState().switchSession('newer.jsonl');
     }
     const previousCalls = host.calls.length;
     if (stage === 'workspace-error') pending.reject(new Error('obsolete workspace unavailable'));
-    else pending.resolve([]);
+    else pending.resolve();
     await selecting;
     assert.equal(host.calls.length, previousCalls, stage);
     assert.deepEqual(search.updates, [], stage);

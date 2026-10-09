@@ -154,6 +154,7 @@
 .pd-model-import-selection code { overflow-wrap: anywhere; color: var(--pd-text-weak); font: var(--pd-font-sm)/1.5 ui-monospace, Consolas, monospace; }
 .pd-model-import-row > button { flex: 0 0 auto; }
 .pd-model-import-meta { display: flex; flex-wrap: wrap; gap: 4px 9px; margin: 7px 0 0 20px; color: var(--pd-text-weak); font-size: var(--pd-font-xs); line-height: 1.5; }
+.pd-model-import-inferred { padding: 0 6px; border: 1px solid var(--pd-border); border-radius: 999px; color: var(--pd-text-weak); }
 .pd-model-import-fields { display: flex; flex-direction: column; gap: 10px; margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--pd-border-soft); }
 .pd-model-thinking-fields { display: flex; flex-direction: column; gap: 9px; min-width: 0; margin: 0; padding: 10px; border: 1px solid var(--pd-border); border-radius: var(--pd-radius-sm); }
 .pd-model-thinking-fields legend { padding-inline: 5px; color: var(--pd-text-subtle); font-size: var(--pd-font-sm); }
