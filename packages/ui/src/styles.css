@@ -498,7 +498,7 @@ button:focus-visible, textarea:focus-visible, input:focus-visible { outline: 2px
 .pd-sidebar-update { display: inline-flex; flex: 0 0 auto; align-items: center; justify-content: center; gap: 5px; min-width: 32px; height: 28px; padding: 0 8px; border: 1px solid #ffffff18; border-radius: var(--pd-radius-sm); background: #1673cd; color: #fff; box-shadow: 0 1px 2px #0002; transition: background 150ms ease, transform 150ms ease; }
 .pd-sidebar-update > svg { flex-shrink: 0; stroke-width: 2; }
 .pd-sidebar-update-label { font-size: var(--pd-font-sm); font-weight: 600; font-variant-numeric: tabular-nums; line-height: 1.3; white-space: nowrap; }
-.pd-sidebar-update:not(:disabled):hover { background: var(--pd-brand-hover); }
+.pd-sidebar-update:not(:disabled):hover { background: color-mix(in srgb, #1673cd 82%, #ffffff); }
 .pd-sidebar-update:not(:disabled):active { transform: scale(.96); }
 .pd-sidebar-update:disabled { opacity: .8; cursor: progress; }
 /* Release-notes hint on the update entry (zcode-style hover changelog). */
