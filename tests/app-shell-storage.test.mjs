@@ -41,7 +41,7 @@ function mountShell(storage, chatState = { appInfo: { platform: 'win32' } }) {
       if (specifier === '../workbenchReading') return workbenchReading;
       if (specifier === '../shortcuts/bindings') return shortcutBindings;
       if (specifier === '../taskNotificationSound') return taskNotificationSound;
-      if (specifier === './ExtensionDialogHost') return { ExtensionDialogHost: 'ExtensionDialogHost', useExtensionRequestPending: () => false };
+      if (specifier === './ExtensionDialogHost') return { ExtensionDialogHost: 'ExtensionDialogHost', useExtensionRequestPending: () => false, useAnyExtensionRequestPending: () => false };
       if (specifier === '../resultFilePressRescue') return { installResultFilePressRescue: () => {} };
       // The real module runs outside this VM realm. Inject its supported storage
       // dependency so it observes this mount's browser storage, including errors.

@@ -58,7 +58,7 @@ const LEGACY_DEFAULT_GENERATIONS: Array<Record<ColorMode, ThemeColors>> = [
 // inline overrides, while these values also support an accurate default preview.
 const DEFAULT_TOKENS: Record<ColorMode, Record<string, string>> = {
 	dark: {
-		'--pd-bg': '#161616', '--pd-sidebar': '#2b2b2b', '--pd-sidebar-hover': '#404040', '--pd-sidebar-selected': '#404040', '--pd-sidebar-surface': '#363636', '--pd-sidebar-tab': '#161616', '--pd-header': '#161616', '--pd-surface': '#222222',
+		'--pd-bg': '#161616', '--pd-sidebar': '#2b2b2b', '--pd-sidebar-hover': '#404040', '--pd-sidebar-selected': '#4a4a4a', '--pd-sidebar-surface': '#363636', '--pd-sidebar-tab': '#161616', '--pd-header': '#161616', '--pd-surface': '#222222',
 		'--pd-surface-hover': '#2d2d2d', '--pd-selected': '#2d2d2d', '--pd-border': '#2d2d2d', '--pd-border-soft': '#262626',
 		'--pd-text': '#e5e5e5', '--pd-text-subtle': '#b8b8b8', '--pd-text-weak': '#999999',
 		'--pd-brand': '#ffffff', '--pd-brand-hover': '#d4d4d4', '--pd-brand-ink': '#000000',
@@ -70,7 +70,7 @@ const DEFAULT_TOKENS: Record<ColorMode, Record<string, string>> = {
 		'--pd-assistant-mark-bg': '#ffffff14', '--pd-brand-mark-bg': '#ffffff12',
 	},
 	light: {
-		'--pd-bg': '#f8f8f8', '--pd-sidebar': '#ececee', '--pd-sidebar-hover': '#e1e1e3', '--pd-sidebar-selected': '#e1e1e3', '--pd-sidebar-surface': '#e5e5e7', '--pd-sidebar-tab': '#f8f8f8', '--pd-header': '#f8f8f8', '--pd-surface': '#f1f1f1',
+		'--pd-bg': '#f8f8f8', '--pd-sidebar': '#ececee', '--pd-sidebar-hover': '#e1e1e3', '--pd-sidebar-selected': '#d9d9de', '--pd-sidebar-surface': '#e5e5e7', '--pd-sidebar-tab': '#f8f8f8', '--pd-header': '#f8f8f8', '--pd-surface': '#f1f1f1',
 		'--pd-surface-hover': '#ececec', '--pd-selected': '#e5e5e5', '--pd-border': '#e0e0e0', '--pd-border-soft': '#e9e9e9',
 		'--pd-text': '#262626', '--pd-text-subtle': '#666666', '--pd-text-weak': '#767676',
 		'--pd-brand': '#000000', '--pd-brand-hover': '#262626', '--pd-brand-ink': '#ffffff',

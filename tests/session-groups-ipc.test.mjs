@@ -9,6 +9,7 @@ const stubs = {
   electron: `
     export const app = { getPath: () => globalThis.__groupsRoot };
     export const shell = { showItemInFolder: () => {} };
+    export const powerSaveBlocker = { start: () => 1, stop: () => {} };
     export const BrowserWindow = { getAllWindows: () => [], fromWebContents: (sender) => globalThis.__reviewWindow?.webContents === sender ? globalThis.__reviewWindow : null };
     export const Menu = { buildFromTemplate: () => ({}) };
     export const nativeImage = { createFromPath: () => ({ isEmpty: () => true }) };
@@ -17,8 +18,8 @@ const stubs = {
     export const Notification = class { static isSupported() { return false; } on() { return this; } show() {} };
     export const ipcMain = { handle: (channel, handler) => globalThis.__groupsHandlers.set(channel, handler) };
   `,
+  './updateService': 'export const updateService = { stop() {}, setAutoInstallSource() {} };',
   './agentClient': 'export const createIsolatedAgentService = () => globalThis.__groupsAgent;',
-  './updateService': 'export const updateService = { stop() {} };',
   './workbenchIpc': 'export const registerWorkbenchIpc = () => ({ reset: async () => {}, dispose: async () => {} });',
 };
 registerHooks({

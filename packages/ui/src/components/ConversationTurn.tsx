@@ -2,6 +2,7 @@ import { memo, useEffect, useId, useLayoutEffect, useRef, useState } from 'react
 import type { UiConversationRun, UiFileChange, UiMessage, UiToolActivity } from '@pidesktop/shared';
 import { useT } from '../i18n';
 import { useExtensionNoticeDisplayEnabled } from '../extensionNoticeDisplay';
+import { useMessageStreamShowReasoning } from '../messageStreamShowReasoning';
 import { formatRunDuration } from '../conversationRuns';
 import { turnAnswer, type ConversationTurnEntry } from '../conversationTimeline';
 import { useDisclosureChoice, useDisclosureRequest } from '../conversationDisclosure';
@@ -55,11 +56,12 @@ export const ConversationTurn = memo(function ConversationTurn({ entry, messages
   // settles they fold away with the process instead of staying expanded
   // beside the answer. The display setting hides them entirely.
   const [noticesVisible] = useExtensionNoticeDisplayEnabled();
+  const [showReasoning] = useMessageStreamShowReasoning();
   const notices = ownMessages.filter(message => message.systemKind === 'extension-notice');
   const shownNotices = noticesVisible ? notices : [];
   const processMessages = ownMessages.filter(message => message.id !== answer?.id && message.systemKind !== 'extension-notice');
   const foldMessages = noticesVisible ? [...processMessages, ...notices] : processMessages;
-  const hasProcess = ownTools.length > 0 || shownNotices.length > 0 || processMessages.some(message => message.text || message.thinking || message.thinkingStatus || message.status === 'error') || Boolean(answer?.thinking || answer?.thinkingStatus);
+  const hasProcess = ownTools.length > 0 || shownNotices.length > 0 || processMessages.some(message => message.text || (showReasoning && (message.thinking || message.thinkingStatus)) || message.status === 'error') || Boolean(showReasoning && (answer?.thinking || answer?.thinkingStatus));
   const searchExpands = Boolean(query && foldMessages.some(message => `${message.text}\n${message.thinking ?? ''}`.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase())));
   const expanded = hasProcess && (searchExpands || (choice ?? running));
   const mountedProcess = useRef(false);
@@ -103,7 +105,7 @@ export const ConversationTurn = memo(function ConversationTurn({ entry, messages
           // Thinking and live prose share a stable position throughout the run.
           // Only the final answer moves out when the whole run has settled.
           return <div key={message.id}>
-            {(message.thinking || message.thinkingStatus) && <div data-thinking-for={message.id}><ThinkingActivity message={message} /></div>}
+            {showReasoning && (message.thinking || message.thinkingStatus) && <div data-thinking-for={message.id}><ThinkingActivity message={message} /></div>}
             {message.id !== answer?.id && <MessageItem message={message} process hideThinking showHeading={false} hidePending highlighted={highlightedId === message.id} findMatch={findIds.has(message.id)} />}
           </div>;
         })}</div>}

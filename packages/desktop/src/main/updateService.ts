@@ -64,6 +64,7 @@ class UpdateService {
 	private firstCheck: ReturnType<typeof setTimeout> | null = null;
 	private interval: ReturnType<typeof setInterval> | null = null;
 	private beforeInstall: (() => Promise<void>) | null = null;
+	private autoInstallSource: (() => boolean) | null = null;
 	private installing = false;
 	private servicesClosedForInstall = false;
 
@@ -76,12 +77,13 @@ class UpdateService {
 	getState(): UiUpdateState { return { ...this.state }; }
 
 	setBeforeInstall(callback: () => Promise<void>): void { this.beforeInstall = callback; }
-
+	/** Periodic checks consult this to decide whether they chain into download + silent install. */
+	setAutoInstallSource(source: () => boolean): void { this.autoInstallSource = source; }
 	start(): void {
 		if (!this.feedUrl || this.servicesClosedForInstall || this.firstCheck || this.interval) return;
 		// A slow updater import or network request must never delay splash or first paint.
-		this.firstCheck = setTimeout(() => { this.firstCheck = null; void this.check(); }, FIRST_CHECK_DELAY_MS);
-		this.interval = setInterval(() => { void this.check(); }, CHECK_INTERVAL_MS);
+		this.firstCheck = setTimeout(() => { this.firstCheck = null; void this.check(this.autoInstallSource?.() ?? false); }, FIRST_CHECK_DELAY_MS);
+		this.interval = setInterval(() => { void this.check(this.autoInstallSource?.() ?? false); }, CHECK_INTERVAL_MS);
 	}
 
 	stop(): void {
@@ -156,7 +158,7 @@ class UpdateService {
 		}
 	}
 
-	/** Downloads the previously found update (never automatic — user consent required). */
+/** Downloads the previously found update; explicit consent is the install() click or the auto-install preference. */
 	private async startDownload(): Promise<void> {
 		const attempt = this.checkAttempt;
 		this.publish({ phase: 'downloading', progressPercent: 0, error: undefined });
@@ -177,7 +179,8 @@ class UpdateService {
 			updater.setFeedURL({ provider: 'generic', url: this.feedUrl!,
 				...(isGitHubReleaseFeedUrl(this.feedUrl!) ? { useMultipleRangeRequest: false } : {}),
 			});
-			// Updates are never fetched silently: the state only records availability
+			// Downloads never start from the updater itself: only an explicit install
+			// request (button click or the auto-install preference) chains into one.
 			// (plus release notes) and the download starts when the user consents.
 			updater.autoDownload = false;
 			updater.autoInstallOnAppQuit = false;

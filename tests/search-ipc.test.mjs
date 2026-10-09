@@ -8,6 +8,7 @@ import { test } from 'node:test';
 const stubs = {
   electron: `
     export const app = { getPath: () => globalThis.__searchRoot };
+    export const powerSaveBlocker = { start: () => 1, stop: () => {} };
     export const shell = { showItemInFolder: () => {} };
     export const BrowserWindow = { getAllWindows: () => [], fromWebContents: (sender) => globalThis.__reviewWindow?.webContents === sender ? globalThis.__reviewWindow : null };
     export const Menu = { buildFromTemplate: () => ({}) };
@@ -18,7 +19,7 @@ const stubs = {
     export const ipcMain = { handle: (channel, handler) => globalThis.__searchHandlers.set(channel, handler) };
   `,
   './agentClient': `export const createIsolatedAgentService = () => globalThis.__searchAgent;`,
-  './updateService': `export const updateService = { stop() {} };`,
+  './updateService': `export const updateService = { stop() {}, setAutoInstallSource() {} };`,
   './workbenchIpc': `export const registerWorkbenchIpc = () => ({ reset: async () => {}, dispose: async () => {} });`,
   './stateFiles': `
     export class CorruptStateFileError extends Error {}

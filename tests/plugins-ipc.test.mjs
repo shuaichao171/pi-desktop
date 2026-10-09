@@ -8,6 +8,7 @@ import { test } from 'node:test';
 const stubs = {
   electron: `
     export const app = { getPath: () => globalThis.__pluginRoot };
+    export const powerSaveBlocker = { start: () => 1, stop: () => {} };
     export const shell = { showItemInFolder: () => {} };
     export const BrowserWindow = { getAllWindows: () => [], fromWebContents: (sender) => globalThis.__reviewWindow?.webContents === sender ? globalThis.__reviewWindow : null };
     export const Menu = { buildFromTemplate: () => ({}) };
@@ -25,7 +26,7 @@ const stubs = {
     sessionPaths: () => [], isSessionRunning: () => false,
   });`,
   './pluginDiscovery': 'export const createPluginDiscovery = () => async () => ({ items: [], total: 0 });',
-  './updateService': 'export const updateService = { stop() {} };',
+  './updateService': 'export const updateService = { stop() {}, setAutoInstallSource() {} };',
   './workbenchIpc': 'export const registerWorkbenchIpc = () => ({ async reset() {}, async dispose() {} });',
 };
 registerHooks({ resolve(specifier, context, nextResolve) {

@@ -8,6 +8,7 @@ import { test } from 'node:test';
 const stubs = {
   electron: `
     export const app = { getPath: () => globalThis.__automationRoot };
+    export const powerSaveBlocker = { start: () => 1, stop: () => {} };
     export const shell = { showItemInFolder: () => {} };
     export const Menu = { buildFromTemplate: () => ({}) };
     export const nativeImage = { createFromPath: () => ({ isEmpty: () => true }) };
@@ -18,7 +19,7 @@ const stubs = {
     export const ipcMain = { handle: (channel, handler) => globalThis.__automationHandlers.set(channel, handler) };
   `,
   './agentClient': 'export const createIsolatedAgentService = () => ({ onEvent() {}, onBackgroundActivity() {}, async dispose() {} });',
-  './updateService': 'export const updateService = { stop() {} };',
+  './updateService': 'export const updateService = { stop() {}, setAutoInstallSource() {} };',
   './workbenchIpc': 'export const registerWorkbenchIpc = () => ({ async dispose() {} });',
 };
 registerHooks({ resolve(specifier, context, nextResolve) {

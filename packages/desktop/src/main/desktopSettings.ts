@@ -11,6 +11,10 @@ export interface DesktopSettings {
 	notificationsEnabled: boolean;
 	/** What the window close button does on Windows: hide to tray (default) or quit (4.2). */
 	closeBehavior: 'tray' | 'quit';
+	/** Hold an Electron powerSaveBlocker while a task or automation run is active (prevents idle sleep only). */
+	keepAwakeWhileRunning: boolean;
+	/** Periodic update checks chain straight into download + silent install + restart. */
+	autoInstallUpdates: boolean;
 	/** Parent folder used only for newly created standalone conversations. */
 	conversationStorageDirectory: string;
 	/** Which Pi SDK drives the agent host: bundled or a user-managed install (restart to apply). */
@@ -23,11 +27,14 @@ export function isValidDesktopSettings(value: unknown): value is DesktopSettings
 	return typeof candidate.notificationsEnabled === 'boolean'
 		&& (candidate.closeBehavior === 'tray' || candidate.closeBehavior === 'quit')
 		&& (candidate.conversationStorageDirectory === undefined || isConversationStorageDirectory(candidate.conversationStorageDirectory))
+		&& (candidate.keepAwakeWhileRunning === undefined || typeof candidate.keepAwakeWhileRunning === 'boolean')
+		&& (candidate.autoInstallUpdates === undefined || typeof candidate.autoInstallUpdates === 'boolean')
 		&& (candidate.piEngine === undefined || isValidPiEngineSelection(candidate.piEngine));
 }
 
 export const DEFAULT_DESKTOP_SETTINGS: DesktopSettings = {
 	notificationsEnabled: true, closeBehavior: 'tray', conversationStorageDirectory: join(homedir(), 'PiDesktopWorkspace'),
+	keepAwakeWhileRunning: false, autoInstallUpdates: false,
 	piEngine: { mode: 'builtin' },
 };
 
