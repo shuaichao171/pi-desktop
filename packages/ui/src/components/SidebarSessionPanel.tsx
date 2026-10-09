@@ -724,22 +724,20 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, onNavig
 				if (event.key === 'Enter') event.currentTarget.blur();
 				if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); renameCancelled.current = true; setRenaming(null); }
 			}} onBlur={() => { if (renameCancelled.current) return; setRenaming(null); void perform(() => updateSessionMeta(session.path, { name: renameDraft.trim() })); }} /> : <>
-				<HoverTooltip title={title} description={`${isConversationWorkspace(session.workspace, conversationWorkspaces) ? '' : `${session.workspace} · `}${t('sidebar.messageCount', { count: session.messageCount })}${indicator ? ` · ${indicator.label}` : ''}`} side="right" align="start">
-					<button type="button" className="pd-session-row" onClick={() => openSession(session)} disabled={status === 'starting' || navigating} aria-current={active ? 'page' : undefined} aria-haspopup="menu" aria-expanded={menuOpen} onKeyDown={(event) => {
+				<button type="button" className="pd-session-row" onClick={() => openSession(session)} disabled={status === 'starting' || navigating} aria-current={active ? 'page' : undefined} aria-haspopup="menu" aria-expanded={menuOpen} onKeyDown={(event) => {
 						if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) {
 							event.preventDefault();
-						event.stopPropagation();
-						setArchiveConfirm(null);
+							event.stopPropagation();
+							setArchiveConfirm(null);
 							setPopup({ kind: 'session', anchor: event.currentTarget, session });
 						}
 					}}>
-						{!archived && <span className="pd-session-leading" role="img" aria-label={indicator?.label}>
-							{indicator?.kind === 'running' && <Icon name="loader" className="pd-session-spinner" width="14" height="14" />}
-							{indicator && indicator.kind !== 'running' && <span className={`pd-session-indicator is-${indicator.kind}`} />}
-						</span>}
-						<span className="pd-session-copy"><SidebarSessionTitle title={title} /></span>
-					</button>
-				</HoverTooltip>
+					{!archived && <span className="pd-session-leading" role="img" aria-label={indicator?.label}>
+						{indicator?.kind === 'running' && <Icon name="loader" className="pd-session-spinner" width="14" height="14" />}
+						{indicator && indicator.kind !== 'running' && <span className={`pd-session-indicator is-${indicator.kind}`} />}
+					</span>}
+					<span className="pd-session-copy"><SidebarSessionTitle title={title} /></span>
+				</button>
 				{!archived && pinButton('pd-session-pin')}
 				<div className="pd-session-actions">
 					{archived && pinButton('pd-session-action pd-icon-button')}
