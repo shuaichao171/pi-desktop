@@ -7,7 +7,7 @@
   --pd-bg: #161616;
   --pd-sidebar: #2b2b2b;
   --pd-sidebar-hover: #404040;
-  --pd-sidebar-selected: #404040;
+  --pd-sidebar-selected: #4a4a4a;
   --pd-sidebar-surface: #363636;
   --pd-sidebar-tab: #161616;
   --pd-header: #161616;
@@ -121,7 +121,7 @@
   --pd-bg: #f8f8f8;
   --pd-sidebar: #ececee;
   --pd-sidebar-hover: #e1e1e3;
-  --pd-sidebar-selected: #e1e1e3;
+  --pd-sidebar-selected: #d9d9de;
   --pd-sidebar-surface: #e5e5e7;
   --pd-sidebar-tab: #f8f8f8;
   --pd-header: #f8f8f8;
@@ -193,7 +193,8 @@ button:focus-visible, textarea:focus-visible, input:focus-visible { outline: 2px
 .pd-nav-row { display: flex; align-items: center; justify-content: flex-start; gap: 10px; width: 100%; height: 36px; padding: 0 10px; border: 0; border-radius: var(--pd-radius-md); background: transparent; color: var(--pd-text); font-size: var(--pd-font-base); font-weight: 500; text-align: left; }
 .pd-nav-row svg { flex: 0 0 auto; width: 17px; height: 17px; }
 .pd-nav-row[aria-disabled='true'] { cursor: default; }
-.pd-nav-row:hover:not(:disabled), .pd-nav-row.is-active { background: var(--pd-sidebar-hover); color: var(--pd-text); }
+.pd-nav-row:hover:not(:disabled) { background: var(--pd-sidebar-hover); color: var(--pd-text); }
+.pd-nav-row.is-active { background: var(--pd-sidebar-selected); color: var(--pd-text); }
 .pd-sidebar.is-collapsed .pd-sidebar-navigation { align-items: center; padding: 4px 6px 4px; }
 .pd-sidebar.is-collapsed .pd-nav-row { justify-content: center; width: 38px; height: 38px; padding: 0; }
 .pd-project-section { display: flex; flex: 1; flex-direction: column; min-height: 0; padding-top: 6px; border-top: 1px solid var(--pd-sidebar-surface); }
@@ -715,8 +716,12 @@ div.pd-hover-tooltip:has(.pd-update-notes-body) { max-width: min(400px, calc(100
 .pd-session-group + .pd-session-group { margin-top: 3px; }
 .pd-session-group-label { height: 25px; padding-left: 11px; }
 .pd-session-item { --pd-session-background: var(--pd-sidebar); --pd-session-actions-width: 30px; position: relative; display: flex; align-items: center; min-height: 34px; border-radius: var(--pd-radius-sm); }
-.pd-session-item:hover { --pd-session-background: var(--pd-surface-hover); background: var(--pd-session-background); }
-.pd-session-item.is-active { --pd-session-background: var(--pd-selected); background: var(--pd-session-background); }
+.pd-session-item:hover { --pd-session-background: var(--pd-sidebar-hover); background: var(--pd-session-background); }
+.pd-session-item.is-active { --pd-session-background: var(--pd-sidebar-selected); background: var(--pd-session-background); }
+/* zcode-style draft frame: the not-yet-persisted new session carries a dashed border, like ZCode's new-chat marker. */
+.pd-session-item.is-unsaved { border: 1px dashed var(--pd-border-strong); }
+/* The border adds 2px to the item; shrink the row so draft rows keep the same height as persisted ones. */
+.pd-session-item.is-unsaved .pd-session-row { min-height: 32px; }
 .pd-session-item .pd-session-row { min-height: 34px; width: 100%; padding: 0 9px; background: transparent; }
 .pd-session-item .pd-session-row:hover:not(:disabled), .pd-session-item .pd-session-row.is-active { background: transparent; }
 .pd-session-item .pd-session-copy strong { font-size: var(--pd-font-base); }
