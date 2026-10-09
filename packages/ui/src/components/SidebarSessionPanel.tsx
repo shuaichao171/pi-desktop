@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import type { UiSessionGroup, UiSidebarGroupChange } from '@pidesktop/shared';
 import { useChatStore } from '../store';
 import { useT } from '../i18n';
@@ -196,6 +196,35 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, onNavig
 	const dragCapture = useRef<{ element: HTMLElement; pointerId: number } | null>(null);
 	const scrollRef = useRef<HTMLDivElement | null>(null);
 	const scrollFrameRef = useRef<number | null>(null);
+	// --- Scroll edge fade (zcode WorkspaceSidebar) --------------------------------
+	// 对滚动容器直接应用 CSS mask(而非 overlay):上/下 32px 渐隐,滚到边界立即消失。
+	const [showScrollTopMask, setShowScrollTopMask] = useState(false);
+	const [showScrollBottomMask, setShowScrollBottomMask] = useState(false);
+	const scrollMaskStyle = useMemo<CSSProperties | undefined>(() => {
+		if (!showScrollTopMask && !showScrollBottomMask) return undefined;
+		const topStop = showScrollTopMask ? 'transparent 0px, black 32px' : 'black 0px, black 32px';
+		const bottomStop = showScrollBottomMask ? 'black calc(100% - 32px), transparent 100%' : 'black calc(100% - 32px), black 100%';
+		const image = `linear-gradient(to bottom, ${topStop}, ${bottomStop})`;
+		return { WebkitMaskImage: image, maskImage: image, WebkitMaskRepeat: 'no-repeat', maskRepeat: 'no-repeat', WebkitMaskSize: '100% 100%', maskSize: '100% 100%' };
+	}, [showScrollBottomMask, showScrollTopMask]);
+	const updateScrollFade = useCallback(() => {
+		const node = scrollRef.current;
+		if (!node) return;
+		const hasOverflow = node.scrollHeight > node.clientHeight + 1;
+		const isAtTop = node.scrollTop <= 1;
+		const isAtBottom = node.scrollTop + node.clientHeight >= node.scrollHeight - 1;
+		setShowScrollTopMask(hasOverflow && !isAtTop);
+		setShowScrollBottomMask(hasOverflow && !isAtBottom);
+	}, []);
+	// 列表内容增减都会重渲染,逐次重测即可覆盖 zcode 用 ResizeObserver 处理的场景。
+	useLayoutEffect(updateScrollFade);
+	useEffect(() => {
+		const node = scrollRef.current;
+		if (!node) return;
+		node.addEventListener('scroll', updateScrollFade, { passive: true });
+		window.addEventListener('resize', updateScrollFade);
+		return () => { node.removeEventListener('scroll', updateScrollFade); window.removeEventListener('resize', updateScrollFade); };
+	}, [updateScrollFade]);
 	const pointerRef = useRef({ x: 0, y: 0 });
 	useLayoutEffect(() => {
 		if (trashTarget || bulkTrashTarget || !trashFocus.current) return;
@@ -834,7 +863,7 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, onNavig
 			<span role="status">{t('sidebar.archiveSelectionCount', { count: selectedArchiveSessions.length })}</span>
 			<button type="button" data-action="delete-selected-archived" disabled={!selectedArchiveSessions.length || !bridge || navigating || workspaceNavigationPending} onClick={() => { setPopup(null); setBulkTrashTarget(selectedArchiveSessions.map(session => ({ path: session.path, title: titleOf(session) }))); }}>{t('sidebar.deleteSelected')}</button>
 		</div>}
-		<div className="pd-project-list pd-organized-list" ref={scrollRef} tabIndex={-1} aria-label={t('sidebar.sessions')} onScroll={() => setPopup(null)}>
+		<div className="pd-project-list pd-organized-list" ref={scrollRef} tabIndex={-1} aria-label={t('sidebar.sessions')} style={scrollMaskStyle} onScroll={() => { setPopup(null); updateScrollFade(); }}>
 			{(refreshing || loadingSessions) && sessions.length > 0 && <div className="pd-session-loading-hint" role="status"><Icon name="loader" className="pd-session-spinner" width="14" height="14" />{t('sidebar.refreshing')}</div>}
 			{hasPinned && section('pinned', t('sidebar.pinned'), <>
 				{grouped.pinned.map(session => renderSession(session, null))}
