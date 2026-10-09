@@ -2019,6 +2019,7 @@ export class AgentService {
 	private backgroundActivity: (cwd: string, path: string) => void = () => {};
 	private sequence = 0;
 	private transition: Promise<void> | null = null;
+	private queuedNavigation: { operation: () => Promise<void>; resolve: () => void; reject: (error: unknown) => void } | null = null;
 	private trimOperation: Promise<void> | null = null;
 	private credentialOperation: Promise<void> | null = null;
 	private providerOperation: Promise<void> | null = null;
@@ -2085,7 +2086,7 @@ export class AgentService {
 			if (path && this.isSessionReserved(path)) throw new Error('会话正在切换或删除，请稍后重试');
 			this.activate(entry[0], entry[1]);
 			activated = true;
-		});
+		}, { supersede: true });
 		return activated;
 	}
 
@@ -2156,7 +2157,7 @@ export class AgentService {
 	async init({ cwd, sessionPath, fresh, excludeSessionPaths }: AgentInitOptions): Promise<void> {
 		if (typeof cwd !== 'string' || !cwd.trim()) throw new Error('工作区路径无效');
 		if (sessionPath && fresh) throw new Error('不能同时指定已有会话和新会话');
-		if (!sessionPath && !fresh) return this.switchWorkspace(cwd, excludeSessionPaths);
+		if (!sessionPath && !fresh) return this.runTransition(() => this.transitionSwitchWorkspace(cwd, excludeSessionPaths ?? []));
 		await this.runTransition(async () => {
 			if (sessionPath) {
 				if (this.isSessionReserved(sessionPath)) throw new Error(this.reservedSessionPaths.has(sessionPath) ? '扩展正在切换此会话，请稍后重试' : '会话正在删除，请稍后重试');
@@ -2175,39 +2176,42 @@ export class AgentService {
 
 	async switchWorkspace(cwd: string, excludeSessionPaths: string[] = []): Promise<void> {
 		if (typeof cwd !== 'string' || !cwd.trim()) throw new Error('工作区路径无效');
-		await this.runTransition(async () => {
-			const previous = this.active;
-			const previousKey = this.activeKey;
-			const remembered = this.lastContextByCwd.get(cwd);
-			const existing = remembered ? this.contexts.get(remembered) : undefined;
-			if (existing?.hasSession && !excludeSessionPaths.includes(existing.getSnapshot().sessionPath ?? '')) {
-				this.activate(remembered!, existing);
-				return;
-			}
-			const sessionPath = (await this.listSessions(cwd)).find((session) => !excludeSessionPaths.includes(session.path))?.path;
-			if (sessionPath && this.isSessionReserved(sessionPath)) throw new Error('会话正在切换或删除，请稍后重试');
-			const loaded = sessionPath ? [...this.contexts.entries()].find(([, context]) =>
-				context.hasSession && context.cwd === cwd && context.getSnapshot().sessionPath === sessionPath) : undefined;
-			if (loaded) {
-				this.activate(loaded[0], loaded[1]);
-				return;
-			}
-			const key = existing ? remembered! : randomUUID();
-			const service = existing ?? this.newContext(key);
-			this.active = service;
-			this.activeKey = key;
-			try {
-				await service.init({ cwd, sessionPath, fresh: !sessionPath });
-				this.lastContextByCwd.set(cwd, key);
-				await this.trimContexts();
-			} catch (error) {
-				if (!existing) this.contexts.delete(key);
-				this.active = previous;
-				this.activeKey = previousKey;
-				if (previous && previousKey) this.activate(previousKey, previous);
-				throw error;
-			}
-		});
+		await this.runTransition(() => this.transitionSwitchWorkspace(cwd, excludeSessionPaths), { supersede: true });
+	}
+
+	/** switchWorkspace 的切换体。init 的无会话入口复用它，但保持严格串行（排队会破坏重叠初始化的拒绝语义）。 */
+	private async transitionSwitchWorkspace(cwd: string, excludeSessionPaths: string[]): Promise<void> {
+		const previous = this.active;
+		const previousKey = this.activeKey;
+		const remembered = this.lastContextByCwd.get(cwd);
+		const existing = remembered ? this.contexts.get(remembered) : undefined;
+		if (existing?.hasSession && !excludeSessionPaths.includes(existing.getSnapshot().sessionPath ?? '')) {
+			this.activate(remembered!, existing);
+			return;
+		}
+		const sessionPath = (await this.listSessions(cwd)).find((session) => !excludeSessionPaths.includes(session.path))?.path;
+		if (sessionPath && this.isSessionReserved(sessionPath)) throw new Error('会话正在切换或删除，请稍后重试');
+		const loaded = sessionPath ? [...this.contexts.entries()].find(([, context]) =>
+			context.hasSession && context.cwd === cwd && context.getSnapshot().sessionPath === sessionPath) : undefined;
+		if (loaded) {
+			this.activate(loaded[0], loaded[1]);
+			return;
+		}
+		const key = existing ? remembered! : randomUUID();
+		const service = existing ?? this.newContext(key);
+		this.active = service;
+		this.activeKey = key;
+		try {
+			await service.init({ cwd, sessionPath, fresh: !sessionPath });
+			this.lastContextByCwd.set(cwd, key);
+			await this.trimContexts();
+		} catch (error) {
+			if (!existing) this.contexts.delete(key);
+			this.active = previous;
+			this.activeKey = previousKey;
+			if (previous && previousKey) this.activate(previousKey, previous);
+			throw error;
+		}
 	}
 
 	/** Dispose every idle runtime belonging to a project removed from the desktop workspace list. */
@@ -2241,9 +2245,11 @@ export class AgentService {
 	}
 
 	async switchSession(path: string): Promise<void> {
-		const cwd = this.cwd;
-		if (!cwd) throw new Error('请先打开工作区');
+		// cwd 在切换体执行时才读取：排队等在其它导航后面时，工作区可能已被更新点击换过，
+		// 旧工作区的会话应按「不属于当前工作区」拒绝，而不是被误加载成激活上下文。
 		await this.runTransition(async () => {
+			const cwd = this.cwd;
+			if (!cwd) throw new Error('请先打开工作区');
 			if (this.isSessionReserved(path)) throw new Error('会话正在切换或删除，请稍后重试');
 			if (this.active?.getSnapshot().sessionPath === path) return;
 			const existing = [...this.contexts.entries()].find(([, service]) =>
@@ -2255,14 +2261,16 @@ export class AgentService {
 			if (!(await sessionBelongsToWorkspace(path, cwd))) throw new Error('会话不属于当前工作区');
 			await this.openContext({ cwd, sessionPath: path });
 			this.fire({ type: 'sessions-changed', cwd });
-		});
+		}, { supersede: true });
 	}
 
 	async newSession(): Promise<void> {
-		const cwd = this.cwd;
-		if (!cwd) throw new Error('请先打开工作区');
-		await this.runTransition(() => this.openContext({ cwd, fresh: true }));
-		this.fire({ type: 'sessions-changed', cwd });
+		await this.runTransition(async () => {
+			const cwd = this.cwd;
+			if (!cwd) throw new Error('请先打开工作区');
+			await this.openContext({ cwd, fresh: true });
+		}, { supersede: true });
+		this.fire({ type: 'sessions-changed', cwd: this.cwd });
 	}
 
 	async renameSession(path: string, name: string, cwd = this.cwd): Promise<void> {
@@ -2386,7 +2394,7 @@ export class AgentService {
 				if (this.active !== service || service.getSnapshot().sessionId !== request.sessionId) throw new Error('当前会话已变化，请重试指令');
 				service.assertIdleSlashCommand();
 				await this.openContext({ cwd: request.cwd, fresh: true });
-			});
+			}, { supersede: true });
 			this.fire({ type: 'sessions-changed', cwd: request.cwd });
 			return;
 		}
@@ -2749,14 +2757,38 @@ export class AgentService {
 		try { await work; } finally { if (this.trimOperation === work) this.trimOperation = null; }
 	}
 
-	private async runTransition(operation: () => Promise<void>): Promise<void> {
+	// zcode 语义：会话导航点击永远被接受。正在运行的切换不可中断（其上下文加载完仍留作
+	// 热缓存，切回即命中），期间到达的新导航进入「最新者胜」队列：更新的导航会取代还在
+	// 排队的旧导航（旧请求以明确错误收场，渲染端导航代次会静默吞掉这类过期错误）。
+	// 非导航类切换（init、删除、移除项目）保持严格拒绝，避免破坏性或启动操作被静默取消。
+	private async runTransition(operation: () => Promise<void>, options: { supersede?: boolean } = {}): Promise<void> {
 		if (this.closing) throw new Error('应用正在退出');
 		if (this.pluginOperation) throw new Error('插件设置正在更新，请稍后再切换会话');
 		if (this.providerOperation) throw new Error('供应商配置正在更新，请稍后再切换会话');
-		if (this.transition) throw new Error('会话正在切换，请稍后再试');
+		if (this.transition) {
+			if (!options.supersede) throw new Error('会话正在切换，请稍后再试');
+			return await new Promise<void>((resolve, reject) => {
+				this.queuedNavigation?.reject(new Error('已有更新的切换请求，本次切换已让位'));
+				this.queuedNavigation = { operation, resolve, reject };
+			});
+		}
+		return await this.beginTransition(operation);
+	}
+
+	private beginTransition(operation: () => Promise<void>): Promise<void> {
 		const promise = Promise.resolve().then(operation);
 		this.transition = promise;
-		try { await promise; } finally { if (this.transition === promise) this.transition = null; }
+		return promise.finally(() => {
+			if (this.transition !== promise) return;
+			this.transition = null;
+			const queued = this.queuedNavigation;
+			this.queuedNavigation = null;
+			if (!queued) return;
+			if (this.closing) { queued.reject(new Error('应用正在退出')); return; }
+			if (this.pluginOperation || this.providerOperation) { queued.reject(new Error('插件或供应商配置正在更新，切换已取消')); return; }
+			// 同步接管切换槽：当前切换结束与排队导航开跑之间不留异步空隙，其它操作无法插队。
+			void this.beginTransition(queued.operation).then(queued.resolve, queued.reject);
+		});
 	}
 }
 

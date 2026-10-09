@@ -31,7 +31,6 @@ export function Sidebar({ open, projectRevealRequest = 0, narrow, onToggle, onNa
 	const { t, locale } = useT();
 	const bridge = useChatStore((s) => s.bridge);
 	const platform = useChatStore((s) => s.appInfo?.platform);
-	const status = useChatStore((s) => s.status);
 	const newSession = useChatStore((s) => s.newSession);
 	const [actionError, setActionError] = useState<string | null>(null);
 	const reportActionError = useCallback((message: string | null) => {
@@ -115,7 +114,7 @@ export function Sidebar({ open, projectRevealRequest = 0, narrow, onToggle, onNa
 			</div>
 		</div>
 		<div className="pd-sidebar-top pd-sidebar-navigation">
-			<button type="button" className="pd-new-session pd-nav-row" onClick={() => void startSession()} disabled={status === 'starting'} aria-label={t('sidebar.newSession')}><Icon name="plus" /><span className="pd-sidebar-detail">{t('sidebar.newSession')}</span></button>
+			<button type="button" className="pd-new-session pd-nav-row" onClick={() => void startSession()} aria-label={t('sidebar.newSession')}><Icon name="plus" /><span className="pd-sidebar-detail">{t('sidebar.newSession')}</span></button>
 			<button type="button" className={`pd-sidebar-automation pd-nav-row${automationsOpen ? ' is-active' : ''}`} aria-label={t('sidebar.automation')} aria-current={automationsOpen ? 'page' : undefined} onClick={onOpenAutomations}><Icon name="automation" /><span className="pd-sidebar-detail">{t('sidebar.automation')}</span></button>
 			<button type="button" className={`pd-sidebar-plugins pd-nav-row${pluginsOpen ? ' is-active' : ''}`} aria-label={t('sidebar.plugins')} aria-current={pluginsOpen ? 'page' : undefined} onClick={onOpenPlugins}><Icon name="plugins" /><span className="pd-sidebar-detail">{t('sidebar.plugins')}</span></button>
 		</div>

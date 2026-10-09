@@ -121,3 +121,70 @@ test('Pi SDK runtime initializes, replaces a session, and publishes a current sn
     rmSync(resolvedTemp, { recursive: true, force: true });
   }
 });
+
+test('session navigation queues latest-wins instead of rejecting while a slow switch loads (zcode fast switching)', async () => {
+  const tempRoot = mkdtempSync(join(tmpdir(), 'pi-desktop-queue-'));
+  const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+  process.env.PI_CODING_AGENT_DIR = join(tempRoot, 'agent');
+  const workspace = join(tempRoot, 'workspace');
+  mkdirSync(workspace);
+
+  let service;
+  try {
+    const [{ AgentService }, { SessionManager }] = await Promise.all([
+      import('../packages/agent/src/index.ts'),
+      import('@earendil-works/pi-coding-agent'),
+    ]);
+    service = new AgentService();
+    await service.init({ cwd: workspace });
+
+    const first = SessionManager.create(workspace);
+    persistConversation(first, 'First conversation', 'First reply');
+    const second = SessionManager.create(workspace);
+    persistConversation(second, 'Second conversation', 'Second reply');
+
+    // Gate the cold context load so the first navigation holds the transition slot.
+    const originalOpenContext = service.openContext.bind(service);
+    let release;
+    let entered;
+    const gate = new Promise((done) => { release = done; });
+    const started = new Promise((done) => { entered = done; });
+    service.openContext = async (...args) => { entered(); await gate; return originalOpenContext(...args); };
+
+    const switching = service.switchSession(first.getSessionFile());
+    await started;
+
+    // A newer navigation queues behind the slow one instead of being rejected…
+    const queued = service.switchSession(second.getSessionFile());
+    // …and an even newer click supersedes the queued one with an explicit error.
+    const newest = service.switchSession(first.getSessionFile());
+    await assert.rejects(queued, /已有更新的切换请求/);
+    // Non-navigation transitions keep the strict busy rejection.
+    await assert.rejects(service.init({ cwd: workspace, fresh: true }), /会话正在切换/);
+
+    release();
+    await switching;
+    assert.equal(service.getSnapshot().sessionPath, first.getSessionFile(), 'the slow navigation finishes and activates its target');
+    await newest;
+    assert.equal(service.getSnapshot().sessionPath, first.getSessionFile(), 'the queued newest navigation converges on the same target');
+    assert.equal((await service.listSessions()).length, 2, 'both conversations stay listed');
+
+    // Warm activation remains instant and wins over any stale state.
+    const before = service.getSnapshot().sequence;
+    await service.switchSession(second.getSessionFile());
+    assert.equal(service.getSnapshot().sessionPath, second.getSessionFile());
+    assert.ok(service.getSnapshot().sequence > before, 'warm activation publishes fresh events');
+
+    service.openContext = originalOpenContext;
+  } finally {
+    await service?.dispose();
+    if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+    else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+    const resolvedTemp = resolve(tempRoot);
+    const resolvedParent = realpathSync.native(tmpdir());
+    if (!resolvedTemp.startsWith(resolvedParent + sep)) {
+      throw new Error('Refusing to remove a test directory outside the temporary folder');
+    }
+    rmSync(resolvedTemp, { recursive: true, force: true });
+  }
+});
