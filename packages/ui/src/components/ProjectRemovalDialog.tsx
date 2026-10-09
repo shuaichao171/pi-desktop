@@ -49,13 +49,13 @@ export function ProjectRemovalDialog({ summary, onRemove, onClose }: {
 			if (mounted.current) setBusy(false);
 		}
 	}
-	return createPortal(<dialog ref={dialog} className="pd-session-trash-dialog pd-project-removal-dialog" aria-labelledby={id} aria-describedby={`${id}-hint`} onCancel={(event) => { event.preventDefault(); if (!lock.current) close(false); }}>
+	return createPortal(<dialog ref={dialog} className="pd-session-delete-dialog pd-project-removal-dialog" aria-labelledby={id} aria-describedby={`${id}-hint`} onCancel={(event) => { event.preventDefault(); if (!lock.current) close(false); }}>
 		<h2 id={id}>{t('sidebar.projectRemoveTitle')}</h2>
 		<strong>{summary.name}</strong>
-		<p className="pd-session-trash-workspace">{summary.workspace}</p>
+		<p className="pd-session-delete-workspace">{summary.workspace}</p>
 		<p id={`${id}-hint`}>{t('sidebar.projectRemoveHint', { count: summary.sessionCount })}</p>
-		{summary.activeCount > 0 && <p role="alert" className="pd-session-trash-error">{t('sidebar.projectRemoveBusy', { count: summary.activeCount })}</p>}
-		{error && <p role="alert" className="pd-session-trash-error">{error}</p>}
+		{summary.activeCount > 0 && <p role="alert" className="pd-session-delete-error">{t('sidebar.projectRemoveBusy', { count: summary.activeCount })}</p>}
+		{error && <p role="alert" className="pd-session-delete-error">{error}</p>}
 		<footer>
 			<button autoFocus type="button" disabled={busy} onClick={() => close(false)}>{t('sidebar.cancel')}</button>
 			<button type="button" className="is-danger" disabled={busy || summary.activeCount > 0} onClick={() => void submit()}>{t(busy ? 'sidebar.projectRemoving' : error ? 'sidebar.projectRemoveRetry' : 'sidebar.projectRemoveConfirm')}</button>

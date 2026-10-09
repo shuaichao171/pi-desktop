@@ -47,7 +47,7 @@ test('colliding workspace directory encodings never share session ownership or r
       if (value === undefined) delete process.env[key];
       else process.env[key] = value;
     }
-    const resolvedTemp = resolve(tempRoot);
+    const resolvedTemp = realpathSync.native(tempRoot);
     if (!resolvedTemp.startsWith(realpathSync.native(tmpdir()) + sep)) throw new Error('Unsafe temporary path');
     rmSync(resolvedTemp, { recursive: true, force: true });
   }
@@ -88,7 +88,7 @@ test('cached unsaved sessions can be revisited within their workspace before Pi 
       if (value === undefined) delete process.env[key];
       else process.env[key] = value;
     }
-    const resolvedTemp = resolve(tempRoot);
+    const resolvedTemp = realpathSync.native(tempRoot);
     if (!resolvedTemp.startsWith(realpathSync.native(tmpdir()) + sep)) throw new Error('Unsafe temporary path');
     rmSync(resolvedTemp, { recursive: true, force: true });
   }
@@ -142,7 +142,7 @@ test('inactive Pi runtimes are bounded and an evicted session can be reopened', 
     await service?.dispose();
     if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
     else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
-    const resolvedTemp = resolve(tempRoot);
+    const resolvedTemp = realpathSync.native(tempRoot);
     if (!resolvedTemp.startsWith(realpathSync.native(tmpdir()) + sep)) throw new Error('Unsafe temporary path');
     rmSync(resolvedTemp, { recursive: true, force: true });
   }
@@ -205,7 +205,7 @@ test('workspace restoration reuses a busy cached runtime after its remembered un
       if (value === undefined) delete process.env[key];
       else process.env[key] = value;
     }
-    const resolvedTemp = resolve(tempRoot);
+    const resolvedTemp = realpathSync.native(tempRoot);
     if (!resolvedTemp.startsWith(realpathSync.native(tmpdir()) + sep)) throw new Error('Unsafe temporary path');
     rmSync(resolvedTemp, { recursive: true, force: true });
   }
@@ -318,7 +318,7 @@ test('Pi extension dialogs reach the desktop callback and a background session k
       if (value === undefined) delete process.env[key];
       else process.env[key] = value;
     }
-    const resolvedTemp = resolve(tempRoot);
+    const resolvedTemp = realpathSync.native(tempRoot);
     if (!resolvedTemp.startsWith(realpathSync.native(tmpdir()) + sep)) throw new Error('Unsafe temporary path');
     rmSync(resolvedTemp, { recursive: true, force: true });
   }
@@ -354,7 +354,7 @@ test('removed projects dispose their idle cached runtimes without deleting sessi
       if (value === undefined) delete process.env[key];
       else process.env[key] = value;
     }
-    const resolvedTemp = resolve(tempRoot);
+    const resolvedTemp = realpathSync.native(tempRoot);
     if (!resolvedTemp.startsWith(realpathSync.native(tmpdir()) + sep)) throw new Error('Unsafe temporary path');
     rmSync(resolvedTemp, { recursive: true, force: true });
   }

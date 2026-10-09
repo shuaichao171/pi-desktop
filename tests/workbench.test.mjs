@@ -8,7 +8,7 @@ import { test } from 'node:test';
 
 function removeSafeTemp(tempRoot) {
   const base = realpathSync.native(tmpdir());
-  const target = realpathSync(tempRoot);
+  const target = realpathSync.native(tempRoot);
   const rel = relative(base, target);
   if (!rel || rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)
     || !rel.startsWith('pi-desktop-')) throw new Error('Unsafe temporary path');

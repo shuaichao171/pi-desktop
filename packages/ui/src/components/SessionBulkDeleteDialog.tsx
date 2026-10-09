@@ -3,10 +3,10 @@ import { createPortal } from 'react-dom';
 import { useT } from '../i18n';
 import { managementCopy } from '../managementCopy';
 
-export type SessionTrashTarget = { path: string; title: string };
+export type SessionDeleteTarget = { path: string; title: string };
 
-export function SessionBulkTrashDialog({ sessions, onDelete, onClose }: {
-	sessions: SessionTrashTarget[];
+export function SessionBulkDeleteDialog({ sessions, onDelete, onClose }: {
+	sessions: SessionDeleteTarget[];
 	/** zcode deleteArchivedTasks shape: one batched call returns per-path outcomes instead of N independent deletions (each of which used to refetch the whole session list). Skipped = selection went stale while the confirm sat open (zcode skippedTaskIds). */
 	onDelete(paths: string[]): Promise<{ deleted: string[]; failed: Record<string, string>; skipped: Record<string, string> }>;
 	onClose(deleted: string[]): void;
@@ -48,10 +48,10 @@ export function SessionBulkTrashDialog({ sessions, onDelete, onClose }: {
 			if (deleted.current.size === sessions.length) close();
 		} finally { lock.current = false; if (mounted.current) setBusy(false); }
 	}
-	return createPortal(<dialog ref={dialog} className="pd-session-trash-dialog pd-session-bulk-trash-dialog" aria-labelledby={id} onCancel={event => { event.preventDefault(); if (!lock.current) close(); }}>
+	return createPortal(<dialog ref={dialog} className="pd-session-delete-dialog pd-session-bulk-trash-dialog" aria-labelledby={id} onCancel={event => { event.preventDefault(); if (!lock.current) close(); }}>
 		<h2 id={id}>{t('sidebar.trashSelectedTitle', { count: remaining.length })}</h2>
-		<ul className="pd-session-bulk-trash-list">{remaining.map(session => <li key={session.path}><strong>{session.title}</strong>{skipped[session.path] && <p className="pd-session-trash-skip" role="status">{t('sidebar.trashSelectedSkipped')}</p>}{errors[session.path] && <p className="pd-session-trash-error" role="alert">{errors[session.path]}</p>}</li>)}</ul>
+		<ul className="pd-session-bulk-trash-list">{remaining.map(session => <li key={session.path}><strong>{session.title}</strong>{skipped[session.path] && <p className="pd-session-delete-skip" role="status">{t('sidebar.trashSelectedSkipped')}</p>}{errors[session.path] && <p className="pd-session-delete-error" role="alert">{errors[session.path]}</p>}</li>)}</ul>
 		{deleted.current.size > 0 && <p role="status">{t('sidebar.trashSelectedProgress', { count: deleted.current.size, total: sessions.length })}</p>}
-		<footer><button autoFocus type="button" disabled={busy} onClick={close}>{copy.cancel}</button><button type="button" className="is-danger" disabled={busy} onClick={() => void submit()}>{busy ? copy.deleting : Object.keys(errors).length ? copy.retry : copy.trash}</button></footer>
+		<footer><button autoFocus type="button" disabled={busy} onClick={close}>{copy.cancel}</button><button type="button" className="is-danger" disabled={busy} onClick={() => void submit()}>{busy ? copy.deleting : Object.keys(errors).length ? copy.retry : copy.remove}</button></footer>
 	</dialog>, document.body);
 }

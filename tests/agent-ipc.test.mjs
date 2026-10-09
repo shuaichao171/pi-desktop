@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
+import { existsSync } from 'node:fs';
 import { mkdtemp, mkdir, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { registerHooks } from 'node:module';
 import { tmpdir } from 'node:os';
@@ -20,6 +21,7 @@ const stubs = {
     export const dialog = { showErrorBox: () => {}, showOpenDialog: (...args) => globalThis.__ipcOpenDialog(...args) };
     export const Notification = class { static isSupported() { return false; } on() { return this; } show() {} };
     export const ipcMain = { handle: (channel, handler) => globalThis.__ipcHandlers.set(channel, handler) };
+    export const powerSaveBlocker = { start: () => 1, stop: () => {}, isStarted: () => false };
   `,
   './agentClient': `
     export function createIsolatedAgentService(ui) {
@@ -27,8 +29,7 @@ const stubs = {
       return globalThis.__ipcAgent;
     }
   `,
-  './updateService': 'export const updateService = { stop() {} };',
-  './sessionTrash': 'export const createSessionTrash = () => ({ trashSession: (path) => globalThis.__ipcTrash(path) });',
+  './updateService': 'export const updateService = { stop() {}, setAutoInstallSource: async () => {} };',
   './workbenchIpc': `
     export const registerWorkbenchIpc = () => globalThis.__ipcWorkbench ?? ({ reset: async () => {}, dispose: async () => {} });
   `,
@@ -471,12 +472,16 @@ test('agent broadcasts survive a renderer disappearing during send and still del
   assert.equal(console.error.mock.callCount(), 1);
 });
 
-test('session switches and shutdown wait for an accepted asynchronous trash move', async (t) => {
-  const root = await mkdtemp(join(tmpdir(), 'pi-ipc-trash-queue-'));
+test('session switches and shutdown wait for an accepted asynchronous deletion', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'pi-ipc-delete-queue-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   await writeFile(join(root, 'workspace.json'), JSON.stringify({ cwd: root, workspaces: [root] }));
   const oldPath = join(root, 'old.jsonl');
   const nextPath = join(root, 'next.jsonl');
+  // A regular file used as a path segment makes the real unlink fail with ENOTDIR.
+  await writeFile(join(root, 'blocked.jsonl'), 'in the way');
+  const stuckPath = join(root, 'blocked.jsonl', 'old.jsonl');
+  await writeFile(oldPath, 'transcript body');
   const main = createIpcWindow();
   globalThis.__ipcUserData = root;
   globalThis.__ipcWindows = [main];
@@ -487,27 +492,27 @@ test('session switches and shutdown wait for an accepted asynchronous trash move
   let disposed = false;
   let releases = 0;
   let busy = false;
-  const trashGate = () => {
+  const prepareGate = () => {
     const started = new Promise((resolve) => { entered = resolve; });
     const finished = new Promise((resolve) => { release = resolve; });
-    globalThis.__ipcTrash = async () => { entered(); await finished; return join(root, 'trashed.jsonl'); };
+    globalThis.__ipcPrepare = async () => { entered(); await finished; };
     return started;
   };
   globalThis.__ipcAgent = {
     onEvent() {}, onBackgroundActivity() {},
-    listSessions: async () => [{ path: oldPath }, { path: nextPath }],
+    listSessions: async () => [{ path: oldPath }, { path: nextPath }, { path: stuckPath }],
     getSnapshot: async () => ({ cwd: root, sessionPath: null }),
     switchSession: async () => { switching = true; },
-    prepareSessionDeletion: async () => { if (busy) throw new Error('后台会话仍在运行'); },
+    prepareSessionDeletion: async () => { if (busy) throw new Error('后台会话仍在运行'); await globalThis.__ipcPrepare(); },
     releaseSessionDeletion: async () => { releases++; },
     dispose: async () => { disposed = true; },
   };
-  const ipc = await import('../packages/desktop/src/main/ipc.ts?trash-queue');
+  const ipc = await import('../packages/desktop/src/main/ipc.ts?delete-queue');
   const { IPC_CHANNELS } = await import('../packages/shared/src/index.ts');
   ipc.registerIpc();
   const valid = { sender: main.webContents, senderFrame: main.webContents.mainFrame };
-  const remove = () => globalThis.__ipcHandlers.get(IPC_CHANNELS.sessionDelete)(valid, oldPath);
-  let started = trashGate();
+  const remove = (path = oldPath) => globalThis.__ipcHandlers.get(IPC_CHANNELS.sessionDelete)(valid, path);
+  let started = prepareGate();
   const firstDelete = remove();
   await started;
   const switchSession = globalThis.__ipcHandlers.get(IPC_CHANNELS.agentSwitchSession)(valid, nextPath);
@@ -517,25 +522,24 @@ test('session switches and shutdown wait for an accepted asynchronous trash move
   await Promise.all([firstDelete, switchSession]);
   assert.equal(switching, true);
   assert.equal(releases, 1);
+  assert.equal(existsSync(oldPath), false, 'deletion unlinks the transcript directly');
+  assert.equal(existsSync(join(root, 'session-trash')), false, 'no app trash directory is created');
 
-  globalThis.__ipcTrash = async () => { throw new Error('copy failed'); };
-  await assert.rejects(remove(), /copy failed/);
-  assert.equal(releases, 2, 'a failed file move releases the host reservation');
   busy = true;
-  globalThis.__ipcTrash = async () => { assert.fail('busy sessions cannot reach the trash'); };
   await assert.rejects(remove(), /后台会话仍在运行/);
-  assert.equal(releases, 2, 'a failed prepare must not release an unrelated reservation');
+  assert.equal(releases, 1, 'a failed prepare must not release an unrelated reservation');
   busy = false;
 
-  started = trashGate();
-  const secondDelete = remove();
+  started = prepareGate();
+  const secondDelete = remove(nextPath);
   await started;
   const shutdown = ipc.disposeServices();
   await new Promise((resolve) => setImmediate(resolve));
-  assert.equal(disposed, false, 'host shutdown cannot interrupt the file move');
+  assert.equal(disposed, false, 'host shutdown cannot interrupt the deletion');
   release();
   await Promise.all([secondDelete, shutdown]);
   assert.equal(disposed, true);
+  assert.equal(releases, 2);
 });
 
 test('folder-drop IPC registers projects atomically without activating or trusting them', async (t) => {

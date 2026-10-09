@@ -110,7 +110,7 @@ interface ChatState {
 	switchWorkspace(cwd: string, options?: { fresh?: boolean; force?: boolean }): Promise<void>;
 	removeWorkspace(cwd: string): Promise<void>;
 	updateSessionMeta(path: string, patch: UiSessionMetaPatch): Promise<void>;
-	/** Moves a conversation to the app trash after a confirmation; active sessions switch away first (3.3). */
+	/** Permanently deletes a conversation after a confirmation; active sessions switch away first. */
 	deleteSession(path: string): Promise<void>;
 	/** Trash several conversations in one batch: sequential bridge calls with independent failures (one bad path never rolls back the rest), a pre-flight re-validation of the selection, and a single cache refresh for the whole batch. */
 	deleteSessions(paths: string[], options?: { expectArchived?: boolean }): Promise<{ deleted: string[]; failed: Record<string, string>; skipped: Record<string, string> }>;

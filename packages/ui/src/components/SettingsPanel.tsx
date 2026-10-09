@@ -1,5 +1,5 @@
 import { McpSettingsPanel } from './McpSettingsPanel';
-import { DataManagementPanel } from './DataManagementPanel';
+import { SessionManagementPanel } from './SessionManagementPanel';
 import { useCallback, useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
 import type { UiDesktopSettings, UiProviderAuthStatus, UiUpdateState } from '@pidesktop/shared';
 import { useChatStore } from '../store';
@@ -18,6 +18,8 @@ import { useBusyInputBehavior } from '../busyInputBehavior';
 import { ConversationMetricsSettings } from './ConversationMetricsSettings';
 import { useTaskNotificationSoundEnabled } from '../taskNotificationSound';
 import { useExtensionNoticeDisplayEnabled } from '../extensionNoticeDisplay';
+import { useMessageStreamShowReasoning } from '../messageStreamShowReasoning';
+import { useQuestionAutoResolutionEnabled } from '../extensionQuestionTimeout';
 import { ConversationStorageSettings } from './ConversationStorageSettings';
 import { EngineSettingsPanel } from './EngineSettingsPanel';
 
@@ -26,7 +28,7 @@ import { EngineSettingsPanel } from './EngineSettingsPanel';
 const PROJECT_REPOSITORY_URL = 'https://github.com/shuaichao171/pi-desktop';
 
 export type ThemePreference = 'system' | 'dark' | 'light';
-type SettingsPage = 'general' | 'appearance' | 'personalization' | 'model' | 'engine' | 'shortcuts' | 'updates' | 'data' | 'mcp';
+type SettingsPage = 'general' | 'appearance' | 'personalization' | 'model' | 'engine' | 'shortcuts' | 'updates' | 'sessions' | 'mcp';
 type DraftFocus = { element: HTMLElement; selection?: { start: number; end: number; direction: 'forward' | 'backward' | 'none' } };
 type PendingLeave = SettingsLeaveRequest<SettingsPage, DraftFocus | null>;
 
@@ -143,6 +145,10 @@ export function SettingsPanel({ initialPage = 'general', modelManagementTarget, 
 	const [notificationSoundSaveFailed, setNotificationSoundSaveFailed] = useState(false);
 	const [extensionNotices, setExtensionNotices] = useExtensionNoticeDisplayEnabled();
 	const [extensionNoticesSaveFailed, setExtensionNoticesSaveFailed] = useState(false);
+	const [showReasoning, setShowReasoning] = useMessageStreamShowReasoning();
+	const [showReasoningSaveFailed, setShowReasoningSaveFailed] = useState(false);
+	const [questionAutoResolution, setQuestionAutoResolution] = useQuestionAutoResolutionEnabled();
+	const [questionAutoResolutionSaveFailed, setQuestionAutoResolutionSaveFailed] = useState(false);
 	const [contentFonts, setContentFonts] = useState(() => ({ code: readContentFontSize('code'), command: readContentFontSize('command') }));
 	const [savingLeave, setSavingLeave] = useState(false);
 	const [leaveError, setLeaveError] = useState(false);
@@ -336,11 +342,11 @@ export function SettingsPanel({ initialPage = 'general', modelManagementTarget, 
 						<button type="button" className={page === 'shortcuts' ? 'is-active' : ''} aria-current={page === 'shortcuts' ? 'page' : undefined} onClick={() => selectPage('shortcuts')}>{t('settings.shortcuts')}</button>
 						{!paiMode && <button type="button" className={page === 'updates' ? 'is-active' : ''} aria-current={page === 'updates' ? 'page' : undefined} onClick={() => selectPage('updates')}>{t('settings.updates')}</button>}
 						<button type="button" className={page === 'mcp' ? 'is-active' : ''} aria-current={page === 'mcp' ? 'page' : undefined} onClick={() => selectPage('mcp')}>MCP</button>
-						{!paiMode && <button type="button" className={page === 'data' ? 'is-active' : ''} aria-current={page === 'data' ? 'page' : undefined} onClick={() => selectPage('data')}>{locale === 'zh-CN' ? '数据管理' : 'Data management'}</button>}
+						{!paiMode && <button type="button" className={page === 'sessions' ? 'is-active' : ''} aria-current={page === 'sessions' ? 'page' : undefined} onClick={() => selectPage('sessions')}>{locale === 'zh-CN' ? '会话管理' : 'Conversations'}</button>}
 					</nav>
 					<div className="pd-settings-content" onFocusCapture={(event) => { if (event.target instanceof HTMLElement) draftFocusRef.current = event.target; }}>
 						{settingsError && <div className="pd-settings-error" role="alert">{settingsError}</div>}
-						{!paiMode && page === 'data' && <DataManagementPanel />}
+						{!paiMode && page === 'sessions' && <SessionManagementPanel />}
 						{page === 'mcp' && <McpSettingsPanel />}
 						{page === 'personalization' && <PersonalizationPanel active onDraftStateChange={reportDraftState} />}
 						{page === 'general' && <>
@@ -384,6 +390,22 @@ export function SettingsPanel({ initialPage = 'general', modelManagementTarget, 
 							onClick={() => setExtensionNoticesSaveFailed(!setExtensionNotices(false))}>{t('settings.notificationsOff')}</button>
 					</div>
 					{extensionNoticesSaveFailed && <p className="pd-settings-feedback" role="status">{t('settings.extensionNoticesSaveFailed')}</p>}
+					<div className="pd-settings-section-head"><h3>{t('settings.showReasoning')}</h3><p>{t('settings.showReasoningDescription')}</p></div>
+					<div className="pd-language-options" data-setting="show-reasoning" role="group" aria-label={t('settings.showReasoning')}>
+						<button type="button" className={showReasoning ? 'is-selected' : ''} aria-pressed={showReasoning}
+							onClick={() => setShowReasoningSaveFailed(!setShowReasoning(true))}>{t('settings.notificationsOn')}</button>
+						<button type="button" className={!showReasoning ? 'is-selected' : ''} aria-pressed={!showReasoning}
+							onClick={() => setShowReasoningSaveFailed(!setShowReasoning(false))}>{t('settings.notificationsOff')}</button>
+					</div>
+					{showReasoningSaveFailed && <p className="pd-settings-feedback" role="status">{t('settings.showReasoningSaveFailed')}</p>}
+					<div className="pd-settings-section-head"><h3>{t('settings.questionAutoResolution')}</h3><p>{t('settings.questionAutoResolutionDescription')}</p></div>
+					<div className="pd-language-options" data-setting="question-auto-resolution" role="group" aria-label={t('settings.questionAutoResolution')}>
+						<button type="button" className={questionAutoResolution ? 'is-selected' : ''} aria-pressed={questionAutoResolution}
+							onClick={() => setQuestionAutoResolutionSaveFailed(!setQuestionAutoResolution(true))}>{t('settings.notificationsOn')}</button>
+						<button type="button" className={!questionAutoResolution ? 'is-selected' : ''} aria-pressed={!questionAutoResolution}
+							onClick={() => setQuestionAutoResolutionSaveFailed(!setQuestionAutoResolution(false))}>{t('settings.notificationsOff')}</button>
+					</div>
+					{questionAutoResolutionSaveFailed && <p className="pd-settings-feedback" role="status">{t('settings.questionAutoResolutionSaveFailed')}</p>}
 						{!paiMode && appInfo?.platform === 'win32' && desktopSettings && (
 							<>
 								<div className="pd-settings-section-head"><h3>{t('settings.closeBehavior')}</h3><p>{t('settings.closeBehaviorDescription')}</p></div>
@@ -395,6 +417,17 @@ export function SettingsPanel({ initialPage = 'general', modelManagementTarget, 
 									</div>
 								</>
 						) }
+					{desktopSettings && (
+						<>
+							<div className="pd-settings-section-head"><h3>{t('settings.keepAwake')}</h3><p>{t('settings.keepAwakeDescription')}</p></div>
+								<div className="pd-language-options" data-setting="keep-awake" role="group" aria-label={t('settings.keepAwake')}>
+									<button type="button" className={desktopSettings.keepAwakeWhileRunning ? 'is-selected' : ''} aria-pressed={desktopSettings.keepAwakeWhileRunning}
+										disabled={savingDesktopSettings} onClick={() => { void saveDesktopSettings({ keepAwakeWhileRunning: true }); }}>{t('settings.notificationsOn')}</button>
+									<button type="button" className={!desktopSettings.keepAwakeWhileRunning ? 'is-selected' : ''} aria-pressed={!desktopSettings.keepAwakeWhileRunning}
+										disabled={savingDesktopSettings} onClick={() => { void saveDesktopSettings({ keepAwakeWhileRunning: false }); }}>{t('settings.notificationsOff')}</button>
+								</div>
+						</>
+					) }
 						</>}
 						{page === 'appearance' && <>
 							<div className="pd-settings-section-head"><h2>{t('settings.appearance')}</h2><p>{t('settings.appearanceDescription')}</p></div>
@@ -437,6 +470,17 @@ export function SettingsPanel({ initialPage = 'general', modelManagementTarget, 
 									<button type="button" data-action="open-project" className="pd-extension-refresh" onClick={() => window.open(PROJECT_REPOSITORY_URL, '_blank', 'noopener')}>{t('settings.updateOpenProject')}</button>
 								</div>
 							</div>
+						{desktopSettings && (
+							<>
+								<div className="pd-settings-section-head"><h3>{t('settings.autoInstallUpdates')}</h3><p>{t('settings.autoInstallUpdatesDescription')}</p></div>
+								<div className="pd-language-options" data-setting="auto-install-updates" role="group" aria-label={t('settings.autoInstallUpdates')}>
+									<button type="button" className={desktopSettings.autoInstallUpdates ? 'is-selected' : ''} aria-pressed={desktopSettings.autoInstallUpdates}
+										disabled={savingDesktopSettings} onClick={() => { void saveDesktopSettings({ autoInstallUpdates: true }); }}>{t('settings.notificationsOn')}</button>
+									<button type="button" className={!desktopSettings.autoInstallUpdates ? 'is-selected' : ''} aria-pressed={!desktopSettings.autoInstallUpdates}
+										disabled={savingDesktopSettings} onClick={() => { void saveDesktopSettings({ autoInstallUpdates: false }); }}>{t('settings.notificationsOff')}</button>
+								</div>
+						</>
+						) }
 						</>}
 					</div>
 				</div>

@@ -44,7 +44,7 @@ function mountSearch() {
       if (specifier === '../useSessionNavigation') return { useSessionNavigation: () => ({}) };
       if (specifier === '../workbenchReading') return { clampWorkbenchWidth };
       if (specifier === '../shortcuts/bindings') return shortcutBindings;
-      if (specifier === './ExtensionDialogHost') return { ExtensionDialogHost: 'ExtensionDialogHost', useExtensionRequestPending: () => false };
+      if (specifier === './ExtensionDialogHost') return { ExtensionDialogHost: 'ExtensionDialogHost', useExtensionRequestPending: () => false, useAnyExtensionRequestPending: () => false };
       return new Proxy({}, { get: (_, name) => name });
     },
   };

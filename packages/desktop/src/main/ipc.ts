@@ -1,5 +1,4 @@
 import { MCP_FEATURE_CHANNELS, PLUGIN_UPDATE_CHANNELS } from '@pidesktop/shared';
-import { registerManagementIpc } from './managementIpc';
 /**
  * IPC wiring: renderer ⇄ main ⇄ AgentService.
  *
@@ -9,7 +8,7 @@ import { registerManagementIpc } from './managementIpc';
 
 import { app, BrowserWindow, dialog, shell, type IpcMainInvokeEvent } from 'electron';
 import { mkdirSync, statSync } from 'node:fs';
-import { lstat, rm, stat } from 'node:fs/promises';
+import { rm, stat } from 'node:fs/promises';
 import { basename, dirname, join, resolve } from 'node:path';
 import { IPC_CHANNELS, type AgentEventEnvelope, type AppLocale, type UiAppCommand, type UiAttachment, type UiExtensionDialogRequest, type UiInputScope, type UiSessionMetaPatch, type UiSidebarGroupChange, type UiSlashCommandRequest, type UiThinkingLevel } from '@pidesktop/shared';
 import { createIsolatedAgentService } from './agentClient';
@@ -21,15 +20,17 @@ import { registerWorkbenchIpc } from './workbenchIpc';
 import type { WorkbenchService } from './workbenchService';
 import { backupCorruptStateFile, backupCorruptStateFileAsync, CorruptStateFileError, readStateFile, readStateFileAsync, writeStateFile, writeStateFileAsync } from './stateFiles';
 import { SessionGroupService } from './sessionGroups';
-import { createSessionTrash } from './sessionTrash';
 import { broadcastToRenderers, handleRendererInvoke, requireRendererSender } from './rendererIpc';
 import { normalizeUiDiagnostic } from '@pidesktop/shared';
-import { recordDiagnostic } from './diagnostics';
+import { flushDiagnostics, initializeDiagnostics, recordDiagnostic } from './diagnostics';
+import { createInterface } from 'node:readline';
+import { createReadStream } from 'node:fs';
 import { normalizeSessionPath, pruneMissingSessionMeta } from './sessionPaths';
 import { prepareWorkspaceDrop } from './workspaceDrop';
 import { createProjectCreator } from './projectCreation';
 import { createConversationWorkspace, createConversationWorkspaceSync, prepareConversationStorageDirectory } from './conversationStorage';
 import { createDesktopNotifier } from './notifications';
+import { createKeepAwakeController, type KeepAwakeController } from './keepAwake';
 import { readDesktopSettings, writeDesktopSettings, type DesktopSettings } from './desktopSettings';
 import { appearanceStatePath, isValidAppearanceState, readAppearanceState, watchAppearanceState, writeAppearanceState } from './appearance';
 import { readWorkspaceContext, validateContextRequest } from './contextService';
@@ -39,12 +40,11 @@ import { probePiEngine, readBuiltinEngineInfo, isValidPiEngineSelection } from '
 import type { AgentHostEngineOptions } from './agentClient';
 import type { UiPiEngineSelection, UiPiEngineStatus } from '@pidesktop/shared';
 import { createPluginDiscovery } from './pluginDiscovery';
-import { getAgentDir } from '@earendil-works/pi-coding-agent';
+import { SessionManager } from '@earendil-works/pi-coding-agent';
 import { registerWorkbenchFeatureIpc } from './workbenchFeatureIpc';
 import { registerInputAttachmentIpc } from './inputAttachmentIpc';
-import { inputScopeKey } from '@pidesktop/agent/attachmentStore';
 import { registerDataFeaturesIpc } from './dataFeaturesIpc';
-import { INPUT_FEATURE_CHANNELS, WORKBENCH_FEATURE_CHANNELS, MANAGEMENT_FEATURE_CHANNELS, requireInputQueueScope, type RecoverableSessionMetadata } from '@pidesktop/shared';
+import { DATA_FEATURE_CHANNELS, INPUT_FEATURE_CHANNELS, WORKBENCH_FEATURE_CHANNELS, MANAGEMENT_FEATURE_CHANNELS, requireInputQueueScope, type UiMachineSessionSummary } from '@pidesktop/shared';
 import type { UiPluginMutation, UiPluginResourceKind, UiPluginScope, UiSaveInstructionRequest } from '@pidesktop/shared';
 import { requireDialogResponse, type UiExtensionDialogResponse } from '@pidesktop/shared';
 
@@ -68,9 +68,10 @@ const MAX_STARTUP_NOTIFICATIONS = 100;
 let getDialogWindow: () => BrowserWindow | undefined = () => undefined;
 /** Set by registerIpc: OS notification for approvals/questions while unfocused. */
 let notifyInputRequest: ((request: UiExtensionDialogRequest) => void) | null = null;
+/** Set by registerIpc: powerSaveBlocker while tasks run and the preference is on. */
+let keepAwake: KeepAwakeController | null = null;
 let workbenchService: WorkbenchService | null = null;
 let workbenchFeatures: ReturnType<typeof registerWorkbenchFeatureIpc> | null = null;
-let managementFeatures: ReturnType<typeof registerManagementIpc> | null = null;
 let inputFeatures: ReturnType<typeof registerInputAttachmentIpc> | null = null;
 let disposingServices = false;
 let serviceShutdown: Promise<void> | null = null;
@@ -95,7 +96,6 @@ const agentEngineOptions: AgentHostEngineOptions = {
 const automationExecutor = createAutomationExecutor({
 	createAgent: (ui) => createIsolatedAgentService(ui, agentEngineOptions),
 	withSessionSetup: (action) => queueWorkspaceActivation(action),
-	onSessionCreated: async (path, task) => { await managementFeatures?.rememberAutomation(path, task.id); },
 });
 
 function notificationsFor(owner: BrowserWindow): StartupNotifications {
@@ -275,6 +275,7 @@ export function saveCloseBehavior(behavior: DesktopSettings['closeBehavior']): P
 	const result = desktopSettingsQueue.then(() => {
 		const current = readCurrentDesktopSettings();
 		writeDesktopSettings(desktopSettingsPath(), { ...current, closeBehavior: behavior });
+		keepAwake?.settingsChanged();
 	});
 	desktopSettingsQueue = result.then(() => undefined, () => undefined);
 	return result;
@@ -533,6 +534,22 @@ async function requireSessionOwner(path: string, allowCurrentDraft = false): Pro
 	return (await requireSessionOwners([path], allowCurrentDraft)).get(normalizeSessionPath(path))!;
 }
 
+/** Read only the session header line: machine-wide sessions may name a workspace the app never opened. */
+async function readSessionHeaderOwner(path: string): Promise<string | null> {
+	try {
+		const stream = createReadStream(path, { encoding: 'utf8' });
+		const lines = createInterface({ input: stream, crlfDelay: Infinity });
+		try {
+			for await (const line of lines) {
+				if (!line.trim()) continue;
+				const entry = JSON.parse(line) as { type?: unknown; cwd?: unknown };
+				return entry?.type === 'session' && typeof entry.cwd === 'string' && entry.cwd ? entry.cwd : null;
+			}
+			return null;
+		} finally { lines.close(); stream.destroy(); }
+	} catch { return null; }
+}
+
 async function requireSessionOwners(paths: string[], allowCurrentDraft = false): Promise<Map<string, string>> {
 	const targets = [...new Set(paths.map(normalizeSessionPath))];
 	if (targets.some((path) => automationExecutor.isSessionRunning(path))) throw new Error('自动化仍在运行，请结束后再打开会话');
@@ -570,6 +587,13 @@ async function requireSessionOwners(paths: string[], allowCurrentDraft = false):
 				owner = owners.find(({ sessions }) => sessions.has(path))?.cwd;
 			}
 			if (owner) rememberSessionOwner(path, owner);
+		}
+		// Session management lists every transcript on this machine; conversations from
+		// workspaces the app never opened fall back to the header's own cwd, confirmed
+		// against that workspace's listing so a stale header cannot forge ownership.
+		if (!owner) {
+			const headerOwner = await readSessionHeaderOwner(path);
+			if (headerOwner && (await sessionsFor(headerOwner)).has(path)) owner = headerOwner;
 		}
 		if (!owner) throw new Error('未找到会话');
 		result.set(path, owner);
@@ -678,6 +702,8 @@ export function registerIpc(options: {
 		revealSession: (path, cwd) => sendAppCommand({ type: 'switch-session', path, cwd }),
 	});
 	notifyInputRequest = (request) => notifier.handleInputRequest(request, activeSessionPath, agentService.cwd || activeWorkspace);
+	keepAwake = createKeepAwakeController({ settingsPath: desktopSettingsPath, defaultStorageDirectory: join(app.getPath('home'), 'PiDesktopWorkspace') });
+	updateService.setAutoInstallSource(() => readCurrentDesktopSettings().autoInstallUpdates === true);
 	appearancePath = appearanceStatePath(options.baseUserData ?? app.getPath('userData'));
 		handleRendererInvoke(MCP_FEATURE_CHANNELS.getMcpSnapshot, () => agentService.getMcpSnapshot());
 	handleRendererInvoke(MCP_FEATURE_CHANNELS.saveMcpServer, (_event, request: Parameters<typeof agentService.saveMcpServer>[0]) => agentService.saveMcpServer(request));
@@ -709,7 +735,15 @@ export function registerIpc(options: {
 		requirePluginSender(event);
 		return agentService.saveInstruction(request);
 	});
-	managementFeatures = registerManagementIpc(agentService, listWorkspaces);
+	const diagnosticsService = initializeDiagnostics(join(app.getPath('userData'), 'diagnostics'));
+	// Kept for the error-details export affordance; the data-management page itself is gone.
+	handleRendererInvoke(MANAGEMENT_FEATURE_CHANNELS.exportDiagnostics, async (_event, days: number) => {
+		if (!Number.isInteger(days) || days < 1 || days > 30) throw new Error('请选择最近 1 至 30 天');
+		const result = await dialog.showSaveDialog({ title: '导出脱敏诊断包', defaultPath: `pi-diagnostics-${new Date().toISOString().slice(0, 10)}.zip`, filters: [{ name: 'ZIP', extensions: ['zip'] }] });
+		if (result.canceled || !result.filePath) return { path: null, entries: 0, skipped: [] };
+		const report = await diagnosticsService.archive(result.filePath, days, { app: app.getVersion(), electron: process.versions.electron ?? '', node: process.versions.node, platform: process.platform });
+		return { path: result.filePath, ...report };
+	});
 	const automations = createAutomationService({
 		filePath: join(app.getPath('userData'), 'automations.json'),
 		execute: (task, signal, dispatch) => automationExecutor.execute(task, signal, dispatch),
@@ -721,9 +755,10 @@ export function registerIpc(options: {
 		onChanged: (snapshot) => {
 			const win = getDialogWindow();
 			if (win && !win.isDestroyed() && !win.webContents.isDestroyed()) win.webContents.send(IPC_CHANNELS.automationChanged, snapshot);
+			keepAwake?.setAutomationActive(snapshot.runs.some((run) => run.status === 'running' || run.status === 'retrying'));
 		},
 		onError: (error) => console.error('Automation scheduler failed:', error),
-		onRunFinished: (entry, task) => { notifier.handleAutomationRun(entry, task.name, task.cwd); if (entry.sessionPath) void managementFeatures?.rememberAutomation(entry.sessionPath, entry.id).catch(error => console.error('Usage identity persistence failed', error)); },
+		onRunFinished: (entry, task) => { notifier.handleAutomationRun(entry, task.name, task.cwd); },
 	});
 	handleRendererInvoke(IPC_CHANNELS.desktopSettingsGet, () => readCurrentDesktopSettings());
 	stopAppearanceWatch = watchAppearanceState(appearancePath, (state) => {
@@ -769,10 +804,20 @@ export function registerIpc(options: {
 			const next: DesktopSettings = {
 				notificationsEnabled: typeof patch.notificationsEnabled === 'boolean' ? patch.notificationsEnabled : current.notificationsEnabled,
 				closeBehavior: patch.closeBehavior === 'tray' || patch.closeBehavior === 'quit' ? patch.closeBehavior : current.closeBehavior,
+				keepAwakeWhileRunning: typeof patch.keepAwakeWhileRunning === 'boolean' ? patch.keepAwakeWhileRunning : current.keepAwakeWhileRunning,
+				autoInstallUpdates: typeof patch.autoInstallUpdates === 'boolean' ? patch.autoInstallUpdates : current.autoInstallUpdates,
 				conversationStorageDirectory: directory ?? current.conversationStorageDirectory,
 				piEngine: piEngine ?? current.piEngine,
 			};
 			writeDesktopSettings(desktopSettingsPath(), next);
+			keepAwake?.settingsChanged();
+			// Enabling auto-install is explicit consent: chain straight into download +
+			// silent install for an already-known version, or start an auto-install check.
+			if (patch.autoInstallUpdates === true) {
+				const state = updateService.getState();
+				if (state.availableVersion) void updateService.install().catch(() => { /* Published as update state. */ });
+				else if (state.phase === 'idle' || state.phase === 'up-to-date' || (state.phase === 'error' && !state.availableVersion)) void updateService.check(true).catch(() => { /* Published as update state. */ });
+			}
 			return next;
 		});
 		desktopSettingsQueue = result.then(() => undefined, () => undefined);
@@ -892,6 +937,7 @@ export function registerIpc(options: {
 	agentService.onEvent((event: AgentEventEnvelope) => {
 		if (event.event.type === 'ready') activeSessionPath = event.event.sessionPath;
 		if (event.event.type === 'ready' || event.event.type === 'status' || event.event.type === 'sessions-changed') invalidateAppTrayData();
+		if (event.event.type === 'status') keepAwake?.setAgentBusy(event.event.status === 'busy');
 		notifier.handleAgentEvent(event, activeSessionPath, agentService.cwd || activeWorkspace);
 		broadcastToRenderers(IPC_CHANNELS.agentEvent, event);
 	});
@@ -1105,7 +1151,7 @@ export function registerIpc(options: {
 		for (const session of result.sessions) rememberSessionOwner(session.path, session.cwd);
 		return { ...result, sessions: result.sessions.filter((session) => !automationExecutor.isSessionRunning(session.path)).map((session) => ({ ...session, ...meta[session.path] })) };
 	});
-	handleRendererInvoke(IPC_CHANNELS.workspaceSearchFiles, async (_event, query: string, options?: { includeDirectories?: boolean }) => { await dataFeatures.applyProjectRules(activeWorkspace); return agentService.searchWorkspaceFiles(activeWorkspace, query, options); });
+	handleRendererInvoke(IPC_CHANNELS.workspaceSearchFiles, async (_event, query: string, options?: { includeDirectories?: boolean }) => agentService.searchWorkspaceFiles(activeWorkspace, query, options));
 	handleRendererInvoke(IPC_CHANNELS.contextRead, async (_event, request: unknown) => {
 		validateContextRequest(request);
 		if (!(await listWorkspaces()).includes(request.workspace)) throw new Error('未知工作区');
@@ -1164,60 +1210,8 @@ export function registerIpc(options: {
 			await saveSessionMeta(meta);
 		});
 	}));
-	const sessionTrash = createSessionTrash(() => join(app.getPath('userData'), 'session-trash'));
-	async function recoverableMetadata(path: string): Promise<RecoverableSessionMetadata> {
-		const meta = await withSessionMeta(value => ({ ...value[path] }));
-		// Keep the trash sidecar schema stable: the unread watermark is a live CAS
-		// stamp, not a recoverable flag (a restored unread re-stamps on next settle).
-		const { unreadAt: _unreadAt, ...flags } = meta ?? {};
-		const group = (await groups.list()).find(item => item.sessionPaths.includes(path));
-		return { ...flags, order: flags.order ?? undefined, ...(group ? { group: { id: group.id, name: group.name, index: group.sessionPaths.indexOf(path) } } : {}) };
-	}
-	const dataFeatures = registerDataFeaturesIpc({
-		userData: app.getPath('userData'), sessionsRoot: join(getAgentDir(), 'sessions'), trash: sessionTrash,
+	registerDataFeaturesIpc({
 		getWorkspace: () => activeWorkspace, getWorkspaces: listWorkspaces,
-		listSources: async () => {
-      const runtimeSnapshot = await agentService.getSnapshot();
-      const runningPaths = new Set(runtimeSnapshot.sessionRuntimes?.filter(item => !['idle', 'failed'].includes(item.runtime.phase)).map(item => item.path) ?? []);
-      if (runtimeSnapshot.sessionPath && !['idle', 'error', 'uninitialized'].includes(runtimeSnapshot.status)) runningPaths.add(runtimeSnapshot.sessionPath);
-			const sources = [];
-			for (const cwd of await listWorkspaces()) for (const session of await agentService.listSessions(cwd)) {
-				if (automationExecutor.isSessionRunning(session.path) || runningPaths.has(session.path)) throw new Error('请等待会话运行结束后再创建完整备份');
-				sources.push({ path: session.path, cwd, metadata: await recoverableMetadata(session.path) });
-			}
-			return sources;
-		},
-		applyMetadata: async items => {
-			for (const item of items) {
-				const { group, ...flags } = item.metadata ?? {};
-				await withSessionMeta(async meta => { meta[item.path] = { ...meta[item.path], ...flags }; await saveSessionMeta(meta); });
-				if (group) {
-					let collection = await groups.list();
-					let target = collection.find(value => value.id === group.id || value.name.toLowerCase() === group.name.toLowerCase());
-					if (!target) { collection = await groups.update({ type: 'create', name: group.name }); target = collection.find(value => value.name === group.name)!; }
-					await groups.update({ type: 'move-session', sessionPath: item.path, groupId: target.id, index: group.index });
-				}
-			}
-		},
-		removeMetadata: async paths => {
-			await withSessionMeta(async meta => { for (const path of paths) delete meta[path]; await saveSessionMeta(meta); });
-			for (const path of paths) await groups.removeSession(path);
-		},
-		isSessionRunning: async path => {
-			if (automationExecutor.isSessionRunning(path)) return true;
-			const snapshot = await agentService.getSnapshot();
-			return snapshot.sessionPath === path || Boolean(snapshot.sessionRuntimes?.some(runtime => runtime.path === path && !['idle', 'failed'].includes(runtime.runtime.phase)));
-		},
-		releaseSessionInputs: async entry => {
-			if (!entry.cwd || !entry.originalPath) return;
-			// A failed cross-volume move can leave both copies. Its live source still owns inputs.
-			try { await lstat(entry.originalPath); return; }
-			catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
-			if (!inputFeatures) throw new Error('输入存储尚未就绪，请重试清理');
-			const scope = { cwd: entry.cwd, sessionPath: entry.originalPath };
-			inputFeatures.storage.releaseScope(scope);
-			await rm(join(getAgentDir(), 'desktop-inputs', 'queues', `${inputScopeKey(scope)}.json`), { force: true });
-		},
 		searchSessions: async request => {
 			const workspaces = await listWorkspaces();
 			const result = await agentService.searchSessionsPage(workspaces, request, await withSessionMeta(value => Object.fromEntries(Object.entries(value).map(([path, meta]) => [path, { ...meta, order: meta.order ?? undefined }]))), workspaces.flatMap(cwd => automationExecutor.sessionPaths(cwd)));
@@ -1225,12 +1219,36 @@ export function registerIpc(options: {
 			return result;
 		},
 		searchFiles: (cwd, request) => agentService.searchProjectFiles(cwd, request),
-		rebuildIndex: async () => agentService.rebuildSearchIndex(await listWorkspaces()),
 		cancelSearch: id => agentService.cancelDataSearch(id),
-		getSearchRules: cwd => agentService.getProjectSearchRules(cwd),
-		setSearchRules: (cwd, rules) => agentService.setProjectSearchRules(cwd, rules),
-		onChanged: async () => { lastSessionMetaPrune = 0; invalidateAppTrayData(); },
 	});
+	// Session management page: every transcript under the local pi sessions root,
+	// including workspaces the app has never opened (native pi's listAll scope).
+	handleRendererInvoke(DATA_FEATURE_CHANNELS.listMachineSessions, () => queueWorkspaceActivation(async () => {
+		const [known, meta, runtimeSnapshot, sessions] = await Promise.all([
+			listWorkspaces().then(value => new Set(value)),
+			withSessionMeta(value => value),
+			agentService.getSnapshot(),
+			SessionManager.listAll(),
+		]);
+		const running = new Set(runtimeSnapshot.sessionRuntimes?.filter(item => !['idle', 'failed'].includes(item.runtime.phase)).map(item => item.path) ?? []);
+		const rows: UiMachineSessionSummary[] = [];
+		for (const session of sessions) {
+			if (!session.cwd) continue;
+			const flags = meta[session.path];
+			rows.push({
+				path: session.path, id: session.id, name: session.name, firstMessage: session.firstMessage,
+				modified: session.modified.toISOString(), messageCount: session.messageCount,
+				...(flags?.pinned !== undefined ? { pinned: flags.pinned } : {}),
+				...(flags?.archived !== undefined ? { archived: flags.archived } : {}),
+				...(flags?.unread !== undefined ? { unread: flags.unread } : {}),
+				cwd: session.cwd, registered: known.has(session.cwd),
+				running: running.has(session.path) || automationExecutor.isSessionRunning(session.path),
+				bytes: await stat(session.path).then(value => value.size).catch(() => 0),
+			});
+		}
+		rows.sort((a, b) => b.modified.localeCompare(a.modified));
+		return rows;
+	}));
 	handleRendererInvoke(IPC_CHANNELS.sessionDelete, (event, path: unknown) => queueWorkspaceActivation(async () => {
 		const win = invokingWindow(event);
 		if (event.senderFrame !== win.webContents.mainFrame) throw new Error('Invalid session-delete sender');
@@ -1242,15 +1260,15 @@ export function registerIpc(options: {
 		if (snapshot.sessionPath === target) throw new Error('不能删除当前打开的会话');
 		await agentService.prepareSessionDeletion(target, owner);
 		try {
-			const session = (await agentService.listSessions(owner)).find(item => item.path === target);
-			const trashed = await sessionTrash.trashSession(target, { cwd: owner, sessionId: session?.id, name: session?.name, metadata: await recoverableMetadata(target) });
+			// Native pi semantics: deleting a conversation unlinks its transcript directly.
+			// There is no app trash and no recovery; only the file itself is removed.
+			await rm(target, { force: true });
 			sessionOwnerByPath.delete(target);
 			await withSessionMeta(async (meta) => {
 				delete meta[target];
 				await saveSessionMeta(meta);
 			});
 			await sessionGroupService?.removeSession(target);
-			return trashed;
 		} finally {
 			await agentService.releaseSessionDeletion(target);
 		}
@@ -1350,6 +1368,7 @@ export function disposeServices(): Promise<void> {
 	disposingServices = true;
 	updateService.stop();
 	stopAppearanceWatch?.();
+	keepAwake?.dispose();
 	stopAppearanceWatch = null;
 	destroyAppTray();
 	for (const queue of startupNotifications.values()) queue.cleanup();
@@ -1368,7 +1387,7 @@ export function disposeServices(): Promise<void> {
 		// A failed service must not let app.quit interrupt another service's
 		// cleanup or metadata that was queued by its final activity events.
 		await sessionMetaQueue;
-		await managementFeatures?.dispose();
+		await flushDiagnostics();
 		const failure = results.find((result) => result.status === 'rejected');
 		if (failure?.status === 'rejected') throw failure.reason;
 	})();

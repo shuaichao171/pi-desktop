@@ -1,16 +1,9 @@
-import type { UiSessionSearchResult, WorkspaceEntry } from './index';
+import type { UiSessionSummary, UiSessionSearchResult, WorkspaceEntry } from './index';
 
-export interface RecoverableSessionMetadata {
+/** Desktop metadata flags the search layer filters on (pinned/archived/unread plus manual order). */
+export interface SessionSearchMetadata {
 	pinned?: boolean; archived?: boolean; unread?: boolean; order?: number;
-	group?: { id: string; name: string; index: number };
 }
-export interface SessionTrashEntry {
-	id: string; deletedAt: string; bytes: number; originalPath?: string; cwd?: string;
-	sessionId?: string; name?: string; metadata?: RecoverableSessionMetadata;
-	legacy: boolean; expiresAt?: string;
-}
-export interface TrashRestoreRequest { id: string; cwd?: string }
-export interface TrashCleanupRequest { entries: Array<{ id: string; deletedAt: string }> }
 export interface SessionSearchRequest {
 	query: string; workspace?: string; after?: string; before?: string;
 	archived?: 'all' | 'exclude' | 'only'; otherBranches?: boolean;
@@ -39,24 +32,24 @@ export interface ProjectSearchPage {
 	skipReasons: { binary: number; large: number; unreadable: number; ignored: number };
 	rules: ProjectSearchRules; diagnostics: SearchDiagnostics;
 }
-export interface SessionImportResult { paths: string[]; cwd: string; duplicate: boolean; warnings: string[] }
+/** A conversation discovered anywhere under the local pi sessions root, including workspaces the app has not opened. */
+export interface UiMachineSessionSummary extends UiSessionSummary {
+	cwd: string;
+	/** False when the session belongs to a workspace that is not registered in this app. */
+	registered: boolean;
+	/** True while the conversation has a live background runtime; deletion must wait. */
+	running: boolean;
+	/** Transcript file size in bytes. */
+	bytes: number;
+}
 export interface DataFeaturesBridge {
-	listSessionTrash(): Promise<{ entries: SessionTrashEntry[]; retentionDays: number }>;
-	restoreSessionTrash(request: TrashRestoreRequest): Promise<{ path: string; cwd: string; warnings: string[] }>;
-	cleanupSessionTrash(request: TrashCleanupRequest): Promise<{ removed: string[]; skipped: string[] }>;
-	setSessionTrashRetention(days: number): Promise<void>;
+	listMachineSessions(): Promise<UiMachineSessionSummary[]>;
 	searchSessionsPage(request: SessionSearchRequest): Promise<SessionSearchPage>;
 	searchProjectFiles(request: ProjectSearchRequest): Promise<ProjectSearchPage>;
-	rebuildSearchIndex(): Promise<{ indexed: number }>;
 	cancelDataSearch(requestId: string): Promise<void>;
-	getProjectSearchRules(): Promise<ProjectSearchRules>;
-	setProjectSearchRules(rules: ProjectSearchRules): Promise<void>;
-	importSessions(format: 'native' | 'backup', cwd: string): Promise<SessionImportResult | null>;
-	exportSessionsBackup(): Promise<string | null>;
 }
 export const DATA_FEATURE_CHANNELS = {
-	listSessionTrash: 'data:trash:list', restoreSessionTrash: 'data:trash:restore', cleanupSessionTrash: 'data:trash:cleanup',
-	setSessionTrashRetention: 'data:trash:retention', searchSessionsPage: 'data:search:sessions', searchProjectFiles: 'data:search:project',
-	rebuildSearchIndex: 'data:search:rebuild', cancelDataSearch: 'data:search:cancel', getProjectSearchRules: 'data:search:rules:get',
-	setProjectSearchRules: 'data:search:rules:set', importSessions: 'data:sessions:import', exportSessionsBackup: 'data:sessions:backup',
+	listMachineSessions: 'data:sessions:list-all',
+	searchSessionsPage: 'data:search:sessions', searchProjectFiles: 'data:search:project',
+	cancelDataSearch: 'data:search:cancel',
 } as const;

@@ -5,7 +5,7 @@ import { AGENT_HOST_METHODS, createAgentHostMethods, createAgentHostProxy, invok
 test('every protocol method has a real implementation and the client forwards its exact arguments', async () => {
   const { AgentService } = await import('../packages/agent/src/index.ts');
   const service = Object.create(AgentService.prototype);
-  const search = { searchSessions() {}, searchWorkspaceFiles() {}, readSessionContext() {}, searchSessionsPage() {}, searchProjectFiles() {}, rebuildSearchIndex() {}, cancelDataSearch() {}, getProjectSearchRules() {}, setProjectSearchRules() {}, getUsageReport() {}, cancelUsageReport() {} };
+  const search = { searchSessions() {}, searchWorkspaceFiles() {}, readSessionContext() {}, searchSessionsPage() {}, searchProjectFiles() {}, rebuildSearchIndex() {}, cancelDataSearch() {}, getProjectSearchRules() {}, setProjectSearchRules() {} };
   const actual = createAgentHostMethods(service, search);
   assert.deepEqual(Object.keys(actual), [...AGENT_HOST_METHODS]);
   const calls = [];

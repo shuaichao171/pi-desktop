@@ -1,0 +1,26 @@
+.pd-session-management { display: flex; flex-direction: column; gap: 12px; }
+.pd-session-management header h2 { margin: 0 0 6px; font-size: var(--pd-font-lg); }
+.pd-session-management header p { margin: 0; color: var(--pd-text-subtle); }
+.pd-session-management-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.pd-session-management-toolbar input[type='search'] { flex: 1; min-width: 220px; }
+.pd-session-management-toolbar .is-danger { color: var(--pd-danger, #d1242f); }
+.pd-session-management-toolbar[role='status'], .pd-session-management-toolbar span[role='status'] { color: var(--pd-text-subtle); }
+.pd-session-management-count { margin: 0; color: var(--pd-text-weak); font-size: var(--pd-font-sm, 12px); }
+.pd-session-management-error { margin: 0; color: var(--pd-danger, #d1242f); }
+.pd-session-management-table { border: 1px solid var(--pd-border); border-radius: var(--pd-radius-sm); overflow: hidden; }
+.pd-session-management-row { display: grid; grid-template-columns: 28px minmax(220px, 1fr) 170px 64px 76px max-content; gap: 8px; align-items: center; padding: 8px 12px; border-bottom: 1px solid var(--pd-border-soft); font-size: var(--pd-font-base); }
+.pd-session-management-row:last-child { border-bottom: none; }
+.pd-session-management-row:not(.pd-session-management-head):hover { background: var(--pd-surface-hover); }
+.pd-session-management-head { color: var(--pd-text-weak); font-size: var(--pd-font-sm, 12px); background: var(--pd-surface); }
+.pd-session-management-title { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.pd-session-management-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--pd-text); }
+.pd-session-management-meta { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; color: var(--pd-text-weak); font-size: var(--pd-font-sm, 12px); }
+.pd-session-management-cwd { max-width: 360px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left; }
+.pd-session-management-flag { padding: 0 6px; border: 1px solid var(--pd-border); border-radius: 999px; color: var(--pd-text-weak); }
+.pd-session-management-actions { display: flex; gap: 6px; }
+.pd-session-management-actions .is-danger { color: var(--pd-danger, #d1242f); }
+.pd-session-management-rename { width: min(420px, calc(100vw - 32px)); margin: auto; padding: 20px; border: 1px solid var(--pd-border); border-radius: var(--pd-radius-lg); background: var(--pd-surface); color: var(--pd-text); }
+.pd-session-management-rename::backdrop { background: var(--pd-overlay); }
+.pd-session-management-rename h3 { margin: 0 0 12px; font-size: var(--pd-font-lg); }
+.pd-session-management-rename input { width: 100%; margin-bottom: 14px; }
+.pd-session-management-rename footer { display: flex; justify-content: flex-end; gap: 8px; }
