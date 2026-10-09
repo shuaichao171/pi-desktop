@@ -45,6 +45,8 @@
 .pd-sidebar-group.is-custom > .pd-sidebar-group-content { border-left-color: var(--pd-group-color); }
 .pd-organized-list .pd-session-item .pd-session-row { min-height: 36px; padding: 5px 7px; gap: 5px; }
 .pd-organized-list .pd-session-item { --pd-session-actions-width: 30px; }
+/* Draft dashed frame (see styles.css): keep organized draft rows 36px tall too. */
+.pd-organized-list .pd-session-item.is-unsaved .pd-session-row { min-height: 34px; }
 .pd-organized-list .pd-session-copy strong { line-height: 1.5; }
 .pd-organized-list .pd-session-actions { top: 50%; right: 1px; transform: translateY(-50%); }
 .pd-organized-list .pd-session-action { width: 25px; height: 26px; }

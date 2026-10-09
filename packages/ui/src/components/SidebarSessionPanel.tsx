@@ -780,7 +780,7 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, onNavig
 		return <>{ordered.slice(0, limitOf(key)).map((session) => renderSession(session, key))}{moreButton(key, ordered.length)}</>;
 	}
 	function unsaved() {
-		return <div className="pd-session-item is-active"><div className="pd-session-row" aria-current="page"><span className="pd-session-leading" aria-hidden="true" /><span className="pd-session-copy"><strong>{t('sidebar.newSession')}</strong></span><span className="pd-session-unsaved">{t('sidebar.current')}</span></div></div>;
+		return <div className="pd-session-item is-active is-unsaved"><div className="pd-session-row" aria-current="page"><span className="pd-session-leading" aria-hidden="true" /><span className="pd-session-copy"><strong>{t('sidebar.newSession')}</strong></span><span className="pd-session-unsaved">{t('sidebar.current')}</span></div></div>;
 	}
 	function renderProject(workspace: string) {
 		const items = projectByWorkspace.get(workspace)?.sessions ?? [];
