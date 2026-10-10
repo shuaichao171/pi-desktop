@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { IPC_CHANNELS } from '@pidesktop/shared';
 import { getAppLocale } from './appLocale';
 import { createSplashErrorHtml, createSplashHtml } from './splash';
-import { showEditContextMenu } from './editContextMenu';
+import { showEditContextMenu } from './editContextMenu.ts';
 import { createAppTray, destroyAppTray } from './tray';
 import { parseDesktopLaunch, rendererLaunchUrl, reservePaiProfile, validatePaiWorkspace, type DesktopLaunch, type PaiProfile } from './desktopLaunch.ts';
 
