@@ -29,7 +29,8 @@ test('file change presentation preserves unknown counts and full path identity',
     await context.test('Windows and slash paths display directory before basename without status letters', () => {
       for (const path of ['packages/ui/index.ts', 'packages\\ui\\index.ts']) {
         const html = renderToStaticMarkup(createElement(FileLabel, { item: { path, kind: 'modified' } }));
-        assert.match(html, /<small>packages\/ui\/<\/small><span>index\.ts<\/span>/);
+        // The directory is bidi-isolated so lists can shorten it from the front.
+        assert.match(html, /<small><bdi>packages\/ui\/<\/bdi><\/small><span>index\.ts<\/span>/);
         assert.match(html, /pd-change-file-icon/);
         assert.doesNotMatch(html, />M<|>A<|>D</);
       }

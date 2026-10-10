@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import type { GitDeliveryPreview, TaskWorktree, UiFileCheckpoint, WorkbenchFeaturesBridge } from '@pidesktop/shared/workbenchFeatures';
 import { useChatStore } from '../store';
 import { WorkbenchTextView } from './WorkbenchTextView';
+import { Icon } from './Icons';
 import './workbenchFeatures.css';
 type View = 'checkpoint' | 'worktree' | 'delivery';
 export function WorkbenchGitFeatures() {
@@ -34,7 +35,7 @@ export function WorkbenchGitFeatures() {
     setView(null);
   }
   return <>
-    <div className="pd-feature-toolbar">{(['checkpoint', 'worktree', 'delivery'] as View[]).map(kind => <button type="button" key={kind} data-feature={kind} disabled={!cwd || busy} onClick={event => void open(kind, event.currentTarget)}>{kind === 'checkpoint' ? '回合检查点' : kind === 'worktree' ? '独立工作树任务' : '推送 / 草稿 PR'}</button>)}</div>
+    <div className="pd-feature-toolbar">{(['checkpoint', 'worktree', 'delivery'] as View[]).map(kind => <button type="button" key={kind} data-feature={kind} disabled={!cwd || busy} onClick={event => void open(kind, event.currentTarget)}><Icon name={kind === 'checkpoint' ? 'rotateCcw' : kind === 'worktree' ? 'gitBranch' : 'arrowUp'} width="13" height="13" /><span>{kind === 'checkpoint' ? '回合检查点' : kind === 'worktree' ? '独立工作树任务' : '推送 / 草稿 PR'}</span></button>)}</div>
     {view && createPortal(<dialog className="pd-feature-dialog" ref={dialog} aria-modal="true" onCancel={event => { event.preventDefault(); if (!busy) setView(null); }} onKeyDown={event => event.stopPropagation()}>
       <header><h2>{view === 'checkpoint' ? '撤销最近完成回合' : view === 'worktree' ? '独立工作树任务' : '交付当前分支'}</h2><button type="button" disabled={busy} onClick={() => setView(null)}>关闭</button></header><p className="pd-feature-path">{cwd}</p>
       {error && <p role="alert" className="pd-workbench-error">{error}</p>}{notice && <p role="status">{notice}</p>}{busy && <p role="status">{view === 'checkpoint' && checkpoint ? '正在应用回退…' : view === 'checkpoint' ? '正在生成回退预览…' : '正在处理…'}</p>}

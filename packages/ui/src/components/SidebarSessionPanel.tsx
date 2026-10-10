@@ -78,6 +78,7 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 	const workspaceNavigationPending = useChatStore((s) => s.navigationPending);
 	const sessionId = useChatStore((s) => s.sessionId);
 	const sessionPath = useChatStore((s) => s.sessionPath);
+	const hasUserMessage = useChatStore((s) => s.messages.some((message) => message.role === 'user'));
 	const workspaces = useChatStore((s) => s.workspaces);
 	const conversationWorkspaces = useChatStore((s) => s.conversationWorkspaces);
 	const defaultWorkspace = useChatStore((s) => s.defaultWorkspace);
@@ -170,7 +171,9 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 	}, [bodySessions, preferences.sort, archived]);
 	const collapsed = useMemo(() => new Set(preferences.collapsed), [preferences.collapsed]);
 	const loadingSessions = workspacePaths.some((path) => !workspaceRequests[path] || workspaceRequests[path]?.phase === 'loading');
-	const showUnsaved = !archived && preferences.filter === 'all' && Boolean(cwd && sessionId && !allSessions.some((s) => s.path === sessionPath));
+	// A brand-new conversation stays out of the sidebar until its first user
+	// message lands; only then does the row (saved or still-saving) appear.
+	const showUnsaved = !archived && preferences.filter === 'all' && hasUserMessage && Boolean(cwd && sessionId && !allSessions.some((s) => s.path === sessionPath));
 	const unsavedProject = projectPaths.find(path => sidebarWorkspaceKey(path) === sidebarWorkspaceKey(cwd));
 	const showBodyUnsaved = showUnsaved && !pinnedWorkspaceKeys.has(sidebarWorkspaceKey(cwd));
 	const hasPinned = !archived && (grouped.pinned.length > 0 || projectPartitions.pinned.length > 0);
@@ -787,7 +790,7 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 		return <>{ordered.slice(0, limitOf(key)).map((session) => renderSession(session, key))}{moreButton(key, ordered.length)}</>;
 	}
 	function unsaved() {
-		return <div className={`pd-session-item${alternateViewOpen ? '' : ' is-active'} is-unsaved`}><button type="button" className="pd-session-row" onClick={onNavigate} aria-current={alternateViewOpen ? undefined : 'page'}><span className="pd-session-leading" aria-hidden="true" /><span className="pd-session-copy"><strong>{t('sidebar.newSession')}</strong></span><span className="pd-session-unsaved">{t('sidebar.current')}</span></button></div>;
+		return <div className={`pd-session-item${alternateViewOpen ? '' : ' is-active'} is-unsaved`}><button type="button" className="pd-session-row" onClick={onNavigate} aria-current={alternateViewOpen ? undefined : 'page'}><span className="pd-session-leading" aria-hidden="true" /><span className="pd-session-copy"><strong>{t('sidebar.newSession')}</strong></span></button></div>;
 	}
 	function renderProject(workspace: string) {
 		const items = projectByWorkspace.get(workspace)?.sessions ?? [];
@@ -837,7 +840,7 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 			{expanded && <div className="pd-sidebar-group-content" data-drag-container={droppable ? key : undefined}>{content}{droppable && drag && <div className="pd-session-drop-zone" data-drag-footer />}</div>}
 		</section>;
 	}
-	const iconButton = (label: string, icon: Parameters<typeof Icon>[0]['name'], onClick: (element: HTMLButtonElement) => void, extra: { disabled?: boolean; active?: boolean; expanded?: boolean } = {}) => <HoverTooltip title={label}><button type="button" className={`pd-icon-button${extra.active ? ' is-active' : ''}`} aria-label={label} disabled={extra.disabled} aria-pressed={extra.active === undefined ? undefined : extra.active} aria-expanded={extra.expanded} onClick={(event) => onClick(event.currentTarget)}><Icon name={icon} width="14" height="14" /></button></HoverTooltip>;
+	const iconButton = (label: string, icon: Parameters<typeof Icon>[0]['name'], onClick: (element: HTMLButtonElement) => void, extra: { disabled?: boolean; active?: boolean; expanded?: boolean; dot?: boolean } = {}) => <HoverTooltip title={label}><button type="button" className={`pd-icon-button${extra.active ? ' is-active' : ''}${extra.dot ? ' has-dot' : ''}`} aria-label={label} disabled={extra.disabled} aria-pressed={extra.active === undefined ? undefined : extra.active} aria-expanded={extra.expanded} onClick={(event) => onClick(event.currentTarget)}><Icon name={icon} width="15" height="15" /></button></HoverTooltip>;
 	function radio(label: string, selected: boolean, action: () => void) {
 		return <button type="button" role="menuitemradio" aria-checked={selected} onClick={action}><span>{label}</span>{selected && <Icon name="check" width="14" height="14" />}</button>;
 	}
@@ -848,21 +851,28 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 	const ghostGroup = dragItem?.kind === 'group' ? groups.find((group) => group.id === dragItem.id) : null;
 	const ghostProject = dragItem?.kind === 'project' ? dragItem.workspace : null;
 	return <div className="pd-sidebar-detail pd-project-section pd-organized-sessions" onDragStart={(event) => event.preventDefault()}>
-		<div className="pd-sidebar-organize-toolbar">
+		{/* One quiet row: view switch, "new", and a menu holding every low-frequency
+		    control. The archive is a sub-page with its own header and a way back. */}
+		{archived ? <div className="pd-sidebar-organize-toolbar is-archive">
+			{iconButton(t('sidebar.closeArchive'), 'arrowLeft', () => { setArchived(false); setPopup(null); })}
+			<strong className="pd-sidebar-archive-title">{t('sidebar.archived')}</strong>
+			<span className="pd-sidebar-archive-count">{sessions.length}</span>
+			<div className="pd-sidebar-organize-actions">
+				{iconButton(t('sidebar.viewOptions'), 'more', (anchor) => setPopup(popup?.kind === 'filter' ? null : { kind: 'filter', anchor }), { dot: filtered, expanded: popup?.kind === 'filter' })}
+			</div>
+		</div> : <div className="pd-sidebar-organize-toolbar">
 			<div className="pd-sidebar-mode" role="tablist" aria-label={t('sidebar.organize')}>
 				{(['grouped', 'project'] as const).map((mode) => <button key={mode} type="button" role="tab" aria-selected={preferences.mode === mode} onClick={() => { preference({ mode }); setArchived(false); setPopup(null); }} onKeyDown={(event) => {
 					if (['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) { event.preventDefault(); const next = event.key === 'Home' ? 'grouped' : event.key === 'End' ? 'project' : mode === 'grouped' ? 'project' : 'grouped'; preference({ mode: next }); setArchived(false); event.currentTarget.parentElement?.querySelector<HTMLButtonElement>(`[data-mode="${next}"]`)?.focus(); }
-				}} tabIndex={preferences.mode === mode ? 0 : -1} data-mode={mode}><Icon name={mode === 'grouped' ? 'hash' : 'folder'} width="12" height="12" />{t(mode === 'grouped' ? 'sidebar.groups' : 'sidebar.projects')}</button>)}
+				}} tabIndex={preferences.mode === mode ? 0 : -1} data-mode={mode}>{t(mode === 'grouped' ? 'sidebar.groups' : 'sidebar.projects')}</button>)}
 			</div>
-			{iconButton(t(allExpanded ? 'sidebar.collapseAll' : 'sidebar.expandAll'), allExpanded ? 'collapseAll' : 'expandAll', toggleAll, { disabled: sectionKeys.length === 0 })}
 			<div className="pd-sidebar-organize-actions">
-				{!archived && (preferences.mode === 'grouped'
-					? iconButton(t('sidebar.newGroup'), 'hash', (anchor) => editGroup(anchor), { disabled: !bridge || groupsLoading || pending })
-					: iconButton(t('sidebar.newProject'), 'plus', () => { setPopup(null); setCreatingProject(true); }, { disabled: !bridge || status === 'starting' || workspaceNavigationPending || navigating }))}
-				{iconButton(t('sidebar.filter'), 'filter', (anchor) => setPopup(popup?.kind === 'filter' ? null : { kind: 'filter', anchor }), { active: filtered, expanded: popup?.kind === 'filter' })}
-				{iconButton(t(archived ? 'sidebar.closeArchive' : 'sidebar.showArchive'), archived ? 'close' : 'archive', () => { setArchived((value) => !value); setPopup(null); }, { active: archived })}
+				{preferences.mode === 'grouped'
+					? iconButton(t('sidebar.newGroup'), 'plus', (anchor) => editGroup(anchor), { disabled: !bridge || groupsLoading || pending })
+					: iconButton(t('sidebar.newProject'), 'plus', () => { setPopup(null); setCreatingProject(true); }, { disabled: !bridge || status === 'starting' || workspaceNavigationPending || navigating })}
+				{iconButton(t('sidebar.viewOptions'), 'more', (anchor) => setPopup(popup?.kind === 'filter' ? null : { kind: 'filter', anchor }), { dot: filtered, expanded: popup?.kind === 'filter' })}
 			</div>
-		</div>
+		</div>}
 		{filtered && <button type="button" className="pd-sidebar-filter-chip" aria-label={`${t(preferences.filter === 'unread' ? 'sidebar.onlyUnread' : 'sidebar.onlyPinned')} · ${t('sidebar.clearFilter')}`} onClick={() => preference({ filter: 'all' })}>{t(preferences.filter === 'unread' ? 'sidebar.onlyUnread' : 'sidebar.onlyPinned')}<Icon name="close" width="11" height="11" /></button>}
 		{archived && <div className="pd-archive-selection-toolbar">
 			<label><input ref={archiveSelectAllRef} type="checkbox" aria-label={t('sidebar.selectAllArchived')} checked={allArchiveSelected} disabled={!sessions.length} onChange={event => setArchiveSelection(new Set(event.currentTarget.checked ? sessions.map(session => session.path) : []))} />{t('sidebar.selectAll')}</label>
@@ -903,7 +913,7 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 					{!projectGroups.unassigned.length && !(showUnsaved && !unsavedProject) && <div className="pd-session-empty">{t(loadingSessions ? 'sidebar.loading' : filtered ? 'sidebar.noMatches' : 'sidebar.noSessions')}</div>}
 				</>)}
 			</>}
-			{!projectPaths.length && !archived && <div className="pd-project-empty"><p>{t('sidebar.noProjects')}</p><button type="button" disabled={!bridge || status === 'starting' || workspaceNavigationPending || navigating} onClick={() => { setPopup(null); setCreatingProject(true); }}>{t('sidebar.newProject')}</button></div>}
+			{!projectPaths.length && !archived && <div className="pd-project-empty"><Icon name="folder" width="18" height="18" aria-hidden="true" /><p>{t('sidebar.noProjects')}</p><button type="button" disabled={!bridge || status === 'starting' || workspaceNavigationPending || navigating} onClick={() => { setPopup(null); setCreatingProject(true); }}><Icon name="plus" width="13" height="13" aria-hidden="true" />{t('sidebar.newProject')}</button></div>}
 			{workspacePaths.map((workspace) => workspaceRequests[workspace]?.phase === 'error' ? <div key={workspace} className="pd-workspace-list-error" role="alert"><strong>{!isConversationWorkspace(workspace, conversationWorkspaces) && `${workspaceName(workspace)} · `}{copy.loadFailed}</strong><p>{workspaceRequests[workspace]?.error}</p><button type="button" onClick={() => void refreshWorkspaceSessions(workspace)}>{copy.retry}</button></div> : null)}
 		</div>
 		{creatingProject && <ProjectCreationDialog onClose={(opened) => {
@@ -932,13 +942,19 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 		{drag && (ghostSession || ghostGroup || ghostProject) && <div className="pd-sidebar-drag-ghost" style={{ left: drag.ghost.x, top: drag.ghost.y, width: drag.ghost.width }} aria-hidden>
 			{ghostProject ? <><Icon name={pinnedWorkspaceSet.has(ghostProject) ? 'pin' : 'folder'} width="14" height="14" /><span>{workspaceName(ghostProject)}</span></> : ghostGroup ? <><Icon name="hash" width="14" height="14" /><span>{ghostGroup.name}</span></> : <span>{titleOf(ghostSession!)}</span>}
 		</div>}
-		{popup && <SidebarPopover key={popup.kind} anchor={popup.anchor} trigger={popup.trigger} point={popup.point} label={t(popup.kind === 'filter' ? 'sidebar.filter' : popup.kind === 'edit-group' ? popup.group ? 'sidebar.renameGroup' : 'sidebar.newGroup' : popup.kind === 'move' ? 'sidebar.moveToGroup' : popup.kind === 'group' ? 'sidebar.groupActions' : popup.kind === 'project' ? 'sidebar.projectActions' : 'sidebar.menuTitle')} dialog={popup.kind === 'edit-group'} onClose={() => setPopup(null)}>
+		{popup && <SidebarPopover key={popup.kind} anchor={popup.anchor} trigger={popup.trigger} point={popup.point} label={t(popup.kind === 'filter' ? 'sidebar.viewOptions' : popup.kind === 'edit-group' ? popup.group ? 'sidebar.renameGroup' : 'sidebar.newGroup' : popup.kind === 'move' ? 'sidebar.moveToGroup' : popup.kind === 'group' ? 'sidebar.groupActions' : popup.kind === 'project' ? 'sidebar.projectActions' : 'sidebar.menuTitle')} dialog={popup.kind === 'edit-group'} onClose={() => setPopup(null)}>
 			{popup.kind === 'filter' && <>
 				{preferences.mode === 'project' && !archived && <><div className="pd-sidebar-menu-label">{t('sidebar.organize')}</div>{radio(t('sidebar.byProject'), preferences.projectView === 'project', () => preference({ projectView: 'project' }))}{radio(t('sidebar.byTime'), preferences.projectView === 'timeline', () => preference({ projectView: 'timeline' }))}<hr /></>}
-				<div className="pd-sidebar-menu-label">{t('sidebar.filter')}</div>
+				<div className="pd-sidebar-menu-label">{t('sidebar.filterHeading')}</div>
 				{(['all', 'unread', 'pinned'] as const).map((filter) => <div key={filter}>{radio(t(filter === 'all' ? 'sidebar.allSessions' : filter === 'unread' ? 'sidebar.onlyUnread' : 'sidebar.onlyPinned'), preferences.filter === filter, () => preference({ filter }))}</div>)}
 				<hr /><div className="pd-sidebar-menu-label">{t('sidebar.sortOrder')}</div>
 				{radio(t('sidebar.sortRecent'), preferences.sort === 'newest', () => preference({ sort: 'newest' }))}{radio(t('sidebar.sortOldest'), preferences.sort === 'oldest', () => preference({ sort: 'oldest' }))}
+				{!archived && <>
+					<hr />
+					<button type="button" role="menuitem" disabled={sectionKeys.length === 0} onClick={() => { toggleAll(); setPopup(null); }}><span>{t(allExpanded ? 'sidebar.collapseAllGroups' : 'sidebar.expandAllGroups')}</span></button>
+					<hr />
+					<button type="button" role="menuitem" onClick={() => { setArchived(true); setPopup(null); }}><span>{t('sidebar.showArchive')}</span><Icon name="archive" width="14" height="14" /></button>
+				</>}
 			</>}
 			{popup.kind === 'edit-group' && <form onSubmit={(event) => {
 				event.preventDefault();

@@ -3,11 +3,21 @@
 .pd-error-details pre { padding: 9px; border: 1px solid var(--pd-border); border-radius: var(--pd-radius-sm); max-height: 240px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: var(--pd-font-sm)/1.5 var(--pd-font-mono); background: var(--pd-bg); color: var(--pd-text); user-select: text; }
 .pd-error-details small { color: var(--pd-text-subtle); overflow-wrap: anywhere; }
 .pd-error-tools { display: flex; flex-wrap: wrap; gap: 8px; }
-.pd-error-tools button, .pd-scoped-error > button { border: 1px solid var(--pd-border); padding: 4px 9px; border-radius: var(--pd-radius-xs); color: var(--pd-text); background: var(--pd-bg); font: inherit; cursor: pointer; }
+.pd-error-tools button, .pd-scoped-error > button { min-height: 28px; border: 1px solid var(--pd-border); padding: 4px 10px; border-radius: var(--pd-radius-sm); color: var(--pd-text); background: var(--pd-bg); font: inherit; font-size: var(--pd-font-sm); cursor: pointer; }
+.pd-error-tools button:hover:not(:disabled) { background: var(--pd-surface-hover); }
 .pd-error-tools button:disabled { opacity: .6; cursor: default; }
-.pd-scoped-error { display: grid; align-content: start; justify-items: start; gap: 12px; min-width: 0; padding: 18px; color: var(--pd-text); overflow: auto; }
+/* A local failure is a contained card: icon, explanation, retry, then collapsible details. */
+.pd-scoped-error { display: grid; grid-template-columns: auto minmax(0, 1fr); align-content: start; align-items: start; gap: 12px 14px; width: min(560px, calc(100% - 36px)); min-width: 0; margin: 18px; padding: 18px 20px; border: 1px solid var(--pd-border); border-radius: var(--pd-radius-lg); background: var(--pd-surface); color: var(--pd-text); overflow: auto; }
+.pd-scoped-error-icon { display: grid; place-items: center; width: 34px; height: 34px; border-radius: var(--pd-radius-md); background: color-mix(in srgb, var(--pd-warning) 14%, transparent); color: var(--pd-warning); }
+.pd-scoped-error-copy { display: grid; gap: 4px; min-width: 0; padding-top: 1px; }
+.pd-scoped-error-copy strong { font-size: var(--pd-font-base); font-weight: 600; }
+.pd-scoped-error-copy p { margin: 0; color: var(--pd-text-subtle); font-size: var(--pd-font-sm); line-height: 1.6; }
+.pd-scoped-error > button, .pd-scoped-error > .pd-error-details { grid-column: 2; justify-self: start; }
+.pd-scoped-error > button { border-color: transparent; background: var(--pd-brand); color: var(--pd-brand-ink); font-weight: 600; }
+.pd-scoped-error > button:hover { background: var(--pd-brand-hover); }
 /* Full-page views (automation, plugins) keep the failure centered in the page. */
 .pd-main-view > .pd-scoped-error { width: min(560px, calc(100% - 48px)); margin: auto; }
+.pd-overlay-error-host > .pd-scoped-error { margin: 0; }
 /* Overlay surfaces (search) show their failure as a dialog; Retry closes the overlay. */
 .pd-overlay-error-host:has(> .pd-scoped-error) { position: fixed; inset: 0; z-index: var(--pd-z-modal, 60); display: grid; place-items: center; padding: 24px; background: var(--pd-overlay); }
 .pd-overlay-error-host > .pd-scoped-error { width: min(560px, 100%); max-height: calc(100vh - 48px); border: 1px solid var(--pd-border); border-radius: var(--pd-radius-lg); background: var(--pd-surface); box-shadow: var(--pd-shadow-dialog); }

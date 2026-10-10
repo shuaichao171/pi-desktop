@@ -28,6 +28,9 @@ type WorkbenchTab = 'files' | 'git' | 'command' | 'terminal';
 type CommandRun = { id: string; command: string; cwd: string };
 export interface WorkbenchOpenRequest { cwd: string; path: string; requestId: number }
 
+const COMMAND_HISTORY_KEY = 'pi-desktop.workbench-command-history';
+const COMMAND_HISTORY_LIMIT = 8;
+
 function parentDirectory(path: string): string {
 	return path.split('/').slice(0, -1).join('/');
 }
@@ -113,7 +116,9 @@ export function WorkbenchSidePane({ open, onClose, openRequest, terminalRequest,
 	const [entryOpBusy, setEntryOpBusy] = useState(false);
 	const [entryOpError, setEntryOpError] = useState<string | null>(null);
 	const [deleteEntryTarget, setDeleteEntryTarget] = useState<WorkspaceEntry | null>(null);
+	const [gitView, setGitView] = useState<'changes' | 'history'>('changes');
 	const [command, setCommand] = useState('');
+	const [commandHistory, setCommandHistory] = useState<string[]>(() => { try { const saved = JSON.parse(localStorage.getItem(COMMAND_HISTORY_KEY) ?? '[]'); return Array.isArray(saved) ? saved.filter((item): item is string => typeof item === 'string').slice(0, COMMAND_HISTORY_LIMIT) : []; } catch { return []; } });
 	const [commandRun, setCommandRun] = useState<CommandRun | null>(null);
 	const [commandStarting, setCommandStarting] = useState(false);
 	const [commandStopping, setCommandStopping] = useState(false);
@@ -628,6 +633,11 @@ export function WorkbenchSidePane({ open, onClose, openRequest, terminalRequest,
 			}
 			setCommandRun({ id, command: text, cwd });
 			setCommand('');
+			setCommandHistory((items) => {
+				const next = [text, ...items.filter((item) => item !== text)].slice(0, COMMAND_HISTORY_LIMIT);
+				try { localStorage.setItem(COMMAND_HISTORY_KEY, JSON.stringify(next)); } catch {}
+				return next;
+			});
 		} catch (cause) { if (currentCwdRef.current === cwd) setCommandError(cause instanceof Error ? cause.message : String(cause)); }
 		finally { if (currentCwdRef.current === cwd) setCommandStarting(false); }
 	}
@@ -646,8 +656,8 @@ export function WorkbenchSidePane({ open, onClose, openRequest, terminalRequest,
 			onPointerMove={event => { const drag = ratioDrag.current; if (drag) setPreviewRatio(Math.max(25, Math.min(80, drag.ratio - (event.clientY - drag.y) / drag.height * 100))); }}
 			onPointerUp={event => { ratioDrag.current = null; if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId); }} onLostPointerCapture={() => { ratioDrag.current = null; }}
 			onKeyDown={event => { if (['ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) { event.preventDefault(); setPreviewRatio(value => event.key === 'Home' ? 25 : event.key === 'End' ? 80 : Math.max(25, Math.min(80, value + (event.key === 'ArrowUp' ? 5 : -5)))); } }} />
-		<button type="button" className="pd-workbench-preview-expand" aria-pressed={previewExpanded} onClick={() => setPreviewExpanded(value => !value)}>{previewExpanded ? label('返回列表', 'Back to list') : label('放大预览', 'Expand preview')}</button>
 	</>;
+	const expandButton = <HoverTooltip title={previewExpanded ? label('返回列表', 'Back to list') : label('放大预览', 'Expand preview')}><button type="button" className="pd-icon-button pd-workbench-preview-expand" aria-pressed={previewExpanded} aria-label={previewExpanded ? label('返回列表', 'Back to list') : label('放大预览', 'Expand preview')} onClick={() => setPreviewExpanded(value => !value)}><Icon name={previewExpanded ? 'restore' : 'maximize'} width="13" height="13" /></button></HoverTooltip>;
 
 	return (
 		<aside ref={pane} className={`pd-workbench${open ? ' is-open' : ''}`} role={modal && open ? 'dialog' : 'complementary'} aria-modal={modal && open || undefined} aria-label={t('workbench.panel')} aria-hidden={!open} inert={!open || suspended} onKeyDown={paneKeyDown} style={{ '--pd-preview-ratio': `${previewRatio}%` } as CSSProperties}>
@@ -658,14 +668,14 @@ export function WorkbenchSidePane({ open, onClose, openRequest, terminalRequest,
 				onKeyDown={event => { if (['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) { event.preventDefault(); onWidthChange?.(event.key === 'Home' ? 320 : event.key === 'End' ? 800 : width + (event.key === 'ArrowLeft' ? 16 : -16)); } }} />
 			<div className="pd-workbench-content">
 			<header className="pd-workbench-header">
-				<div><span className="pd-workbench-eyebrow">{t('workbench.workspace')}</span><h2>{t('workbench.title')}</h2></div>
-				<button type="button" className="pd-icon-button" onClick={onClose} aria-label={t('workbench.close')}><Icon name="close" width="17" height="17" /></button>
+				<div className="pd-workbench-heading"><h2>{t('workbench.workspace')}</h2>{cwd && <HoverTooltip title={cwd}><span className="pd-workbench-project">{cwd.split(/[\\/]/).filter(Boolean).at(-1) ?? cwd}</span></HoverTooltip>}</div>
+				<button type="button" className="pd-icon-button pd-workbench-close" onClick={onClose} aria-label={t('workbench.close')}><Icon name="close" width="16" height="16" /></button>
 			</header>
 			<SegmentedIndicator as="nav" activeKey={tab} className="pd-workbench-tabs" label={t('workbench.tabs')}>
 				<button data-segment-key="files" type="button" className={tab === 'files' ? 'is-active' : ''} aria-current={tab === 'files' ? 'page' : undefined} onClick={() => setTab('files')}><Icon name="file" width="15" height="15" />{t('workbench.files')}</button>
 				<button data-segment-key="git" type="button" className={tab === 'git' ? 'is-active' : ''} aria-current={tab === 'git' ? 'page' : undefined} onClick={() => setTab('git')}><Icon name="gitBranch" width="15" height="15" />{t('workbench.git')}</button>
-				<button data-segment-key="command" type="button" className={tab === 'command' ? 'is-active' : ''} aria-current={tab === 'command' ? 'page' : undefined} onClick={() => setTab('command')}><Icon name="terminal" width="15" height="15" />{t('workbench.command')}</button>
-				<button data-segment-key="terminal" type="button" className={tab === 'terminal' ? 'is-active' : ''} aria-current={tab === 'terminal' ? 'page' : undefined} onClick={() => { setTerminalVisited(true); setTab('terminal'); }}>PTY</button>
+				<button data-segment-key="command" type="button" className={tab === 'command' ? 'is-active' : ''} aria-current={tab === 'command' ? 'page' : undefined} onClick={() => setTab('command')}><Icon name="play" width="14" height="14" />{t('workbench.command')}</button>
+				<button data-segment-key="terminal" type="button" className={tab === 'terminal' ? 'is-active' : ''} aria-current={tab === 'terminal' ? 'page' : undefined} onClick={() => { setTerminalVisited(true); setTab('terminal'); }}><Icon name="terminal" width="15" height="15" />{t('workbench.terminal')}</button>
 			</SegmentedIndicator>
 			<div className={`pd-workbench-body${previewExpanded && (tab === 'files' && selectedFile || tab === 'git' && diffPath) ? ' is-preview-expanded' : ''}`}>
 				{!cwd && <div className="pd-workbench-empty">{t('workbench.emptyWorkspace')}</div>}
@@ -697,7 +707,7 @@ export function WorkbenchSidePane({ open, onClose, openRequest, terminalRequest,
 						</div>
 					</div>)}
 					<div ref={fileList} className="pd-workbench-file-list" role="group" tabIndex={visibleFileEntries.length ? -1 : 0} aria-label={t('workbench.fileList')} onKeyDown={fileKeyDown}>
-						{visibleFileEntries.map((entry) => <div key={entry.path} className="pd-workbench-file-row"><HoverTooltip title={entry.path}><button type="button" data-file-path={entry.path} tabIndex={entry.path === activePath ? 0 : -1} className={`pd-workbench-entry${selectedFile === entry.path ? ' is-selected' : ''}`} onFocus={() => setFocusedPath(entry.path)} onClick={() => void openFile(entry)} draggable={entry.name !== '..' && Boolean(cwd)} onDragStart={(event) => { if (entry.name === '..' || !cwd) { event.preventDefault(); return; } writeWorkspaceEntryDrag(event.dataTransfer, { kind: entry.kind, workspace: cwd, path: entry.path }); }} onContextMenu={event => { event.preventDefault(); openMenu(entry, event.currentTarget, event.button === 2 ? { x: event.clientX, y: event.clientY } : null); }}>{entry.kind === 'directory' ? <Icon name="folder" width="15" height="15" /> : <FileDisplayIcon name={entry.name} />}<span>{entry.name}</span>{entry.kind === 'file' && <small>{readableSize(entry.size)}</small>}</button></HoverTooltip><button className="pd-workbench-file-menu-trigger" type="button" tabIndex={-1} aria-label={`${label('操作', 'Actions')}: ${entry.path}`} onClick={event => openMenu(entry, event.currentTarget)}>…</button></div>)}
+						{visibleFileEntries.map((entry) => <div key={entry.path} className="pd-workbench-file-row"><HoverTooltip title={entry.name === '..' ? label('返回上一级', 'Up one level') : entry.path}><button type="button" data-file-path={entry.path} tabIndex={entry.path === activePath ? 0 : -1} className={`pd-workbench-entry${selectedFile === entry.path ? ' is-selected' : ''}${entry.name === '..' ? ' is-parent' : ''}`} onFocus={() => setFocusedPath(entry.path)} onClick={() => void openFile(entry)} draggable={entry.name !== '..' && Boolean(cwd)} onDragStart={(event) => { if (entry.name === '..' || !cwd) { event.preventDefault(); return; } writeWorkspaceEntryDrag(event.dataTransfer, { kind: entry.kind, workspace: cwd, path: entry.path }); }} onContextMenu={event => { event.preventDefault(); openMenu(entry, event.currentTarget, event.button === 2 ? { x: event.clientX, y: event.clientY } : null); }}>{entry.name === '..' ? <Icon name="arrowUp" width="14" height="14" /> : entry.kind === 'directory' ? <Icon name="folder" width="15" height="15" /> : <FileDisplayIcon name={entry.name} />}<span>{entry.name === '..' ? label('上一级', 'Up one level') : entry.name}</span>{entry.kind === 'file' && <small>{readableSize(entry.size)}</small>}</button></HoverTooltip>{entry.name !== '..' && <button className="pd-workbench-file-menu-trigger" type="button" tabIndex={-1} aria-label={`${label('操作', 'Actions')}: ${entry.path}`} aria-expanded={menuTarget?.path === entry.path} onClick={event => openMenu(entry, event.currentTarget)}><Icon name="more" width="14" height="14" /></button>}</div>)}
 						{menuTarget && open && !suspended && createPortal(<div ref={menu} className="pd-workbench-file-menu" role="menu" aria-label={menuTarget.path} style={{ ...menuPosition, visibility: menuPositioned ? 'visible' : 'hidden' }} onKeyDown={event => { event.stopPropagation(); const buttons = [...(menu.current?.querySelectorAll<HTMLButtonElement>('button') ?? [])]; const index = buttons.indexOf(document.activeElement as HTMLButtonElement); if (event.key === 'Escape' || event.key === 'Tab') { if (event.key === 'Escape') event.preventDefault(); closeMenu(); } else if (event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); buttons[(index + (event.key === 'ArrowDown' ? 1 : -1) + buttons.length) % buttons.length]?.focus(); } }}>
 							<strong>{menuTarget.path || cwd}</strong>
 							{menuTarget.kind === 'directory' && <>
@@ -725,30 +735,43 @@ export function WorkbenchSidePane({ open, onClose, openRequest, terminalRequest,
 					</div>
 					{selectedFile && <section className="pd-workbench-preview" aria-label={t('workbench.preview')}>
 						{previewControls}
-						<div className="pd-workbench-preview-head"><strong title={selectedFile}>{selectedFile}</strong><span className="pd-workbench-preview-actions"><HoverTooltip title={t('workbench.openInEditor')}><button type="button" className="pd-icon-button" onClick={() => void openInEditor(selectedFile, !officePreview && !/\.(?:md|markdown)$/i.test(selectedFile) ? previewTopLine : undefined)} aria-label={t('workbench.openInEditor')}><Icon name="code" width="14" height="14" /></button></HoverTooltip><HoverTooltip title={t('workbench.revealInFolder')}><button type="button" className="pd-icon-button" onClick={() => void revealPath(selectedFile)} aria-label={t('workbench.revealInFolder')}><Icon name="folder" width="14" height="14" /></button></HoverTooltip><button type="button" className="pd-icon-button" onClick={() => { setSelectedFile(null); setFileText(''); }} aria-label={t('workbench.closePreview')}><Icon name="close" width="14" height="14" /></button></span></div>
+						<div className="pd-workbench-preview-head"><strong title={selectedFile}>{selectedFile}</strong><span className="pd-workbench-preview-actions">{expandButton}<HoverTooltip title={t('workbench.openInEditor')}><button type="button" className="pd-icon-button" onClick={() => void openInEditor(selectedFile, !officePreview && !/\.(?:md|markdown)$/i.test(selectedFile) ? previewTopLine : undefined)} aria-label={t('workbench.openInEditor')}><Icon name="code" width="14" height="14" /></button></HoverTooltip><HoverTooltip title={t('workbench.revealInFolder')}><button type="button" className="pd-icon-button" onClick={() => void revealPath(selectedFile)} aria-label={t('workbench.revealInFolder')}><Icon name="folder" width="14" height="14" /></button></HoverTooltip><button type="button" className="pd-icon-button" onClick={() => { setSelectedFile(null); setFileText(''); }} aria-label={t('workbench.closePreview')}><Icon name="close" width="14" height="14" /></button></span></div>
 						{fileLoading ? <div className="pd-workbench-empty">{t('workbench.loadingFile')}</div> : fileError ? <div className="pd-workbench-error" role="alert">{fileError}</div> : <ScopedErrorBoundary scope="preview" resetKeys={[cwd, selectedFile]}>{officePreview?.kind === 'office' && officePreview.officeFormat && officePreview.bytesBase64 ? <Suspense fallback={<div className="pd-workbench-empty">{t('workbench.loadingFile')}</div>}><OfficeFilePreview bytesBase64={officePreview.bytesBase64} format={officePreview.officeFormat} /></Suspense> : officePreview?.kind === 'image' && officePreview.dataUrl ? <div className="pd-workbench-preview-image"><img src={officePreview.dataUrl} alt={selectedFile} /></div> : officePreview?.kind === 'pdf' && officePreview.dataUrl ? <iframe className="pd-workbench-preview-pdf" title={`${t('workbench.preview')}: ${selectedFile}`} src={officePreview.dataUrl} /> : officePreview ? <div className="pd-workbench-empty">{officePreview.reason === 'too-large' ? label('文件较大，无法在这里预览。', 'This file is too large to preview here.') : label('无法预览此文件。', 'This file cannot be previewed.')}<button type="button" onClick={() => { if (bridge) void runWithFeedback({ id: `open:${cwd}:${selectedFile}`, title: label('打开文件', 'Open file'), run: () => bridge.openResultFile({ cwd, path: selectedFile }) }); }}>{label('使用默认应用打开', 'Open in default app')}</button></div> : /\.(?:md|markdown)$/i.test(selectedFile) ? <div className="pd-workbench-preview-markdown" tabIndex={0}><ConversationMarkdown>{fileText}</ConversationMarkdown></div> : <WorkbenchTextView key={selectedFile} text={fileText} path={selectedFile} onTopLineChange={setPreviewTopLine} onQuote={cwd ? (quote) => requestCodeQuote({ cwd, path: selectedFile, ...quote }) : undefined} />}</ScopedErrorBoundary>}
 					</section>}
 				</>}
 
 				{cwd && tab === 'git' && <>
 					<WorkbenchGitFeatures />
-					<div className="pd-workbench-toolbar"><strong>{t('workbench.gitStatus')}</strong><HoverTooltip title={t('workbench.refresh')}><button type="button" className="pd-icon-button" onClick={() => setGitRevision((value) => value + 1)} aria-label={t('workbench.refreshGit')}><Icon name="refresh" width="15" height="15" /></button></HoverTooltip></div>
 					{gitLoading && <div className="pd-workbench-empty">{t('workbench.loadingGit')}</div>}
 					{gitError && <div className="pd-workbench-error" role="alert">{gitError}</div>}
+					{(gitError || gitStatus && !gitStatus.isRepository) && !gitLoading && <div className="pd-workbench-toolbar"><strong>{t('workbench.gitStatus')}</strong><HoverTooltip title={t('workbench.refresh')}><button type="button" className="pd-icon-button" onClick={() => setGitRevision((value) => value + 1)} aria-label={t('workbench.refreshGit')}><Icon name="refresh" width="15" height="15" /></button></HoverTooltip></div>}
 					{!gitLoading && !gitError && gitStatus && (gitStatus.isRepository ? <>
-						<div className="pd-workbench-branch"><Icon name="gitBranch" width="15" height="15" /><span>{gitStatus.branch || 'HEAD'}</span><small>{t('workbench.changes', { count: gitStatus.entries.length })}</small>
-							{gitStatus.upstream && (gitStatus.ahead || gitStatus.behind) ? <HoverTooltip title={t('workbench.trackingTitle', { upstream: gitStatus.upstream, ahead: gitStatus.ahead ?? 0, behind: gitStatus.behind ?? 0 })}><span className="pd-workbench-tracking" aria-label={t('workbench.trackingTitle', { upstream: gitStatus.upstream, ahead: gitStatus.ahead ?? 0, behind: gitStatus.behind ?? 0 })}>{gitStatus.ahead ? <span><Icon name="arrowUp" width="11" height="11" />{gitStatus.ahead}</span> : null}{gitStatus.behind ? <span><Icon name="arrowDown" width="11" height="11" />{gitStatus.behind}</span> : null}</span></HoverTooltip> : null}
+						{/* Branch card: name and tracking on the left, the one likely next sync step as a labelled button. */}
+						<div className="pd-workbench-branch"><span className="pd-workbench-branch-icon" aria-hidden="true"><Icon name="gitBranch" width="15" height="15" /></span>
+							<span className="pd-workbench-branch-copy"><strong title={gitStatus.branch || 'HEAD'}>{gitStatus.branch || 'HEAD'}</strong>
+								<small>{gitStatus.upstream ? <HoverTooltip title={t('workbench.trackingTitle', { upstream: gitStatus.upstream, ahead: gitStatus.ahead ?? 0, behind: gitStatus.behind ?? 0 })}><span className="pd-workbench-tracking" aria-label={t('workbench.trackingTitle', { upstream: gitStatus.upstream, ahead: gitStatus.ahead ?? 0, behind: gitStatus.behind ?? 0 })}>{gitStatus.ahead || gitStatus.behind ? <>{gitStatus.ahead ? <span>{label(`领先 ${gitStatus.ahead}`, `${gitStatus.ahead} ahead`)}</span> : null}{gitStatus.behind ? <span>{label(`落后 ${gitStatus.behind}`, `${gitStatus.behind} behind`)}</span> : null}</> : <span>{label('已同步', 'Up to date')}</span>}</span></HoverTooltip> : <span>{label('未关联远端分支', 'No upstream')}</span>}</small>
+							</span>
+							<span className="pd-workbench-branch-actions">
 							{bridge?.syncWorkspaceGit && (gitStatus.upstream || gitStatus.hasRemote) && <span className="pd-workbench-sync-actions">
 								<HoverTooltip title={t('workbench.gitFetch')}><button type="button" className="pd-icon-button" disabled={gitActionBusy || navigationPending} onClick={() => void syncGit('fetch')} aria-label={t('workbench.gitFetch')}><Icon name={gitSyncing === 'fetch' ? 'loader' : 'refresh'} width="14" height="14" /></button></HoverTooltip>
-								{gitStatus.upstream && <HoverTooltip title={t('workbench.gitPull')}><button type="button" className="pd-icon-button" disabled={gitActionBusy || navigationPending} onClick={() => void syncGit('pull')} aria-label={t('workbench.gitPull')}><Icon name={gitSyncing === 'pull' ? 'loader' : 'arrowDown'} width="14" height="14" /></button></HoverTooltip>}
-								{gitStatus.branch && <HoverTooltip title={t(gitStatus.upstream ? 'workbench.gitPush' : 'workbench.gitPublish')}><button type="button" className="pd-icon-button" disabled={gitActionBusy || navigationPending} onClick={() => void syncGit('push')} aria-label={t(gitStatus.upstream ? 'workbench.gitPush' : 'workbench.gitPublish')}><Icon name={gitSyncing === 'push' ? 'loader' : 'arrowUp'} width="14" height="14" /></button></HoverTooltip>}
+								{gitStatus.upstream && <HoverTooltip title={t('workbench.gitPull')}><button type="button" className={gitStatus.behind ? 'pd-workbench-sync-primary' : 'pd-icon-button'} disabled={gitActionBusy || navigationPending} onClick={() => void syncGit('pull')} aria-label={t('workbench.gitPull')}><Icon name={gitSyncing === 'pull' ? 'loader' : 'arrowDown'} width="14" height="14" />{gitStatus.behind ? <span>{t('workbench.gitPull')}</span> : null}</button></HoverTooltip>}
+								{gitStatus.branch && <HoverTooltip title={t(gitStatus.upstream ? 'workbench.gitPush' : 'workbench.gitPublish')}><button type="button" className={!gitStatus.upstream || gitStatus.ahead ? 'pd-workbench-sync-primary' : 'pd-icon-button'} disabled={gitActionBusy || navigationPending} onClick={() => void syncGit('push')} aria-label={t(gitStatus.upstream ? 'workbench.gitPush' : 'workbench.gitPublish')}><Icon name={gitSyncing === 'push' ? 'loader' : 'arrowUp'} width="14" height="14" />{!gitStatus.upstream || gitStatus.ahead ? <span>{t(gitStatus.upstream ? 'workbench.gitPush' : 'workbench.gitPublish')}</span> : null}</button></HoverTooltip>}
 							</span>}
-							<HoverTooltip title={t('workbench.newBranch')}><button type="button" className="pd-icon-button" disabled={gitActionBusy || navigationPending} onClick={() => setBranchCreateOpen((open) => !open)} aria-label={t('workbench.newBranch')} aria-expanded={branchCreateOpen}><Icon name="plus" width="14" height="14" /></button></HoverTooltip></div>
+							<HoverTooltip title={t('workbench.newBranch')}><button type="button" className="pd-icon-button" disabled={gitActionBusy || navigationPending} onClick={() => setBranchCreateOpen((open) => !open)} aria-label={t('workbench.newBranch')} aria-expanded={branchCreateOpen}><Icon name="plus" width="14" height="14" /></button></HoverTooltip>
+							</span></div>
 						{branchCreateOpen && <form className="pd-workbench-branch-form" onSubmit={(event) => void createBranch(event)}>
 							<input value={branchName} onChange={(event) => setBranchName(event.target.value)} placeholder={t('workbench.branchNamePlaceholder')} spellCheck={false} autoComplete="off" aria-label={t('workbench.branchNamePlaceholder')} />
 							<button type="submit" disabled={!branchName.trim() || gitActionBusy || navigationPending}>{t(branchCreating ? 'workbench.creating' : 'workbench.createAndSwitch')}</button>
 						</form>}
 						{gitActionError && <div className="pd-workbench-error" role="alert">{gitActionError}</div>}
+						<div className="pd-workbench-toolbar pd-workbench-git-switch">
+							<SegmentedIndicator activeKey={gitView} className="pd-workbench-subtabs" label={label('Git 视图', 'Git view')}>
+								<button type="button" data-segment-key="changes" className={gitView === 'changes' ? 'is-active' : ''} aria-pressed={gitView === 'changes'} onClick={() => setGitView('changes')}>{label('变更', 'Changes')}<span>{gitStatus.entries.length}</span></button>
+								<button type="button" data-segment-key="history" className={gitView === 'history' ? 'is-active' : ''} aria-pressed={gitView === 'history'} onClick={() => setGitView('history')}>{label('历史', 'History')}</button>
+							</SegmentedIndicator>
+							<HoverTooltip title={t('workbench.refresh')}><button type="button" className="pd-icon-button" onClick={() => setGitRevision((value) => value + 1)} aria-label={t('workbench.refreshGit')}><Icon name="refresh" width="15" height="15" /></button></HoverTooltip>
+						</div>
+						{gitView === 'history' ? <div className="pd-workbench-history-view">{gitLog.length ? <GitHistoryGraph commits={gitLog} /> : <div className="pd-workbench-empty">{label('暂无提交记录。', 'No commits yet.')}</div>}</div> : <>
 						{gitStatus.truncated && <div className="pd-workbench-empty" role="status">{t('workbench.gitStatusTruncated')}</div>}
 						<div className="pd-workbench-changes">
 							{(['staged', 'unstaged'] as const).map(source => <section className="pd-workbench-git-group" key={source} aria-label={source === 'staged' ? label('已暂存', 'Staged') : label('未暂存', 'Unstaged')}>
@@ -759,7 +782,7 @@ export function WorkbenchSidePane({ open, onClose, openRequest, terminalRequest,
 								const code = entry.status[staged ? 0 : 1];
 								const statusText = ({ M: label('修改', 'Modified'), A: label('新增', 'Added'), D: label('删除', 'Deleted'), R: label('重命名', 'Renamed'), C: label('复制', 'Copied'), U: label('冲突', 'Conflict'), '?': label('未跟踪', 'Untracked') } as Record<string, string>)[code ?? ''] ?? code;
 								return (<div key={entry.path} className={`pd-workbench-change${diffPath === entry.path && diffSource === source ? ' is-selected' : ''}${discardTarget?.cwd === cwd && discardTarget.path === entry.path ? ' is-discarding' : ''}`}>
-									<HoverTooltip title={`${entry.path}\n${statusText}`}><button type="button" data-git-path={entry.path} data-git-source={source} className="pd-workbench-change-main" onClick={() => void openDiff(entry.path, source)}><span className="pd-workbench-git-status" aria-label={statusText}>{code}</span><span className="pd-workbench-change-path">{entry.path}</span><small>{statusText}</small></button></HoverTooltip>
+									<HoverTooltip title={`${entry.path}\n${statusText}`}><button type="button" data-git-path={entry.path} data-git-source={source} className="pd-workbench-change-main" onClick={() => void openDiff(entry.path, source)}><span className={`pd-workbench-git-status is-${({ M: 'modified', A: 'added', D: 'deleted', R: 'renamed', C: 'renamed', U: 'conflict', '?': 'untracked' } as Record<string, string>)[code ?? ''] ?? 'modified'}`} aria-label={statusText}>{code}</span><span className="pd-workbench-change-path"><span className="pd-workbench-change-name">{entry.path.split('/').at(-1)}</span>{entry.path.includes('/') && <span className="pd-workbench-change-dir">{parentDirectory(entry.path)}</span>}</span></button></HoverTooltip>
 									<span className="pd-workbench-change-actions">
 										{staged
 											? <HoverTooltip title={t('workbench.unstage')}><button type="button" data-git-action="unstage" disabled={gitActionBusy || navigationPending} onClick={() => void setStaged(entry.path, false)} aria-label={t('workbench.unstage')}><Icon name="minusCircle" width="13" height="13" /></button></HoverTooltip>
@@ -779,14 +802,10 @@ export function WorkbenchSidePane({ open, onClose, openRequest, terminalRequest,
 						</div>)}
 						{diffPath && <section className="pd-workbench-preview" aria-label={t('workbench.diff')}>
 							{previewControls}
-							<div className="pd-workbench-diff-source">{diffSource === 'staged' ? label('已暂存差异', 'Staged changes') : label('未暂存差异', 'Unstaged changes')}</div>
-							<div className="pd-workbench-preview-head"><strong title={diffPath}>{diffPath}</strong><span className="pd-workbench-preview-actions"><HoverTooltip title={t('workbench.openInEditor')}><button type="button" className="pd-icon-button" onClick={() => void openInEditor(diffPath, diffTopLine)} aria-label={t('workbench.openInEditor')}><Icon name="code" width="14" height="14" /></button></HoverTooltip><HoverTooltip title={t('workbench.revealInFolder')}><button type="button" className="pd-icon-button" onClick={() => void revealPath(diffPath)} aria-label={t('workbench.revealInFolder')}><Icon name="folder" width="14" height="14" /></button></HoverTooltip><button type="button" className="pd-icon-button" onClick={() => setDiffPath(null)} aria-label={t('workbench.closeDiff')}><Icon name="close" width="14" height="14" /></button></span></div>
+							<div className="pd-workbench-preview-head"><span className="pd-workbench-preview-title"><span className={`pd-workbench-diff-source is-${diffSource}`}>{diffSource === 'staged' ? label('已暂存', 'Staged') : label('未暂存', 'Unstaged')}</span><strong title={diffPath}>{diffPath}</strong></span><span className="pd-workbench-preview-actions">{expandButton}<HoverTooltip title={t('workbench.openInEditor')}><button type="button" className="pd-icon-button" onClick={() => void openInEditor(diffPath, diffTopLine)} aria-label={t('workbench.openInEditor')}><Icon name="code" width="14" height="14" /></button></HoverTooltip><HoverTooltip title={t('workbench.revealInFolder')}><button type="button" className="pd-icon-button" onClick={() => void revealPath(diffPath)} aria-label={t('workbench.revealInFolder')}><Icon name="folder" width="14" height="14" /></button></HoverTooltip><button type="button" className="pd-icon-button" onClick={() => setDiffPath(null)} aria-label={t('workbench.closeDiff')}><Icon name="close" width="14" height="14" /></button></span></div>
 							{diffLoading ? <div className="pd-workbench-empty">{t('workbench.loadingDiff')}</div> : diffError ? <div className="pd-workbench-error" role="alert">{diffError}</div> : <ScopedErrorBoundary scope="preview" resetKeys={[cwd, diffPath, diffSource]}><WorkbenchTextView key={`${diffSource}:${diffPath}`} diff text={diffText || t('workbench.noDiff')} path={diffPath} onTopLineChange={setDiffTopLine} onQuote={cwd && diffText ? (quote) => requestCodeQuote({ cwd, path: diffPath, diff: true, ...quote }) : undefined} /></ScopedErrorBoundary>}
 						</section>}
-						<details className="pd-workbench-history">
-							<summary><Icon name="gitCommit" width="13" height="13" />{t('workbench.history')}</summary>
-							<GitHistoryGraph commits={gitLog} />
-						</details>
+						</>}
 					</> : <div className="pd-workbench-empty">{t('workbench.notRepo')}</div>)}
 				</>}
 
@@ -798,6 +817,10 @@ export function WorkbenchSidePane({ open, onClose, openRequest, terminalRequest,
 						<div><input id="pd-workbench-command" value={command} onChange={(event) => setCommand(event.target.value)} placeholder={t('workbench.commandPlaceholder')} spellCheck={false} autoComplete="off" disabled={commandStarting || commandRunning} /><button type="submit" disabled={!command.trim() || commandStarting || commandRunning}>{t(commandStarting ? 'workbench.starting' : 'workbench.run')}</button></div>
 					</form>
 					{commandError && <div className="pd-workbench-error" role="alert">{commandError}</div>}
+					{!commandRunning && commandHistory.length > 0 && <section className="pd-workbench-command-history" aria-label={label('最近运行', 'Recent commands')}>
+						<h3>{label('最近运行', 'Recent')}<small>{label('点击填入，再按运行', 'Click to fill in, then run')}</small></h3>
+						{commandHistory.slice(0, commandRun ? 3 : COMMAND_HISTORY_LIMIT).map((item) => <button type="button" key={item} title={item} disabled={commandStarting || commandRunning} onClick={() => { setCommand(item); requestAnimationFrame(() => document.getElementById('pd-workbench-command')?.focus()); }}><Icon name="clock" width="13" height="13" /><code>{item}</code></button>)}
+					</section>}
 					{commandRun && <section className="pd-workbench-command-result" aria-label={t('workbench.output')}>
 						<div className="pd-workbench-command-result-head" role="status">
 							<strong title={commandRun.command}>$ {commandRun.command}</strong>

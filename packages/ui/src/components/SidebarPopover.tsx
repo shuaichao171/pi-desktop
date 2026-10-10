@@ -8,8 +8,10 @@ import { contextMenuPosition, type ContextMenuPoint } from '../contextMenuPositi
 let openPopoverCount = 0;
 
 /** A measured, keyboard-accessible menu shared by the sidebar controls. */
-export function SidebarPopover({ anchor, trigger = anchor, point, label, dialog = false, placement = 'bottom', children, onClose }: {
-	anchor: HTMLElement; trigger?: HTMLElement; point?: ContextMenuPoint; label: string; dialog?: boolean; placement?: 'bottom' | 'top'; children: ReactNode; onClose(): void;
+export function SidebarPopover({ anchor, trigger = anchor, point, label, dialog = false, placement = 'bottom', align = 'end', className, children, onClose }: {
+	anchor: HTMLElement; trigger?: HTMLElement; point?: ContextMenuPoint; label: string; dialog?: boolean; placement?: 'bottom' | 'top';
+	/** Which anchor edge the menu lines up with: sidebar menus hang from the right, composer menus from the left. */
+	align?: 'start' | 'end'; className?: string; children: ReactNode; onClose(): void;
 }) {
 	const ref = useRef<HTMLDivElement>(null);
 	const closeRef = useRef(onClose);
@@ -31,7 +33,7 @@ export function SidebarPopover({ anchor, trigger = anchor, point, label, dialog 
 			const rect = anchor.getBoundingClientRect();
 			const box = menu.getBoundingClientRect();
 			const next = point ? contextMenuPosition(point, box, { width: window.innerWidth, height: window.innerHeight }) : {
-				left: Math.max(8, Math.min(rect.right - box.width, window.innerWidth - box.width - 8)),
+				left: Math.max(8, Math.min(align === 'start' ? rect.left : rect.right - box.width, window.innerWidth - box.width - 8)),
 				top: placement === 'top'
 					? Math.max(8, Math.min(rect.top - box.height - 5, window.innerHeight - box.height - 8))
 					: Math.max(8, Math.min(rect.bottom + 5, window.innerHeight - box.height - 8)),
@@ -43,7 +45,7 @@ export function SidebarPopover({ anchor, trigger = anchor, point, label, dialog 
 		observer.observe(menu);
 		window.addEventListener('resize', place);
 		return () => { observer.disconnect(); window.removeEventListener('resize', place); };
-	}, [anchor, placement, point?.x, point?.y]);
+	}, [anchor, placement, align, point?.x, point?.y]);
 	const positioned = position !== null;
 	useLayoutEffect(() => {
 		if (positioned) ref.current?.querySelector<HTMLElement>('input, button:not(:disabled)')?.focus();
@@ -70,7 +72,7 @@ export function SidebarPopover({ anchor, trigger = anchor, point, label, dialog 
 			});
 		};
 	}, [trigger]);
-	return createPortal(<div ref={ref} className={`pd-sidebar-popover${dialog ? ' is-form' : ''}`} role={dialog ? 'dialog' : 'menu'} aria-label={label}
+	return createPortal(<div ref={ref} className={`pd-sidebar-popover${dialog ? ' is-form' : ''}${className ? ` ${className}` : ''}`} role={dialog ? 'dialog' : 'menu'} aria-label={label}
 		style={{ ...position, visibility: positioned ? 'visible' : 'hidden' }} onKeyDown={(event) => {
 			if (event.nativeEvent.isComposing) return;
 			if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); onClose(); trigger.focus(); return; }

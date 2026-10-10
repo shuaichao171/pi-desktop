@@ -45,7 +45,8 @@ export function HoverTooltip({ children, title, description, shortcut, disabled 
 	const tooltipId = useId();
 	const [open, setOpen] = useState(false);
 	const [position, setPosition] = useState<TooltipPosition | null>(null);
-	const visible = open && !disabled;
+	// An empty title would open a blank bubble (e.g. the workspace root, whose relative path is '').
+	const visible = open && !disabled && Boolean(title || description);
 	const originalRef = trigger.props.ref;
 
 	const composedRef = useCallback((element: HTMLButtonElement | null) => {

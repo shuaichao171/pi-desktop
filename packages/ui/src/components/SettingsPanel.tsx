@@ -332,7 +332,7 @@ export function SettingsPanel({ initialPage = 'general', modelManagementTarget, 
 	return (
 		<div className="pd-settings-overlay" onMouseDown={(event) => { if (event.target === event.currentTarget && !pendingLeave) requestLeave(); }}>
 			<div ref={dialogRef} className="pd-settings-dialog" role="dialog" aria-modal="true" aria-labelledby="pd-settings-title" onKeyDown={onDialogKeyDown}>
-				<header className="pd-settings-header" inert={Boolean(pendingLeave)}><div><span className="pd-settings-eyebrow">PI DESKTOP</span><h1 id="pd-settings-title">{t('settings.title')}</h1></div><button ref={closeRef} type="button" className="pd-icon-button" disabled={draftState.saving} onClick={() => requestLeave()} aria-label={t('settings.close')}><Icon name="close" /></button></header>
+				<header className="pd-settings-header" inert={Boolean(pendingLeave)}><div><h1 id="pd-settings-title">{t('settings.title')}</h1></div><button ref={closeRef} type="button" className="pd-icon-button" disabled={draftState.saving} onClick={() => requestLeave()} aria-label={t('settings.close')}><Icon name="close" /></button></header>
 				{pendingLeave && <div className="pd-settings-discard" role="alertdialog" aria-modal="true" aria-labelledby="pd-discard-title" aria-describedby="pd-discard-description"><h2 id="pd-discard-title">{t('settings.discardTitle')}</h2><p id="pd-discard-description">{t('settings.discardDescription')}</p><div className="pd-instruction-actions"><button ref={keepEditingRef} className="pd-instruction-button" type="button" disabled={savingLeave} onClick={keepEditing}>{t('personalization.keepEditing')}</button><button className="pd-instruction-button" type="button" disabled={savingLeave} onClick={discardChanges}>{t('personalization.discard')}</button>{draftState.save && <button className="pd-settings-primary" data-action="save-settings-and-leave" type="button" disabled={savingLeave} onClick={() => void saveAndLeave()}>{savingLeave ? t('personalization.saving') : locale === 'zh-CN' ? '保存并继续' : 'Save and continue'}</button>}</div>{leaveError && <p role="alert">{locale === 'zh-CN' ? '保存失败，请继续编辑并查看错误。草稿已保留。' : 'Saving failed. Continue editing to review the error; your draft is preserved.'}</p>}</div>}
 				<div className="pd-settings-layout" inert={Boolean(pendingLeave)}>
 					<nav className="pd-settings-nav" aria-label={t('settings.category')}>
@@ -447,29 +447,27 @@ export function SettingsPanel({ initialPage = 'general', modelManagementTarget, 
 						</>}
 						{!paiMode && page === 'updates' && <>
 							<div className="pd-settings-section-head"><h2>{t('settings.updates')}</h2><p>{t('settings.updateDescription')}</p></div>
-							<div className="pd-update-card" aria-live="polite">
-								<strong>{updateStatus}</strong>
-								<span>{t('settings.updateInstalled', { version: updateState?.currentVersion ?? appInfo?.appVersion ?? '—' })}</span>
-								{updateState?.phase === 'downloading' && <progress max={100} value={updateState.progressPercent ?? 0} aria-label={t('settings.updateProgress')} />}
-								{updateState?.error && <p className="pd-settings-error" role="alert">{updateState.error}</p>}
-								{updateActionError && <p className="pd-settings-error" role="alert">{updateActionError}</p>}
-								<div className="pd-update-actions">
-									<button type="button" data-action="check-updates" className="pd-extension-refresh" onClick={() => void checkForUpdates()} disabled={!bridge || updateBusy || !updateState || !['idle', 'up-to-date', 'available', 'error'].includes(updateState.phase)}>{t('settings.updateCheck')}</button>
-									<button type="button" data-action="install-update" className="pd-extension-refresh" onClick={() => void installUpdate()} disabled={!bridge || updateBusy || !updateAvailable}>{t(updateState?.phase === 'ready' ? 'settings.updateInstall' : 'settings.updateNow')}</button>
-									<button type="button" data-action="open-project" className="pd-extension-refresh" onClick={() => window.open(PROJECT_REPOSITORY_URL, '_blank', 'noopener')}>{t('settings.updateOpenProject')}</button>
+							<SettingsGroup title={t('settings.groupVersion')}>
+								<div className={`pd-update-card is-${updateState?.phase ?? 'idle'}`} aria-live="polite">
+									<div className="pd-update-summary">
+										<span className="pd-update-icon" aria-hidden="true"><Icon name={updateState?.phase === 'error' ? 'close' : updateState?.phase === 'up-to-date' ? 'check' : 'update'} width="18" height="18" /></span>
+										<div><strong>{updateStatus}</strong><span>{t('settings.updateInstalled', { version: updateState?.currentVersion ?? appInfo?.appVersion ?? '—' })}</span></div>
+									</div>
+									{updateState?.phase === 'downloading' && <progress max={100} value={updateState.progressPercent ?? 0} aria-label={t('settings.updateProgress')} />}
+									{updateState?.error && <p className="pd-settings-error" role="alert">{updateState.error}</p>}
+									{updateActionError && <p className="pd-settings-error" role="alert">{updateActionError}</p>}
+									<div className="pd-update-actions">
+										<button type="button" data-action="check-updates" className="pd-extension-refresh" onClick={() => void checkForUpdates()} disabled={!bridge || updateBusy || !updateState || !['idle', 'up-to-date', 'available', 'error'].includes(updateState.phase)}><Icon name="refresh" width="14" height="14" />{t('settings.updateCheck')}</button>
+										<button type="button" data-action="install-update" className={`pd-extension-refresh${updateAvailable ? ' is-primary' : ''}`} onClick={() => void installUpdate()} disabled={!bridge || updateBusy || !updateAvailable}>{t(updateState?.phase === 'ready' ? 'settings.updateInstall' : 'settings.updateNow')}</button>
+										<button type="button" data-action="open-project" className="pd-extension-refresh is-quiet" onClick={() => window.open(PROJECT_REPOSITORY_URL, '_blank', 'noopener')}>{t('settings.updateOpenProject')}<Icon name="arrowRight" width="13" height="13" /></button>
+									</div>
 								</div>
-							</div>
-						{desktopSettings && (
-							<>
-								<div className="pd-settings-section-head"><h3>{t('settings.autoInstallUpdates')}</h3><p>{t('settings.autoInstallUpdatesDescription')}</p></div>
-								<div className="pd-language-options" data-setting="auto-install-updates" role="group" aria-label={t('settings.autoInstallUpdates')}>
-									<button type="button" className={desktopSettings.autoInstallUpdates ? 'is-selected' : ''} aria-pressed={desktopSettings.autoInstallUpdates}
-										disabled={savingDesktopSettings} onClick={() => { void saveDesktopSettings({ autoInstallUpdates: true }); }}>{t('settings.notificationsOn')}</button>
-									<button type="button" className={!desktopSettings.autoInstallUpdates ? 'is-selected' : ''} aria-pressed={!desktopSettings.autoInstallUpdates}
-										disabled={savingDesktopSettings} onClick={() => { void saveDesktopSettings({ autoInstallUpdates: false }); }}>{t('settings.notificationsOff')}</button>
-								</div>
-						</>
-						) }
+							</SettingsGroup>
+							{desktopSettings && <SettingsGroup title={t('settings.groupPreferences')}>
+								<SettingsRow title={t('settings.autoInstallUpdates')} description={t('settings.autoInstallUpdatesDescription')}>
+									<SettingsSwitch setting="auto-install-updates" label={t('settings.autoInstallUpdates')} checked={desktopSettings.autoInstallUpdates} disabled={savingDesktopSettings} onChange={next => { void saveDesktopSettings({ autoInstallUpdates: next }); }} />
+								</SettingsRow>
+							</SettingsGroup>}
 						</>}
 						</ScopedErrorBoundary>
 					</div>

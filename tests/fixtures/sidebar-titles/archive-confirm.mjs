@@ -91,12 +91,12 @@ export default async function archiveConfirmScenarios(review) {
 
   // 5. Unarchive stays immediate: in the archive view one click restores the
   //    row, and the optimistic flip moves it back at once.
-  await review.click('.pd-sidebar-organize-actions button[aria-label="显示归档对话"]');
+  await review.click('.pd-sidebar-organize-actions button[aria-label="视图选项"]'); await review.clickText('.pd-sidebar-popover [role="menuitem"]', '查看已归档');
   await review.waitFor(`Boolean(document.querySelector(${q(row('target'))}))`);
   await moveTo('target');
   await review.click(archiveButton('target'));
   await review.waitFor(`!document.querySelector(${q(row('target'))})`);
-  await review.click('.pd-sidebar-organize-actions button[aria-label="关闭归档视图"]');
+  await review.click('.pd-sidebar-organize-toolbar button[aria-label="返回对话列表"]');
   await review.waitFor(`Boolean(document.querySelector(${q(row('target'))}))`);
   await review.assert(`${state}.writes.length === 2 && ${state}.writes[1].patch.archived === false && ${state}.rows.find(r => r.id === 'target').archived === false`, 'Restoring from the archive view is a single immediate click in both views');
 

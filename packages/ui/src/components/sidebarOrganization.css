@@ -20,14 +20,23 @@
 .pd-session-delete-dialog footer { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-top: 22px; }
 .pd-session-delete-dialog button { display: inline-flex; align-items: center; justify-content: center; min-height: 34px; padding: 6px 12px; border: 1px solid var(--pd-border); border-radius: var(--pd-radius-sm); background: var(--pd-surface); color: var(--pd-text); }
 .pd-session-delete-dialog button.is-danger { color: var(--pd-danger); border-color: var(--pd-danger-border); background: var(--pd-danger-surface); }
-.pd-sidebar-organize-toolbar { display: flex; flex: 0 0 auto; flex-wrap: wrap; align-items: center; gap: 3px; padding: 0 9px 5px; }
-.pd-sidebar-mode { display: flex; flex: 0 0 auto; gap: 1px; padding: 2px; border-radius: var(--pd-radius-pill); background: var(--pd-sidebar-surface); }
-.pd-sidebar-mode button { display: flex; align-items: center; gap: 3px; height: 24px; padding: 0 6px; border: 0; border-radius: var(--pd-radius-pill); background: transparent; color: var(--pd-text); font-size: var(--pd-font-sm); white-space: nowrap; }
-.pd-sidebar-mode button[aria-selected='true'] { background: var(--pd-sidebar-tab); color: var(--pd-text); box-shadow: var(--pd-shadow-low); }
+/* One row: an equal-width view switch, then "new" and the view-options menu. */
+.pd-sidebar-organize-toolbar { display: flex; flex: 0 0 auto; align-items: center; gap: 6px; min-height: 34px; padding: 0 9px 6px 12px; }
+.pd-sidebar-mode { display: flex; flex: 1 1 auto; gap: 2px; max-width: 168px; min-width: 0; padding: 2px; border-radius: var(--pd-radius-md); background: var(--pd-sidebar-surface); }
+.pd-sidebar-mode button { display: flex; flex: 1 1 0; align-items: center; justify-content: center; min-width: 0; height: 26px; padding: 0 10px; border: 0; border-radius: var(--pd-radius-sm); background: transparent; color: var(--pd-text-subtle); font-size: var(--pd-font-caption); white-space: nowrap; transition: background var(--pd-motion-fast), color var(--pd-motion-fast); }
+.pd-sidebar-mode button[aria-selected='true'] { background: var(--pd-sidebar-tab); color: var(--pd-text); font-weight: 500; box-shadow: var(--pd-shadow-low); }
 .pd-sidebar-mode button:hover { color: var(--pd-text); }
-.pd-sidebar-organize-toolbar .pd-icon-button { width: 23px; height: 26px; border-radius: var(--pd-radius-sm); }
-.pd-sidebar-organize-actions { display: flex; align-items: center; gap: 1px; margin-left: auto; }
+.pd-sidebar-organize-toolbar .pd-icon-button { position: relative; width: 28px; height: 28px; border-radius: var(--pd-radius-sm); color: var(--pd-text-subtle); }
+.pd-sidebar-organize-toolbar .pd-icon-button:hover:not(:disabled), .pd-sidebar-organize-toolbar .pd-icon-button[aria-expanded='true'] { background: var(--pd-sidebar-hover); color: var(--pd-text); }
+/* An active filter marks the options button instead of tinting it. */
+.pd-sidebar-organize-toolbar .pd-icon-button.has-dot::after { position: absolute; top: 5px; right: 5px; width: 6px; height: 6px; border-radius: 50%; background: var(--pd-brand); box-shadow: 0 0 0 2px var(--pd-sidebar); content: ''; }
+.pd-sidebar-organize-actions { display: flex; align-items: center; gap: 2px; margin-left: auto; }
 .pd-sidebar-organize-actions .is-active { background: var(--pd-sidebar-selected); color: var(--pd-brand); }
+/* Archive sub-page header: back, title and count. */
+.pd-sidebar-organize-toolbar.is-archive { gap: 4px; padding-left: 6px; }
+.pd-sidebar-archive-title { color: var(--pd-text); font-size: var(--pd-font-base); font-weight: 600; white-space: nowrap; }
+.pd-sidebar-archive-count { min-width: 20px; padding: 0 6px; border-radius: var(--pd-radius-pill); background: color-mix(in srgb, var(--pd-text) 9%, transparent); color: var(--pd-text-subtle); font-size: var(--pd-font-xs); line-height: 18px; text-align: center; }
+.pd-sidebar-popover button[role='menuitem'] > svg { color: var(--pd-text-weak); }
 .pd-organized-list { padding-top: 2px; padding-right: 4px; }
 .pd-sidebar-group { margin-bottom: 7px; }
 .pd-sidebar-group.is-pinned { margin-bottom: 12px; padding-bottom: 7px; border-bottom: 1px solid var(--pd-sidebar-surface); }

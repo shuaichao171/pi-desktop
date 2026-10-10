@@ -1,4 +1,9 @@
-.pd-feature-toolbar { display:flex; flex-wrap:wrap; gap:8px; align-items:center; padding:8px; }
+.pd-feature-toolbar { display:flex; flex-wrap:wrap; gap:6px; align-items:center; padding:8px; }
+/* Git page shortcuts are actions: icon + label chips, not a second tab row. */
+.pd-workbench-body > .pd-feature-toolbar { flex: 0 0 auto; padding: 10px 10px 0; }
+.pd-workbench-body > .pd-feature-toolbar button { display:inline-flex; align-items:center; gap:6px; height:28px; padding:0 10px; border:1px solid var(--pd-border-soft); border-radius:var(--pd-radius-pill); background:transparent; color:var(--pd-text-subtle); font-size:var(--pd-font-sm); }
+.pd-workbench-body > .pd-feature-toolbar button:hover:not(:disabled) { border-color:var(--pd-border-strong); background:var(--pd-surface-hover); color:var(--pd-text); }
+.pd-workbench-body > .pd-feature-toolbar button > svg { flex:0 0 auto; color:var(--pd-text-weak); }
 .pd-feature-toolbar button,.pd-feature-dialog button { border:1px solid var(--pd-border); border-radius:var(--pd-radius-md); padding:6px 10px; font-size:var(--pd-font-caption); }
 .pd-feature-note,.pd-feature-path { font-size:var(--pd-font-caption); overflow-wrap:anywhere; margin:8px; }
 .pd-terminal-pane { display:flex; flex-direction:column; height:100%; min-height:260px; overflow:hidden; }

@@ -55,12 +55,12 @@ export default async function archiveSelectionScenarios(review) {
     await review.evaluate('new Promise(resolve => setTimeout(resolve, 250))');
   }
   async function filter(text) {
-    await review.click('.pd-sidebar-organize-actions button[aria-label="筛选与排序"]');
+    await review.click('.pd-sidebar-organize-actions button[aria-label="视图选项"]');
     await review.clickText('.pd-sidebar-popover [role="menuitemradio"]', text);
     await review.key('Escape');
   }
   async function openArchive() {
-    await review.click('.pd-sidebar-organize-actions button[aria-label="显示归档对话"]');
+    await review.click('.pd-sidebar-organize-actions button[aria-label="视图选项"]'); await review.clickText('.pd-sidebar-popover [role="menuitem"]', '查看已归档');
     await review.waitFor(`Boolean(document.querySelector(${q(toolbar)})) && ${checkboxes} === 4`);
   }
   async function cancel() {
@@ -93,7 +93,7 @@ export default async function archiveSelectionScenarios(review) {
   await review.waitFor(`Boolean(document.querySelector(${q(dialog)}))`);
   await review.assert(`document.querySelector(${q(dialog)}).textContent.includes(${q(data.entries[0].name)}) && !document.querySelector(${q(dialog)}).textContent.includes(${q(data.entries[1].name)})`, 'The confirmation names only the selected session');
   await cancel();
-  await review.click('.pd-sidebar-organize-actions button[aria-label="关闭归档视图"]');
+  await review.click('.pd-sidebar-organize-toolbar button[aria-label="返回对话列表"]');
   await review.assert(`!document.querySelector(${q(toolbar)}) && ${checkboxes} === 0`, 'Archive selection controls disappear outside the archive');
   await openArchive();
   await review.assert(`${selected} === 0 && !document.querySelector(${q(all)}).indeterminate`, 'Leaving and re-entering the archive clears its previous selection');

@@ -45,7 +45,7 @@ export default async function sidebarPinsScenarios(review) {
   const pinToggle = pinned + ' > .pd-sidebar-group-heading .pd-sidebar-group-toggle';
   const menu = '.pd-sidebar-popover[role="menu"]';
   const menuAction = menu + ' > [role="menuitem"]:first-child';
-  const filter = '.pd-sidebar-organize-actions button[aria-label="筛选与排序"]';
+  const filter = '.pd-sidebar-organize-actions button[aria-label="视图选项"]';
   const projectPaths = '[...document.querySelectorAll(".pd-sidebar-group[data-project-path]")].map(node => node.dataset.projectPath)';
   const regularPaths = '[...document.querySelectorAll(".pd-organized-list > .pd-sidebar-group[data-project-path]")].map(node => node.dataset.projectPath)';
   const unique = '(() => { const rows = [...document.querySelectorAll(".pd-session-item[data-session-path]")].map(node => node.dataset.sessionPath); const projects = ' + projectPaths + '; return rows.length === new Set(rows).size && projects.length === new Set(projects).size; })()';
@@ -109,9 +109,9 @@ export default async function sidebarPinsScenarios(review) {
   await view('按时间');
   await review.assert(`${inPinned('Alpha')} && ${inPinned('Bravo')} && ${unique} && document.querySelectorAll('.pd-session-item[data-session-path]').length === 7`, 'Timeline mode retains pinned projects and active conversations exactly once');
   await review.assert(`![...document.querySelectorAll(${q('[data-section-key^="date:"]')})].some(section => /Alpha 当前对话|Bravo 项目对话/.test(section.textContent))`, 'Timeline sections omit conversations already shown under pinned projects');
-  await review.click('.pd-sidebar-organize-actions button[aria-label="显示归档对话"]');
+  await review.click('.pd-sidebar-organize-actions button[aria-label="视图选项"]'); await review.clickText('.pd-sidebar-popover [role="menuitem"]', '查看已归档');
   await review.assert(`!document.querySelector(${q(pinned)}) && !document.querySelector('[data-project-path]') && document.querySelectorAll('.pd-session-item[data-session-path]').length === 1 && document.querySelector('.pd-organized-list').textContent.includes('Alpha 归档对话')`, 'Archive mode shows the archived conversation without any pinned section or active project');
-  await review.click('.pd-sidebar-organize-actions button[aria-label="关闭归档视图"]');
+  await review.click('.pd-sidebar-organize-toolbar button[aria-label="返回对话列表"]');
   await view('按项目');
   await review.click(toggle('Alpha'));
   await review.assert(`!(${expanded('Alpha')}) && !document.querySelector(${q(project('Alpha') + ' .pd-session-item')})`, 'Pinned projects can collapse independently of the pinned section');

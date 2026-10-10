@@ -79,21 +79,25 @@ function ProjectChip({ isHome }: { isHome: boolean }) {
 					<Icon name="chevronDown" width="13" height="13" />
 				</button>
 			</div>
-			{open && anchorRef.current && <SidebarPopover anchor={anchorRef.current} label={t('composer.projectMenuLabel')} placement="top" onClose={() => setOpen(false)}>
-				{projects.map((workspace) => (
-					<button type="button" key={workspace} role="menuitemradio" aria-checked={workspace === cwd} className="pd-context-menu-row is-wide" disabled={navigationPending || workspace === cwd} onClick={() => { setOpen(false); void switchWorkspace(workspace, { fresh: true }).catch((cause) => setError(errorText(cause))); }}>
-						<span className="pd-context-menu-main"><Icon name="folder" width="15" height="15" />{workspaceName(workspace)}</span>
-						{workspace === cwd ? <Icon name="check" width="15" height="15" /> : null}
-						{workspace !== cwd && <small className="pd-context-menu-sub">{workspace}</small>}
+			{open && anchorRef.current && <SidebarPopover anchor={anchorRef.current} label={t('composer.projectMenuLabel')} placement="top" align="start" className="pd-project-picker" onClose={() => setOpen(false)}>
+				<div className="pd-project-picker-head" aria-hidden="true"><span>{t('composer.projectPickerTitle')}</span>{projects.length > 0 && <small>{projects.length}</small>}</div>
+				{projects.length > 0 ? <div className="pd-project-picker-list">
+					{projects.map((workspace) => (
+						<button type="button" key={workspace} role="menuitemradio" aria-checked={workspace === cwd} className="pd-context-menu-row is-wide pd-project-option" title={workspace} disabled={navigationPending || workspace === cwd} onClick={() => { setOpen(false); void switchWorkspace(workspace, { fresh: true }).catch((cause) => setError(errorText(cause))); }}>
+							<span className="pd-project-option-icon" aria-hidden="true"><Icon name="folder" width="15" height="15" /></span>
+							<span className="pd-project-option-copy"><span className="pd-context-menu-main">{workspaceName(workspace)}</span><small className="pd-context-menu-sub">{workspace}</small></span>
+							{workspace === cwd ? <Icon name="check" className="pd-project-option-check" width="15" height="15" /> : null}
+						</button>
+					))}
+				</div> : <p className="pd-project-picker-empty">{t('composer.projectPickerEmpty')}</p>}
+				<div className="pd-project-picker-actions">
+					<button type="button" role="menuitem" className="pd-context-menu-row is-wide pd-project-action" disabled={navigationPending} onClick={() => { setOpen(false); void pickWorkspace({ fresh: true }).catch((cause) => setError(errorText(cause))); }}>
+						<span className="pd-project-option-icon is-action" aria-hidden="true"><Icon name="plus" width="15" height="15" /></span><span className="pd-context-menu-main">{t('composer.projectOpen')}</span>
 					</button>
-				))}
-				<hr />
-				<button type="button" role="menuitem" className="pd-context-menu-row is-wide" disabled={navigationPending} onClick={() => { setOpen(false); void pickWorkspace({ fresh: true }).catch((cause) => setError(errorText(cause))); }}>
-					<span className="pd-context-menu-main"><Icon name="plus" width="15" height="15" />{t('composer.projectOpen')}</span>
-				</button>
-				{canDetach && <button type="button" role="menuitem" className="pd-context-menu-row is-wide" disabled={navigationPending} onClick={clearProject}>
-					<span className="pd-context-menu-main"><Icon name="home" width="15" height="15" />{t('composer.projectClear')}</span>
-				</button>}
+					{canDetach && <button type="button" role="menuitem" className="pd-context-menu-row is-wide pd-project-action" disabled={navigationPending} onClick={clearProject}>
+						<span className="pd-project-option-icon is-action" aria-hidden="true"><Icon name="home" width="15" height="15" /></span><span className="pd-context-menu-main">{t('composer.projectClear')}</span>
+					</button>}
+				</div>
 			</SidebarPopover>}
 			{error && <div className="pd-chat-title-error pd-context-chip-error" role="alert">{t('chat.menuActionFailed', { message: error })}</div>}
 		</div>

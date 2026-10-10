@@ -11,8 +11,8 @@ type NamedPreset = Exclude<ColorPresetId, 'custom'>;
 
 const PRESETS: Record<NamedPreset, Record<ColorMode, ThemeColors>> = {
 	default: {
-		light: { accent: '#000000', surface: '#f8f8f8', ink: '#262626', contrast: 50 },
-		dark: { accent: '#ffffff', surface: '#161616', ink: '#e5e5e5', contrast: 50 },
+		light: { accent: '#4a5fc1', surface: '#f8f8f8', ink: '#262626', contrast: 50 },
+		dark: { accent: '#8aa4f8', surface: '#161616', ink: '#e5e5e5', contrast: 50 },
 	},
 	sky: {
 		light: { accent: '#38bdf8', surface: '#fafafa', ink: '#404040', contrast: 50 },
@@ -38,7 +38,8 @@ const PRESETS: Record<NamedPreset, Record<ColorMode, ThemeColors>> = {
 
 // Saved-by-default palettes from earlier versions of the built-in look.
 // They must migrate to the current default instead of being pinned as a
-// stale "custom" choice (generation 1: original indigo; generation 2: zcode sky).
+// stale "custom" choice (generation 1: original indigo; generation 2: zcode sky;
+// generation 3: monochrome).
 const LEGACY_DEFAULT_GENERATIONS: Array<Record<ColorMode, ThemeColors>> = [
 	{
 		light: { accent: '#000000', surface: '#f8f8f8', ink: '#262626', contrast: 50 },
@@ -52,6 +53,10 @@ const LEGACY_DEFAULT_GENERATIONS: Array<Record<ColorMode, ThemeColors>> = [
 		light: { accent: '#38bdf8', surface: '#fafafa', ink: '#404040', contrast: 50 },
 		dark: { accent: '#0ea5e9', surface: '#171717', ink: '#e5e5e5', contrast: 50 },
 	},
+	{
+		light: { accent: '#000000', surface: '#f8f8f8', ink: '#262626', contrast: 50 },
+		dark: { accent: '#ffffff', surface: '#161616', ink: '#e5e5e5', contrast: 50 },
+	},
 ];
 
 // Keep the built-in appearance exactly aligned with styles.css. Reset removes
@@ -61,7 +66,7 @@ const DEFAULT_TOKENS: Record<ColorMode, Record<string, string>> = {
 		'--pd-bg': '#161616', '--pd-sidebar': '#2b2b2b', '--pd-sidebar-hover': '#404040', '--pd-sidebar-selected': '#4a4a4a', '--pd-sidebar-surface': '#363636', '--pd-sidebar-tab': '#161616', '--pd-header': '#161616', '--pd-surface': '#222222',
 		'--pd-surface-hover': '#2d2d2d', '--pd-selected': '#2d2d2d', '--pd-border': '#2d2d2d', '--pd-border-soft': '#262626',
 		'--pd-text': '#e5e5e5', '--pd-text-subtle': '#b8b8b8', '--pd-text-weak': '#999999',
-		'--pd-brand': '#ffffff', '--pd-brand-hover': '#d4d4d4', '--pd-brand-ink': '#000000',
+		'--pd-brand': '#8aa4f8', '--pd-brand-hover': '#a6bafa', '--pd-brand-ink': '#000000',
 		'--pd-danger': '#f87171', '--pd-warning': '#fbbf24', '--pd-success': '#4ade80',
 		'--pd-chrome-border': '#2b2b2b', '--pd-surface-raised': '#2b2b2b', '--pd-surface-muted': '#0e0e0e',
 		'--pd-border-strong': '#404040', '--pd-user-surface': '#222222', '--pd-code-surface': '#0e0e0e',
@@ -73,7 +78,7 @@ const DEFAULT_TOKENS: Record<ColorMode, Record<string, string>> = {
 		'--pd-bg': '#f8f8f8', '--pd-sidebar': '#ececee', '--pd-sidebar-hover': '#e1e1e3', '--pd-sidebar-selected': '#d9d9de', '--pd-sidebar-surface': '#e5e5e7', '--pd-sidebar-tab': '#f8f8f8', '--pd-header': '#f8f8f8', '--pd-surface': '#f1f1f1',
 		'--pd-surface-hover': '#ececec', '--pd-selected': '#e5e5e5', '--pd-border': '#e0e0e0', '--pd-border-soft': '#e9e9e9',
 		'--pd-text': '#262626', '--pd-text-subtle': '#666666', '--pd-text-weak': '#767676',
-		'--pd-brand': '#000000', '--pd-brand-hover': '#262626', '--pd-brand-ink': '#ffffff',
+		'--pd-brand': '#4a5fc1', '--pd-brand-hover': '#3d50a8', '--pd-brand-ink': '#ffffff',
 		'--pd-danger': '#ef4444', '--pd-warning': '#d97706', '--pd-success': '#16a34a',
 		'--pd-chrome-border': '#e0e0e0', '--pd-surface-raised': '#ffffff', '--pd-surface-muted': '#ececee',
 		'--pd-border-strong': '#c9c9c9', '--pd-user-surface': '#eeeeee', '--pd-code-surface': '#f0f0f0',

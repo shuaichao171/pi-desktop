@@ -1,14 +1,14 @@
 .pd-code-block { min-width: 0; margin: 10px 0; overflow: hidden; border: 1px solid var(--pd-border-soft); border-radius: var(--pd-radius-md); background: var(--pd-code-surface); }
-.pd-code-block-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 32px; padding: 3px 6px 3px 12px; border-bottom: 1px solid var(--pd-border-soft); }
+.pd-code-block-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 32px; padding: 3px 6px 3px 14px; border-bottom: 1px solid var(--pd-border-soft); }
 .pd-code-block-language { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--pd-text-weak); font-size: var(--pd-font-xs); text-transform: lowercase; }
 .pd-code-block-actions { display: flex; flex: 0 0 auto; }
 .pd-code-block-actions button, .pd-code-block-toggle { padding: 3px 8px; border: 0; border-radius: var(--pd-radius-xs); background: transparent; color: var(--pd-text-subtle); font-size: var(--pd-font-xs); }
 .pd-code-block-actions button:hover, .pd-code-block-toggle:hover { background: var(--pd-surface-hover); color: var(--pd-text); }
 .pd-code-block-actions button:focus-visible, .pd-code-block-toggle:focus-visible { outline: 2px solid var(--pd-focus-border); outline-offset: 1px; }
-.pd-markdown pre.pd-code-block-body { margin: 0; padding: 0; border: 0; border-radius: 0; background: transparent; }
+.pd-markdown pre.pd-code-block-body { margin: 0; padding: 10px 0; border: 0; border-radius: 0; background: transparent; }
 .pd-code-block-body { max-height: 560px; margin: 0; padding: 10px 0; overflow: auto; scrollbar-width: thin; overscroll-behavior: contain; }
-.pd-code-block-body code { display: block; width: max-content; min-width: 100%; padding: 0 12px; border: 0; border-radius: 0; background: transparent; color: var(--pd-code-text); font: var(--pd-code-font-size, 12px)/1.65 var(--pd-font-mono); white-space: pre; tab-size: 2; }
-.pd-code-block-body.is-wrapped code { width: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
+.pd-code-block-body code, .pd-markdown pre.pd-code-block-body code { display: block; width: max-content; min-width: 100%; padding: 0 14px; border: 0; border-radius: 0; background: transparent; color: var(--pd-code-text); font: var(--pd-code-font-size, 12px)/1.65 var(--pd-font-mono); white-space: pre; tab-size: 2; }
+.pd-code-block-body.is-wrapped code, .pd-markdown pre.pd-code-block-body.is-wrapped code { width: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
 .pd-code-block-actions button[aria-pressed="true"] { color: var(--pd-text); }
 .pd-code-block-toggle { display: block; width: 100%; padding: 6px; border-top: 1px solid var(--pd-border-soft); text-align: center; }
 

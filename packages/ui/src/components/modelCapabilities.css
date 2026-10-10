@@ -1,5 +1,11 @@
-.pd-model-image-filter { display: flex; align-items: center; gap: 7px; padding: 0 5px 9px; color: var(--pd-text-subtle); font-size: var(--pd-font-caption); }
+/* Image filter reads as a toggle pill; the real checkbox covers it for clicks and keyboard focus. */
+.pd-model-image-filter { position: relative; display: inline-flex; flex: 0 0 auto; align-items: center; gap: 6px; height: 34px; padding: 0 12px; border: 1px solid var(--pd-border-soft); border-radius: var(--pd-radius-md); color: var(--pd-text-subtle); font-size: var(--pd-font-sm); white-space: nowrap; cursor: pointer; transition: background var(--pd-motion-fast), border-color var(--pd-motion-fast), color var(--pd-motion-fast); }
+.pd-model-image-filter input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; }
+.pd-model-image-filter:hover { background: var(--pd-surface-hover); color: var(--pd-text); }
+.pd-model-image-filter.is-on { border-color: color-mix(in srgb, var(--pd-brand) 45%, var(--pd-border)); background: color-mix(in srgb, var(--pd-brand) 14%, transparent); color: var(--pd-text); }
+.pd-model-image-filter.is-on > svg { color: var(--pd-brand); }
+.pd-model-image-filter:has(input:focus-visible) { outline: 2px solid var(--pd-focus-border); outline-offset: 2px; }
 .pd-model-capabilities { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
-.pd-model-capabilities > span { padding: 1px 5px; border: 1px solid var(--pd-border); border-radius: var(--pd-radius-xs); color: var(--pd-text-subtle); font-size: var(--pd-font-xs); line-height: 1.4; }
+.pd-model-capabilities > span { padding: 1px 7px; border: 0; border-radius: var(--pd-radius-pill); background: color-mix(in srgb, var(--pd-text) 7%, transparent); color: var(--pd-text-subtle); font-size: var(--pd-font-xs); line-height: 1.5; }
 .pd-model-image-notice.is-unsupported, .pd-model-image-notice.is-unknown { color: var(--pd-warning); }
 @container (max-width: 520px) { .pd-model-image-notice > span { display: none; } }

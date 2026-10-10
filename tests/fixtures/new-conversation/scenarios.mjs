@@ -1,6 +1,6 @@
 // Build first, then run the isolated renderer against deferred in-memory IPC:
 // node tests/fixtures/model-settings/run.mjs --run --scenario=../new-conversation/scenarios.mjs
-function installNewConversationFixture() {
+export function installNewConversationFixture() {
   const fixture = window.__modelReview, bridge = window.piDesktop;
   const clone = value => structuredClone(value);
   const project = 'C:/new-conversation/project';

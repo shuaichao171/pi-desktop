@@ -93,7 +93,7 @@ export function McpSettingsPanel() {
 		{snapshot.cwd && <div className="pd-mcp-context">
 			<Icon name="folder" width="15" height="15" />
 			<span className="pd-mcp-owner" title={snapshot.cwd}>{snapshot.cwd}</span>
-			{snapshot.sessionId && <span className="pd-mcp-chip">{label('会话', 'Conversation')} {snapshot.sessionId.slice(0, 8)}</span>}
+			{snapshot.sessionId && <span className="pd-mcp-chip" title={snapshot.sessionId}>{label('会话', 'Conversation')}<code className="pd-mcp-chip-id">{snapshot.sessionId.slice(0, 8)}</code></span>}
 			<span className={`pd-mcp-chip ${snapshot.projectTrusted ? 'is-success' : 'is-warning'}`}>{snapshot.projectTrusted ? label('项目已受信任', 'Trusted project') : label('项目未受信任', 'Untrusted project')}</span>
 		</div>}
 		{!loading && supported && !snapshot.projectTrusted && <p className="pd-mcp-callout is-warning">{label('项目尚未受信任，项目级 MCP 配置与连接不可用。用户级服务器仍需手动连接。', 'Project MCP configuration is unavailable until the project is trusted. User servers still require manual connection.')}</p>}

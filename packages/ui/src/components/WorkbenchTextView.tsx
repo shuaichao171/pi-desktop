@@ -5,6 +5,7 @@ import { literalMatches, readingRows } from '../workbenchReading';
 
 import { useReadingAnalysis } from '../useReadingAnalysis';
 import { WordDiffText } from './WordDiffText';
+import { Icon } from './Icons';
 
 /** Whole selected lines with their numbers, for "add to chat" (ZCode code comments). */
 export interface TextViewQuote { text: string; startLine?: number; endLine?: number }
@@ -130,10 +131,12 @@ export function WorkbenchTextView({ text, path = '', diff = false, command = fal
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'f') { event.preventDefault(); event.stopPropagation(); find.current?.focus(); }
   }}>
     <div className="pd-workbench-reader-tools">
-      <input ref={find} type="search" aria-label={label('查找内容', 'Find in content')} placeholder={label('查找', 'Find')} value={query} onChange={event => { setQuery(event.target.value); setFollowing(false); }} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); move(event.shiftKey ? -1 : 1); } }} />
-      <span role="status">{matches.length ? `${index + 1}/${matches.length}` : query ? '0/0' : ''}</span>
-      <button type="button" disabled={!matches.length} aria-label={label('上一处', 'Previous match')} onClick={() => move(-1)}>↑</button><button type="button" disabled={!matches.length} aria-label={label('下一处', 'Next match')} onClick={() => move(1)}>↓</button>
-      <button type="button" onClick={() => void copy()}>{label('复制原文', 'Copy raw')}</button>
+      <label className="pd-workbench-reader-find"><Icon name="search" width="12" height="12" /><input ref={find} type="search" aria-label={label('查找内容', 'Find in content')} placeholder={label('查找  Ctrl+F', 'Find  Ctrl+F')} value={query} onChange={event => { setQuery(event.target.value); setFollowing(false); }} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); move(event.shiftKey ? -1 : 1); } }} /></label>
+      {/* Match navigation only appears while searching; copy stays as a quiet icon. */}
+      {query && <><span role="status">{matches.length ? `${index + 1}/${matches.length}` : '0/0'}</span>
+      <button type="button" className="pd-workbench-reader-icon" disabled={!matches.length} aria-label={label('上一处', 'Previous match')} title={label('上一处', 'Previous match')} onClick={() => move(-1)}><Icon name="arrowUp" width="13" height="13" /></button><button type="button" className="pd-workbench-reader-icon" disabled={!matches.length} aria-label={label('下一处', 'Next match')} title={label('下一处', 'Next match')} onClick={() => move(1)}><Icon name="arrowDown" width="13" height="13" /></button></>}
+      <span className="pd-workbench-reader-spacer" />
+      <button type="button" className="pd-workbench-reader-icon" aria-label={label('复制原文', 'Copy raw')} title={label('复制原文', 'Copy raw')} onClick={() => void copy()}><Icon name="copy" width="13" height="13" /></button>
       {onClear && <button type="button" onClick={onClear}>{label('清空显示', 'Clear display')}</button>}
       {command && <button type="button" aria-pressed={following} onClick={() => { setQuery(''); setLimit(rows.length); setFollowing(true); }}>{label('回到底部', 'Follow output')}</button>}
     </div>

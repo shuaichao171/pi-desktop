@@ -66,7 +66,7 @@ export default async function bulkDeleteScenarios(review) {
   await review.mouseMove(700, 600);
 
   // Enter the archive view: five archived conversations across two workspaces.
-  await review.click('.pd-sidebar-organize-actions button[aria-label="显示归档对话"]');
+  await review.click('.pd-sidebar-organize-actions button[aria-label="视图选项"]'); await review.clickText('.pd-sidebar-popover [role="menuitem"]', '查看已归档');
   await review.waitFor('document.querySelectorAll(".pd-session-title-text").length === 5');
   await review.click(checkbox('arch-a'));
   await review.click(checkbox('arch-b'));
@@ -96,7 +96,7 @@ export default async function bulkDeleteScenarios(review) {
   await review.click('.pd-session-bulk-trash-dialog footer button:not(.is-danger)');
   await review.waitFor('document.querySelector(".pd-session-bulk-trash-dialog") === null');
   await review.assert(`!${present('arch-b')} && ${present('arch-c')}`, 'After the batch the archive view reflects the refreshed state');
-  await review.click('.pd-sidebar-organize-actions button[aria-label="关闭归档视图"]');
+  await review.click('.pd-sidebar-organize-toolbar button[aria-label="返回对话列表"]');
   await review.waitFor(`${present('current')} && ${present('arch-b')} && !${present('arch-a')}`);
   await review.assert(`${state}.rows.length === 3 && ${state}.rows.every(item => item.id !== 'arch-a')`, 'Closing the review dialog keeps the deletion and the unarchived restore');
 
@@ -105,7 +105,7 @@ export default async function bulkDeleteScenarios(review) {
   // pre-flight must validate them against their owning workspace's snapshot —
   // the old single-cwd precheck reported both stale ("选择已过期，已跳过") and
   // never deleted them.
-  await review.click('.pd-sidebar-organize-actions button[aria-label="显示归档对话"]');
+  await review.click('.pd-sidebar-organize-actions button[aria-label="视图选项"]'); await review.clickText('.pd-sidebar-popover [role="menuitem"]', '查看已归档');
   await review.waitFor('document.querySelectorAll(".pd-session-title-text").length === 3');
   await review.click(checkbox('arch-d'));
   await review.click(checkbox('arch-e'));

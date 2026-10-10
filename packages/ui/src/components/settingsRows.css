@@ -21,10 +21,10 @@
 .pd-settings-row-footer > .pd-settings-feedback { margin: 0; color: var(--pd-danger); }
 
 /* Switch */
-.pd-settings-switch { position: relative; flex: 0 0 auto; width: 34px; height: 20px; padding: 0; border: 0; border-radius: 999px; background: color-mix(in srgb, var(--pd-text) 22%, transparent); cursor: pointer; transition: background var(--pd-motion-fast, 120ms) ease; }
-.pd-settings-switch > span { position: absolute; top: 3px; left: 3px; width: 14px; height: 14px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgb(0 0 0 / 25%); transition: transform var(--pd-motion-fast, 120ms) ease; }
-.pd-settings-switch[aria-checked='true'] { background: var(--pd-brand); }
-.pd-settings-switch[aria-checked='true'] > span { background: var(--pd-brand-ink, #fff); transform: translateX(14px); }
+.pd-settings-switch { position: relative; flex: 0 0 auto; width: var(--pd-switch-width); height: var(--pd-switch-height); padding: 0; border: 0; border-radius: 999px; background: var(--pd-switch-off); cursor: pointer; transition: background var(--pd-motion-fast, 120ms) ease; }
+.pd-settings-switch > span { position: absolute; top: 2px; left: 2px; width: var(--pd-switch-thumb); height: var(--pd-switch-thumb); border-radius: 50%; background: var(--pd-switch-thumb-off); box-shadow: var(--pd-switch-thumb-shadow); transition: transform var(--pd-motion-fast, 120ms) ease; }
+.pd-settings-switch[aria-checked='true'] { background: var(--pd-switch-on); }
+.pd-settings-switch[aria-checked='true'] > span { background: var(--pd-switch-thumb-on); transform: translateX(var(--pd-switch-travel)); }
 .pd-settings-switch:focus-visible { outline: 2px solid var(--pd-focus-border, var(--pd-brand)); outline-offset: 2px; }
 .pd-settings-switch:disabled { opacity: .45; cursor: not-allowed; }
 
@@ -55,5 +55,21 @@
 .pd-settings-group .pd-font-size-row { gap: 14px; }
 .pd-settings-group .pd-font-size-value { min-width: 40px; color: var(--pd-text); font-size: var(--pd-font-sm); text-align: right; font-variant-numeric: tabular-nums; }
 .pd-settings-group .pd-font-size-reset { font-size: var(--pd-font-sm); }
-.pd-settings-group .pd-font-size-reset:disabled { opacity: .45; cursor: default; }
-.pd-settings-group .pd-font-size-reset:disabled:hover { background: var(--pd-surface); color: var(--pd-text-subtle); }
+/* Reset only appears once a value differs from its default; the slot keeps the slider width stable. */
+.pd-settings-group .pd-font-size-reset:disabled { visibility: hidden; }
+
+/* 更新: the version card lives inside a settings group. */
+.pd-settings-group-body > .pd-update-card { gap: 14px; padding: 16px; border: 0; border-radius: 0; background: transparent; }
+.pd-update-summary { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.pd-update-summary > div { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.pd-update-summary strong { color: var(--pd-text); font-size: var(--pd-font-base); }
+.pd-update-summary span { color: var(--pd-text-weak); font-size: var(--pd-font-sm); }
+.pd-update-icon { display: grid; flex: 0 0 auto; place-items: center; width: 38px; height: 38px; border-radius: var(--pd-radius-md); background: color-mix(in srgb, var(--pd-text) 8%, transparent); color: var(--pd-text-subtle); }
+.pd-update-card.is-up-to-date .pd-update-icon { background: color-mix(in srgb, var(--pd-success) 14%, transparent); color: var(--pd-success); }
+.pd-update-card:is(.is-available, .is-ready, .is-downloading) .pd-update-icon { background: color-mix(in srgb, var(--pd-brand) 15%, transparent); color: var(--pd-brand); }
+.pd-update-card.is-error .pd-update-icon { background: var(--pd-danger-surface); color: var(--pd-danger); }
+.pd-update-card .pd-update-actions { width: 100%; margin-top: 0; padding-top: 14px; border-top: 1px solid var(--pd-border-soft); }
+.pd-update-actions .pd-extension-refresh { display: inline-flex; align-items: center; gap: 6px; }
+.pd-update-actions .pd-extension-refresh.is-primary:not(:disabled) { border-color: var(--pd-brand); background: var(--pd-brand); color: var(--pd-brand-ink, #fff); font-weight: 600; }
+.pd-update-actions .pd-extension-refresh.is-quiet { margin-left: auto; border-color: transparent; background: transparent; color: var(--pd-text-subtle); }
+.pd-update-actions .pd-extension-refresh.is-quiet:hover { color: var(--pd-text); }

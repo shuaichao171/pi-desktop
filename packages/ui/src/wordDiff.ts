@@ -17,6 +17,24 @@ export function changedWords(before: string, after: string): [WordRange[], WordR
   }
   return [removed, added];
 }
+/** Join ranges separated only by whitespace so one edit reads as one mark. */
+function mergeRanges(text: string, ranges: WordRange[]): WordRange[] {
+  const merged: WordRange[] = [];
+  for (const range of ranges) {
+    const last = merged.at(-1);
+    if (last && !text.slice(last.end, range.start).trim()) last.end = range.end;
+    else merged.push({ ...range });
+  }
+  return merged;
+}
+/** Share of a line's visible characters covered by the ranges. */
+function changedShare(text: string, ranges: WordRange[]): number {
+  const visible = text.replace(/\s/g, '').length;
+  if (!visible) return 0;
+  return ranges.reduce((sum, range) => sum + text.slice(range.start, range.end).replace(/\s/g, '').length, 0) / visible;
+}
+/** Word marks only help when most of the line survived; a rewritten line keeps its line-level colour. */
+const REWRITE_SHARE = 0.6;
 export function diffWordRanges(rows: WordDiffRow[], prefix = 0): Record<number, WordRange[]> {
   const result: Record<number, WordRange[]> = {}; let pairs = 0;
   const removed = (kind: string) => kind === 'removed' || kind === 'deletion';
@@ -28,7 +46,10 @@ export function diffWordRanges(rows: WordDiffRow[], prefix = 0): Record<number, 
     const middle = i;
     while (i < rows.length && added(rows[i]!.kind)) i++;
     for (let n = 0; n < Math.min(middle - start, i - middle) && pairs < 200; n++, pairs++) {
-      const [oldRanges, newRanges] = changedWords(rows[start + n]!.text.slice(prefix), rows[middle + n]!.text.slice(prefix));
+      const before = rows[start + n]!.text.slice(prefix), after = rows[middle + n]!.text.slice(prefix);
+      const [rawOld, rawNew] = changedWords(before, after);
+      const oldRanges = mergeRanges(before, rawOld), newRanges = mergeRanges(after, rawNew);
+      if (changedShare(before, oldRanges) >= REWRITE_SHARE || changedShare(after, newRanges) >= REWRITE_SHARE) continue;
       result[start + n] = oldRanges.map(range => ({ start: range.start + prefix, end: range.end + prefix }));
       result[middle + n] = newRanges.map(range => ({ start: range.start + prefix, end: range.end + prefix }));
     }

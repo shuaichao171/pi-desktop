@@ -1,9 +1,3 @@
-.pd-settings-dialog:has(.pd-model-settings) { height: 820px; max-height: calc(100vh - 48px); }
-/* The frameless title bar pushes the overlay down 56px; without these the
-   model page override above would let the dialog spill past the window edge. */
-.is-frameless .pd-settings-dialog:has(.pd-model-settings) { max-height: calc(100vh - 104px); }
-@media (max-width: 650px) { .is-frameless .pd-settings-dialog:has(.pd-model-settings) { max-height: calc(100vh - 76px); } }
-@media (max-width: 450px) { .is-frameless .pd-settings-dialog:has(.pd-model-settings) { max-height: none; } }
 .pd-settings-dialog:has(.pd-settings-discard) { position: relative; }
 .pd-settings-dialog > .pd-settings-discard { position: absolute; z-index: 1; top: 50%; left: 50%; width: min(440px, calc(100% - 40px)); margin: 0; transform: translate(-50%, -50%); border: 1px solid var(--pd-border); border-radius: var(--pd-radius-xl); background: var(--pd-surface); box-shadow: 0 0 0 100vmax var(--pd-overlay), var(--pd-shadow-dialog); }
 .pd-settings-content:has(.pd-model-settings) { display: flex; flex-direction: column; overflow: hidden; padding: 20px; scrollbar-gutter: auto; }
@@ -214,10 +208,10 @@
 .pd-model-settings-model.is-disabled .pd-model-settings-model-copy { opacity: 0.55; }
 .pd-model-switch { display: inline-flex; flex: 0 0 auto; align-items: center; cursor: pointer; }
 .pd-model-switch input { position: absolute; width: 1px; height: 1px; margin: 0; opacity: 0; }
-.pd-model-switch-track { display: inline-block; box-sizing: border-box; width: 28px; height: 16px; border: 1px solid var(--pd-border); border-radius: var(--pd-radius-md); background: var(--pd-bg); transition: background 0.15s ease, border-color 0.15s ease; }
-.pd-model-switch-thumb { display: block; width: 12px; height: 12px; margin: 1px; border-radius: 50%; background: var(--pd-text-subtle); transition: transform 0.15s ease, background 0.15s ease; }
-.pd-model-switch input:checked + .pd-model-switch-track { border-color: var(--pd-brand); background: var(--pd-brand); }
-.pd-model-switch input:checked + .pd-model-switch-track .pd-model-switch-thumb { transform: translateX(12px); background: var(--pd-brand-ink); }
+.pd-model-switch-track { display: inline-block; box-sizing: border-box; width: var(--pd-switch-width); height: var(--pd-switch-height); border: 0; border-radius: 999px; background: var(--pd-switch-off); transition: background 0.15s ease; }
+.pd-model-switch-thumb { display: block; width: var(--pd-switch-thumb); height: var(--pd-switch-thumb); margin: 2px; border-radius: 50%; background: var(--pd-switch-thumb-off); box-shadow: var(--pd-switch-thumb-shadow); transition: transform 0.15s ease, background 0.15s ease; }
+.pd-model-switch input:checked + .pd-model-switch-track { background: var(--pd-switch-on); }
+.pd-model-switch input:checked + .pd-model-switch-track .pd-model-switch-thumb { transform: translateX(var(--pd-switch-travel)); background: var(--pd-switch-thumb-on); }
 .pd-model-switch input:focus-visible + .pd-model-switch-track { outline: 2px solid var(--pd-focus-border); outline-offset: 1px; }
 .pd-model-switch input:disabled + .pd-model-switch-track { opacity: 0.5; cursor: not-allowed; }
 .pd-model-settings-model-actions > .pd-model-switch { margin-right: 2px; }
