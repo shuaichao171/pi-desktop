@@ -544,6 +544,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
 			case 'run':
 				set(state => ({ runs: mergeConversationRuns(state.runs, [event.run]) }));
 				return;
+			case 'system-message': {
+				// Live system rows (subagent completion notices) append in transcript order.
+				set(s => ({
+					messages: [...s.messages, { id: event.id, order: event.order, runId: event.runId, role: 'system', systemKind: event.systemKind, text: event.text, status: 'done' }],
+					timelineRevision: s.timelineRevision + 1,
+				}));
+				return;
+			}
 			case 'user-message': {
 				const pending = currentPreparedInput();
 				// This is the first submitted input in a brand-new session. A slash

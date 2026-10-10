@@ -84,6 +84,7 @@ import type {
 	UiThinkingStatus,
 	UiSaveInstructionRequest,
 	UiToolActivity,
+	UiSubagentActivity,
 } from '@pidesktop/shared';
 import { createAgentError, normalizeAgentError } from '../../shared/src/agentErrors.ts';
 import { BUILTIN_SLASH_COMMANDS, expandSlashPrompt, validateSlashCommandRequest, validSlashCommandName } from './slashCommands.ts';
@@ -1728,6 +1729,10 @@ class SingleAgentService {
 				this.state.messages.push({ id: event.id, order: event.order, runId: event.runId, role: 'user', text: event.text, attachments: event.attachments, attachmentsOmitted: event.attachmentsOmitted, attachmentReferences: event.attachmentReferences, status: 'done' });
 				this.state.historyTotal = (this.state.historyTotal ?? this.state.messages.length - 1) + 1;
 				break;
+			case 'system-message':
+				this.state.messages.push({ id: event.id, order: event.order, runId: event.runId, role: 'system', systemKind: event.systemKind, text: event.text, status: 'done' });
+				this.state.historyTotal = (this.state.historyTotal ?? this.state.messages.length - 1) + 1;
+				break;
 			case 'assistant-start':
 				this.state.messages.push({ id: event.id, order: event.order, runId: event.runId, role: 'assistant', text: '', status: 'streaming' });
 				this.state.historyTotal = (this.state.historyTotal ?? this.state.messages.length - 1) + 1;
@@ -1881,6 +1886,13 @@ class SingleAgentService {
 					const session = this.runtime?.session;
 					if (session) this.fire({ type: 'model', ...modelSelection(session) });
 				}
+				// pi-subagents completion notices (custom_message, display:false) are invisible
+				// without a TUI renderer; project them live so the wake is visible in the UI.
+				if (event.entry.type === 'custom_message' && event.entry.customType === 'subagent-notify'
+					&& typeof event.entry.content === 'string' && event.entry.content.trim()) {
+					this.fire({ type: 'system-message', id: event.entry.id, order: this.timelineOrder++,
+						text: event.entry.content, systemKind: 'subagent-notify', runId: this.conversationRuns?.active?.id });
+				}
 				return;
 			}
 			case 'thinking_level_changed': {
@@ -1970,6 +1982,7 @@ class SingleAgentService {
 						id: event.toolCallId, order, runId: this.conversationRuns?.active?.id, tool: event.toolName, title, status: 'running',
 						startedAt: Date.now(),
 						...toolCallMeta(event.args),
+						...toolSubagentMeta(event.toolName, event.args, undefined, undefined),
 					},
 				});
 				return;
@@ -1991,7 +2004,8 @@ class SingleAgentService {
 					startedAt: previous?.startedAt ?? null,
 					files: previous?.files ?? null,
 					command: previous?.command ?? null,
-					...toolResultText(event.partialResult),
+				...toolResultText(event.partialResult),
+				...toolSubagentMeta(event.toolName, undefined, event.partialResult, previous?.subagent),
 				} });
 				return;
 			}
@@ -2017,6 +2031,7 @@ class SingleAgentService {
 						command: previous?.command ?? null,
 						...toolResultText(event.result),
 						...toolResultMeta(event.toolName, event.isError, rawText),
+						...toolSubagentMeta(event.toolName, undefined, event.result, previous?.subagent),
 					},
 				});
 				return;
@@ -3017,7 +3032,8 @@ function historyTimeline(entries: SessionEntry[], liveRun?: UiConversationRun | 
 	for (const entry of entries) {
 		const runId = entryRuns.get(entry.id);
 		// Project compaction/branch summaries and visible extension notices into system rows (3.6).
-		if (entry.type === 'compaction' || entry.type === 'branch_summary' || (entry.type === 'custom_message' && entry.display)) {
+		if (entry.type === 'compaction' || entry.type === 'branch_summary'
+			|| (entry.type === 'custom_message' && (entry.display || entry.customType === 'subagent-notify'))) {
 			const text = entry.type === 'custom_message'
 				? (typeof entry.content === 'string' ? entry.content : '')
 				: entry.summary;
@@ -3026,7 +3042,7 @@ function historyTimeline(entries: SessionEntry[], liveRun?: UiConversationRun | 
 				runId,
 				order: nextOrder++,
 				role: 'system',
-				systemKind: entry.type === 'compaction' ? 'compaction' : entry.type === 'branch_summary' ? 'branch-summary' : 'custom',
+				systemKind: entry.type === 'compaction' ? 'compaction' : entry.type === 'branch_summary' ? 'branch-summary' : (entry.type === 'custom_message' && entry.customType === 'subagent-notify') ? 'subagent-notify' : 'custom',
 				text,
 				status: 'done',
 			});
@@ -3082,6 +3098,7 @@ function historyTimeline(entries: SessionEntry[], liveRun?: UiConversationRun | 
 					status: 'running',
 					startedAt,
 					...toolCallMeta(part.arguments),
+					...toolSubagentMeta(part.name, part.arguments, undefined, undefined),
 				});
 			}
 		} else if (message.role === 'toolResult') {
@@ -3100,6 +3117,7 @@ function historyTimeline(entries: SessionEntry[], liveRun?: UiConversationRun | 
 				command: previous?.command ?? null,
 				...toolResultText(message),
 				...toolResultMeta(message.toolName, message.isError, rawText),
+				...toolSubagentMeta(message.toolName, undefined, message, previous?.subagent),
 			});
 		}
 	}
@@ -3279,10 +3297,65 @@ function describeToolUse(tool: string, args: unknown): string {
 		}
 		return undefined;
 	};
+	// pi-subagents calls carry agent/task instead of file/command keys.
+	if (tool === 'subagent') {
+		const agent = firstString('agent', 'workflow') ?? 'subagent';
+		const task = firstString('task', 'prompt', 'action');
+		return task ? `subagent(${agent}: ${truncate(task, 48)})` : `subagent(${agent})`;
+	}
 	const detail =
 		firstString('file', 'path', 'command', 'pattern', 'url', 'prompt') ??
 		safeJson(args, 56);
 	return detail ? `${tool}(${truncate(detail, 72)})` : tool;
+}
+
+/** Structured projection of pi-subagents `subagent` tool calls for zcode-style cards.
+ *  Defensive by design: the payload belongs to a third-party extension, so every
+ *  field is optional and malformed shapes degrade to plain-text rendering. */
+export function subagentSnapshot(args: unknown, payload: unknown, previous?: UiSubagentActivity): UiSubagentActivity | undefined {
+	const argRecord = isPlainRecord(args) ? args : {};
+	const payloadRecord = isPlainRecord(payload) ? payload : {};
+	const details = isPlainRecord(payloadRecord.details) ? payloadRecord.details : undefined;
+	const progress = Array.isArray(details?.progress) ? details.progress.find(isPlainRecord) : undefined;
+	const result = Array.isArray(details?.results) ? details.results.find(isPlainRecord) : undefined;
+	const str = (value: unknown): string | undefined => typeof value === 'string' && value.trim() ? value.trim() : undefined;
+	const num = (value: unknown): number | undefined => typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : undefined;
+	const recent = Array.isArray(progress?.recentTools)
+		? progress.recentTools.filter(isPlainRecord).slice(-5).map(item => ({ tool: str(item.tool) ?? '?', args: truncate(str(item.args) ?? '', 60) }))
+		: undefined;
+	const outputRef = isPlainRecord(result?.outputReference) ? result.outputReference : undefined;
+	const task = truncate(str(argRecord.task) ?? previous?.task ?? '', 160) || null;
+	// Delegation calls default to background: the extension's asyncByDefault is on,
+	// and the detached ACK ("Async: <agent> [<runId>]") is the reliable marker.
+	const isDelegation = task != null || str(argRecord.agent) != null;
+	const ackRunId = /Async: \S+\s*\[([0-9a-f][0-9a-f-]{7,})\]/i.exec(toolResultRawText(payload) ?? '')?.[1];
+	const asyncFlag = argRecord.async === false || argRecord.run_in_background === false
+		? false
+		: isDelegation ? (previous?.async ?? true) : (argRecord.async === true || argRecord.run_in_background === true || previous?.async === true || undefined);
+	return {
+		agent: str(argRecord.agent) ?? previous?.agent ?? 'subagent',
+		task,
+		runId: str(result?.runId) ?? str(details?.runId) ?? (ackRunId ? truncate(ackRunId, 64) : undefined) ?? previous?.runId ?? null,
+		async: asyncFlag,
+		model: str(progress?.model) ?? str(result?.model) ?? previous?.model ?? null,
+		turnCount: num(progress?.turnCount) ?? previous?.turnCount ?? null,
+		toolCount: num(progress?.toolCount) ?? previous?.toolCount ?? null,
+		tokens: num(progress?.tokens) ?? previous?.tokens ?? null,
+		currentTool: str(progress?.currentTool) ?? previous?.currentTool ?? null,
+		recentTools: recent ?? previous?.recentTools ?? null,
+		outputReference: str(outputRef?.message) ?? str(result?.outputReference) ?? previous?.outputReference ?? null,
+		durationMs: num(progress?.durationMs) ?? previous?.durationMs ?? null,
+	};
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/** Attach the structured snapshot only for pi-subagents `subagent` tool calls. */
+function toolSubagentMeta(tool: string, args: unknown, payload: unknown, previous?: UiSubagentActivity): Pick<UiToolActivity, 'subagent'> {
+	if (tool !== 'subagent') return {};
+	return { subagent: subagentSnapshot(args, payload, previous) };
 }
 
 function safeJson(value: unknown, max: number): string | undefined {

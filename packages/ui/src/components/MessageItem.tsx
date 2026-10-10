@@ -322,7 +322,7 @@ const SystemMessageItem = memo(function SystemMessageItem({ message, highlighted
 	return (
 		<div className={`pd-message-row is-system${highlighted ? ' is-search-match' : ''}${findMatch ? ' is-find-match' : ''}`} data-message-id={message.id}>
 			<details className="pd-system-notice" data-system-kind={message.systemKind} open={query && message.text.toLocaleLowerCase().includes(query) ? true : undefined}>
-				<summary><Icon name={message.systemKind === 'compaction' ? 'archive' : message.systemKind === 'branch-summary' ? 'gitBranch' : 'file'} width="13" height="13" />{t(`message.system.${message.systemKind ?? 'custom'}`)}</summary>
+				<summary><Icon name={message.systemKind === 'compaction' ? 'archive' : message.systemKind === 'branch-summary' ? 'gitBranch' : message.systemKind === 'subagent-notify' ? 'plugins' : 'file'} width="13" height="13" />{t(`message.system.${message.systemKind ?? 'custom'}`)}</summary>
 				<div className="pd-system-notice-body" data-message-body>{message.text}</div>
 			</details>
 		</div>

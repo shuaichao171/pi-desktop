@@ -203,3 +203,20 @@
 .pd-transcript-find-scopes button { padding: 1px 8px; border: 0; border-radius: var(--pd-radius-xs); background: transparent; color: var(--pd-text-weak); font-size: var(--pd-font-xs); cursor: pointer; }
 .pd-transcript-find-scopes button.is-active { background: var(--pd-selected); color: var(--pd-text); }
 .pd-transcript-find-step:disabled { opacity: .35; cursor: default; }
+
+/* pi-subagents child-agent card (zcode-style delegation rendering) */
+.pd-subagent-item .pd-subagent-agent { color: var(--pd-text); font-weight: 600; font-size: var(--pd-font-sm); overflow-wrap: anywhere; }
+.pd-subagent-item .pd-subagent-model { color: var(--pd-text-weak); font-size: var(--pd-font-xs); }
+.pd-subagent-async-tag { flex: 0 0 auto; padding: 0 6px; border-radius: var(--pd-radius-xs); background: color-mix(in srgb, var(--pd-brand) 14%, transparent); color: var(--pd-brand); font-size: var(--pd-font-xs); }
+.pd-subagent-progress, .pd-subagent-tokens { flex: 0 0 auto; color: var(--pd-text-weak); font-size: var(--pd-font-xs); }
+.pd-subagent-detail { display: flex; flex-direction: column; gap: 6px; }
+.pd-subagent-task { margin: 0; color: var(--pd-text); font-size: var(--pd-font-sm); overflow-wrap: anywhere; }
+.pd-subagent-current { margin: 0; color: var(--pd-text-subtle); font-size: var(--pd-font-xs); }
+.pd-subagent-current code { color: var(--pd-text); }
+.pd-subagent-async-hint { margin: 0; color: var(--pd-brand); font-size: var(--pd-font-xs); }
+.pd-subagent-recent { display: flex; flex-wrap: wrap; gap: 4px; }
+.pd-subagent-recent-chip { max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 1px 8px; border-radius: var(--pd-radius-xs); border: 1px solid var(--pd-border-soft); color: var(--pd-text-weak); font-size: var(--pd-font-xs); }
+.pd-subagent-output { display: flex; align-items: center; gap: 8px; min-width: 0; color: var(--pd-text-subtle); font-size: var(--pd-font-xs); }
+.pd-subagent-output code { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--pd-text); }
+.pd-subagent-output span { flex: 0 0 auto; }
+.pd-subagent-runid { margin: 0; color: var(--pd-text-weak); font-size: var(--pd-font-xs); font-family: var(--pd-font-mono, monospace); }

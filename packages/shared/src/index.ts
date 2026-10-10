@@ -430,7 +430,7 @@ export interface UiMessage {
   order: number;
   role: 'user' | 'assistant' | 'system';
   /** System-row flavor: compaction/branch summaries and extension notices (role 'system' only). */
-  systemKind?: 'compaction' | 'branch-summary' | 'custom' | 'extension-notice';
+  systemKind?: 'compaction' | 'branch-summary' | 'custom' | 'extension-notice' | 'subagent-notify';
   /** Extension-notice flavor: info/warning/error styling (systemKind 'extension-notice' only). */
   notificationType?: 'info' | 'warning' | 'error';
   /** Accumulated text (grows while streaming). */
@@ -584,6 +584,27 @@ export interface UiToolActivity {
   command?: string | null;
   /** Pi edit-tool diff text (`+3 added` / `-2 removed` / ` 1 context` rows). */
   diff?: string | null;
+  /** Structured snapshot when the call runs a pi-subagents child agent. */
+  subagent?: UiSubagentActivity;
+}
+
+/** One child-agent step shown in the subagent card's live progress. */
+export interface UiSubagentRecentTool { tool: string; args: string }
+
+/** Defensive projection of a pi-subagents `subagent` tool payload; every field optional. */
+export interface UiSubagentActivity {
+  agent: string;
+  task?: string | null;
+  runId?: string | null;
+  async?: boolean;
+  model?: string | null;
+  turnCount?: number | null;
+  toolCount?: number | null;
+  tokens?: number | null;
+  currentTool?: string | null;
+  recentTools?: UiSubagentRecentTool[] | null;
+  outputReference?: string | null;
+  durationMs?: number | null;
 }
 
 /**
@@ -598,6 +619,7 @@ export type AgentUiEvent =
   | { type: 'context-usage'; contextUsage: UiContextUsage | null }
   | { type: 'thinking-level'; level: UiThinkingLevel }
   | { type: 'user-message'; id: string; order: number; text: string; attachments?: UiAttachment[]; attachmentsOmitted?: number; attachmentReferences?: UiAttachmentReference[]; runId?: string }
+  | { type: 'system-message'; id: string; order: number; text: string; systemKind?: 'compaction' | 'branch-summary' | 'custom' | 'extension-notice' | 'subagent-notify'; runId?: string }
   | { type: 'assistant-start'; id: string; order: number; runId?: string }
   | { type: 'run'; run: UiConversationRun }
   | { type: 'assistant-delta'; id: string; delta: string }
