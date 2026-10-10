@@ -1,10 +1,15 @@
 .pd-conversation-storage { min-width: 0; }
 .pd-conversation-storage form { min-width: 0; }
-.pd-conversation-storage textarea { display: block; width: 100%; min-width: 0; min-height: 64px; padding: 9px 11px; resize: vertical; border: 1px solid var(--pd-border); border-radius: var(--pd-radius-sm); background: var(--pd-bg); color: var(--pd-text); font: var(--pd-font-caption)/1.6 ui-monospace, Consolas, 'Microsoft YaHei', monospace; overflow-wrap: anywhere; }
-.pd-conversation-storage textarea:disabled { opacity: .7; }
+.pd-conversation-storage-field { display: flex; gap: 8px; min-width: 0; }
+.pd-conversation-storage-field > input { flex: 1; min-width: 0; height: 34px; padding: 0 11px; border: 1px solid var(--pd-border); border-radius: var(--pd-radius-sm); background: var(--pd-bg); color: var(--pd-text); font: var(--pd-font-sm) var(--pd-font-mono, ui-monospace, Consolas, monospace); text-overflow: ellipsis; }
+.pd-conversation-storage-field > input:focus { outline: none; border-color: var(--pd-focus-border, var(--pd-brand)); }
+.pd-conversation-storage-field > input:disabled { opacity: .7; }
+.pd-conversation-storage-field > button { flex: 0 0 auto; min-height: 34px; }
 .pd-conversation-storage-actions { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; margin-top: 9px; }
 .pd-conversation-storage-actions > button { min-height: 32px; }
-.pd-conversation-storage-choose { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 32px; padding: 5px 10px; border: 1px solid var(--pd-border); border-radius: var(--pd-radius-sm); background: var(--pd-surface); color: var(--pd-text); font-size: var(--pd-font-caption); }
+.pd-conversation-storage-choose { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 32px; padding: 5px 10px; border: 1px solid var(--pd-border); border-radius: var(--pd-radius-sm); background: var(--pd-surface); color: var(--pd-text); font-size: var(--pd-font-sm); white-space: nowrap; }
 .pd-conversation-storage-choose:hover:not(:disabled) { background: var(--pd-surface-hover); }
+.pd-conversation-storage .pd-settings-feedback.is-success { display: flex; align-items: center; gap: 6px; color: var(--pd-success); }
 .pd-conversation-storage-error { margin: 9px 0 0; color: var(--pd-danger); font-size: var(--pd-font-caption); line-height: 1.6; overflow-wrap: anywhere; }
 .pd-conversation-storage-error > p { margin: 0 0 8px; }
+@media (max-width: 520px) { .pd-conversation-storage-field { flex-wrap: wrap; } .pd-conversation-storage-field > input { flex-basis: 100%; } }

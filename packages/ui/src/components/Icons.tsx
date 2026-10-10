@@ -52,13 +52,15 @@ export type IconName =
 	| 'trash'
 	| 'pin'
 	| 'eye'
-	| 'eyeOff';
+	| 'eyeOff'
+	| 'globe';
 
 const paths: Record<IconName, ReactNode> = {
 	image: <><rect x="3" y="3" width="18" height="18" rx="2" /><circle cx="8" cy="8" r="1.5" /><path d="m21 15-5-5L5 21" /></>,
 	eye: <><path d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0" /><circle cx="12" cy="12" r="3" /></>,
 	eyeOff: <><path d="M10.733 5.076a10.744 10.744 0 0 1 11.205 6.575 1 1 0 0 1 0 .696 10.747 10.747 0 0 1-1.444 2.49" /><path d="M14.084 14.158a3 3 0 0 1-4.242-4.242" /><path d="M17.479 17.499a10.75 10.75 0 0 1-15.417-5.151 1 1 0 0 1 0-.696 10.75 10.75 0 0 1 4.446-5.143" /><path d="m2 2 20 20" /></>,
 	loader: <path d="M21 12a9 9 0 1 1-9-9" />,
+	globe: <><circle cx="12" cy="12" r="9" /><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18" /></>,
 	hash: <path d="m10 3-4 18M18 3l-4 18M4 9h17M3 15h17" />,
 	filter: <path d="M4 6h16M7 12h10M10 18h4" />,
 	expandAll: <><path d="M8 3H3v5M3 3l6 6M16 21h5v-5M21 21l-6-6" /></>,

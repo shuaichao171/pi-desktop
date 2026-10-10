@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent } from 'react';
 import type { UiInstructionDocument } from '@pidesktop/shared';
 import { useChatStore } from '../store';
 import { useT } from '../i18n';
+import { Icon } from './Icons';
 import './personalization.css';
 
 type DocumentId = UiInstructionDocument['id'];
@@ -31,12 +32,14 @@ export function PersonalizationPanel({ active, onDraftStateChange }: {
 		let current = true;
 		setLoading(true);
 		setLoadError(null);
+		// Clear loading together with the result: storing documents re-runs this
+		// effect, whose cleanup marks the request stale before a finally() runs.
 		void bridge.getPersonalization().then((items) => {
 			if (!current) return;
+			setLoading(false);
 			setDocuments(items);
 			setDrafts(Object.fromEntries(items.map((doc) => [doc.id, editableText(doc.content)])));
-		}).catch((error: unknown) => { if (current) setLoadError(errorText(error)); })
-			.finally(() => { if (current) setLoading(false); });
+		}).catch((error: unknown) => { if (current) { setLoading(false); setLoadError(errorText(error)); } });
 		return () => { current = false; };
 	}, [active, documents, bridge, attempt]);
 
@@ -75,9 +78,9 @@ export function PersonalizationPanel({ active, onDraftStateChange }: {
 			return <form className="pd-instruction-card" data-instruction-id={doc.id} key={doc.id} onSubmit={(event) => submit(event, doc)} onKeyDown={(event) => {
 				if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') { event.preventDefault(); event.currentTarget.requestSubmit(); }
 			}}>
-				<div className="pd-instruction-heading"><h3>{t(`personalization.${doc.id}.title`)}</h3><span>{t(doc.exists ? 'personalization.file' : 'personalization.notCreated')}</span></div>
+				<div className="pd-instruction-heading"><h3>{t(`personalization.${doc.id}.title`)}</h3><span className={doc.exists ? 'is-exists' : undefined}>{t(doc.exists ? 'personalization.file' : 'personalization.notCreated')}</span></div>
 				<p className="pd-instruction-description">{t(`personalization.${doc.id}.description`)}</p>
-				<code className="pd-instruction-path">{doc.path}</code>
+				<code className="pd-instruction-path" title={doc.path}><Icon name="file" width="13" height="13" />{doc.path}</code>
 				{doc.id === 'pi' && /AGENTS\.override\.md$/i.test(doc.path) && <p className="pd-settings-hint">{t('personalization.override')}</p>}
 				{doc.error ? <p className="pd-settings-error" role="alert">{doc.error}</p> : <>
 					<label className="pd-instruction-label" htmlFor={`pd-instruction-${doc.id}`}>{t('personalization.instructions')}</label>

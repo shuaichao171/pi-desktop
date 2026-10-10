@@ -891,12 +891,6 @@ html.pd-popover-open :is(.pd-sidebar-toolbar, .pd-chat-header, .pd-chat-heading,
 .pd-theme-swatch { display: block; width: 100%; height: 55px; border: 1px solid #c3c8d2; border-radius: var(--pd-radius-xs); background: linear-gradient(90deg, #f5f6fa 0 33%, #fff 33%); }
 .pd-theme-swatch.is-dark { border-color: #414550; background: linear-gradient(90deg, #17191f 0 33%, #22252c 33%); }
 .pd-theme-swatch.is-system { background: linear-gradient(90deg, #17191f 0 50%, #fff 50%); }
-.pd-shortcut-list { margin: 0; border: 1px solid var(--pd-border); border-radius: var(--pd-radius-md); }
-.pd-shortcut-list > div { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 43px; padding: 8px 12px; }
-.pd-shortcut-list > div + div { border-top: 1px solid var(--pd-border-soft); }
-.pd-shortcut-list dt { color: var(--pd-text-subtle); font-size: var(--pd-font-caption); }
-.pd-shortcut-list dd { margin: 0; color: var(--pd-text-weak); font-size: var(--pd-font-sm); white-space: nowrap; }
-.pd-shortcut-list kbd { display: inline-block; min-width: 22px; padding: 3px 6px; border: 1px solid var(--pd-border); border-radius: var(--pd-radius-xs); background: var(--pd-bg); color: var(--pd-text-subtle); font: var(--pd-font-sm) var(--pd-font-mono); text-align: center; }
 .pd-timeline-tool-group { width: 100%; }
 .pd-timeline-tool-group .pd-tool-panel { margin-top: 0; }
 
@@ -1148,20 +1142,6 @@ html.pd-popover-open :is(.pd-sidebar-toolbar, .pd-chat-header, .pd-chat-heading,
 }
 
 /* Shortcut settings (4.3): registry-driven list with inline rebinding. */
-.pd-shortcut-settings { display: flex; flex-direction: column; gap: 12px; }
-.pd-shortcut-rows { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; }
-.pd-shortcut-rows li { display: flex; align-items: center; gap: 10px; padding: 7px 2px; border-bottom: 1px solid var(--pd-border-soft); flex-wrap: wrap; }
-.pd-shortcut-rows li:last-child { border-bottom: none; }
-.pd-shortcut-label { flex: 1; min-width: 140px; font-size: var(--pd-font-caption); }
-.pd-shortcut-keys { display: inline-flex; align-items: center; gap: 6px; }
-.pd-shortcut-keys kbd, .pd-shortcut-capture { display: inline-block; min-width: 32px; padding: 3px 8px; border: 1px solid var(--pd-border); border-radius: var(--pd-radius-sm); background: var(--pd-surface-muted); color: var(--pd-text); font-family: var(--pd-font-mono); font-size: var(--pd-font-xs); text-align: center; }
-.pd-shortcut-capture { cursor: pointer; }
-.pd-shortcut-capture:hover { background: var(--pd-surface); }
-.pd-shortcut-capture.is-capturing { border-color: var(--pd-brand); color: var(--pd-brand); }
-.pd-shortcut-reset, .pd-shortcut-reset-all { padding: 3px 10px; border: 1px solid var(--pd-border); border-radius: var(--pd-radius-sm); background: none; color: var(--pd-text-subtle); font-size: var(--pd-font-xs); cursor: pointer; }
-.pd-shortcut-reset:hover, .pd-shortcut-reset-all:hover { color: var(--pd-text); background: var(--pd-surface-muted); }
-.pd-shortcut-conflict { flex-basis: 100%; color: var(--pd-warning); font-size: var(--pd-font-xs); }
-.pd-shortcut-rows li.has-conflict .pd-shortcut-capture { border-color: var(--pd-warning); }
 
 /* Git pane per-entry actions, discard confirm, branch create, history (4.5). */
 .pd-workbench-change { display: flex; align-items: center; gap: 4px; padding: 0 4px 0 0; }

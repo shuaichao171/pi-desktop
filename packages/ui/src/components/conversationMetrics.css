@@ -6,12 +6,13 @@
 .pd-metric-output { color: light-dark(#8c50a6, #c799e8); }
 .pd-metric-cache { color: light-dark(#697347, #b5c296); }
 .pd-metric-duration { color: light-dark(#68639c, #b5b0df); }
-.pd-metrics-settings-options { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
-.pd-metrics-setting { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 10px 12px; border: 1px solid var(--pd-border-soft); border-radius: var(--pd-radius-md); background: var(--pd-surface); color: var(--pd-text); text-align: start; font-size: var(--pd-font-caption); }
+.pd-metrics-settings-options { display: grid; flex: 1; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; min-width: 0; }
+.pd-metrics-setting { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 9px 12px; border: 1px solid var(--pd-border-soft); border-radius: var(--pd-radius-sm); background: color-mix(in srgb, var(--pd-text) 3%, var(--pd-surface)); color: var(--pd-text); text-align: start; font-size: var(--pd-font-sm); }
 .pd-metrics-setting:hover { background: var(--pd-surface-hover); }
-.pd-metrics-switch { flex: 0 0 auto; width: 28px; height: 16px; border-radius: var(--pd-radius-lg); background: var(--pd-border-strong); padding: 2px; transition: background 150ms; }
-.pd-metrics-switch::after { content: ''; display: block; width: 12px; height: 12px; border-radius: 50%; background: var(--pd-bg); transition: transform 150ms; }
-.pd-metrics-setting[aria-checked=true] .pd-metrics-switch { background: var(--pd-text); }
+.pd-metrics-switch { flex: 0 0 auto; width: 30px; height: 18px; border-radius: 999px; background: color-mix(in srgb, var(--pd-text) 22%, transparent); padding: 3px; transition: background 150ms; }
+.pd-metrics-switch::after { content: ''; display: block; width: 12px; height: 12px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgb(0 0 0 / 25%); transition: transform 150ms; }
+.pd-metrics-setting[aria-checked=true] .pd-metrics-switch { background: var(--pd-brand); }
+.pd-metrics-setting[aria-checked=true] .pd-metrics-switch::after { background: var(--pd-brand-ink, #fff); }
 .pd-metrics-setting[aria-checked=true] .pd-metrics-switch::after { transform: translateX(12px); }
 @media (max-width: 520px) { .pd-metrics-settings-options { grid-template-columns: 1fr; } .pd-conversation-metrics .pd-metric-group { padding: 0 7px; } }
 @media (prefers-reduced-motion: reduce) { .pd-metrics-switch, .pd-metrics-switch::after { transition: none; } }

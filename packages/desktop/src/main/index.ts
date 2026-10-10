@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { IPC_CHANNELS } from '@pidesktop/shared';
 import { getAppLocale } from './appLocale';
 import { createSplashErrorHtml, createSplashHtml } from './splash';
+import { showEditContextMenu } from './editContextMenu';
 import { createAppTray, destroyAppTray } from './tray';
 import { parseDesktopLaunch, rendererLaunchUrl, reservePaiProfile, validatePaiWorkspace, type DesktopLaunch, type PaiProfile } from './desktopLaunch.ts';
 
@@ -282,6 +283,11 @@ function createWindow(onReady?: () => void, onLoadError?: (error: unknown) => vo
 		if (url === win.webContents.getURL()) return;
 		event.preventDefault();
 		openExternalLink(url);
+	});
+	// Right-click editing menu (cut/copy/paste...) for plain text fields; targets
+	// with their own React menu preventDefault() and never reach this handler.
+	win.webContents.on('context-menu', (_event, params) => {
+		showEditContextMenu(win, params);
 	});
 
 	// electron-vite dev serves the renderer from the HMR server.

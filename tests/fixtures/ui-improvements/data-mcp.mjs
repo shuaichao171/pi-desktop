@@ -41,7 +41,24 @@ export default async function dataMcpScenarios(review) {
   await review.waitFor("document.querySelector('.pd-mcp-status')?.textContent==='未连接'");
   await review.assert("!document.querySelector('.pd-mcp-server details')", 'Disconnect removes tool availability from the panel');
   await review.clickText('.pd-mcp-toolbar button', '添加服务器');
+  await review.waitFor("Boolean(document.querySelector('.pd-mcp-editor[open] .pd-mcp-form'))");
+  await review.screenshot('data-mcp-03-form');
   await review.viewport(680, 900);
-  await review.screenshot('data-mcp-03-narrow-form');
+  await review.screenshot('data-mcp-04-narrow-form');
   await review.assert("document.querySelector('.pd-mcp-panel').scrollWidth<=document.querySelector('.pd-mcp-panel').clientWidth+1", 'MCP form fits the narrow settings panel');
+  await review.assert("(() => { const box = document.querySelector('.pd-mcp-editor').getBoundingClientRect(); return box.left >= 0 && box.right <= innerWidth; })()", 'MCP editor dialog fits a narrow window');
+  await review.key('Escape');
+  await review.waitFor("!document.querySelector('.pd-mcp-editor[open]')");
+  await review.viewport(1440, 1000);
+  await review.clickText('.pd-mcp-server button', '移除');
+  await review.waitFor("Boolean(document.querySelector('.pd-mcp-remove[open]'))");
+  await review.screenshot('data-mcp-05-remove');
+  await review.clickText('.pd-mcp-remove button', '确认移除');
+  await review.waitFor("Boolean(document.querySelector('.pd-mcp-empty'))");
+  await review.assert("window.__dataMcpReview.calls.some(call=>call[0]==='removeMcp')", 'Confirming removal removes the server');
+  await review.clickText('.pd-settings-nav button', '外观');
+  await review.clickText('.pd-appearance-choice', '浅色');
+  await review.clickText('.pd-settings-nav button', 'MCP');
+  await review.waitFor("Boolean(document.querySelector('.pd-mcp-empty'))");
+  await review.screenshot('data-mcp-06-light-empty');
 }

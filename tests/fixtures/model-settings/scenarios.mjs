@@ -35,6 +35,14 @@ export default async function runScenarios(review) {
   await review.assert('document.querySelector(".pd-model-provider-detail [data-provider-editor]") === null', 'Provider detail keeps the connection editor out of the compact view');
   await review.assert('document.querySelector(".pd-model-provider-url code").textContent === "https://models.example.invalid/v1"', 'Provider detail shows the API URL');
   await review.assert(`${customModels} === 3`, 'Model list stays visible without opening the editor');
+  await review.assert('getComputedStyle(document.querySelector("[data-model-id=review-fast] .pd-model-settings-model-tools")).opacity === "0"', 'Model row tools stay hidden until the row is hovered');
+  {
+    const box = await review.evaluate('(() => { const box = document.querySelector("[data-model-id=review-fast]").getBoundingClientRect(); return { x: box.x + box.width / 3, y: box.y + box.height / 2 }; })()');
+    await review.mouseMove(box.x, box.y);
+    await review.waitFor('getComputedStyle(document.querySelector("[data-model-id=review-fast] .pd-model-settings-model-tools")).opacity === "1"');
+    await review.screenshot('01-model-row-hover');
+    await review.mouseMove(5, 5);
+  }
   await review.click('[data-action="edit-provider"]');
   await review.waitFor(`Boolean(document.querySelector(${JSON.stringify(editDialog)}))`);
   const oneConnection = (stage) => review.assert(`document.querySelectorAll(${JSON.stringify(connection)}).length === 1 && document.querySelector(${JSON.stringify(connection)}).isConnected`, `Exactly one connected provider form: ${stage}`);

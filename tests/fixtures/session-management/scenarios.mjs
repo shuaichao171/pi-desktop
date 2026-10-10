@@ -44,7 +44,8 @@ export default async function sessionManagementScenarios(review) {
   await review.assert("window.__sessionManagementReview.meta.length === 1", 'Unarchive issues exactly one metadata update');
 
   await review.evaluate(`(() => { const row = document.querySelector('.pd-session-management-row[data-session-path$=\"manage-alpha.jsonl\"]'); [...row.querySelectorAll('button')].find(item => item.textContent === '重命名').click(); })()`);
-  await review.waitFor("Boolean(document.querySelector('.pd-session-management-rename'))");
+  await review.waitFor("Boolean(document.querySelector('.pd-session-management-rename[open]'))");
+  await review.screenshot('session-management-rename');
   await review.evaluate(`(() => { const input = document.querySelector('.pd-session-management-rename input'); const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set; setter.call(input, '已重命名的会话'); input.dispatchEvent(new Event('input', { bubbles: true })); })()`);
   await review.evaluate(`(() => { [...document.querySelectorAll('.pd-session-management-rename footer button')].find(item => item.textContent === '保存').click(); })()`);
   await review.waitFor('window.__sessionManagementReview.meta.some(([path, patch]) => path.endsWith("manage-alpha.jsonl") && patch.name === "已重命名的会话")');
@@ -66,10 +67,20 @@ export default async function sessionManagementScenarios(review) {
   await review.screenshot('session-management-02-after-delete');
 
   await review.evaluate(`(() => { document.querySelector('.pd-session-management-row[data-session-path$=\"manage-alpha.jsonl\"] input[type=checkbox]').click(); })()`);
-  await review.clickText('.pd-session-management-toolbar button', '永久删除所选 (1)');
+  await review.screenshot('session-management-selection');
+  await review.clickText('.pd-session-management-selection button', '永久删除所选 (1)');
   await review.waitFor("Boolean(document.querySelector('.pd-session-delete-dialog[open]'))");
   await review.evaluate(`(() => { [...document.querySelectorAll('.pd-session-delete-dialog button')].find(item => item.textContent === '永久删除').click(); })()`);
   await review.waitFor('window.__sessionManagementReview.deletes.some(path => path.endsWith("manage-alpha.jsonl"))');
   await review.assert("!document.querySelector('.pd-session-management-row[data-session-path$=\"manage-alpha.jsonl\"]')", 'Bulk deletion removes the selected conversation');
   await review.screenshot('session-management-03-after-bulk');
+
+  await review.clickText('.pd-settings-nav button', '外观');
+  await review.clickText('.pd-appearance-choice', '浅色');
+  await review.clickText('.pd-settings-nav button', '会话管理');
+  await review.waitFor("document.querySelectorAll('.pd-session-management-row').length === 2");
+  await review.screenshot('session-management-04-light');
+  await review.viewport(680, 900);
+  await review.assert('document.documentElement.scrollWidth <= innerWidth', 'Session management has no horizontal overflow at narrow width');
+  await review.screenshot('session-management-05-narrow');
 }
