@@ -69,7 +69,7 @@ const PROJECT_DRAG_THRESHOLD = 6;
 const EDGE_SCROLL_MARGIN = 28;
 const EDGE_SCROLL_STEP = 9;
 
-export function SidebarSessionPanel({ visible, projectRevealRequest = 0, onNavigate, onError }: { visible: boolean; projectRevealRequest?: number; onNavigate(): void; onError(value: string | null): void }) {
+export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alternateViewOpen = false, onNavigate, onError }: { visible: boolean; projectRevealRequest?: number; alternateViewOpen?: boolean; onNavigate(): void; onError(value: string | null): void }) {
 	const { t, locale } = useT();
 	const copy = managementCopy(locale);
 	const bridge = useChatStore((s) => s.bridge);
@@ -673,6 +673,9 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, onNavig
 		// Store navigation generations discard stale results; the agent queues the newest
 		// navigation while an older one finishes loading, so every click stays responsive.
 		if (session.workspace === cwd && session.path === sessionPath) {
+			// Clicking the current session still leaves an alternate view
+			// (automations/plugins) so route the click back to the conversation.
+			onNavigate();
 			if (session.unread) void perform(() => updateSessionMeta(session.path, { unread: false, expectedUnreadAt: session.unreadAt }));
 			return;
 		}
@@ -704,7 +707,7 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, onNavig
 	}
 	const titleOf = (session: SidebarSession) => session.name?.trim() || session.firstMessage.trim().split(/\r?\n/)[0] || t('sidebar.unnamed');
 	function renderSession(session: SidebarSession, container: string | null) {
-		const active = session.workspace === cwd && session.path === sessionPath;
+		const active = !alternateViewOpen && session.workspace === cwd && session.path === sessionPath;
 		const title = titleOf(session);
 		const pinLabel = t(session.pinned ? 'sidebar.unpinSession' : 'sidebar.pinSession');
 		const confirmingArchive = !session.archived && archiveConfirm === session.path;
@@ -784,7 +787,7 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, onNavig
 		return <>{ordered.slice(0, limitOf(key)).map((session) => renderSession(session, key))}{moreButton(key, ordered.length)}</>;
 	}
 	function unsaved() {
-		return <div className="pd-session-item is-active is-unsaved"><div className="pd-session-row" aria-current="page"><span className="pd-session-leading" aria-hidden="true" /><span className="pd-session-copy"><strong>{t('sidebar.newSession')}</strong></span><span className="pd-session-unsaved">{t('sidebar.current')}</span></div></div>;
+		return <div className={`pd-session-item${alternateViewOpen ? '' : ' is-active'} is-unsaved`}><button type="button" className="pd-session-row" onClick={onNavigate} aria-current={alternateViewOpen ? undefined : 'page'}><span className="pd-session-leading" aria-hidden="true" /><span className="pd-session-copy"><strong>{t('sidebar.newSession')}</strong></span><span className="pd-session-unsaved">{t('sidebar.current')}</span></button></div>;
 	}
 	function renderProject(workspace: string) {
 		const items = projectByWorkspace.get(workspace)?.sessions ?? [];
