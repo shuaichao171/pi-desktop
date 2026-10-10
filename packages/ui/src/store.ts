@@ -69,6 +69,8 @@ interface ChatState {
 	sessionRuntimes: Record<string, UiSessionRuntimeState>;
 	sessionId: string | null;
 	sessionPath: string | null;
+	/** The painted transcript is a keep-warm preview of this session (zcode warm store). */
+	conversationPreviewPath: string | null;
 	sessions: UiSessionSummary[];
 	messages: UiMessage[];
 	activities: UiToolActivity[];
@@ -258,6 +260,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 	sessionRuntimes: {},
 	sessionId: null,
 	sessionPath: null,
+	conversationPreviewPath: null,
 	sessions: [],
 	messages: [],
 	activities: [],
@@ -507,12 +510,19 @@ export const useChatStore = create<ChatState>((set, get) => ({
 					sessions: get().sessionsByWorkspace[event.cwd] ?? [],
 					sessionId: event.sessionId,
 					sessionPath: event.sessionPath,
+					// Authoritative content replaced any painted preview; the transcript's
+					// session is again the identity sessionPath itself.
+					conversationPreviewPath: null,
 					messages,
 					activities: event.activities,
 					runs: event.runs ?? [],
 					historyTotal: (event.historyTotal ?? event.messages.length + event.activities.length) + (messages.length - event.messages.length),
 					timelineRevision: get().timelineRevision + 1,
-					historyGeneration: previous.historyGeneration + 1,
+					// A settled turn / idle notice re-publishes the same branch (resync):
+					// that is a content commit, not navigation. Keeping the generation lets the
+					// renderer hold the reading position instead of re-running restore and
+					// yanking a scrolled-up reader to the bottom (zcode: following ? pin : hold).
+					historyGeneration: event.resync && sameSession ? previous.historyGeneration : previous.historyGeneration + 1,
 					loadingOlder: sameSession && previous.loadingOlder,
 					queuedCount: 0,
 					queuedMessages: [],
@@ -1583,6 +1593,11 @@ function applySessionConversationPreview(path: string): boolean {
 		fileChangeActiveRunId: preview.fileChangeActiveRunId,
 		historyTotal: preview.historyTotal,
 		timelineRevision: state.timelineRevision + 1,
+		// The painted transcript belongs to the previewed session even though the
+		// identity fields stay on the source session; the renderer keys reading-
+		// position restore off this so a warm switch-back lands directly on the
+		// remembered position instead of bottom-then-jump (zcode warm restore).
+		conversationPreviewPath: path,
 	}));
 	return true;
 }

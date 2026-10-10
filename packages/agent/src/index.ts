@@ -1465,7 +1465,7 @@ class SingleAgentService {
 					session.sessionManager.appendCustomEntry(EXTENSION_NOTICE_CUSTOM_TYPE, { message, notificationType: type });
 					// Appending outside the SDK emits no event; resync while idle so the
 					// row appears immediately. During a run the settle resync picks it up.
-					if (session.isIdle) this.fireReady();
+					if (session.isIdle) this.fireReady(true);
 				} catch {
 					void request({ id: randomUUID(), kind: 'notify', title: message, notificationType: type });
 				}
@@ -1542,7 +1542,7 @@ class SingleAgentService {
 	private fireFileChanges(view: UiFileChangesView): void {
 		this.fire({ type: 'file-changes', items: view.items, turns: view.turns, activeRunId: view.activeRunId });
 	}
-	private fireReady(): void {
+	private fireReady(resync = false): void {
 		const session = this.runtime?.session;
 		if (!session) return;
 		const changes = this.fileChangeTrackers.get(session)?.restore();
@@ -1556,6 +1556,10 @@ class SingleAgentService {
 		this.timelineOrder = timeline.nextOrder;
 		this.fire({
 			type: 'ready',
+			// Pure content re-publish of the same branch: the renderer must treat it as a
+			// stream/layout commit (following readers pin, others hold), never as
+			// navigation that re-runs reading-position restore (zcode scroll anchor).
+			...(resync ? { resync: true } : {}),
 			...modelSelection(session),
 			cwd: this.cwd,
 			sessionId: session.sessionId,
@@ -1863,7 +1867,7 @@ class SingleAgentService {
 				// live-streamed messages carry real session entry ids (message edit/fork needs
 				// them). Interrupted turns have no transcript entry for the partial reply, so
 				// skip the resync to keep the interrupted row visible.
-				if (!hadPendingAssistant) this.fireReady();
+				if (!hadPendingAssistant) this.fireReady(true);
 				this.fire({ type: 'status', status: 'idle' });
 				return;
 			}

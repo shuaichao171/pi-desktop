@@ -614,7 +614,7 @@ export interface UiSubagentActivity {
 export type AgentUiEvent =
   | { type: 'reset'; cwd: string }
   | { type: 'status'; status: AgentStatus; message?: string; attempt?: number; maxAttempts?: number }
-  | { type: 'ready'; resumeKind?: 'cold' | 'warm'; model: string; modelName?: string | null; modelProvider: string; thinkingLevel: UiThinkingLevel; availableThinkingLevels: UiThinkingLevel[]; contextUsage: UiContextUsage | null; cwd: string; sessionId: string; sessionPath: string | null; messages: UiMessage[]; activities: UiToolActivity[]; fileChanges: UiFileChange[]; fileChangeTurns?: UiFileChangeTurn[]; fileChangeActiveRunId?: string | null; historyTotal?: number; runs?: UiConversationRun[] }
+  | { type: 'ready'; /** Same branch re-published as-is (settled-turn id swap, idle notice): a content change, not navigation — reading positions are not restored. */ resync?: boolean; resumeKind?: 'cold' | 'warm'; model: string; modelName?: string | null; modelProvider: string; thinkingLevel: UiThinkingLevel; availableThinkingLevels: UiThinkingLevel[]; contextUsage: UiContextUsage | null; cwd: string; sessionId: string; sessionPath: string | null; messages: UiMessage[]; activities: UiToolActivity[]; fileChanges: UiFileChange[]; fileChangeTurns?: UiFileChangeTurn[]; fileChangeActiveRunId?: string | null; historyTotal?: number; runs?: UiConversationRun[] }
   | { type: 'model'; model: string; modelName?: string | null; modelProvider: string; thinkingLevel: UiThinkingLevel; availableThinkingLevels: UiThinkingLevel[]; contextUsage: UiContextUsage | null }
   | { type: 'context-usage'; contextUsage: UiContextUsage | null }
   | { type: 'thinking-level'; level: UiThinkingLevel }
