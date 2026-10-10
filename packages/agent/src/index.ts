@@ -852,7 +852,7 @@ class SingleAgentService {
 
 	/** Select the session model, optionally retaining the user's existing default. */
 	async setModel(provider: string, id: string, persist = true): Promise<void> {
-		const session = this.requireIdleSession();
+		const session = this.requireSessionForModelSettings();
 		if (typeof provider !== 'string' || typeof id !== 'string') throw new Error('模型参数无效');
 		const model = session.modelRuntime.getAvailableSnapshot().find((item) => item.provider === provider && item.id === id);
 		if (!model) throw new Error(`模型不可用：${provider}/${id}`);
@@ -887,7 +887,7 @@ class SingleAgentService {
 
 	/** Pi clamps the requested level to the selected model's supported levels. */
 	async setThinkingLevel(level: UiThinkingLevel, persist = true): Promise<void> {
-		const session = this.requireIdleSession();
+		const session = this.requireSessionForModelSettings();
 		if (!THINKING_LEVELS.includes(level)) throw new Error('思考级别无效');
 		session.setThinkingLevel(level, { persist });
 		if (this.state.thinkingLevel !== session.thinkingLevel) {
@@ -897,7 +897,7 @@ class SingleAgentService {
 
 	/** Store one API key through pi's persistent credential store. */
 	async setProviderApiKey(provider: string, key: string): Promise<void> {
-		const session = this.requireIdleSession();
+		const session = this.requireSessionForModelSettings();
 		if (typeof provider !== 'string' || typeof key !== 'string' || !key.trim()) throw new Error('Provider 或 API Key 无效');
 		const method = session.modelRuntime.getProvider(provider)?.auth.apiKey;
 		if (!method?.login) throw new Error('该 Provider 不支持 API Key 登录');
@@ -919,7 +919,7 @@ class SingleAgentService {
 
 	/** Delete pi's stored credential; environment-based auth remains intact. */
 	async removeProviderCredential(provider: string): Promise<void> {
-		const session = this.requireIdleSession();
+		const session = this.requireSessionForModelSettings();
 		if (typeof provider !== 'string' || !session.modelRuntime.getProvider(provider)) throw new Error('Provider 无效');
 		this.activeConfigurationCalls += 1;
 		try {
@@ -1319,6 +1319,17 @@ class SingleAgentService {
 		if (this.activePromptCalls > 0 || this.activeConfigurationCalls > 0 || !session.isIdle) {
 			throw new Error('当前会话仍在运行，请等待完成后修改设置');
 		}
+		return session;
+	}
+
+	/** Settings mutations that only rewrite selection state read by the NEXT
+	 * model request (model/thinking/credentials); they stay safe while a turn is
+	 * running, so unlike requireIdleSession we do not reject a busy session. */
+	private requireSessionForModelSettings(): PiRuntime['session'] {
+		if (this.closing) throw new Error('应用正在退出');
+		if (this.lifecycleOperation) throw new Error('会话正在切换，请稍后再修改设置');
+		const session = this.runtime?.session;
+		if (!session) throw new Error('Agent is not initialized');
 		return session;
 	}
 

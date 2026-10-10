@@ -320,11 +320,17 @@ test('running SDK sessions permit new providers without changing the active requ
     assert.equal(session.model, selectedModel, 'creating a provider does not rebind the active model');
     assert.equal(session.thinkingLevel, selectedThinking);
     assert.ok(f.service.listModels().some((model) => model.provider === 'desktop-busy-active-create'));
-    await assert.rejects(f.service.setModel('desktop-busy-active-create', 'custom-one'), /运行|空闲/);
+    // Model selection stays editable while a turn runs: the switch lands on the
+    // session for the NEXT request and never aborts the active SDK command.
+    await f.service.setModel('desktop-busy-active-create', 'custom-one');
+    assert.equal(commandFinished, false, 'switching models mid-turn must not abort the active SDK command');
+    assert.equal(f.service.active.runtime.session, session, 'switching models preserves the active runtime');
+    assert.notEqual(session.model, selectedModel, 'the new selection is applied to the session');
+    const switchedModel = session.model;
     await f.service.switchWorkspace(f.otherCwd);
     await f.service.saveCustomProvider(request('desktop-busy-background-create', { apiKey: 'background-new-provider-key' }));
     assert.ok(f.service.listModels().some((model) => model.provider === 'desktop-busy-background-create'));
-    assert.equal(session.model, selectedModel, 'background runtime retains its request model');
+    assert.equal(session.model, switchedModel, 'background runtime retains its request model');
     assert.equal(commandFinished, false, 'background command continues running after catalog refresh');
     const before = f.disk();
     await assert.rejects(f.service.saveCustomProvider(request('desktop-busy-delete', { mode: 'update', name: 'Must not change while busy' })));

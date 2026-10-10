@@ -417,9 +417,10 @@ export function ModelSettingsPanel({ initialTarget, renderCredential, onDraftSta
 	const draftFocus = useRef<HTMLElement | null>(null);
 	const dirty = connectionDirty || setupConnectionDirty || modalDirty || credentialState.dirty;
 	const saving = pending || credentialState.saving || modalSaving;
-	const canChange = status === 'idle' && !loading && !saving;
-	// New providers only extend the catalog; existing session settings stay locked.
-	const canCreateProvider = (status === 'idle' || status === 'busy') && !loading && !saving;
+	// Model/catalog edits only rewrite configuration read by the NEXT model
+	// request, so they stay available while a conversation turn is running.
+	const canChange = (status === 'idle' || status === 'busy') && !loading && !saving;
+	const canCreateProvider = canChange;
 	const canSaveDrafts = canChange || (canCreateProvider && editor?.kind === 'create' && !connectionDirty && !setupConnectionDirty && !credentialState.dirty);
 	const waitingForAgent = status === 'starting' || status === 'uninitialized';
 	const authByProvider = useMemo(() => new Map(providerAuth.map((item) => [item.provider, item])), [providerAuth]);

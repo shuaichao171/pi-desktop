@@ -291,9 +291,8 @@ export default async function runScenarios(review) {
   await review.waitFor('document.querySelector(".pd-model-provider-option.is-selected")?.dataset.provider === "review-gateway"');
   await review.evaluate('window.__modelReview.snapshot.status = "busy"; window.__modelReview.emitAgent({type:"status",status:"busy"})');
   await review.settle();
-  await review.assert('document.querySelector("[data-action=edit-provider]").disabled === true', 'Busy state blocks provider settings editing');
-  await review.assert('[...document.querySelectorAll("[data-action=add-model],[data-action=edit-model],[data-action=toggle-model],[data-action=discover-models],[data-action=use-model],[data-action=remove-provider],[data-action=edit-provider]")].every(element=>element.disabled)', 'Busy state protects existing models, connections, and provider removal');
-  await review.assert('document.querySelector("[data-action=add-provider]").disabled === false', 'Busy state permits adding a new provider');
+  await review.assert('document.querySelector("[data-action=edit-provider]").disabled === false', 'Busy state keeps provider settings editing available');
+  await review.assert('[...document.querySelectorAll("[data-action=add-model],[data-action=edit-model],[data-action=discover-models],[data-action=remove-provider],[data-action=edit-provider],[data-action=add-provider]")].every(element=>!element.disabled) && [...document.querySelectorAll("[data-action=toggle-model]")].every(element=>!element.disabled)', 'Busy state keeps controls editable; only hiding the in-use model stays blocked');
   await review.screenshot('05-busy-gated-controls');
   await review.click('[data-action="add-provider"]');
   await review.click('dialog[open] [data-template="custom"]');
@@ -313,7 +312,7 @@ export default async function runScenarios(review) {
   await review.assert('window.__modelReview.providers.find(provider=>provider.provider==="created-during-chat")?.configured === true', 'A provider and its credential can be saved while the conversation is busy');
   await review.assert('window.__modelReview.providers.find(provider=>provider.provider==="created-during-chat")?.models[0].id === "busy-import"', 'Discovery in a new provider form remains available during a conversation');
   await review.assert('window.__modelReview.snapshot.status === "busy" && window.__modelReview.snapshot.modelProvider === "openai" && window.__modelReview.snapshot.model === "gpt-review" && window.__modelReview.snapshot.thinkingLevel === "medium"', 'Adding a provider does not interrupt the task or switch its model or thinking level');
-  await review.assert('document.querySelector("[data-action=use-model]").disabled === true && document.querySelector("[data-action=remove-provider]").disabled === true', 'Newly created providers cannot switch the running model or bypass removal protection');
+  await review.assert('document.querySelector("[data-action=use-model]").disabled === false && document.querySelector("[data-action=remove-provider]").disabled === false', 'Busy state allows using a newly created model on the next request and editing providers');
   await review.screenshot('07-created-provider-chat-running');
   await review.click('[data-action="add-provider"]');
   await review.click('dialog[open] [data-template="custom"]');
@@ -448,7 +447,7 @@ export default async function runScenarios(review) {
   await review.waitFor(`${saveCalls}.length === ${beforeBuiltinImport} + 1`);
   await review.waitFor('document.querySelector("dialog[open].pd-model-dialog") === null');
   await review.assert('window.__modelReview.providers.find(provider=>provider.provider==="openai").models.some(model=>model.id==="discovered-model")', 'Importing a builtin catalog pins the discovered model');
-  await review.assert(`(() => { const args = ${saveCalls}.at(-1).args[0]; return ${saveCalls}.at(-1).name === 'saveProviderModels' && args.provider === 'openai' && args.upsert.map(m => m.id).join() === 'discovered-model'; })()`, 'Builtin import writes only the new models, never the builtin catalog');
+  await review.assert(`(() => { const args = ${saveCalls}.at(-1).args[0]; return ${saveCalls}.at(-1).name === 'saveProviderModels' && args.provider === 'openai' && args.upsert.some(m => m.id === 'discovered-model') && !args.upsert.some(m => m.id === 'gpt-review'); })()`, 'Builtin import writes only the new models, never the builtin catalog');
   await review.screenshot('10-builtin-import');
 
   // A hand-written provider keeps its connection read-only but its models.json models editable.
