@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { registerHooks } from 'node:module';
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { test } from 'node:test';
 
 const updater = new EventEmitter();
@@ -26,14 +29,23 @@ registerHooks({
 });
 const { updateService } = await import('../packages/desktop/src/main/updateService.ts');
 
-function createService(feedUrl = 'https://updates.example.com/') {
+// Simulated NSIS install layout: the uninstaller sits next to the app executable.
+const fakeInstallDir = mkdtempSync(join(tmpdir(), 'pi-update-install-'));
+writeFileSync(join(fakeInstallDir, 'Pi Desktop.exe'), '');
+writeFileSync(join(fakeInstallDir, 'Uninstall Pi Desktop.exe'), '');
+// A build-output folder ships the app but no uninstaller.
+const fakeBuildDir = mkdtempSync(join(tmpdir(), 'pi-update-build-'));
+writeFileSync(join(fakeBuildDir, 'Pi Desktop.exe'), '');
+
+function createService(feedUrl = 'https://updates.example.com/', exePath = join(fakeInstallDir, 'Pi Desktop.exe')) {
   updater.removeAllListeners();
-  const keys = ['PI_DESKTOP_UPDATE_URL', 'APPIMAGE', 'PORTABLE_EXECUTABLE_FILE'];
+  const keys = ['PI_DESKTOP_UPDATE_URL', 'APPIMAGE', 'PORTABLE_EXECUTABLE_FILE', 'PI_DESKTOP_EXEC_PATH'];
   const saved = keys.map((key) => process.env[key]);
   try {
     process.env.PI_DESKTOP_UPDATE_URL = feedUrl;
     process.env.APPIMAGE = process.execPath;
     delete process.env.PORTABLE_EXECUTABLE_FILE;
+    process.env.PI_DESKTOP_EXEC_PATH = exePath;
     return new updateService.constructor();
   } finally {
     keys.forEach((key, index) => {
@@ -49,6 +61,14 @@ function deferred() {
   const promise = new Promise((yes, no) => { resolve = yes; reject = no; });
   return { promise, resolve, reject };
 }
+
+test('a windows copy outside its NSIS install directory never offers updates', { skip: process.platform !== 'win32' }, () => {
+  const service = createService(undefined, join(fakeBuildDir, 'Pi Desktop.exe'));
+  try {
+    assert.equal(service.getState().phase, 'unavailable');
+    assert.equal(service.getState().unavailableReason, 'uninstalled-copy');
+  } finally { service.stop(); }
+});
 
 test('downloads start only after the user clicks and install once ready', async () => {
   const service = createService();

@@ -1,6 +1,6 @@
 import { app, BrowserWindow, net } from 'electron';
 import { readFileSync, statSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { IPC_CHANNELS, type UiUpdateState, type UiUpdateUnavailableReason } from '@pidesktop/shared';
 import { getAppLocale } from './appLocale';
 import { isGitHubReleaseFeedUrl, parseUpdateFeedUrl } from './updateFeed';
@@ -32,6 +32,14 @@ function runningAsAppImage(): boolean {
 	catch { return false; }
 }
 
+/** NSIS installs place "Uninstall <productName>.exe" next to the app; build outputs and copied folders do not. */
+function inWindowsInstallDirectory(): boolean {
+	// Tests point PI_DESKTOP_EXEC_PATH at a simulated NSIS layout; there execPath is node.exe.
+	const exePath = process.env.PI_DESKTOP_EXEC_PATH ?? process.execPath;
+	try { return statSync(join(dirname(exePath), 'Uninstall Pi Desktop.exe')).isFile(); }
+	catch { return false; }
+}
+
 function unavailable(reason: UiUpdateUnavailableReason): UiUpdateState {
 	return { phase: 'unavailable', unavailableReason: reason, currentVersion: app.getVersion() };
 }
@@ -40,6 +48,12 @@ function initialState(): { state: UiUpdateState; feedUrl: string | null } {
 	if (!app.isPackaged) return { state: unavailable('development'), feedUrl: null };
 	if (process.platform === 'win32' && process.env.PORTABLE_EXECUTABLE_FILE) {
 		return { state: unavailable('portable'), feedUrl: null };
+	}
+	// A packaged copy outside its NSIS install directory (e.g. a build-output win-unpacked
+	// folder) must not offer updates: the installer would patch the registered install while
+	// this copy stays old, so relaunching it would offer the same update again forever.
+	if (process.platform === 'win32' && !inWindowsInstallDirectory()) {
+		return { state: unavailable('uninstalled-copy'), feedUrl: null };
 	}
 	if (!['win32', 'darwin', 'linux'].includes(process.platform)) {
 		return { state: unavailable('unsupported'), feedUrl: null };

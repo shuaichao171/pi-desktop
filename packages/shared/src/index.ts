@@ -892,7 +892,7 @@ export interface AppInfo {
 
 // 'available' = an update was found but nothing downloads until the user consents.
 export type UiUpdatePhase = 'unavailable' | 'idle' | 'checking' | 'available' | 'downloading' | 'ready' | 'installing' | 'up-to-date' | 'error';
-export type UiUpdateUnavailableReason = 'development' | 'portable' | 'unsupported' | 'unconfigured' | 'invalid-feed';
+export type UiUpdateUnavailableReason = 'development' | 'portable' | 'uninstalled-copy' | 'unsupported' | 'unconfigured' | 'invalid-feed';
 
 export interface UiUpdateState {
   phase: UiUpdatePhase;

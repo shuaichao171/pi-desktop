@@ -949,6 +949,7 @@ export const translations: Record<string, { 'zh-CN': string; 'en-US': string }> 
   'update.noticeLater': { 'zh-CN': '稍后', 'en-US': 'Later' },
   'settings.updateUnavailable.development': { 'zh-CN': '开发模式无法检查更新', 'en-US': 'Updates are unavailable in development mode' },
   'settings.updateUnavailable.portable': { 'zh-CN': '便携版不支持应用内更新，请下载新版 Portable 文件', 'en-US': 'The portable app cannot update itself. Download the new Portable file.' },
+  'settings.updateUnavailable.uninstalled-copy': { 'zh-CN': '当前运行的是未安装的副本（如构建目录），请从开始菜单的 Pi Desktop 更新', 'en-US': 'This is an unpacked copy, not the installed app. Update from the installed Pi Desktop.' },
   'settings.updateUnavailable.unsupported': { 'zh-CN': '此安装方式由系统或包管理器更新', 'en-US': 'This installation is updated through the system or package manager' },
   'settings.updateUnavailable.unconfigured': { 'zh-CN': '尚未配置公开更新源', 'en-US': 'No public update feed is configured' },
   'settings.updateUnavailable.invalid-feed': { 'zh-CN': '更新源配置无效，必须是公开 HTTPS 地址', 'en-US': 'The update feed must be a valid public HTTPS URL' },
