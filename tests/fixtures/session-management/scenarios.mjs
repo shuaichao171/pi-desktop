@@ -27,16 +27,17 @@ export default async function sessionManagementScenarios(review) {
   await review.click('.pd-settings-entry');
   await review.clickText('.pd-settings-nav button', '会话管理');
   await review.waitFor("Boolean(document.querySelector('.pd-session-management-row[data-session-path$=\"manage-beta.jsonl\"]'))");
-  await review.assert("document.querySelectorAll('.pd-session-management-row').length - 1 === 4", 'Every machine-wide conversation is listed');
-  await review.assert("document.querySelector('.pd-session-management-row[data-session-path$=\"manage-foreign.jsonl\"]').textContent.includes('未打开的工作区')", 'Unregistered workspaces are marked');
+  await review.assert("document.querySelectorAll('.pd-session-management-row').length === 4", 'Every machine-wide conversation is listed');
+  await review.assert("document.querySelectorAll('.pd-session-management-group').length === 2", 'Conversations are grouped by workspace');
+  await review.assert("document.querySelector('.pd-session-management-row[data-session-path$=\"manage-foreign.jsonl\"]').closest('.pd-session-management-group').querySelector('.pd-session-management-group-head').textContent.includes('未打开的工作区')", 'Unregistered workspaces are marked on the group header');
   await review.assert("document.querySelector('.pd-session-management-row[data-session-path$=\"manage-beta.jsonl\"]').textContent.includes('当前会话') === false", 'Only the open session carries the current badge');
   await review.screenshot('session-management-01-list');
 
   await review.evaluate(`(() => { const input = document.querySelector('.pd-session-management-toolbar input[type=search]'); const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set; setter.call(input, 'beta 分支'); input.dispatchEvent(new Event('input', { bubbles: true })); })()`);
-  await review.waitFor("document.querySelectorAll('.pd-session-management-row').length - 1 === 1");
+  await review.waitFor("document.querySelectorAll('.pd-session-management-row').length === 1");
   await review.assert("document.querySelector('.pd-session-management-count').textContent.includes('显示 1 个')", 'Search narrows the visible rows');
   await review.evaluate(`(() => { const input = document.querySelector('.pd-session-management-toolbar input[type=search]'); const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set; setter.call(input, ''); input.dispatchEvent(new Event('input', { bubbles: true })); })()`);
-  await review.waitFor("document.querySelectorAll('.pd-session-management-row').length - 1 === 4");
+  await review.waitFor("document.querySelectorAll('.pd-session-management-row').length === 4");
 
   await review.evaluate(`(() => { const row = document.querySelector('.pd-session-management-row[data-session-path$=\"manage-alpha.jsonl\"]'); [...row.querySelectorAll('button')].find(item => item.textContent === '取消归档').click(); })()`);
   await review.waitFor('window.__sessionManagementReview.meta.some(([path, patch]) => path.endsWith("manage-alpha.jsonl") && patch.archived === false)');
