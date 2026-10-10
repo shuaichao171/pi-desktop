@@ -6,3 +6,8 @@
 .pd-error-tools button, .pd-scoped-error > button { border: 1px solid var(--pd-border); padding: 4px 9px; border-radius: var(--pd-radius-xs); color: var(--pd-text); background: var(--pd-bg); font: inherit; cursor: pointer; }
 .pd-error-tools button:disabled { opacity: .6; cursor: default; }
 .pd-scoped-error { display: grid; align-content: start; justify-items: start; gap: 12px; min-width: 0; padding: 18px; color: var(--pd-text); overflow: auto; }
+/* Full-page views (automation, plugins) keep the failure centered in the page. */
+.pd-main-view > .pd-scoped-error { width: min(560px, calc(100% - 48px)); margin: auto; }
+/* Overlay surfaces (search) show their failure as a dialog; Retry closes the overlay. */
+.pd-overlay-error-host:has(> .pd-scoped-error) { position: fixed; inset: 0; z-index: var(--pd-z-modal, 60); display: grid; place-items: center; padding: 24px; background: var(--pd-overlay); }
+.pd-overlay-error-host > .pd-scoped-error { width: min(560px, 100%); max-height: calc(100vh - 48px); border: 1px solid var(--pd-border); border-radius: var(--pd-radius-lg); background: var(--pd-surface); box-shadow: var(--pd-shadow-dialog); }

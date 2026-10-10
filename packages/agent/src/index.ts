@@ -58,6 +58,7 @@ import type {
 	UiConversationRun,
 	UiModelSummary,
 	UiModelProvider,
+	UiProviderReadOnlyReason,
 	UiDiscoverProviderModelsRequest,
 	UiProviderModelDiscovery,
 	UiProviderApi,
@@ -67,6 +68,7 @@ import type {
 	UiPluginResourcePreview,
 	UiPluginScope,
 	UiSaveCustomProviderRequest,
+	UiSaveProviderModelsRequest,
 	UiProviderAuthStatus,
 	UiHistoryPage,
 	UiSessionStats,
@@ -85,7 +87,7 @@ import type {
 } from '@pidesktop/shared';
 import { createAgentError, normalizeAgentError } from '../../shared/src/agentErrors.ts';
 import { BUILTIN_SLASH_COMMANDS, expandSlashPrompt, validateSlashCommandRequest, validSlashCommandName } from './slashCommands.ts';
-import { commitProviderDocument, CUSTOM_PROVIDER_APIS, getCachedDisabledModels, getBuiltinProviderIds, isEditableProvider, literalApiKey, loadModelPrefs, mergeProvider, readProviderDocument, safeProviderUrl, setModelDisabled, validateDiscoveryRequest, validateProviderId, validateProviderRequest, validateProviderWithSdk, type ProviderDocument } from './customProviders.ts';
+import { assertWritableDocument, commitProviderDocument, connectionReadOnlyReason, CUSTOM_PROVIDER_APIS, getCachedDisabledModels, getBuiltinProviderIds, literalApiKey, loadModelPrefs, mergeProvider, mergeProviderModels, readProviderDocument, safeProviderUrl, setModelDisabled, validateDiscoveryRequest, validateProviderId, validateProviderModelsRequest, validateProviderRequest, validateProviderWithSdk, type ProviderDocument, type ProviderModelsChange } from './customProviders.ts';
 import { discoverProviderModels, ProviderDiscoveryError } from './providerDiscovery.ts';
 import { bindProviderNetwork, runWithProviderNetwork } from './providerNetwork.ts';
 export { configureProviderNetwork } from './providerNetwork.ts';
@@ -652,26 +654,38 @@ class SingleAgentService {
 		return this.runtime?.session.modelRuntime.getRegisteredProviderIds().includes(provider) ?? false;
 	}
 
-	listModelProviders(document: ProviderDocument): UiModelProvider[] {
+	listModelProviders(document: ProviderDocument, builtinIds: ReadonlySet<string>): UiModelProvider[] {
 		const runtime = this.runtime?.session.modelRuntime;
 		if (!runtime) return [];
 		const providers = new Map(runtime.getProviders().map((provider) => [provider.id, provider]));
 		const ids = new Set([...providers.keys(), ...Object.keys(document.data.providers)]);
 		const registered = new Set(runtime.getRegisteredProviderIds());
+		const invalid = new Set(document.invalid);
 		const disabledByProvider = getCachedDisabledModels();
 		return [...ids].map((id): UiModelProvider => {
-			const config = Object.hasOwn(document.data.providers, id) ? document.data.providers[id] : undefined;
-			const custom = config !== undefined;
+			const entry = Object.hasOwn(document.data.providers, id) ? document.data.providers[id] : undefined;
+			const custom = entry !== undefined;
+			const config = entry !== null && typeof entry === 'object' && !Array.isArray(entry) ? entry : undefined;
 			const credential = readStoredCredential(id, join(this.agentDirectory, 'auth.json'));
 			const catalog = runtime.getModels(id);
-			// Builtin providers surface their catalog baseUrl/api so the UI can offer
-			// live model discovery for them; custom providers keep config-only values.
-			const catalogApi = !custom && typeof catalog[0]?.api === 'string' ? catalog[0].api : null;
+			const builtin = builtinIds.has(id);
+			// The connection editor writes name/URL/protocol/headers back verbatim, so it
+			// needs a config it can round-trip; model entries are rewritten in isolation.
+			const configReason = config ? connectionReadOnlyReason(config) : null;
+			const readOnlyReason: UiProviderReadOnlyReason | undefined = registered.has(id) ? 'extension' : invalid.has(id) ? 'invalid-config'
+				: builtin && (!config || (configReason && config.api === undefined)) ? 'builtin'
+				: credential && credential.type !== 'api_key' ? 'oauth' : configReason ?? undefined;
+			const modelsEditable = !registered.has(id) && !invalid.has(id) && (custom || builtin);
+			// Missing config fields inherit the catalog (builtin or overlay); a present
+			// but unsafe URL is hidden rather than replaced by the catalog value.
 			return {
 				provider: id, name: typeof config?.name === 'string' ? config.name : providers.get(id)?.name ?? id,
-				custom, editable: custom && !registered.has(id) && isEditableProvider(config!) && (!credential || credential.type === 'api_key'),
+				custom, builtin, editable: custom && !readOnlyReason, modelsEditable,
+				...(Array.isArray(config?.models) ? { configModelIds: config.models.filter((model): model is { id: string } => typeof model?.id === 'string').map((model) => model.id) } : {}),
+				...(readOnlyReason ? { readOnlyReason } : {}),
 				configured: runtime.getProviderAuthStatus(id).configured,
-				baseUrl: safeProviderUrl(config?.baseUrl) ?? (custom ? null : safeProviderUrl(catalog[0]?.baseUrl)), api: typeof config?.api === 'string' ? config.api : catalogApi,
+				baseUrl: config && Object.hasOwn(config, 'baseUrl') ? safeProviderUrl(config.baseUrl) : safeProviderUrl(catalog[0]?.baseUrl),
+				api: typeof config?.api === 'string' ? config.api : typeof catalog[0]?.api === 'string' ? catalog[0].api : null,
 				headerNames: config?.headers && typeof config.headers === 'object' && !Array.isArray(config.headers) ? Object.keys(config.headers) : [],
 				...(typeof config?.desktopUseSystemProxy === 'boolean' ? { useSystemProxy: config.desktopUseSystemProxy } : {}),
 				models: catalog.map((model) => ({ provider: model.provider, id: model.id, name: model.name, reasoning: model.reasoning,
@@ -688,7 +702,8 @@ class SingleAgentService {
 		const provider = request.provider;
 		const model = provider ? runtime.getModels(provider)[0] : undefined;
 		if (provider && !runtime.getProvider(provider)) throw new Error('供应商不存在，请刷新后重试');
-		const config = provider && Object.hasOwn(document.data.providers, provider) ? document.data.providers[provider] : undefined;
+		const entry = provider && Object.hasOwn(document.data.providers, provider) ? document.data.providers[provider] : undefined;
+		const config = entry !== null && typeof entry === 'object' && !Array.isArray(entry) ? entry : undefined;
 		const savedUrl = safeProviderUrl(config?.baseUrl) ?? safeProviderUrl(model?.baseUrl);
 		const baseUrl = request.baseUrl ?? savedUrl;
 		const api = request.api ?? config?.api ?? model?.api;
@@ -2329,8 +2344,8 @@ export class AgentService {
 	async listModelProviders(): Promise<UiModelProvider[]> {
 		if (this.providerOperation) { try { await this.providerOperation; } catch { /* Read restored state after an unsuccessful edit. */ } }
 		const service = this.requireActive();
-		const [document] = await Promise.all([readProviderDocument(join(service.agentDirectory, 'models.json')), getBuiltinProviderIds(), loadModelPrefs(service.agentDirectory)]);
-		return service.listModelProviders(document);
+		const [document, builtinIds] = await Promise.all([readProviderDocument(join(service.agentDirectory, 'models.json')), getBuiltinProviderIds(), loadModelPrefs(service.agentDirectory)]);
+		return service.listModelProviders(document, builtinIds);
 	}
 	async setModelEnabled(provider: string, modelId: string, enabled: boolean): Promise<void> {
 		const providerId = validateProviderId(provider);
@@ -2369,6 +2384,10 @@ export class AgentService {
 	}
 	async removeCustomProvider(provider: string): Promise<void> {
 		await this.updateCustomProvider(validateProviderId(provider));
+	}
+	async saveProviderModels(input: UiSaveProviderModelsRequest): Promise<void> {
+		const request = validateProviderModelsRequest(input);
+		await this.updateCustomProvider(request.provider, undefined, request);
 	}
 	listSlashCommands(): UiSlashCommand[] { return this.active?.listSlashCommands() ?? []; }
 	async executeSlashCommand(request: UiSlashCommandRequest): Promise<void> {
@@ -2555,7 +2574,8 @@ export class AgentService {
 		}
 	}
 
-	private async updateCustomProvider(provider: string, request?: UiSaveCustomProviderRequest): Promise<void> {
+	/** One serialized models.json transaction: save (`request`), models-only edit (`models`), or removal (neither). */
+	private async updateCustomProvider(provider: string, request?: UiSaveCustomProviderRequest, models?: ProviderModelsChange): Promise<void> {
 		const service = this.requireActive();
 		if (this.transition || this.credentialOperation || this.trimOperation) throw new Error('会话或设置正在更新，请稍后再试');
 		const contexts = [...this.contexts.values()];
@@ -2567,32 +2587,38 @@ export class AgentService {
 		const operation = Promise.resolve().then(async () => {
 			const directory = service.agentDirectory;
 			const path = join(directory, 'models.json');
-			const [document] = await Promise.all([readProviderDocument(path), getBuiltinProviderIds()]);
+			const [document, builtinIds] = await Promise.all([readProviderDocument(path), getBuiltinProviderIds()]);
+			assertWritableDocument(document);
 			if (contexts.some((context) => context.usesExtensionProvider(provider))) throw new Error('此供应商 ID 已由已打开工作区的扩展管理，请使用其他 ID');
-			const listed = service.listModelProviders(document);
+			const listed = service.listModelProviders(document, builtinIds);
 			const existing = listed.find((entry) => entry.provider === provider);
-			if (request?.mode === 'create' && existing) throw new Error('供应商 ID 已存在，请使用其他 ID');
-			// Importing a live model list for a configured builtin provider pins it as a
-			// custom catalog entry; only the builtin's own api/baseUrl may be written.
-			const builtinImport = Boolean(request && existing && !existing.custom && existing.configured
-				&& request.api === existing.api && request.baseUrl === existing.baseUrl && CUSTOM_PROVIDER_APIS.includes(request.api));
-			if (request?.mode === 'update' && !existing) throw new Error('自定义供应商不存在，请刷新后重试');
-			if (existing && !existing.editable && !builtinImport) throw new Error('此供应商由内置、扩展或高级外部配置管理，不能在此修改');
-			if (!request && !existing?.custom) throw new Error('自定义供应商不存在');
+			if (models) {
+				if (!existing) throw new Error('供应商不存在，请刷新后重试');
+				if (!existing.modelsEditable) throw new Error('此供应商的模型由扩展管理或配置格式无效，不能在此修改');
+			} else {
+				if (request?.mode === 'create' && existing) throw new Error('供应商 ID 已存在，请使用其他 ID');
+				if (request?.mode === 'update' && !existing) throw new Error('自定义供应商不存在，请刷新后重试');
+				if (existing && !existing.editable) throw new Error('此供应商由内置、扩展或高级外部配置管理，不能在此修改');
+				if (!request && !existing?.custom) throw new Error('自定义供应商不存在');
+			}
 			for (const context of contexts) {
 				const selected = context.getSnapshot();
-				if (selected.modelProvider === provider && (request?.mode === 'create' || !request || !request.models.some((model) => model.id === selected.model))) {
-					throw new Error('供应商或模型仍被已打开的会话使用，请先为这些会话切换模型');
-				}
+				if (selected.modelProvider !== provider) continue;
+				const dropsSelected = models ? models.remove.includes(selected.model ?? '')
+					: request?.mode === 'create' || !request || !request.models.some((model) => model.id === selected.model);
+				if (dropsSelected) throw new Error('供应商或模型仍被已打开的会话使用，请先为这些会话切换模型');
 			}
-			const next = request ? mergeProvider(document, request) : { ...document.data, providers: { ...document.data.providers } };
-			if (!request) delete next.providers[provider];
-			else await validateProviderWithSdk(directory, provider, next.providers[provider]!);
+			const next = models ? mergeProviderModels(document, models, existing!.api)
+				: request ? mergeProvider(document, request) : { ...document.data, providers: { ...document.data.providers } };
+			if (!request && !models) delete next.providers[provider];
+			else if (Object.hasOwn(next.providers, provider)) await validateProviderWithSdk(directory, provider, next.providers[provider]!);
 			const previousCredential = readStoredCredential(provider, join(directory, 'auth.json'));
+			// A builtin keeps working after its overlay is removed, so its login stays.
+			const removesCredential = !request && !models && !builtinIds.has(provider);
 			let rollback: (() => Promise<void>) | undefined;
 			let credentialChanged = false;
 			try {
-				if (!request && previousCredential) {
+				if (removesCredential && previousCredential) {
 					credentialChanged = true;
 					await service.writeProviderCredential(provider, undefined);
 				}
@@ -2614,7 +2640,7 @@ export class AgentService {
 				if (request && credentialChanged) await restoreCredential();
 				if (rollback) { try { await rollback(); } catch { recovered = false; } }
 				try { await this.refreshCustomProviderContexts(contexts, provider, false); } catch { recovered = false; }
-				if (!request && credentialChanged) await restoreCredential();
+				if (removesCredential && credentialChanged) await restoreCredential();
 				try { await this.refreshCustomProviderContexts(contexts, provider); } catch { recovered = false; }
 				throw new Error(recovered ? '供应商保存失败，原配置已恢复；请检查 URL、协议和凭据存储' : '供应商保存失败，部分配置未能恢复；请检查 models.json 及其 pi-desktop-backup 备份');
 			}

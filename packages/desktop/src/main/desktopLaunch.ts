@@ -2,23 +2,34 @@ import { randomUUID } from 'node:crypto';
 import { mkdirSync, readFileSync, realpathSync, renameSync, rmdirSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { isAbsolute, join, posix, resolve, win32 } from 'node:path';
 
-export type DesktopLaunch = { windowMode: 'full' } | { windowMode: 'pai'; cwd: string };
+export type DesktopLaunch = { windowMode: 'full' } | { windowMode: 'multi' } | { windowMode: 'pai'; cwd: string };
 
 /** Electron switches and its development entry point may surround our arguments. */
 export function parseDesktopLaunch(argv: readonly string[], platform: NodeJS.Platform = process.platform): DesktopLaunch {
 	let pai = false;
+	let multi = false;
 	let cwd: string | undefined;
 	for (let index = 0; index < argv.length; index++) {
 		const argument = argv[index]!;
 		if (argument === '--pai') {
 			if (pai) throw new Error('Duplicate --pai argument');
+			if (multi) throw new Error('--pai cannot be combined with --multi');
 			pai = true;
 		} else if (argument.startsWith('--pai=')) throw new Error('Use --pai without a value');
+		else if (argument === '--multi') {
+			if (multi) throw new Error('Duplicate --multi argument');
+			if (pai) throw new Error('--multi cannot be combined with --pai');
+			multi = true;
+		} else if (argument.startsWith('--multi=')) throw new Error('Use --multi without a value');
 		else if (argument === '--cwd' || argument.startsWith('--cwd=')) {
 			if (cwd !== undefined) throw new Error('Duplicate --cwd argument');
 			cwd = argument === '--cwd' ? argv[++index] : argument.slice('--cwd='.length);
 			if (!cwd || cwd.startsWith('--') || cwd.includes('\0')) throw new Error('--cwd requires an absolute folder path');
 		}
+	}
+	if (multi) {
+		if (cwd !== undefined) throw new Error('--cwd requires --pai');
+		return { windowMode: 'multi' };
 	}
 	if (!pai) {
 		if (cwd !== undefined) throw new Error('--cwd requires --pai');
@@ -41,6 +52,8 @@ interface Owner { pid: number; token: string }
 interface ProfileOptions {
 	pid?: number;
 	isProcessRunning?(pid: number): boolean;
+	/** Profile root name under the base userData directory; pai and multi instances stay separated. */
+	rootName?: string;
 }
 export interface PaiProfile {
 	userData: string;
@@ -100,12 +113,13 @@ function claimProfile(slot: string, owner: Owner, running: (pid: number) => bool
 }
 
 /**
- * Keep a separate persistent Chromium/app-state slot per live pai process.
- * Slots retain settings between launches. SDK credentials, sessions, and input
- * journals remain in Pi's global agent directory, which this module never edits.
+ * Keep a separate persistent Chromium/app-state slot per live extra instance
+ * (pai window or --multi full window). Slots retain settings between launches.
+ * SDK credentials, sessions, and input journals remain in Pi's global agent
+ * directory, which this module never edits.
  */
 export function reservePaiProfile(baseUserData: string, options: ProfileOptions = {}): PaiProfile {
-	const root = join(resolve(baseUserData), 'pai-profiles');
+	const root = join(resolve(baseUserData), options.rootName ?? 'pai-profiles');
 	const owner: Owner = { pid: options.pid ?? process.pid, token: randomUUID() };
 	const running = options.isProcessRunning ?? processRunning;
 	mkdirSync(root, { recursive: true });
@@ -139,7 +153,7 @@ export function reservePaiProfile(baseUserData: string, options: ProfileOptions 
 }
 
 export function rendererLaunchUrl(url: string, launch: DesktopLaunch): string {
-	if (launch.windowMode === 'full') return url;
+	if (launch.windowMode !== 'pai') return url;
 	const target = new URL(url);
 	target.searchParams.set('mode', 'pai');
 	return target.toString();

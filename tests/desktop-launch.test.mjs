@@ -124,3 +124,22 @@ test('simultaneous operating-system processes cannot acquire the same profile', 
     } finally { for (const child of children) if (child.exitCode === null) child.kill(); }
   });
 });
+
+test('multi parses a full-size second instance and keeps its profiles separate from pai', async () => {
+  assert.deepEqual(parseDesktopLaunch(['pi.exe', '--multi'], 'win32'), { windowMode: 'multi' });
+  assert.deepEqual(parseDesktopLaunch(['--multi', '--inspect=9229'], 'win32'), { windowMode: 'multi' });
+  for (const args of [
+    ['--multi', '--multi'], ['--pai', '--multi'], ['--multi', '--pai'],
+    ['--multi=1'], ['--multi', '--cwd', 'D:\one'],
+  ]) assert.throws(() => parseDesktopLaunch(args, 'win32'), /--multi|--pai|--cwd/);
+  assert.equal(rendererLaunchUrl('http://localhost:5173/', { windowMode: 'multi' }), 'http://localhost:5173/');
+  await temporary(async root => {
+    const pai = reservePaiProfile(root);
+    const multi = reservePaiProfile(root, { rootName: 'multi-profiles' });
+    assert.ok(pai.userData.includes(join('pai-profiles', 'slot-')), pai.userData);
+    assert.ok(multi.userData.includes(join('multi-profiles', 'slot-')), multi.userData);
+    assert.notEqual(pai.userData, multi.userData);
+    pai.release();
+    multi.release();
+  });
+});

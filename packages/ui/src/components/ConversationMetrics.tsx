@@ -39,7 +39,8 @@ export function ConversationMetrics() {
 		const interval = status === 'busy' ? window.setInterval(() => { setNow(Date.now()); void refresh(); }, 1_000) : undefined;
 		return () => { active = false; if (interval !== undefined) window.clearInterval(interval); };
 	}, [enabled, bridge, scope, sessionId, navigating, status, runs, messageCount]);
-	if (!enabled) return null;
+	// Nothing has run yet: an all-zero stats line is just noise under a fresh composer.
+	if (!enabled || (runs.length === 0 && messageCount === 0 && status !== 'busy')) return null;
 	const stats = !navigating && sample?.scope === scope ? sample.stats : null;
 	const metrics = conversationMetricsAt(stats, now, status === 'busy');
 	const latestRun = runs.at(-1);

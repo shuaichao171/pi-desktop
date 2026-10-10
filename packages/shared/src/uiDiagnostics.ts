@@ -1,6 +1,6 @@
 export interface UiDiagnosticEvent {
   id: string;
-  scope: 'conversation' | 'workbench' | 'terminal' | 'preview' | 'approval' | 'session-navigation';
+  scope: 'conversation' | 'workbench' | 'terminal' | 'preview' | 'approval' | 'session-navigation' | 'automation' | 'plugins' | 'settings' | 'search';
   kind: 'render-error' | 'operation-error' | 'session-open';
   outcome: 'success' | 'failure' | 'cancelled';
   durationMs?: number;
@@ -14,7 +14,7 @@ export function normalizeUiDiagnostic(value: unknown): UiDiagnosticEvent | null 
   if (!value || typeof value !== 'object') return null;
   const v = value as Record<string, unknown>;
   if (typeof v.id !== 'string' || !/^[a-zA-Z0-9-]{8,80}$/.test(v.id)
-    || typeof v.scope !== 'string' || !['conversation','workbench','terminal','preview','approval','session-navigation'].includes(v.scope)
+    || typeof v.scope !== 'string' || !['conversation','workbench','terminal','preview','approval','session-navigation','automation','plugins','settings','search'].includes(v.scope)
     || typeof v.kind !== 'string' || !['render-error','operation-error','session-open'].includes(v.kind)
     || typeof v.outcome !== 'string' || !['success','failure','cancelled'].includes(v.outcome)) return null;
   const ms = (n: unknown) => typeof n === 'number' && Number.isFinite(n) && n >= 0 && n <= 3_600_000 ? Math.round(n * 100) / 100 : undefined;

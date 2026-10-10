@@ -58,14 +58,20 @@
 
 
 /* In-conversation find (Ctrl+F) floats over the transcript's top-right corner. */
-.pd-transcript-find-anchor { position: absolute; top: 10px; left: 18px; right: 18px; z-index: 6; display: flex; justify-content: flex-end; pointer-events: none; }
-.pd-transcript-find { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; width: 390px; max-width: 100%; padding: 4px 6px 4px 10px; border: 1px solid var(--pd-border); border-radius: var(--pd-radius-md); background: var(--pd-surface-raised); box-shadow: var(--pd-shadow-popover); color: var(--pd-text-subtle); pointer-events: auto; }
-.pd-transcript-find-input { flex: 1; width: 210px; min-width: 40px; border: 0; background: transparent; color: var(--pd-text); font-size: var(--pd-font-caption); outline: none; }
+/* The find bar sits in its own strip above the transcript so it never covers messages. */
+.pd-transcript-find-anchor { position: relative; z-index: 6; display: flex; flex: 0 0 auto; justify-content: flex-end; padding: 10px 18px 8px; border-bottom: 1px solid var(--pd-border-soft); background: var(--pd-bg); }
+.pd-transcript-find { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; width: 420px; max-width: 100%; min-height: 36px; padding: 3px 4px 3px 11px; border: 1px solid var(--pd-border); border-radius: var(--pd-radius-md); background: var(--pd-surface); color: var(--pd-text-weak); transition: border-color var(--pd-motion-fast, 120ms) ease, box-shadow var(--pd-motion-fast, 120ms) ease; }
+.pd-transcript-find:focus-within { border-color: var(--pd-focus-border, var(--pd-brand)); box-shadow: 0 0 0 3px color-mix(in srgb, var(--pd-brand) 14%, transparent); }
+.pd-transcript-find > svg { flex: 0 0 auto; }
+.pd-transcript-find-input { flex: 1; width: 210px; min-width: 40px; height: 28px; padding: 0 4px; border: 0; background: transparent; color: var(--pd-text); font-size: var(--pd-font-caption); outline: none; }
+.pd-transcript-find-input:focus-visible { outline: none; }
+.pd-transcript-find-input::placeholder { color: var(--pd-text-weak); }
 .pd-transcript-find-scope { flex-basis: 100%; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px; font-size: var(--pd-font-xs); }
 .pd-transcript-find-load { border: 0; border-radius: var(--pd-radius-xs); padding: 3px 6px; background: var(--pd-surface-hover); color: var(--pd-text); font-size: inherit; }
-.pd-transcript-find-count { flex: 0 0 auto; min-width: 54px; text-align: center; color: var(--pd-text-weak); font-size: var(--pd-font-xs); font-variant-numeric: tabular-nums; }
+.pd-transcript-find-count { flex: 0 0 auto; min-width: 44px; padding: 0 6px; border-left: 1px solid var(--pd-border-soft); color: var(--pd-text-subtle); font-size: var(--pd-font-xs); text-align: center; font-variant-numeric: tabular-nums; }
+.pd-transcript-find-count:empty { display: none; }
 .pd-transcript-find-count.is-empty { color: var(--pd-danger); }
-.pd-transcript-find-step, .pd-transcript-find-close { display: inline-flex; flex: 0 0 auto; align-items: center; justify-content: center; width: 24px; height: 24px; border: 0; border-radius: var(--pd-radius-xs); background: transparent; color: var(--pd-text-subtle); }
+.pd-transcript-find-step, .pd-transcript-find-close { display: inline-flex; flex: 0 0 auto; align-items: center; justify-content: center; width: 26px; height: 26px; border: 0; border-radius: var(--pd-radius-xs); background: transparent; color: var(--pd-text-subtle); }
 .pd-transcript-find-step:hover:not(:disabled), .pd-transcript-find-close:hover { background: var(--pd-surface-hover); color: var(--pd-text); }
 .pd-transcript-find-step:focus-visible, .pd-transcript-find-close:focus-visible { outline: 2px solid var(--pd-focus-border); outline-offset: 1px; }
 .pd-message-row.is-find-match .pd-user-bubble, .pd-message-row.is-find-match .pd-markdown { outline: 1px dashed color-mix(in srgb, var(--pd-brand) 45%, transparent); outline-offset: 4px; border-radius: var(--pd-radius-sm); }
@@ -196,3 +202,4 @@
 .pd-transcript-find-scopes { display: inline-flex; flex: 0 0 auto; gap: 2px; padding: 2px; border: 1px solid var(--pd-border-soft, var(--pd-border)); border-radius: var(--pd-radius-sm); }
 .pd-transcript-find-scopes button { padding: 1px 8px; border: 0; border-radius: var(--pd-radius-xs); background: transparent; color: var(--pd-text-weak); font-size: var(--pd-font-xs); cursor: pointer; }
 .pd-transcript-find-scopes button.is-active { background: var(--pd-selected); color: var(--pd-text); }
+.pd-transcript-find-step:disabled { opacity: .35; cursor: default; }

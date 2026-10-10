@@ -58,6 +58,9 @@ export function installModelSettingsFixture(options = {}) {
     getWorkspaceBranches: () => ({ isRepository: true, current: 'review-fixture', detached: false, branches: ['review-fixture'] }),
     getWorkspaceGitStatus: () => ({ isRepository: true, branch: 'review-fixture', entries: [], truncated: false }),
     listWorkspaceOpeners: () => [],
+    // The workbench subscribes to file-system changes while open (auto refresh).
+    watchWorkspace: () => undefined,
+    getWorkspaceGitGraph: () => [],
     listModels: () => clone(state.providers.filter((provider) => provider.configured).flatMap((provider) => provider.models.filter((entry) => !provider.disabledModels?.includes(entry.id)))),
     listModelProviders: () => clone(state.providers),
     listProviderAuth: () => state.providers.map(({ provider, configured }) => ({ provider, configured, supportsApiKey: true, ...(configured ? { source: 'stored' } : {}) })),
@@ -82,6 +85,18 @@ export function installModelSettingsFixture(options = {}) {
       if (index >= 0) state.providers[index] = next; else state.providers.push(next);
     },
     removeCustomProvider: (provider) => { state.providers = state.providers.filter((entry) => entry.provider !== provider); },
+    saveProviderModels: ({ provider, upsert = [], remove = [] }) => {
+      const entry = state.providers.find((item) => item.provider === provider);
+      if (!entry) throw new Error('Fixture provider missing');
+      const models = entry.models.filter((item) => !remove.includes(item.id));
+      for (const value of upsert) {
+        const index = models.findIndex((item) => item.id === value.id);
+        const next = model(provider, value.id, value.name || value.id, value);
+        if (index >= 0) models[index] = next; else models.push(next);
+      }
+      entry.models = models;
+      if (entry.configModelIds) entry.configModelIds = [...new Set([...entry.configModelIds.filter((id) => !remove.includes(id)), ...upsert.map((value) => value.id)])];
+    },
     getPersonalization: () => [],
     getInputDraft: () => ({ version: 0, text: '', attachments: [], missing: [] }),
     saveInputDraft: request => ({ version: request.expectedVersion + 1, text: request.text, attachments: [], missing: [] }),

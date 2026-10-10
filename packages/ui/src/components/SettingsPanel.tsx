@@ -5,6 +5,7 @@ import type { UiDesktopSettings, UiProviderAuthStatus, UiUpdateState } from '@pi
 import { useChatStore } from '../store';
 import { useT, type Translate } from '../i18n';
 import { Icon } from './Icons';
+import { ScopedErrorBoundary } from './ScopedErrorBoundary';
 import { ModelSettingsPanel } from './ModelSettingsPanel';
 import { CONTENT_FONT_MIN, CONTENT_FONT_MAX, DEFAULT_CONTENT_FONT_SIZE, readContentFontSize, saveContentFontSize, type ContentFontKind } from '../contentFontSize';
 import { ShortcutSettings } from './ShortcutSettings';
@@ -347,6 +348,7 @@ export function SettingsPanel({ initialPage = 'general', modelManagementTarget, 
 					</nav>
 					<div className="pd-settings-content" onFocusCapture={(event) => { if (event.target instanceof HTMLElement) draftFocusRef.current = event.target; }}>
 						{settingsError && <div className="pd-settings-error" role="alert">{settingsError}</div>}
+						<ScopedErrorBoundary scope="settings" resetKeys={[page]}>
 						{!paiMode && page === 'sessions' && <SessionManagementPanel />}
 						{page === 'mcp' && <McpSettingsPanel />}
 						{page === 'personalization' && <PersonalizationPanel active onDraftStateChange={reportDraftState} />}
@@ -469,6 +471,7 @@ export function SettingsPanel({ initialPage = 'general', modelManagementTarget, 
 						</>
 						) }
 						</>}
+						</ScopedErrorBoundary>
 					</div>
 				</div>
 			</div>

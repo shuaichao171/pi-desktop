@@ -11,13 +11,23 @@ import { createAppTray, destroyAppTray } from './tray';
 import { parseDesktopLaunch, rendererLaunchUrl, reservePaiProfile, validatePaiWorkspace, type DesktopLaunch, type PaiProfile } from './desktopLaunch.ts';
 
 let paiProfile: PaiProfile | null = null;
-// Pai windows relocate userData to an isolated profile; appearance and other
-// shared state still live in the original base directory.
+// Pai and --multi windows relocate userData to an isolated profile;
+// appearance and other shared state still live in the original base directory.
 let baseUserData: string | undefined;
 const launch: DesktopLaunch = (() => {
 	try {
 		const parsed = parseDesktopLaunch(process.argv);
 		if (parsed.windowMode === 'full') return parsed;
+		if (parsed.windowMode === 'multi') {
+			// A second full-size instance with its own profile: skips the app
+			// singleton, tray and updater, and starts a fresh conversation so it
+			// never reopens a transcript another instance may be writing.
+			baseUserData = app.getPath('userData');
+			paiProfile = reservePaiProfile(baseUserData, { rootName: 'multi-profiles' });
+			app.setPath('userData', paiProfile.userData);
+			app.setPath('sessionData', paiProfile.sessionData);
+			return { windowMode: 'multi' };
+		}
 		const cwd = validatePaiWorkspace(parsed.cwd);
 		// The pai profile relocates userData; keep the base path for shared state.
 		baseUserData = app.getPath('userData');
@@ -195,7 +205,7 @@ function createWindow(onReady?: () => void, onLoadError?: (error: unknown) => vo
 		closeDialogOpen = true;
 		void (async () => {
 			try {
-				const settings = launch.windowMode === 'pai' ? { closeBehavior: 'quit' as const }
+				const settings = launch.windowMode !== 'full' ? { closeBehavior: 'quit' as const }
 					: ipc ? ipc.readCurrentDesktopSettings() : { notificationsEnabled: true, closeBehavior: 'tray' as const };
 				const busy = ipc ? await ipc.isAgentWorkActive() : false;
 				const english = getAppLocale() === 'en-US';
@@ -240,7 +250,7 @@ function createWindow(onReady?: () => void, onLoadError?: (error: unknown) => vo
 		})();
 	};
 	win.on('close', (event) => {
-		if (process.platform !== 'win32' && launch.windowMode !== 'pai' || readyToQuit) return;
+		if (process.platform !== 'win32' && launch.windowMode === 'full' || readyToQuit) return;
 		event.preventDefault();
 		requestClose();
 	});
@@ -337,7 +347,7 @@ async function bootstrap(splash: BrowserWindow): Promise<void> {
 		}, (error) => showStartupError(splash, error));
 		// Load the UI and Pi history concurrently, keeping the logo until React
 		// acknowledges a committed conversation (or a required extension dialog).
-		void module.agentService.init({ cwd: workspace, ...(launch.windowMode === 'pai' ? { fresh: true } : {}) }).catch((error: unknown) => {
+		void module.agentService.init({ cwd: workspace, ...(launch.windowMode !== 'full' ? { fresh: true } : {}) }).catch((error: unknown) => {
 			recordDiagnostic({ stage: 'startup', action: 'agent-init', outcome: 'failure' });
 			console.error('Pi agent failed to initialize:', error);
 			if (startupCancelled || mainRevealed) return;
@@ -350,7 +360,7 @@ async function bootstrap(splash: BrowserWindow): Promise<void> {
 	}
 }
 
-const hasSingleInstanceLock = launch.windowMode === 'pai' || app.requestSingleInstanceLock();
+const hasSingleInstanceLock = launch.windowMode !== 'full' || app.requestSingleInstanceLock();
 if (!hasSingleInstanceLock) {
 	app.quit();
 } else {
@@ -436,7 +446,7 @@ if (!hasSingleInstanceLock) {
 }
 
 app.on('window-all-closed', () => {
-	if (process.platform !== 'darwin' || launch.windowMode === 'pai') app.quit();
+	if (process.platform !== 'darwin' || launch.windowMode !== 'full') app.quit();
 });
 
 let readyToQuit = false;

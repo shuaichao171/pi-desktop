@@ -30,6 +30,7 @@ import type {
 	UiModelSummary,
 	UiModelProvider,
 	UiSaveCustomProviderRequest,
+	UiSaveProviderModelsRequest,
 	UiProviderAuthStatus,
 	UiQueuedMessage,
 	UiSessionSummary,
@@ -119,6 +120,7 @@ interface ChatState {
 	refreshModelProviders(): Promise<void>;
 	saveCustomProvider(request: UiSaveCustomProviderRequest): Promise<void>;
 	removeCustomProvider(provider: string): Promise<void>;
+	saveProviderModels(request: UiSaveProviderModelsRequest): Promise<void>;
 	setModelEnabled(provider: string, modelId: string, enabled: boolean): Promise<void>;
 	setModel(provider: string, id: string): Promise<void>;
 	setThinkingLevel(level: UiThinkingLevel): Promise<void>;
@@ -925,6 +927,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
 	async removeCustomProvider(provider) {
 		await updateCustomProvider((bridge) => bridge.removeCustomProvider(provider));
+	},
+
+	async saveProviderModels(request) {
+		await updateCustomProvider((bridge) => bridge.saveProviderModels(request));
 	},
 
 	async setModelEnabled(provider, modelId, enabled) {

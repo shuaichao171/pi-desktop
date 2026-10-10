@@ -2,10 +2,11 @@ import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { ModelRuntime } from '@earendil-works/pi-coding-agent';
-import type { UiDiscoverProviderModelsRequest, UiProviderApi, UiProviderHeaders, UiSaveCustomProviderRequest, UiThinkingLevel } from '@pidesktop/shared';
+import type { UiCustomProviderModel, UiDiscoverProviderModelsRequest, UiProviderApi, UiProviderHeaders, UiProviderReadOnlyReason, UiSaveCustomProviderRequest, UiSaveProviderModelsRequest, UiThinkingLevel } from '@pidesktop/shared';
 
 type JsonObject = Record<string, unknown>;
-export interface ProviderDocument { raw: string | null; data: JsonObject & { providers: Record<string, JsonObject> } }
+/** `invalid` lists entries Pi's schema would reject; they stay readable but block every write. */
+export interface ProviderDocument { raw: string | null; data: JsonObject & { providers: Record<string, JsonObject> }; invalid: string[] }
 export const CUSTOM_PROVIDER_APIS: readonly UiProviderApi[] = ['openai-completions', 'openai-responses', 'anthropic-messages', 'google-generative-ai'];
 const record = (value: unknown): value is JsonObject => value !== null && typeof value === 'object' && !Array.isArray(value);
 const own = (value: object, key: string): boolean => Object.hasOwn(value, key);
@@ -51,17 +52,25 @@ export async function readProviderDocument(path: string): Promise<ProviderDocume
 	let raw: string;
 	try { raw = await readFile(path, 'utf8'); }
 	catch (error) {
-		if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { raw: null, data: { providers: {} } };
+		if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { raw: null, data: { providers: {} }, invalid: [] };
 		throw new Error('无法读取 models.json，未修改供应商配置');
 	}
+	let data: unknown;
 	try {
 		if (raw.length > 8_000_000) throw new Error('Too large');
-		const data: unknown = JSON.parse(withoutComments(raw.replace(/^\uFEFF/, '')));
-		if (!record(data) || !record(data.providers) || Object.values(data.providers).some((provider) => !record(provider)
-			|| (provider.models !== undefined && (!Array.isArray(provider.models) || provider.models.some((model) => !record(model) || typeof model.id !== 'string' || !model.id.trim())))
-			|| ['name', 'baseUrl', 'api', 'apiKey'].some((key) => provider[key] !== undefined && (typeof provider[key] !== 'string' || !provider[key])))) throw new Error('Invalid document');
-		return { raw, data: data as ProviderDocument['data'] };
+		data = JSON.parse(withoutComments(raw.replace(/^\uFEFF/, '')));
+		if (!record(data) || !record(data.providers)) throw new Error('Invalid document');
 	} catch { throw new Error('models.json 格式无效，请先修复原配置；未覆盖文件'); }
+	// One malformed entry must not hide every other provider from settings.
+	const invalid = Object.entries(data.providers as JsonObject).filter(([, provider]) => !record(provider)
+		|| (provider.models !== undefined && (!Array.isArray(provider.models) || provider.models.some((model) => !record(model) || typeof model.id !== 'string' || !model.id.trim())))
+		|| ['name', 'baseUrl', 'api', 'apiKey'].some((key) => provider[key] !== undefined && (typeof provider[key] !== 'string' || !provider[key]))).map(([id]) => id);
+	return { raw, data: data as ProviderDocument['data'], invalid };
+}
+
+/** Pi rejects the whole file for one bad entry, so any write would be silently ignored. */
+export function assertWritableDocument(document: ProviderDocument): void {
+	if (document.invalid.length) throw new Error(`models.json 中供应商 ${document.invalid.join('、')} 的配置格式无效，请先修复原配置后再修改`);
 }
 
 export function safeProviderUrl(value: unknown): string | null {
@@ -72,11 +81,19 @@ export function safeProviderUrl(value: unknown): string | null {
 	} catch { return null; }
 }
 
+/** The first models.json feature the connection editor cannot round-trip, or null when it can. */
+export function connectionReadOnlyReason(config: JsonObject): UiProviderReadOnlyReason | null {
+	if (config.oauth) return 'oauth';
+	if (config.modelOverrides) return 'model-overrides';
+	if (typeof config.api !== 'string' || !CUSTOM_PROVIDER_APIS.includes(config.api as UiProviderApi)) return 'unsupported-api';
+	if (safeProviderUrl(config.baseUrl) === null) return 'unsafe-url';
+	if (!Array.isArray(config.models) || config.models.length === 0) return 'no-models';
+	if (!config.models.every((model) => record(model) && typeof model.id === 'string' && !own(model, 'api') && !own(model, 'baseUrl'))) return 'model-endpoint';
+	return null;
+}
+
 export function isEditableProvider(config: JsonObject): boolean {
-	return typeof config.api === 'string' && CUSTOM_PROVIDER_APIS.includes(config.api as UiProviderApi)
-		&& safeProviderUrl(config.baseUrl) !== null && !config.oauth && !config.modelOverrides
-		&& Array.isArray(config.models) && config.models.length > 0
-		&& config.models.every((model) => record(model) && typeof model.id === 'string' && !own(model, 'api') && !own(model, 'baseUrl'));
+	return connectionReadOnlyReason(config) === null;
 }
 
 function text(value: unknown, label: string, maximum: number): string {
@@ -145,8 +162,18 @@ export function validateProviderRequest(value: unknown): UiSaveCustomProviderReq
 	if (value.useSystemProxy !== undefined && typeof value.useSystemProxy !== 'boolean') throw new Error('代理设置无效');
 	const headers = value.headers === undefined ? undefined : validateProviderHeaders(value.headers);
 	if (!Array.isArray(value.models) || value.models.length < 1 || value.models.length > 1000) throw new Error('请配置 1–1000 个模型');
+	const models = validateModels(value.models);
+	for (const model of models) checkModelLimits(model, value.api);
+	return { provider, name: value.name === undefined ? provider : text(value.name, '供应商名称', 200), baseUrl, api: value.api as UiProviderApi,
+		models, ...(headers === undefined ? {} : { headers }), ...(value.useSystemProxy === undefined ? {} : { useSystemProxy: value.useSystemProxy }),
+		...(value.apiKey === undefined ? {} : { apiKey: (value.apiKey as string).trim() }), ...(value.mode === undefined ? {} : { mode: value.mode }) };
+}
+
+type ValidatedModel = Required<Omit<UiCustomProviderModel, 'thinkingLevelMap'>> & Pick<UiCustomProviderModel, 'thinkingLevelMap'>;
+
+function validateModels(values: unknown[]): ValidatedModel[] {
 	const ids = new Set<string>();
-	const models = value.models.map((model) => {
+	return values.map((model) => {
 		if (!record(model) || Object.keys(model).some((key) => !['id', 'name', 'reasoning', 'input', 'contextWindow', 'maxTokens', 'thinkingLevelMap'].includes(key))) throw new Error('模型参数无效');
 		const id = text(model.id, '模型 ID', 200);
 		if (ids.has(id)) throw new Error('同一供应商不能包含重复模型 ID');
@@ -159,15 +186,57 @@ export function validateProviderRequest(value: unknown): UiSaveCustomProviderReq
 		const contextWindow = model.contextWindow ?? 128000;
 		const maxTokens = model.maxTokens ?? Math.min(16384, Number(contextWindow));
 		if (!Number.isSafeInteger(contextWindow) || Number(contextWindow) <= 0 || Number(contextWindow) > 100_000_000
-			|| !Number.isSafeInteger(maxTokens) || Number(maxTokens) <= 0 || Number(maxTokens) > 100_000_000
-			|| (value.api !== 'google-generative-ai' && Number(maxTokens) > Number(contextWindow))) throw new Error('模型 token 限额无效；非 Gemini 模型的输出限额不能超过上下文容量');
+			|| !Number.isSafeInteger(maxTokens) || Number(maxTokens) <= 0 || Number(maxTokens) > 100_000_000) throw new Error('模型 token 限额无效；非 Gemini 模型的输出限额不能超过上下文容量');
 		return { id, name: model.name === undefined ? id : text(model.name, '模型名称', 200), reasoning: model.reasoning ?? false,
 			input: input as ('text' | 'image')[], contextWindow: Number(contextWindow), maxTokens: Number(maxTokens),
 			...(model.thinkingLevelMap === undefined ? {} : { thinkingLevelMap: { ...model.thinkingLevelMap } as Partial<Record<UiThinkingLevel, string | null>> }) };
 	});
-	return { provider, name: value.name === undefined ? provider : text(value.name, '供应商名称', 200), baseUrl, api: value.api as UiProviderApi,
-		models, ...(headers === undefined ? {} : { headers }), ...(value.useSystemProxy === undefined ? {} : { useSystemProxy: value.useSystemProxy }),
-		...(value.apiKey === undefined ? {} : { apiKey: (value.apiKey as string).trim() }), ...(value.mode === undefined ? {} : { mode: value.mode }) };
+}
+
+/** Gemini reports output separately from context; every other protocol shares the window. */
+function checkModelLimits(model: ValidatedModel, api: unknown): void {
+	if (api !== 'google-generative-ai' && model.maxTokens > model.contextWindow) throw new Error('模型 token 限额无效；非 Gemini 模型的输出限额不能超过上下文容量');
+}
+
+export type ProviderModelsChange = Omit<Required<UiSaveProviderModelsRequest>, 'upsert'> & { upsert: ValidatedModel[] };
+
+export function validateProviderModelsRequest(value: unknown): ProviderModelsChange {
+	if (!record(value) || Object.keys(value).some((key) => !['provider', 'upsert', 'remove'].includes(key))) throw new Error('模型参数无效');
+	const provider = validateProviderId(value.provider);
+	const upsert = value.upsert ?? [];
+	const remove = value.remove ?? [];
+	if (!Array.isArray(upsert) || !Array.isArray(remove) || upsert.length + remove.length < 1 || upsert.length > 1000 || remove.length > 1000) throw new Error('请提供 1–1000 个要修改的模型');
+	const removed = remove.map((id) => text(id, '模型 ID', 200));
+	const models = validateModels(upsert);
+	if (new Set(removed).size !== removed.length || models.some((model) => removed.includes(model.id))) throw new Error('同一模型不能同时修改和删除');
+	return { provider, upsert: models, remove: removed };
+}
+
+/**
+ * Rewrites only the provider's `models` array: connection fields, overrides and
+ * unmanaged model keys (cost, compat, per-model endpoints) are kept verbatim.
+ * `fallbackApi` is the catalog protocol used when neither entry nor provider names one.
+ */
+export function mergeProviderModels(document: ProviderDocument, request: ProviderModelsChange, fallbackApi: string | null): ProviderDocument['data'] {
+	const previous = own(document.data.providers, request.provider) ? document.data.providers[request.provider]! : {};
+	const next = (Array.isArray(previous.models) ? previous.models : []).filter(record);
+	for (const id of request.remove) if (!next.some((model) => model.id === id)) throw new Error('要删除的模型不在配置文件中，请刷新后重试');
+	const models = next.filter((model) => !request.remove.includes(model.id as string));
+	for (const model of request.upsert) {
+		const index = models.findIndex((item) => item.id === model.id);
+		const stored = index >= 0 ? models[index] : undefined;
+		checkModelLimits(model, stored?.api ?? previous.api ?? fallbackApi);
+		// A new entry on a provider without its own `api` would otherwise inherit
+		// whichever builtin model Pi picks as defaults; pin the protocol it was found with.
+		const entry = stored ? { ...stored, ...model } : { ...model, ...(previous.api === undefined && fallbackApi ? { api: fallbackApi } : {}) };
+		if (stored) models[index] = entry; else models.push(entry);
+	}
+	const { models: _replaced, ...rest } = previous;
+	const config: JsonObject = models.length ? { ...rest, models } : rest;
+	const providers = { ...document.data.providers, [request.provider]: config };
+	// Dropping the last overlay field restores the untouched builtin provider.
+	if (!Object.keys(config).length) delete providers[request.provider];
+	return { ...document.data, providers };
 }
 
 export function mergeProvider(document: ProviderDocument, request: UiSaveCustomProviderRequest): ProviderDocument['data'] {

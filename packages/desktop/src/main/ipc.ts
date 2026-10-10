@@ -84,7 +84,7 @@ let lastSessionMetaPrune = 0;
 let sessionGroupService: SessionGroupService | null = null;
 let automationService: ReturnType<typeof createAutomationService> | null = null;
 let pluginMutationActive = false;
-let currentWindowMode: 'full' | 'pai' = 'full';
+let currentWindowMode: 'full' | 'pai' | 'multi' = 'full';
 const discoverPlugins = createPluginDiscovery();
 /** Resolved each time an agent host process is forked; custom engines apply after an app restart. */
 const agentEngineOptions: AgentHostEngineOptions = {
@@ -688,7 +688,7 @@ async function withPluginMutation<T>(cwd: string, action: () => Promise<T>): Pro
 }
 
 export function registerIpc(options: {
-	windowMode?: 'full' | 'pai';
+	windowMode?: 'full' | 'pai' | 'multi';
 	onRendererReady?(win: BrowserWindow): void;
 	getDialogWindow?(): BrowserWindow | undefined;
 	baseUserData?: string;
@@ -1301,6 +1301,7 @@ export function registerIpc(options: {
 	});
 	handleRendererInvoke(IPC_CHANNELS.agentSaveCustomProvider, (_event, request: Parameters<typeof agentService.saveCustomProvider>[0]) => agentService.saveCustomProvider(request));
 	handleRendererInvoke(IPC_CHANNELS.agentRemoveCustomProvider, (_event, provider: string) => agentService.removeCustomProvider(provider));
+	handleRendererInvoke(IPC_CHANNELS.agentSaveProviderModels, (_event, request: Parameters<typeof agentService.saveProviderModels>[0]) => agentService.saveProviderModels(request));
 	handleRendererInvoke(IPC_CHANNELS.agentListSlashCommands, () => agentService.listSlashCommands());
 	handleRendererInvoke(IPC_CHANNELS.agentExecuteSlashCommand, (event, request: UiSlashCommandRequest) => {
 		if (request?.name === 'reload') {

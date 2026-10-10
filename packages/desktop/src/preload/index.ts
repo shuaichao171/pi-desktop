@@ -233,6 +233,7 @@ const bridge: AgentBridge = {
 	discoverProviderModels: (request) => invoke(IPC_CHANNELS.agentDiscoverProviderModels, request),
 	saveCustomProvider: (request) => invoke(IPC_CHANNELS.agentSaveCustomProvider, request),
 	removeCustomProvider: (provider) => invoke(IPC_CHANNELS.agentRemoveCustomProvider, provider),
+	saveProviderModels: (request) => invoke(IPC_CHANNELS.agentSaveProviderModels, request),
 	listSlashCommands: () => invoke(IPC_CHANNELS.agentListSlashCommands),
 	executeSlashCommand: (request) => invoke(IPC_CHANNELS.agentExecuteSlashCommand, request),
 	setModel: (provider, id) => invoke(IPC_CHANNELS.agentSetModel, provider, id),

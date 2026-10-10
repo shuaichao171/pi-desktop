@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import type { UiCustomProviderModel, UiDiscoveredProviderModel, UiDiscoverProviderModelsRequest, UiModelProvider, UiModelSummary, UiProviderApi, UiProviderAuthStatus, UiProviderHeaders, UiSaveCustomProviderRequest, UiThinkingLevel } from '@pidesktop/shared';
+import type { UiCustomProviderModel, UiDiscoveredProviderModel, UiDiscoverProviderModelsRequest, UiModelProvider, UiModelSummary, UiProviderApi, UiProviderAuthStatus, UiProviderHeaders, UiSaveCustomProviderRequest, UiSaveProviderModelsRequest, UiThinkingLevel } from '@pidesktop/shared';
 import { useChatStore } from '../store';
 import { useT, type Translate } from '../i18n';
 import type { ModelManagementTarget } from '../modelManagement';
@@ -88,9 +88,9 @@ function serializeModel(model: UiModelSummary): UiCustomProviderModel {
 	return { id: model.id, name: model.name, contextWindow: model.contextWindow, maxTokens: model.maxTokens, reasoning: model.reasoning, input: [...model.input], ...(model.thinkingLevelMap ? { thinkingLevelMap: { ...model.thinkingLevelMap } } : {}) };
 }
 
-function providerRequest(provider: UiModelProvider, models = provider.models.map(serializeModel)): UiSaveCustomProviderRequest {
-	return { provider: provider.provider, name: provider.name, baseUrl: provider.baseUrl ?? '', api: provider.api as UiProviderApi, models, mode: 'update' };
-}
+/** Older hosts only report `editable`; it then covers the whole models.json entry. */
+const modelsEditable = (provider: UiModelProvider) => provider.modelsEditable ?? provider.editable;
+const configModelIds = (provider: UiModelProvider) => new Set(provider.configModelIds ?? (provider.editable ? provider.models.map((model) => model.id) : []));
 
 function connectionIdentity(provider: UiModelProvider): string {
 	return JSON.stringify([provider.name, provider.baseUrl, provider.api, [...(provider.headerNames ?? [])].sort(), provider.useSystemProxy]);
@@ -354,6 +354,7 @@ export function ModelSettingsPanel({ initialTarget, renderCredential, onDraftSta
 	const refreshModels = useChatStore((state) => state.refreshModels);
 	const refreshAuth = useChatStore((state) => state.refreshProviderAuth);
 	const saveProvider = useChatStore((state) => state.saveCustomProvider);
+	const saveProviderModels = useChatStore((state) => state.saveProviderModels);
 	const removeProvider = useChatStore((state) => state.removeCustomProvider);
 	const setModel = useChatStore((state) => state.setModel);
 	const setModelEnabled = useChatStore((state) => state.setModelEnabled);
@@ -435,7 +436,9 @@ export function ModelSettingsPanel({ initialTarget, renderCredential, onDraftSta
 	const selectedConfigured = selected ? configured(selected) : false;
 	// Builtin providers whose catalog api speaks a standard protocol can also
 	// discover their live model list (agent falls back to the catalog definition).
-	const discoverable = Boolean(selected?.api && (!selected.custom || selected.editable) && PROTOCOLS.some((protocol) => protocol.value === selected.api));
+	const discoverable = Boolean(selected?.api && selected.baseUrl && (modelsEditable(selected) || !selected.custom) && PROTOCOLS.some((protocol) => protocol.value === selected.api));
+	const selectedModelsEditable = Boolean(selected && modelsEditable(selected));
+	const selectedConfigIds = selected ? configModelIds(selected) : new Set<string>();
 	const searchMatches = (items: UiModelProvider[]) => items.filter((item) => `${item.provider} ${item.name}`.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase()));
 	const matches = searchMatches(configuredProviders);
 	const groups = [
@@ -533,15 +536,17 @@ export function ModelSettingsPanel({ initialTarget, renderCredential, onDraftSta
 		const originalId = editor.model?.id;
 		if (originalId && !current.models.some((item) => item.id === originalId)) { setError(t('settings.modelCatalogChanged')); return false; }
 		if (current.models.some((item) => item.id === value.id && item.id !== originalId)) { setError(t('settings.customModelDuplicate')); return false; }
-		const models = originalId ? current.models.map((item) => item.id === originalId ? value : serializeModel(item)) : [...current.models.map(serializeModel), value];
-		if (!await run(() => saveProvider(providerRequest(current, models)), 'settings.customModelSaved')) return false;
+		const request: UiSaveProviderModelsRequest = { provider: current.provider, upsert: [value], ...(originalId && originalId !== value.id ? { remove: [originalId] } : {}) };
+		if (!await run(() => saveProviderModels(request), 'settings.customModelSaved')) return false;
 		setModalDirty(false); setEditor(null); return true;
 	}
 	async function saveConnection(request: UiSaveCustomProviderRequest) {
 		if (!canChange) return false;
 		const current = latestProvider(request.provider);
 		if (!current) { setError(t('settings.modelCatalogChanged')); return false; }
-		if (!await run(() => saveProvider({ ...request, models: current.models.map(serializeModel) }), 'settings.providerSaved')) return false;
+		// Only models.json entries round-trip; builtin catalog models must not be pinned.
+		const configIds = configModelIds(current);
+		if (!await run(() => saveProvider({ ...request, models: current.models.filter((item) => configIds.has(item.id)).map(serializeModel) }), 'settings.providerSaved')) return false;
 		// 连接和凭据分别保存，更新连接不能卸载并清除尚未保存的密钥草稿。
 		setConnectionDirty(false); setConnectionRevision((value) => value + 1); return true;
 	}
@@ -553,7 +558,7 @@ export function ModelSettingsPanel({ initialTarget, renderCredential, onDraftSta
 		const currentIds = new Set(current.models.map((item) => item.id));
 		const additions = request.models.filter((item) => !originalIds.has(item.id) && !currentIds.has(item.id));
 		if (!additions.length) { setError(t('settings.providerNoNewModels')); return false; }
-		if (!await run(() => saveProvider(providerRequest(current, [...current.models.map(serializeModel), ...additions])), 'settings.providerSaved')) return false;
+		if (!await run(() => saveProviderModels({ provider: current.provider, upsert: additions }), 'settings.providerSaved')) return false;
 		setModalDirty(false); setEditor(null); return true;
 	}
 	async function confirmRemoval() {
@@ -563,7 +568,7 @@ export function ModelSettingsPanel({ initialTarget, renderCredential, onDraftSta
 		} else {
 			const current = latestProvider(removalProvider.provider);
 			if (!current || current.models.length < 2) { setError(t('settings.customModelLast')); return; }
-			if (await run(() => saveProvider(providerRequest(current, current.models.filter((item) => item.id !== confirmRemove.model).map(serializeModel))), 'settings.customModelRemoved')) setConfirmRemove(null);
+			if (await run(() => saveProviderModels({ provider: current.provider, remove: [confirmRemove.model] }), 'settings.customModelRemoved')) setConfirmRemove(null);
 		}
 	}
 	const protocolLabel = selected?.api ? PROTOCOLS.find((protocol) => protocol.value === selected.api)?.label ?? selected.api : null;
@@ -587,14 +592,14 @@ export function ModelSettingsPanel({ initialTarget, renderCredential, onDraftSta
 			</nav>
 			<div ref={detailRef} className="pd-model-provider-detail">
 				{selected ? <>
-					<div className="pd-model-provider-detail-head"><div><h3>{selected.name || selected.provider}</h3><div className="pd-model-provider-subtitle"><code>{selected.provider}</code><span className="pd-model-provider-badge">{t(selected.custom ? 'settings.providerCustom' : 'settings.providerBuiltin')}</span><span className={`pd-model-provider-auth ${selectedConfigured ? 'is-ready' : 'is-missing'}`}>{t(selectedConfigured ? 'settings.authAvailable' : 'settings.authMissing')}</span></div></div>
+					<div className="pd-model-provider-detail-head"><div><h3>{selected.name || selected.provider}</h3><div className="pd-model-provider-subtitle"><code>{selected.provider}</code><span className="pd-model-provider-badge">{t(selected.custom && !selected.builtin ? 'settings.providerCustom' : 'settings.providerBuiltin')}</span><span className={`pd-model-provider-auth ${selectedConfigured ? 'is-ready' : 'is-missing'}`}>{t(selectedConfigured ? 'settings.authAvailable' : 'settings.authMissing')}</span></div></div>
 						<div className="pd-model-page-actions">
 							<HoverTooltip title={t('settings.providerEdit')}><button type="button" data-action="edit-provider" className="pd-model-settings-button" disabled={!canChange} aria-label={t('settings.providerEdit')} onClick={() => openEditor({ kind: 'edit', provider: selected.provider })}><Icon name="pencil" width="13" height="13" />{t('settings.providerEdit')}</button></HoverTooltip>
 							{selected.custom && selected.editable && <HoverTooltip title={t('settings.providerRemove')}><button type="button" data-action="remove-provider" className="pd-icon-button is-danger" disabled={!canChange} aria-label={t('settings.providerRemove')} onClick={() => navigate(() => setConfirmRemove({ kind: 'provider', provider: selected }))}><Icon name="trash" width="16" height="16" /></button></HoverTooltip>}
 						</div>
 					</div>
 					<div className="pd-model-provider-connection-row"><span className="pd-model-provider-url"><span className="pd-model-provider-url-label">{t('settings.providerBaseUrl')}</span><code title={selected.baseUrl || undefined}>{selected.baseUrl || '—'}</code></span>{protocolLabel && <span className="pd-model-provider-badge pd-model-provider-protocol">{protocolLabel}</span>}</div>
-					<section className="pd-model-catalog"><div className="pd-model-settings-subhead"><h4>{t('settings.availableModels')} <span className="pd-model-count">{selected.models.length}</span></h4>{(discoverable || selected.custom && selected.editable) && <div className="pd-model-page-actions">{discoverable && <button type="button" data-action="discover-models" className="pd-model-settings-button" disabled={!canChange} onClick={() => openEditor({ kind: 'discover', provider: selected })}><Icon name="refresh" width="13" height="13" />{t('settings.providerFetchModels')}</button>}{selected.custom && selected.editable && <button type="button" data-action="add-model" className="pd-model-settings-button" disabled={!canChange} onClick={() => openEditor({ kind: 'model', provider: selected })}><Icon name="plus" width="13" height="13" />{t('settings.customModelAdd')}</button>}</div>}</div>
+					<section className="pd-model-catalog"><div className="pd-model-settings-subhead"><h4>{t('settings.availableModels')} <span className="pd-model-count">{selected.models.length}</span></h4>{(discoverable || selectedModelsEditable && selected.custom) && <div className="pd-model-page-actions">{discoverable && <button type="button" data-action="discover-models" className="pd-model-settings-button" disabled={!canChange} onClick={() => openEditor({ kind: 'discover', provider: selected })}><Icon name="refresh" width="13" height="13" />{t('settings.providerFetchModels')}</button>}{selectedModelsEditable && selected.custom && <button type="button" data-action="add-model" className="pd-model-settings-button" disabled={!canChange} onClick={() => openEditor({ kind: 'model', provider: selected })}><Icon name="plus" width="13" height="13" />{t('settings.customModelAdd')}</button>}</div>}</div>
 						<input className="pd-model-provider-search" type="search" value={modelSearch} onChange={(event) => setModelSearch(event.target.value)} aria-label={t('composer.pickerSearchLabel')} placeholder={t('composer.pickerSearchPlaceholder')} />
 						<div className="pd-model-settings-models" aria-label={t('settings.availableModels')}>{filteredModels.map((item) => {
 							const current = item.provider === modelProvider && item.id === model;
@@ -606,7 +611,7 @@ export function ModelSettingsPanel({ initialTarget, renderCredential, onDraftSta
 									{current && <span className="pd-model-settings-current-badge">{t('composer.pickerCurrent')}</span>}
 									<div className="pd-model-settings-model-tools">
 										{!current && <HoverTooltip title={t('settings.customModelUse')}><button type="button" data-action="use-model" className="pd-icon-button" disabled={!canChange || !available} aria-label={`${t('settings.customModelUse')} ${item.name || item.id}`} onClick={() => navigate(() => { void run(() => setModel(item.provider, item.id)); })}><Icon name="check" width="15" height="15" /></button></HoverTooltip>}
-									{selected.custom && selected.editable && <><HoverTooltip title={t('settings.customModelEdit')}><button type="button" data-action="edit-model" className="pd-icon-button" disabled={!canChange} aria-label={`${t('settings.customModelEdit')} ${item.name || item.id}`} onClick={() => openEditor({ kind: 'model', provider: selected, model: item })}><Icon name="pencil" width="15" height="15" /></button></HoverTooltip>
+									{selectedModelsEditable && selectedConfigIds.has(item.id) && <><HoverTooltip title={t('settings.customModelEdit')}><button type="button" data-action="edit-model" className="pd-icon-button" disabled={!canChange} aria-label={`${t('settings.customModelEdit')} ${item.name || item.id}`} onClick={() => openEditor({ kind: 'model', provider: selected, model: item })}><Icon name="pencil" width="15" height="15" /></button></HoverTooltip>
 											<HoverTooltip title={t(selected.models.length < 2 ? 'settings.customModelLast' : 'settings.customModelRemove')}><button type="button" data-action="remove-model" className="pd-icon-button is-danger" disabled={!canChange || selected.models.length < 2} aria-label={`${t('settings.customModelRemove')} ${item.name || item.id}`} onClick={() => navigate(() => setConfirmRemove({ kind: 'model', model: item.id }))}><Icon name="trash" width="15" height="15" /></button></HoverTooltip></>}
 											<HoverTooltip title={t(testState?.status === 'busy' ? 'settings.modelTestCancel' : 'settings.modelTest')}><button type="button" data-action="test-model" className="pd-icon-button" disabled={!bridge} aria-busy={testState?.status === 'busy'} aria-label={`${t(testState?.status === 'busy' ? 'settings.modelTestCancel' : 'settings.modelTest')} ${item.name || item.id}`} onClick={() => { void runModelTest(item.provider, item.id); }}><Icon name={testState?.status === 'busy' ? 'loader' : 'spark'} width="15" height="15" /></button></HoverTooltip>
 									</div>
@@ -643,7 +648,7 @@ export function ModelSettingsPanel({ initialTarget, renderCredential, onDraftSta
 			: editor.kind === 'edit' ? (editProvider && editAuth ? <section className="pd-model-provider-edit">
 				{editProvider.custom && editProvider.editable ? <ProviderEditor key={`connection:${editProvider.provider}:${connectionRevision}`} provider={editProvider} mode="connection" disabled={!canChange} onDirtyChange={setConnectionDirty} onSaveReady={reportConnectionSaver} onSave={saveConnection} onCancel={() => { setConnectionDirty(false); setConnectionRevision((value) => value + 1); }} /> : <>
 					<dl className="pd-model-provider-connection"><dt>{t('settings.providerBaseUrl')}</dt><dd>{editProvider.baseUrl || '—'}</dd><dt>{t('settings.providerProtocol')}</dt><dd>{editProvider.api || '—'}</dd></dl>
-					<p className="pd-model-settings-notice">{t(editProvider.custom ? 'settings.providerReadOnly' : 'settings.providerBuiltinConnection')}</p>
+					<p className="pd-model-settings-notice">{t(editProvider.readOnlyReason ? `settings.providerReadOnly.${editProvider.readOnlyReason}` : editProvider.custom ? 'settings.providerReadOnly' : 'settings.providerBuiltinConnection')}</p>
 				</>}
 				<div key={`credential:${editProvider.provider}:${credentialRevision}`} className="pd-model-settings-credentials">{renderCredential(editAuth, reportCredential, navigate)}</div>
 				{feedback && <p className="pd-model-settings-feedback" role="status">{feedback}</p>}

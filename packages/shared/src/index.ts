@@ -100,6 +100,7 @@ export const IPC_CHANNELS = {
   agentDiscoverProviderModels: 'agent:discover-provider-models',
   agentSaveCustomProvider: 'agent:save-custom-provider',
   agentRemoveCustomProvider: 'agent:remove-custom-provider',
+  agentSaveProviderModels: 'agent:save-provider-models',
   agentSetModel: 'agent:set-model',
   agentSetThinkingLevel: 'agent:set-thinking-level',
   agentListSlashCommands: 'agent:list-slash-commands',
@@ -313,12 +314,32 @@ export interface UiSaveCustomProviderRequest {
   mode?: 'create' | 'update';
 }
 
+/** Changes only models.json `models` entries; every connection field stays untouched. */
+export interface UiSaveProviderModelsRequest {
+  provider: string;
+  /** Added or replaced by id; existing entries keep fields the editor does not manage. */
+  upsert?: UiCustomProviderModel[];
+  /** Ids of models.json entries to drop; builtin catalog models cannot be removed. */
+  remove?: string[];
+}
+
+/** Why the connection (name, URL, protocol, headers) cannot be edited in settings. */
+export type UiProviderReadOnlyReason = 'builtin' | 'extension' | 'invalid-config' | 'oauth' | 'model-overrides' | 'unsupported-api' | 'unsafe-url' | 'no-models' | 'model-endpoint';
+
 /** Full settings catalog, including models without configured credentials. */
 export interface UiModelProvider {
   provider: string;
   name: string;
   custom: boolean;
+  /** The id belongs to a Pi builtin provider (a models.json entry only overlays it). */
+  builtin?: boolean;
+  /** The connection can be edited and the provider removed. */
   editable: boolean;
+  /** models.json `models` entries can be added, edited, removed or imported. */
+  modelsEditable?: boolean;
+  /** Ids defined by models.json `models`; other catalog models come from Pi or overrides. */
+  configModelIds?: string[];
+  readOnlyReason?: UiProviderReadOnlyReason;
   configured: boolean;
   baseUrl: string | null;
   api: string | null;
@@ -844,7 +865,7 @@ export interface AppInfo {
   nodeVersion: string;
   electronVersion: string;
   platform: string;
-  windowMode?: 'full' | 'pai';
+  windowMode?: 'full' | 'pai' | 'multi';
 }
 
 // 'available' = an update was found but nothing downloads until the user consents.
@@ -1095,6 +1116,7 @@ export interface AgentBridge extends InputFeatureBridge, DataFeaturesBridge, Wor
   discoverProviderModels(request: UiDiscoverProviderModelsRequest): Promise<UiProviderModelDiscovery>;
   saveCustomProvider(request: UiSaveCustomProviderRequest): Promise<void>;
   removeCustomProvider(provider: string): Promise<void>;
+  saveProviderModels(request: UiSaveProviderModelsRequest): Promise<void>;
   setModel(provider: string, id: string): Promise<void>;
   setThinkingLevel(level: UiThinkingLevel): Promise<void>;
   listProviderAuth(): Promise<UiProviderAuthStatus[]>;

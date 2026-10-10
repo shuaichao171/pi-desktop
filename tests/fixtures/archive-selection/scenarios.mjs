@@ -24,7 +24,11 @@ function installArchiveSelectionFixture() {
     if (state.injectLate) { state.injectLate = false; state.rows[workspaces[0]].push(clone(late)); }
   };
   fixture.sessionStats = { sessionId: active.id, userMessages: 1, assistantMessages: 1, toolCalls: 0, toolResults: 0, totalMessages: 2, tokens: { input: 1234, output: 432, cacheRead: 876, cacheWrite: 54, total: 2596 }, cost: 0, timing: { sampledAt: Date.now(), durationMs: 54000, running: false, latestRun: { id: 'archive-review-run', durationMs: 12000, outputTokens: 432, running: false } } };
-  Object.assign(fixture.snapshot, { cwd: workspaces[0], sessionId: active.id, sessionPath: active.path, status: 'idle', messages: [], activities: [], runs: [], error: null });
+  // The snapshot matches fixture.sessionStats: one finished run with a user message and its reply.
+  const runAt = Date.now();
+  Object.assign(fixture.snapshot, { cwd: workspaces[0], sessionId: active.id, sessionPath: active.path, status: 'idle', activities: [], error: null,
+    runs: [{ id: 'archive-review-run', status: 'completed', startedAt: runAt - 12000, finishedAt: runAt }],
+    messages: [{ id: 'archive-review-u', runId: 'archive-review-run', order: 0, role: 'user', text: '整理归档会话', status: 'done' }, { id: 'archive-review-a', runId: 'archive-review-run', order: 1, role: 'assistant', text: '归档会话已整理。', status: 'done' }] });
   localStorage.setItem('pi-desktop.sidebar-organization.v1', JSON.stringify({ mode: 'grouped', projectView: 'project', filter: 'all', sort: 'newest', collapsed: [], projectOrder: [] }));
   localStorage.setItem('pi-desktop:conversation-metrics', JSON.stringify({ speed: true, tokens: true, cache: true, duration: true }));
   window.__archiveSelectionReview = state;
@@ -114,7 +118,7 @@ export default async function archiveSelectionScenarios(review) {
   // Entries are snapshotted when confirmation opens. A refreshed archive entry
   // arriving during deletion must never become an implicit deletion target.
   await review.evaluate(`${state}.failures[${q(data.entries[1].path)}] = 1; ${state}.deferNext = true; ${state}.injectLate = true;`);
-  await review.clickText(`${dialog} footer button`, '移入回收站');
+  await review.clickText(`${dialog} footer button`, '永久删除');
   await review.waitFor(`Boolean(${state}.pending)`);
   await review.key('Escape');
   await review.assert(`Boolean(document.querySelector(${q(dialog)})) && Array.from(document.querySelectorAll(${q(dialog + ' footer button')})).every(button => button.disabled) && ${state}.deletes.length === 1`, 'An in-flight deletion cannot be dismissed or submitted twice');
@@ -128,7 +132,7 @@ export default async function archiveSelectionScenarios(review) {
   await review.assert(`${state}.entries.every(entry => ${state}.deletes.filter(path => path === entry.path).length === (entry.path === ${q(data.entries[1].path)} ? 2 : 1)) && Boolean(document.querySelector(${q(row(data.late.path))})) && ${selected} === 0 && document.querySelector(${q(remove)}).disabled && !document.querySelector(${q(all)}).checked && !document.querySelector(${q(all)}).indeterminate`, 'Retry deletes only the failed entry once more, leaves new entries intact, and clears successful selection');
   await review.click(all);
   await review.click(remove);
-  await review.clickText(`${dialog} footer button`, '移入回收站');
+  await review.clickText(`${dialog} footer button`, '永久删除');
   await review.waitFor(`!document.querySelector(${q(dialog)}) && ${checkboxes} === 0`);
   await review.assert(`${state}.deletes.length === 6 && document.querySelector(${q(all)}).disabled && document.querySelector(${q(remove)}).disabled && !document.querySelector(${q(all)}).indeterminate && ${state}.navigation.length === 0 && ${state}.rows[${q(data.workspaces[0])}].some(entry => entry.path === ${q(data.active.path)})`, 'Deleting the final visible archive entry leaves an empty disabled selector and preserves the active conversation');
   await review.screenshot('archive-selection-empty');

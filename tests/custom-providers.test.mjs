@@ -684,3 +684,116 @@ test('model visibility changes lock every runtime and never hide an in-use model
     await f.cleanup();
   }
 });
+
+test('hand-written providers keep a read-only connection but allow model edits that preserve every other field', async () => {
+  const model = (id, extra = {}) => ({ id, name: id, contextWindow: 32768, maxTokens: 4096, ...extra });
+  const external = {
+    'desktop-hand-api': { baseUrl: 'https://mistral.example.invalid', api: 'mistral-conversations', models: [model('hand-one')] },
+    'desktop-hand-query': { baseUrl: 'https://azure.example.invalid/v1?api-version=preview', api: 'openai-completions', models: [model('hand-two', { cost: { input: 1, output: 2, cacheRead: 0, cacheWrite: 0 } })] },
+    'desktop-hand-endpoint': { baseUrl: 'https://models.example.invalid/v1', api: 'openai-completions', models: [model('hand-three', { api: 'openai-responses' })] },
+  };
+  const f = await fixture({ models: { providers: external } });
+  try {
+    const listed = await f.service.listModelProviders();
+    const expected = { 'desktop-hand-api': 'unsupported-api', 'desktop-hand-query': 'unsafe-url', 'desktop-hand-endpoint': 'model-endpoint' };
+    for (const [provider, reason] of Object.entries(expected)) {
+      const summary = listed.find((item) => item.provider === provider);
+      assert.equal(summary.editable, false, provider);
+      assert.equal(summary.modelsEditable, true, provider);
+      assert.equal(summary.readOnlyReason, reason, provider);
+      assert.deepEqual(summary.configModelIds, external[provider].models.map((item) => item.id));
+      await assert.rejects(f.service.saveCustomProvider(request(provider, { mode: 'update' })), /不能在此修改/);
+    }
+
+    await f.service.saveProviderModels({ provider: 'desktop-hand-query', upsert: [model('hand-added'), model('hand-two', { name: 'Renamed' })] });
+    let saved = JSON.parse(contents(f.modelsPath)).providers['desktop-hand-query'];
+    assert.equal(saved.baseUrl, external['desktop-hand-query'].baseUrl, 'the connection is written back verbatim');
+    assert.deepEqual(saved.models.map((item) => item.id), ['hand-two', 'hand-added']);
+    assert.equal(saved.models[0].name, 'Renamed');
+    assert.deepEqual(saved.models[0].cost, external['desktop-hand-query'].models[0].cost, 'unmanaged model keys survive an edit');
+    assert.ok(!Object.hasOwn(saved.models[1], 'api'), 'a provider with its own api needs no per-model protocol');
+    assert.ok((await f.service.listModelProviders()).find((item) => item.provider === 'desktop-hand-query').models.some((item) => item.id === 'hand-added'));
+
+    await f.service.saveProviderModels({ provider: 'desktop-hand-endpoint', upsert: [model('hand-three', { name: 'Kept endpoint' })] });
+    saved = JSON.parse(contents(f.modelsPath)).providers['desktop-hand-endpoint'];
+    assert.equal(saved.models[0].api, 'openai-responses', 'per-model protocols survive an edit');
+
+    await f.service.saveProviderModels({ provider: 'desktop-hand-query', remove: ['hand-two'] });
+    assert.deepEqual(JSON.parse(contents(f.modelsPath)).providers['desktop-hand-query'].models.map((item) => item.id), ['hand-added']);
+    const before = f.disk();
+    await assert.rejects(f.service.saveProviderModels({ provider: 'desktop-hand-query', remove: ['hand-added'] }), /Pi 校验/);
+    await assert.rejects(f.service.saveProviderModels({ provider: 'desktop-hand-query', remove: ['not-in-config'] }), /不在配置文件中/);
+    await assert.rejects(f.service.saveProviderModels({ provider: 'desktop-hand-query', upsert: [model('too-large', { maxTokens: 65536 })] }), /token 限额/);
+    assert.deepEqual(f.disk(), before, 'rejected model edits leave models.json untouched');
+    f.assertOffline();
+  } finally { await f.cleanup(); }
+});
+
+test('builtin providers accept model overlays without pinning their connection or catalog', async () => {
+  const f = await fixture({ models: { providers: { groq: { baseUrl: 'https://groq-proxy.example.invalid/openai/v1' } } } });
+  try {
+    let groq = (await f.service.listModelProviders()).find((item) => item.provider === 'groq');
+    assert.equal(groq.builtin, true);
+    assert.equal(groq.custom, true);
+    assert.equal(groq.editable, false);
+    assert.equal(groq.readOnlyReason, 'builtin');
+    assert.equal(groq.modelsEditable, true);
+    assert.equal(groq.api, 'openai-completions', 'a missing api inherits the builtin catalog');
+    assert.equal(groq.baseUrl, 'https://groq-proxy.example.invalid/openai/v1');
+    const builtinCount = groq.models.length;
+    await f.service.saveProviderModels({ provider: 'groq', upsert: [{ id: 'groq-imported', contextWindow: 32768, maxTokens: 4096 }] });
+    const saved = JSON.parse(contents(f.modelsPath)).providers.groq;
+    assert.equal(saved.baseUrl, 'https://groq-proxy.example.invalid/openai/v1');
+    assert.deepEqual(saved.models.map((item) => [item.id, item.api]), [['groq-imported', 'openai-completions']], 'only the new model is written, with its protocol pinned');
+    groq = (await f.service.listModelProviders()).find((item) => item.provider === 'groq');
+    assert.equal(groq.models.length, builtinCount + 1);
+    assert.deepEqual(groq.configModelIds, ['groq-imported']);
+    await f.service.saveProviderModels({ provider: 'groq', remove: ['groq-imported'] });
+    assert.deepEqual(JSON.parse(contents(f.modelsPath)).providers.groq, { baseUrl: 'https://groq-proxy.example.invalid/openai/v1' }, 'the last model removes only the models key');
+
+    const mistral = (await f.service.listModelProviders()).find((item) => item.provider === 'mistral');
+    assert.equal(mistral.custom, false);
+    assert.equal(mistral.modelsEditable, true);
+    await f.service.saveProviderModels({ provider: 'mistral', upsert: [{ id: 'mistral-imported', contextWindow: 32768, maxTokens: 4096 }] });
+    assert.deepEqual(JSON.parse(contents(f.modelsPath)).providers.mistral, { models: [{ id: 'mistral-imported', name: 'mistral-imported', reasoning: false, input: ['text'], contextWindow: 32768, maxTokens: 4096, api: 'mistral-conversations' }] });
+    await f.service.saveProviderModels({ provider: 'mistral', remove: ['mistral-imported'] });
+    assert.ok(!Object.hasOwn(JSON.parse(contents(f.modelsPath)).providers, 'mistral'), 'an emptied overlay restores the untouched builtin');
+    f.assertOffline();
+  } finally { await f.cleanup(); }
+});
+
+test('one malformed models.json entry stays visible as read-only and blocks writes instead of hiding settings', async () => {
+  const fine = request();
+  delete fine.provider;
+  delete fine.mode;
+  const f = await fixture({ models: { providers: {
+    'desktop-broken': { name: '', baseUrl: 'https://broken.example.invalid/v1' },
+    'desktop-fine': fine,
+  } } });
+  try {
+    const listed = await f.service.listModelProviders();
+    const broken = listed.find((item) => item.provider === 'desktop-broken');
+    assert.equal(broken.readOnlyReason, 'invalid-config');
+    assert.equal(broken.editable, false);
+    assert.equal(broken.modelsEditable, false);
+    assert.ok(listed.some((item) => item.provider === 'desktop-fine'), 'other providers are still listed');
+    const before = f.disk();
+    await assert.rejects(f.service.saveCustomProvider(request('desktop-another')), /desktop-broken/);
+    await assert.rejects(f.service.saveProviderModels({ provider: 'desktop-fine', upsert: [{ id: 'extra' }] }), /desktop-broken/);
+    assert.deepEqual(f.disk(), before);
+    f.assertOffline();
+  } finally { await f.cleanup(); }
+});
+
+test('removing an overlay of a builtin provider keeps its stored credential', async () => {
+  const f = await fixture({ models: { providers: { groq: { name: 'Groq', baseUrl: 'https://api.groq.com/openai/v1', api: 'openai-completions', models: [{ id: 'groq-pinned', contextWindow: 32768, maxTokens: 4096 }] } } } });
+  try {
+    await f.service.setProviderApiKey('groq', 'local-groq-key');
+    const groq = (await f.service.listModelProviders()).find((item) => item.provider === 'groq');
+    assert.equal(groq.editable, true, 'a full overlay is connection-editable');
+    await f.service.removeCustomProvider('groq');
+    assert.ok(!Object.hasOwn(JSON.parse(contents(f.modelsPath)).providers, 'groq'));
+    assert.ok(JSON.parse(contents(f.authPath)).groq, 'the builtin still uses the stored key after its overlay is removed');
+    f.assertOffline();
+  } finally { await f.cleanup(); }
+});

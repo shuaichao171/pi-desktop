@@ -6,7 +6,8 @@ export default async function runScenarios(review) {
   const modelDialog = 'dialog[open][data-model-dialog="model"] [data-model-editor="review-reasoner"]';
   const modelRow = '[data-model-id="review-reasoner"]';
   const customModels = 'document.querySelectorAll("[data-model-id]").length';
-  const saveCalls = 'window.__modelReview.calls.filter(call => call.name === "saveCustomProvider")';
+  // Connection saves and models-only saves are both models.json writes.
+  const saveCalls = 'window.__modelReview.calls.filter(call => call.name === "saveCustomProvider" || call.name === "saveProviderModels")';
   const templatesDialog = 'dialog[open][data-model-dialog="templates"]';
   const credentialsDialog = 'dialog[open][data-model-dialog="credentials"]';
   const waitForTemplates = () => review.waitFor(`Boolean(document.querySelector(${JSON.stringify(templatesDialog)}))`);
@@ -143,7 +144,7 @@ export default async function runScenarios(review) {
   await dialogCentered('model');
   await review.assert(`${customModels} === 3`, 'Model rows remain mounted behind the native editor dialog');
   await review.fill(`${modelDialog} [data-field="model.name"]`, '模型编辑失败后仍保留的草稿');
-  await review.evaluate('window.__modelReview.failures.saveCustomProvider = "模拟保存失败，请保留草稿"');
+  await review.evaluate('window.__modelReview.failures.saveProviderModels = "模拟保存失败，请保留草稿"');
   await review.click(`${modelDialog} button[type="submit"]`);
   await review.waitFor('document.body.textContent.includes("模拟保存失败，请保留草稿")');
   await review.assert(`document.querySelector(${JSON.stringify(`${modelDialog} [data-field="model.name"]`)}).value === '模型编辑失败后仍保留的草稿'`, 'Failed model save keeps typed content');
@@ -156,7 +157,7 @@ export default async function runScenarios(review) {
   await noOpenModelDialog();
   await review.assert(`document.querySelector(${JSON.stringify(connection)}) === null`, 'Model discard leaves no stray provider form');
   await review.assert(`${saveCalls}.length === ${failedSaveCount}`, 'Cancelling model editor does not write');
-  await review.evaluate('delete window.__modelReview.failures.saveCustomProvider');
+  await review.evaluate('delete window.__modelReview.failures.saveProviderModels');
   await review.click(`${modelRow} [data-action="edit-model"]`);
   await review.fill(`${modelDialog} [data-field="model.name"]`, '已成功更新的推理模型');
   await review.click(`${modelDialog} button[type="submit"]`);
@@ -447,5 +448,32 @@ export default async function runScenarios(review) {
   await review.waitFor(`${saveCalls}.length === ${beforeBuiltinImport} + 1`);
   await review.waitFor('document.querySelector("dialog[open].pd-model-dialog") === null');
   await review.assert('window.__modelReview.providers.find(provider=>provider.provider==="openai").models.some(model=>model.id==="discovered-model")', 'Importing a builtin catalog pins the discovered model');
+  await review.assert(`(() => { const args = ${saveCalls}.at(-1).args[0]; return ${saveCalls}.at(-1).name === 'saveProviderModels' && args.provider === 'openai' && args.upsert.map(m => m.id).join() === 'discovered-model'; })()`, 'Builtin import writes only the new models, never the builtin catalog');
   await review.screenshot('10-builtin-import');
+
+  // A hand-written provider keeps its connection read-only but its models.json models editable.
+  await review.evaluate(`window.__modelReview.providers.push(${JSON.stringify({
+    provider: 'hand-written', name: '手写配置', custom: true, editable: false, modelsEditable: true, readOnlyReason: 'unsupported-api', configModelIds: ['hand-one'],
+    configured: true, baseUrl: 'https://hand.example.invalid', api: 'mistral-conversations', headerNames: [], disabledModels: [],
+    models: [{ provider: 'hand-written', id: 'hand-one', name: '手写模型', reasoning: false, input: ['text'], contextWindow: 32768, maxTokens: 4096 }, { provider: 'hand-written', id: 'hand-override', name: '覆盖模型', reasoning: false, input: ['text'], contextWindow: 32768, maxTokens: 4096 }],
+  })})`);
+  await review.click('[data-action="refresh-providers"]');
+  await review.waitFor('Boolean(document.querySelector("[data-provider=hand-written]"))');
+  await review.click('[data-provider="hand-written"]');
+  await review.waitFor('document.querySelector(".pd-model-provider-option.is-selected")?.dataset.provider === "hand-written"');
+  await review.assert('Boolean(document.querySelector(".pd-model-catalog [data-action=add-model]")) && document.querySelector(".pd-model-catalog [data-action=discover-models]") === null', 'Read-only connections still allow adding models; unsupported protocols cannot discover');
+  await review.assert('document.querySelector("[data-model-id=hand-one] [data-action=edit-model]") !== null && document.querySelector("[data-model-id=hand-override] [data-action=edit-model]") === null', 'Only models.json entries offer edit and remove');
+  await review.assert('document.querySelector(".pd-model-provider-detail-head [data-action=remove-provider]") === null', 'A read-only connection cannot remove the provider');
+  await review.click('[data-action="edit-provider"]');
+  await review.waitFor(`Boolean(document.querySelector(${JSON.stringify(editDialog)}))`);
+  await review.assert(`document.querySelector(${JSON.stringify(editDialog)}).textContent.includes('协议不在编辑器支持的范围内') && document.querySelector(${JSON.stringify(`${editDialog} [data-provider-editor]`)}) === null`, 'The edit dialog explains why the connection is read-only');
+  await review.click(`${editDialog} .pd-model-dialog-header button`);
+  await noOpenModelDialog();
+  await review.click('[data-model-id="hand-one"] [data-action="edit-model"]');
+  await review.waitFor('Boolean(document.querySelector("dialog[open][data-model-dialog=model] [data-model-editor=hand-one]"))');
+  await review.fill('dialog[open][data-model-dialog=model] [data-field="model.name"]', '手写模型（已改名）');
+  await review.click('dialog[open][data-model-dialog=model] button[type="submit"]');
+  await noOpenModelDialog();
+  await review.assert(`(() => { const call = ${saveCalls}.at(-1); return call.name === 'saveProviderModels' && call.args[0].provider === 'hand-written' && call.args[0].upsert.length === 1 && call.args[0].upsert[0].name === '手写模型（已改名）' && !('baseUrl' in call.args[0]); })()`, 'Editing a model sends only that model, never the connection');
+  await review.waitFor('document.querySelector("[data-model-id=hand-one]").textContent.includes("手写模型（已改名）")');
 }

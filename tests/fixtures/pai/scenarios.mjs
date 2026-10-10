@@ -74,6 +74,8 @@ export default async function paiScenarios(review) {
   await review.click('.pd-send-button');
   await review.waitFor('window.__paiReview.submitted.length === 1');
   await review.assert("window.__paiReview.submitted[0].sessionId === 'pai-new-1' && window.__modelReview.snapshot.cwd === window.__paiReview.conversationWorkspaces[0] && window.__modelReview.snapshot.cwd !== 'C:/pai-review/project'", 'New chat and sending use the standalone window conversation and its newly created independent folder');
+  // The agent echoes the sent message back, so the conversation is no longer empty and shows its stats line.
+  await review.evaluate("(() => { const fixture = window.__modelReview; Object.assign(fixture.snapshot, { messages: [{ id: 'pai-sent-1', order: 0, role: 'user', text: '在这个文件夹继续聊天。', status: 'done' }], historyTotal: 1 }); fixture.emitAgent({ ...structuredClone(fixture.snapshot), type: 'ready' }); })()");
   await review.click('.pd-pai-settings');
   for (const key of keys) await review.click(`[data-setting="metrics-${key}"]`);
   await review.key('Escape');
@@ -84,8 +86,9 @@ export default async function paiScenarios(review) {
   await review.evaluate("window.__paiReview.deferStats = true; window.__modelReview.snapshot.status = 'busy'; window.__modelReview.emitAgent({type: 'status', status: 'busy'});");
   await review.waitFor('Boolean(window.__paiReview.releaseStats)');
   await review.click('.pd-pai-controls [aria-label="新会话"]');
-  await review.waitFor("window.__paiReview.created === 2 && document.querySelector('.pd-metric-input')?.textContent === '↑0'");
+  // A fresh conversation hides the empty stats line; a late sample from the old session must not bring it back.
+  await review.waitFor("window.__paiReview.created === 2 && !document.querySelector('.pd-metric-input')");
   await review.evaluate('window.__paiReview.releaseStats()');
   await review.settle();
-  await review.assert("document.querySelector('.pd-metric-input')?.textContent === '↑0' && window.__modelReview.snapshot.sessionId === 'pai-new-2' && window.__paiReview.conversationWorkspaces[0] !== window.__paiReview.conversationWorkspaces[1]", 'Late metric replies from an older conversation cannot overwrite the new conversation in its distinct folder');
+  await review.assert("!document.querySelector('.pd-metric-input') && window.__modelReview.snapshot.sessionId === 'pai-new-2' && window.__paiReview.conversationWorkspaces[0] !== window.__paiReview.conversationWorkspaces[1]", 'Late metric replies from an older conversation cannot overwrite the new conversation in its distinct folder');
 }
