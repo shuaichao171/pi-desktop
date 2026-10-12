@@ -22,6 +22,8 @@ export interface HoverTooltipProps {
 	disabled?: boolean;
 	align?: 'start' | 'center' | 'end';
 	side?: 'top' | 'right';
+	/** Interactive hints stay open while hovered; plain ones vanish as soon as the pointer leaves the trigger. */
+	interactive?: boolean;
 }
 
 type TriggerProps = ButtonHTMLAttributes<HTMLButtonElement> & RefAttributes<HTMLButtonElement>;
@@ -34,7 +36,7 @@ const CLOSE_DELAY = 180;
 const interactivePopoverOpen = () => [...document.querySelectorAll<HTMLElement>('.pd-sidebar-popover, .pd-composer-config-popover, .pd-search-dialog')].some(element => element.getClientRects().length > 0 && getComputedStyle(element).visibility !== 'hidden');
 
 /** A layout-neutral hint for a native button, including aria-disabled buttons. */
-export function HoverTooltip({ children, title, description, shortcut, disabled = false, align = 'center', side: preferredSide = 'top' }: HoverTooltipProps) {
+export function HoverTooltip({ children, title, description, shortcut, disabled = false, align = 'center', side: preferredSide = 'top', interactive = true }: HoverTooltipProps) {
 	const trigger = children as ReactElement<TriggerProps>;
 	const triggerRef = useRef<HTMLButtonElement | null>(null);
 	const tooltipRef = useRef<HTMLDivElement | null>(null);
@@ -209,7 +211,13 @@ export function HoverTooltip({ children, title, description, shortcut, disabled 
 					show();
 				}
 			},
-			onPointerLeave: (event) => { trigger.props.onPointerLeave?.(event); pointerInTrigger.current = false; leave(); },
+			onPointerLeave: (event) => {
+				trigger.props.onPointerLeave?.(event);
+				pointerInTrigger.current = false;
+				// Plain hints vanish the moment the pointer leaves their trigger.
+				if (interactive) leave();
+				else close();
+			},
 			onPointerCancel: (event) => { trigger.props.onPointerCancel?.(event); close(); },
 			onFocus: (event) => { trigger.props.onFocus?.(event); if (!event.defaultPrevented) show(); },
 			onBlur: (event) => {
@@ -228,7 +236,7 @@ export function HoverTooltip({ children, title, description, shortcut, disabled 
 				role="tooltip"
 				className={`pd-hover-tooltip${description != null ? ' has-description' : ''}`}
 				data-side={position?.side ?? preferredSide}
-				style={{ left: position?.left ?? 0, top: position?.top ?? 0, zIndex: position?.zIndex, visibility: position ? 'visible' : 'hidden' }}
+				style={{ left: position?.left ?? 0, top: position?.top ?? 0, zIndex: position?.zIndex, visibility: position ? 'visible' : 'hidden', pointerEvents: interactive ? undefined : 'none' }}
 				onPointerEnter={() => { pointerInTooltip.current = true; clearCloseTimer(); }}
 				onPointerLeave={() => { pointerInTooltip.current = false; leave(); }}
 				onFocus={(event) => event.stopPropagation()}

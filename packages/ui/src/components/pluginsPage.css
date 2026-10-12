@@ -116,7 +116,7 @@
 .pd-plugin-info dd { margin: 0; color: var(--pd-text-subtle); overflow-wrap: anywhere; }
 .pd-plugin-discovery-card > .pd-plugin-button { align-self: flex-start; margin-top: 16px; }
 .pd-plugin-discovery-note { margin: 0 0 23px; }
-.pd-plugin-dialog { margin: auto; width: min(560px, calc(100vw - 40px)); max-height: calc(100dvh - 88px); padding: 0; overflow: hidden; border: 1px solid var(--pd-border); border-radius: var(--pd-radius-xl); background: var(--pd-bg); color: var(--pd-text); box-shadow: var(--pd-shadow-dialog); font-family: inherit; animation: pd-plugin-enter var(--pd-motion-normal) var(--pd-ease-enter); }
+.pd-plugin-dialog { margin: auto; width: min(560px, calc(100vw - 40px)); max-height: calc(100dvh - 88px); padding: 0; overflow: hidden; border: 1px solid var(--pd-dialog-border); border-radius: var(--pd-radius-xl); background: var(--pd-dialog); color: var(--pd-text); box-shadow: var(--pd-shadow-dialog); font-family: inherit; animation: pd-plugin-enter var(--pd-motion-normal) var(--pd-ease-enter); }
 .pd-plugin-dialog[open] { display: flex; flex-direction: column; }
 .pd-plugin-dialog::backdrop { background: var(--pd-overlay); }
 .pd-plugin-dialog > header { display: flex; flex-shrink: 0; align-items: center; justify-content: space-between; gap: 12px; padding: 17px 22px; border-bottom: 1px solid var(--pd-border-soft); }

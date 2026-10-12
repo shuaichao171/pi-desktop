@@ -19,7 +19,7 @@
 	border-radius: var(--pd-radius-lg);
 	background: var(--pd-surface);
 	color: var(--pd-text);
-	box-shadow: 0 8px 24px #0003;
+	box-shadow: var(--pd-shadow-popover);
 	font-size: var(--pd-font-caption);
 	line-height: 1.5;
 	overflow: auto;

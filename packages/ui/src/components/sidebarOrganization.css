@@ -10,7 +10,7 @@
 .pd-workspace-list-error { border: 1px solid var(--pd-danger-border); border-radius: var(--pd-radius-sm); }
 .pd-workspace-list-error p { margin: 5px 0; color: var(--pd-danger); }
 .pd-workspace-list-error button { min-height: 28px; padding: 3px 9px; border: 1px solid var(--pd-border); border-radius: var(--pd-radius-xs); background: var(--pd-surface); }
-.pd-session-delete-dialog { width: min(460px, calc(100vw - 32px)); max-height: calc(100dvh - 48px); margin: auto; padding: 24px; overflow: auto; border: 1px solid var(--pd-border); border-radius: var(--pd-radius-lg); color: var(--pd-text); background: var(--pd-surface); font-size: var(--pd-font-base); line-height: 1.5; box-shadow: var(--pd-shadow-dialog); }
+.pd-session-delete-dialog { width: min(460px, calc(100vw - 32px)); max-height: calc(100dvh - 48px); margin: auto; padding: 24px; overflow: auto; border: 1px solid var(--pd-dialog-border); border-radius: var(--pd-radius-lg); color: var(--pd-text); background: var(--pd-dialog); font-size: var(--pd-font-base); line-height: 1.5; box-shadow: var(--pd-shadow-dialog); }
 .pd-session-delete-dialog::backdrop { background: var(--pd-overlay); }
 .pd-session-delete-dialog h2 { margin: 0 0 18px; font-size: var(--pd-font-lg); }
 .pd-session-delete-dialog > strong, .pd-session-delete-workspace { overflow-wrap: anywhere; }
@@ -76,11 +76,11 @@
 .pd-sidebar-filter-chip { display: flex; align-items: center; align-self: flex-start; gap: 6px; margin: 1px 15px 7px; padding: 4px 7px; border: 0; border-radius: var(--pd-radius-xs); background: var(--pd-sidebar-selected); color: var(--pd-brand); font-size: var(--pd-font-xs); }
 .pd-sidebar-filter-chip:hover { background: var(--pd-sidebar-hover); }
 .pd-sidebar-retry { margin: 10px; padding: 5px 9px; border: 1px solid var(--pd-sidebar-surface); border-radius: var(--pd-radius-sm); background: var(--pd-sidebar-surface); color: var(--pd-text); font-size: var(--pd-font-caption); }
-.pd-sidebar-popover { position: fixed; z-index: var(--pd-z-menu); width: min(216px, calc(100vw - 16px)); max-height: calc(100dvh - 16px); overflow-y: auto; padding: 5px; border: 1px solid var(--pd-border); border-radius: var(--pd-radius-lg); background: var(--pd-surface-raised); color: var(--pd-text); box-shadow: var(--pd-shadow-popover); }
+.pd-sidebar-popover { position: fixed; z-index: var(--pd-z-menu); width: min(216px, calc(100vw - 16px)); max-height: calc(100dvh - 16px); overflow-y: auto; padding: 5px; border: 1px solid var(--pd-border); border-radius: var(--pd-radius-lg); background: var(--pd-menu); color: var(--pd-text); box-shadow: var(--pd-shadow-popover); }
 .pd-sidebar-popover button { display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; min-height: 30px; padding: 5px 9px; border: 0; border-radius: var(--pd-radius-xs); background: transparent; color: var(--pd-text); font-size: var(--pd-font-caption); text-align: left; overflow-wrap: anywhere; }
 .pd-sidebar-popover button > span { min-width: 0; }
 .pd-sidebar-popover button > svg { flex: 0 0 auto; }
-.pd-sidebar-popover button:hover:not(:disabled), .pd-sidebar-popover button:focus-visible { background: var(--pd-surface-hover); color: var(--pd-text); }
+.pd-sidebar-popover button:hover:not(:disabled), .pd-sidebar-popover button:focus-visible { background: var(--pd-menu-hover); color: var(--pd-text); }
 .pd-sidebar-popover hr { height: 1px; margin: 5px; border: 0; background: var(--pd-border-soft); }
 .pd-sidebar-menu-label { padding: 6px 9px 4px; color: var(--pd-text-weak); font-size: var(--pd-font-xs); }
 .pd-sidebar-menu-note { margin: 5px 9px; color: var(--pd-text-weak); font-size: var(--pd-font-sm); line-height: 1.5; }
@@ -116,3 +116,21 @@ body.pd-sidebar-dragging * { cursor: grabbing !important; }
 .pd-session-more:hover, .pd-session-more:focus-visible { background:var(--pd-surface-hover); opacity:1; }
 .pd-session-loading-hint { display:flex; align-items:center; gap:8px; padding:6px 10px; margin:4px 0; font-size:var(--pd-font-caption); opacity:0.8; }
 .pd-session-loading-hint .pd-session-spinner { animation:pd-spin 1s linear infinite; }
+/* Context menus (conversation / project / group): icon, label, accelerator or flyout chevron. */
+.pd-sidebar-popover.pd-context-menu { width: min(236px, calc(100vw - 16px)); padding: 5px; }
+.pd-sidebar-popover.pd-sidebar-submenu { width: max-content; min-width: 200px; max-width: min(300px, calc(100vw - 16px)); padding: 5px; }
+.pd-sidebar-popover button.pd-menu-item { justify-content: flex-start; gap: 10px; min-height: 32px; padding: 5px 9px; border-radius: var(--pd-radius-sm); color: var(--pd-text); }
+.pd-sidebar-popover button.pd-menu-item > svg:first-child, .pd-menu-app-icon { flex: 0 0 auto; color: var(--pd-text-subtle); }
+.pd-menu-app-icon { width: 16px; height: 16px; border-radius: 3px; object-fit: contain; }
+.pd-sidebar-popover button.pd-menu-item > span { flex: 1; min-width: 0; overflow: hidden; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
+/* The accelerator is drawn from data-shortcut-label so the row's text stays just its label. */
+.pd-sidebar-popover button.pd-menu-item[data-shortcut-label]::after { flex: 0 0 auto; min-width: 14px; margin-left: 12px; color: var(--pd-text-weak); content: attr(data-shortcut-label); font: var(--pd-font-xs)/1 var(--pd-font-mono); text-align: right; }
+.pd-sidebar-popover button.pd-menu-item .pd-menu-chevron { flex: 0 0 auto; margin-left: 12px; color: var(--pd-text-weak); }
+.pd-sidebar-popover button.pd-menu-item .pd-menu-check { flex: 0 0 auto; color: var(--pd-brand); }
+.pd-sidebar-popover button.pd-menu-item[aria-expanded='true'] { background: var(--pd-menu-hover); }
+.pd-sidebar-popover button.pd-menu-item:disabled > svg:first-child { opacity: .7; }
+/* Destructive rows read red at rest, not only on hover. */
+.pd-sidebar-popover button.pd-sidebar-menu-danger, .pd-sidebar-popover button.pd-sidebar-menu-danger > svg:first-child { color: var(--pd-danger); }
+.pd-sidebar-popover button.pd-sidebar-menu-danger:hover:not(:disabled), .pd-sidebar-popover button.pd-sidebar-menu-danger:focus-visible { background: var(--pd-danger-surface); color: var(--pd-danger); }
+.pd-sidebar-popover button.pd-sidebar-menu-danger[data-shortcut-label]::after { color: color-mix(in srgb, var(--pd-danger) 70%, transparent); }
+.pd-sidebar-popover.pd-context-menu hr, .pd-sidebar-popover.pd-sidebar-submenu hr { margin: 4px 6px; }

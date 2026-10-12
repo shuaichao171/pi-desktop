@@ -8,7 +8,7 @@ import { getAppLocale } from './appLocale';
 import { createSplashErrorHtml, createSplashHtml } from './splash';
 import { showEditContextMenu } from './editContextMenu.ts';
 import { createAppTray, destroyAppTray } from './tray';
-import { parseDesktopLaunch, rendererLaunchUrl, reservePaiProfile, validatePaiWorkspace, type DesktopLaunch, type PaiProfile } from './desktopLaunch.ts';
+import { parseDesktopLaunch, rendererLaunchUrl, reservePaiProfile, validatePaiSession, validatePaiWorkspace, type DesktopLaunch, type PaiProfile } from './desktopLaunch.ts';
 
 let paiProfile: PaiProfile | null = null;
 // Pai and --multi windows relocate userData to an isolated profile;
@@ -29,13 +29,14 @@ const launch: DesktopLaunch = (() => {
 			return { windowMode: 'multi' };
 		}
 		const cwd = validatePaiWorkspace(parsed.cwd);
+		const sessionPath = parsed.sessionPath === undefined ? undefined : validatePaiSession(parsed.sessionPath);
 		// The pai profile relocates userData; keep the base path for shared state.
 		baseUserData = app.getPath('userData');
 		paiProfile = reservePaiProfile(baseUserData);
 		// Must be configured before app.ready creates Chromium's default session.
 		app.setPath('userData', paiProfile.userData);
 		app.setPath('sessionData', paiProfile.sessionData);
-		return { windowMode: 'pai', cwd };
+		return sessionPath ? { windowMode: 'pai', cwd, sessionPath } : { windowMode: 'pai', cwd };
 	} catch (error) {
 		dialog.showErrorBox('Pi Desktop', error instanceof Error ? error.message : String(error));
 		app.exit(1);
@@ -347,7 +348,10 @@ async function bootstrap(splash: BrowserWindow): Promise<void> {
 		}, (error) => showStartupError(splash, error));
 		// Load the UI and Pi history concurrently, keeping the logo until React
 		// acknowledges a committed conversation (or a required extension dialog).
-		void module.agentService.init({ cwd: workspace, ...(launch.windowMode !== 'full' ? { fresh: true } : {}) }).catch((error: unknown) => {
+		// A pai window opened from "Open in new window" resumes that conversation;
+		// every other extra instance starts fresh so it never reopens a transcript in use.
+		const resumePath = launch.windowMode === 'pai' ? launch.sessionPath : undefined;
+		void module.agentService.init({ cwd: workspace, ...(resumePath ? { sessionPath: resumePath } : launch.windowMode !== 'full' ? { fresh: true } : {}) }).catch((error: unknown) => {
 			recordDiagnostic({ stage: 'startup', action: 'agent-init', outcome: 'failure' });
 			console.error('Pi agent failed to initialize:', error);
 			if (startupCancelled || mainRevealed) return;

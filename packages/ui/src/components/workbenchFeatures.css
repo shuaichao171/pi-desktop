@@ -10,7 +10,7 @@
 .pd-terminal-pane[hidden] { display:none; }
 .pd-terminal-screen { flex:1; min-height:160px; padding:8px; background:var(--pd-terminal-bg); }
 .pd-terminal-screen .xterm { height:100%; }
-.pd-feature-dialog { position:fixed; inset:0; margin:auto; width:min(760px,calc(100vw - 32px)); max-height:calc(100vh - 40px); overflow:auto; color:var(--pd-text); background:var(--pd-bg); border:1px solid var(--pd-border); border-radius:var(--pd-radius-dialog); padding:20px; }
+.pd-feature-dialog { position:fixed; inset:0; margin:auto; width:min(760px,calc(100vw - 32px)); max-height:calc(100vh - 40px); overflow:auto; color:var(--pd-text); background: var(--pd-dialog); border:1px solid var(--pd-dialog-border); border-radius:var(--pd-radius-dialog); padding:20px; }
 .pd-feature-dialog::backdrop { background:var(--pd-overlay); }
 .pd-feature-dialog header { display:flex; justify-content:space-between; gap:16px; align-items:center; }
 .pd-feature-dialog h2 { font-size:var(--pd-font-lg); font-weight:600; }

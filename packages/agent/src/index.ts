@@ -2336,6 +2336,30 @@ export class AgentService {
 		this.fire({ type: 'sessions-changed', cwd });
 	}
 
+	/**
+	 * Sidebar "Fork": copy a whole conversation into a new session file beside it.
+	 * The source file is only read, so it stays exactly as it was; a running
+	 * conversation is refused so the copy never captures a half-written turn.
+	 */
+	async forkSession(path: string, cwd = this.cwd, name?: string): Promise<string> {
+		if (typeof path !== 'string' || !path || path.length > 32768 || /[\u0000-\u001f\u007f]/.test(path)) throw new Error('会话路径无效');
+		if (name !== undefined && (typeof name !== 'string' || !name.trim() || name.length > 200 || /[\u0000-\u001f\u007f]/u.test(name))) throw new Error('会话名称无效');
+		const assertAvailable = () => {
+			if (this.closing || this.transition || this.isSessionReserved(path)) throw new Error('会话正在切换或删除，请稍后重试');
+		};
+		assertAvailable();
+		if (!cwd || !(await sessionBelongsToWorkspace(path, cwd))) throw new Error('会话不属于当前工作区');
+		assertAvailable();
+		const loaded = [...this.contexts.values()].find((service) => service.cwd === cwd && service.getSnapshot().sessionPath === path);
+		if (loaded && loaded.getSnapshot().status !== 'idle') throw new Error('会话正在运行，请结束后再 Fork');
+		const manager = SessionManager.forkFrom(path, cwd);
+		const target = manager.getSessionFile();
+		if (!target) throw new Error('Fork 失败：未能创建新会话');
+		if (name) manager.appendSessionInfo(name.trim());
+		this.fire({ type: 'sessions-changed', cwd });
+		return target;
+	}
+
 	/** Release idle cached writers, then reserve the path until the desktop has moved the file. */
 	async prepareSessionDeletion(path: string, cwd: string): Promise<void> {
 		if (typeof path !== 'string' || !path || path.length > 32768 || /[\u0000-\u001f\u007f]/.test(path)) throw new Error('会话路径无效');

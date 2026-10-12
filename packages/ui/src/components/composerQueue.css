@@ -31,7 +31,7 @@
 .pd-queue-menu button:disabled { opacity: .4; }
 .pd-queue-menu hr { height: 0; margin: 5px 3px; border: 0; border-top: 1px solid var(--pd-border-soft); }
 .pd-composer-queue :is(button, textarea):focus-visible, .pd-queue-menu button:focus-visible, .pd-queue-details-dialog button:focus-visible, .pd-queue-composer-edit button:focus-visible { outline: 2px solid var(--pd-focus-border, var(--pd-brand)); outline-offset: -2px; }
-.pd-queue-details-dialog { width: min(660px, calc(100vw - 32px)); max-height: calc(100dvh - 64px); margin: auto; padding: 16px; border: 1px solid var(--pd-border-strong); border-radius: var(--pd-radius-lg); background: var(--pd-bg); color: var(--pd-text); box-shadow: var(--pd-shadow-dialog); }
+.pd-queue-details-dialog { width: min(660px, calc(100vw - 32px)); max-height: calc(100dvh - 64px); margin: auto; padding: 16px; border: 1px solid var(--pd-dialog-border); border-radius: var(--pd-radius-lg); background: var(--pd-dialog); color: var(--pd-text); box-shadow: var(--pd-shadow-dialog); }
 .pd-queue-details-dialog::backdrop { background: var(--pd-overlay); }
 .pd-queue-details-dialog header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .pd-queue-details-dialog p { margin: 14px 0; white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; line-height: 1.7; }

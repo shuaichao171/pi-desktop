@@ -7,6 +7,7 @@ import { MCP_FEATURE_CHANNELS, PLUGIN_UPDATE_CHANNELS } from '@pidesktop/shared'
  */
 
 import { app, BrowserWindow, dialog, shell, type IpcMainInvokeEvent } from 'electron';
+import { spawn } from 'node:child_process';
 import { mkdirSync, statSync } from 'node:fs';
 import { rm, stat } from 'node:fs/promises';
 import { basename, dirname, join, resolve } from 'node:path';
@@ -26,6 +27,7 @@ import { flushDiagnostics, initializeDiagnostics, recordDiagnostic } from './dia
 import { createInterface } from 'node:readline';
 import { createReadStream } from 'node:fs';
 import { normalizeSessionPath, pruneMissingSessionMeta } from './sessionPaths';
+import { paiSessionLaunchArgs } from './desktopLaunch';
 import { prepareWorkspaceDrop } from './workspaceDrop';
 import { createProjectCreator } from './projectCreation';
 import { createConversationWorkspace, createConversationWorkspaceSync, prepareConversationStorageDirectory } from './conversationStorage';
@@ -1169,6 +1171,27 @@ export function registerIpc(options: {
 		const info = await stat(target);
 		if (!info.isFile()) throw new Error('会话文件不存在');
 		shell.showItemInFolder(target);
+	});
+	handleRendererInvoke(IPC_CHANNELS.sessionFork, (_event, path: string, name?: string) => queueWorkspaceActivation(async () => {
+		path = normalizeSessionPath(path);
+		if (name !== undefined && (typeof name !== 'string' || !name.trim() || name.trim().length > 200 || /[\u0000-\u001f\u007f]/u.test(name))) throw new Error('会话名称无效');
+		const owner = await requireSessionOwner(path);
+		return agentService.forkSession(path, owner, name?.trim());
+	}));
+	handleRendererInvoke(IPC_CHANNELS.sessionOpenWindow, async (_event, path: string) => {
+		const target = normalizeSessionPath(path);
+		if (!/\.jsonl$/i.test(target)) throw new Error('会话路径无效');
+		if (!(await stat(target)).isFile()) throw new Error('会话文件不存在');
+		const owner = await requireSessionOwner(target);
+		if (!statSync(owner, { throwIfNoEntry: false })?.isDirectory()) throw new Error('会话所属的工作区已不存在');
+		// A separate pai instance owns its own agent and profile slot; detach it so
+		// it keeps running after this window closes.
+		const child = spawn(process.execPath, paiSessionLaunchArgs({ packaged: app.isPackaged, appPath: app.getAppPath(), cwd: owner, sessionPath: target }), { detached: true, stdio: 'ignore', windowsHide: false });
+		await new Promise<void>((resolveSpawn, rejectSpawn) => {
+			child.once('spawn', () => resolveSpawn());
+			child.once('error', rejectSpawn);
+		});
+		child.unref();
 	});
 	handleRendererInvoke(IPC_CHANNELS.agentSwitchSession, (_event, path: string) => queueWorkspaceActivation(async () => {
 		path = normalizeSessionPath(path);

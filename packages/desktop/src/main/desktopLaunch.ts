@@ -2,13 +2,14 @@ import { randomUUID } from 'node:crypto';
 import { mkdirSync, readFileSync, realpathSync, renameSync, rmdirSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { isAbsolute, join, posix, resolve, win32 } from 'node:path';
 
-export type DesktopLaunch = { windowMode: 'full' } | { windowMode: 'multi' } | { windowMode: 'pai'; cwd: string };
+export type DesktopLaunch = { windowMode: 'full' } | { windowMode: 'multi' } | { windowMode: 'pai'; cwd: string; sessionPath?: string };
 
 /** Electron switches and its development entry point may surround our arguments. */
 export function parseDesktopLaunch(argv: readonly string[], platform: NodeJS.Platform = process.platform): DesktopLaunch {
 	let pai = false;
 	let multi = false;
 	let cwd: string | undefined;
+	let sessionPath: string | undefined;
 	for (let index = 0; index < argv.length; index++) {
 		const argument = argv[index]!;
 		if (argument === '--pai') {
@@ -25,8 +26,13 @@ export function parseDesktopLaunch(argv: readonly string[], platform: NodeJS.Pla
 			if (cwd !== undefined) throw new Error('Duplicate --cwd argument');
 			cwd = argument === '--cwd' ? argv[++index] : argument.slice('--cwd='.length);
 			if (!cwd || cwd.startsWith('--') || cwd.includes('\0')) throw new Error('--cwd requires an absolute folder path');
+		} else if (argument === '--session' || argument.startsWith('--session=')) {
+			if (sessionPath !== undefined) throw new Error('Duplicate --session argument');
+			sessionPath = argument === '--session' ? argv[++index] : argument.slice('--session='.length);
+			if (!sessionPath || sessionPath.startsWith('--') || sessionPath.includes('\0')) throw new Error('--session requires an absolute conversation file path');
 		}
 	}
+	if (sessionPath !== undefined && !pai) throw new Error('--session requires --pai');
 	if (multi) {
 		if (cwd !== undefined) throw new Error('--cwd requires --pai');
 		return { windowMode: 'multi' };
@@ -40,7 +46,23 @@ export function parseDesktopLaunch(argv: readonly string[], platform: NodeJS.Pla
 	if (!cwd || !paths.isAbsolute(cwd) || platform === 'win32' && !/^(?:[a-z]:[\\/]|[\\/]{2}[^\\/]+[\\/][^\\/]+)/i.test(cwd)) {
 		throw new Error('--pai requires --cwd with an absolute folder path');
 	}
-	return { windowMode: 'pai', cwd: paths.normalize(cwd) };
+	if (sessionPath !== undefined && (!paths.isAbsolute(sessionPath) || !/\.jsonl$/i.test(sessionPath))) throw new Error('--session requires an absolute .jsonl conversation file');
+	return sessionPath === undefined ? { windowMode: 'pai', cwd: paths.normalize(cwd) } : { windowMode: 'pai', cwd: paths.normalize(cwd), sessionPath: paths.normalize(sessionPath) };
+}
+
+/** The conversation a pai window should open must still exist as a regular file. */
+export function validatePaiSession(path: string): string {
+	if (!isAbsolute(path) || !/\.jsonl$/i.test(path) || !statSync(path).isFile()) throw new Error('--session must name an existing conversation file');
+	return realpathSync(path);
+}
+
+/**
+ * Arguments that start another app instance as a pai chat window on one
+ * conversation. Development runs pass the app folder to the Electron binary;
+ * packaged builds launch the executable directly.
+ */
+export function paiSessionLaunchArgs(options: { packaged: boolean; appPath: string; cwd: string; sessionPath: string }): string[] {
+	return [...(options.packaged ? [] : [options.appPath]), '--pai', '--cwd', options.cwd, '--session', options.sessionPath];
 }
 
 export function validatePaiWorkspace(cwd: string): string {

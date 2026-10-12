@@ -99,7 +99,7 @@
 .pd-session-management-more:hover { background: var(--pd-surface-hover); color: var(--pd-text); }
 
 /* Rename dialog --------------------------------------------------------------- */
-.pd-session-management-rename { width: min(420px, calc(100vw - 32px)); margin: auto; padding: 22px; border: 1px solid var(--pd-border); border-radius: var(--pd-radius-lg); background: var(--pd-surface); color: var(--pd-text); box-shadow: var(--pd-shadow-dialog); }
+.pd-session-management-rename { width: min(420px, calc(100vw - 32px)); margin: auto; padding: 22px; border: 1px solid var(--pd-dialog-border); border-radius: var(--pd-radius-lg); background: var(--pd-dialog); color: var(--pd-text); box-shadow: var(--pd-shadow-dialog); }
 .pd-session-management-rename::backdrop { background: var(--pd-overlay); }
 .pd-session-management-rename h3 { margin: 0 0 14px; font-size: var(--pd-font-lg); }
 .pd-session-management-rename input { box-sizing: border-box; width: 100%; height: 36px; padding: 0 11px; border: 1px solid var(--pd-border); border-radius: var(--pd-radius-sm); background: var(--pd-surface); color: var(--pd-text); font: inherit; font-size: var(--pd-font-caption); }

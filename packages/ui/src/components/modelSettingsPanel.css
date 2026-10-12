@@ -1,5 +1,5 @@
 .pd-settings-dialog:has(.pd-settings-discard) { position: relative; }
-.pd-settings-dialog > .pd-settings-discard { position: absolute; z-index: 1; top: 50%; left: 50%; width: min(440px, calc(100% - 40px)); margin: 0; transform: translate(-50%, -50%); border: 1px solid var(--pd-border); border-radius: var(--pd-radius-xl); background: var(--pd-surface); box-shadow: 0 0 0 100vmax var(--pd-overlay), var(--pd-shadow-dialog); }
+.pd-settings-dialog > .pd-settings-discard { position: absolute; z-index: 1; top: 50%; left: 50%; width: min(440px, calc(100% - 40px)); margin: 0; transform: translate(-50%, -50%); border: 1px solid var(--pd-dialog-border); border-radius: var(--pd-radius-xl); background: var(--pd-dialog); box-shadow: 0 0 0 100vmax var(--pd-overlay), var(--pd-shadow-dialog); }
 .pd-settings-content:has(.pd-model-settings) { display: flex; flex-direction: column; overflow: hidden; padding: 20px; scrollbar-gutter: auto; }
 .pd-model-page-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
 .pd-model-page-header .pd-settings-section-head { margin: 0; }
@@ -74,7 +74,7 @@
 .pd-model-advanced > summary { padding: 9px 10px; color: var(--pd-text-subtle); font-size: var(--pd-font-sm); cursor: pointer; }
 .pd-model-advanced > section, .pd-model-advanced > div { margin: 0 10px 10px; }
 .pd-model-settings-form.is-discover > .pd-model-discovery { padding: 0; border: 0; }
-.pd-model-dialog { width: min(640px, calc(100vw - 40px)); max-width: none; max-height: calc(100vh - 48px); margin: auto; padding: 0; overflow: hidden; border: 1px solid var(--pd-border); border-radius: var(--pd-radius-xl); background: var(--pd-surface); color: var(--pd-text); box-shadow: var(--pd-shadow-dialog); font-family: inherit; }
+.pd-model-dialog { width: min(640px, calc(100vw - 40px)); max-width: none; max-height: calc(100vh - 48px); margin: auto; padding: 0; overflow: hidden; border: 1px solid var(--pd-dialog-border); border-radius: var(--pd-radius-xl); background: var(--pd-dialog); color: var(--pd-text); box-shadow: var(--pd-shadow-dialog); font-family: inherit; }
 .pd-model-dialog[open] { display: flex; flex-direction: column; }
 .pd-model-dialog.is-compact { width: min(440px, calc(100vw - 40px)); }
 .pd-model-dialog::backdrop { background: var(--pd-overlay); }

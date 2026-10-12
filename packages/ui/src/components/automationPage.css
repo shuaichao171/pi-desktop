@@ -87,7 +87,7 @@
 .pd-automation-local-note svg { flex-shrink: 0; margin-top: 2px; }
 .pd-automation-error { padding: 10px 12px; margin: 12px 0; border: 1px solid var(--pd-danger-border); border-radius: var(--pd-radius-md); background: var(--pd-danger-surface); color: var(--pd-danger); font-size: var(--pd-font-caption); line-height: 1.7; overflow-wrap: anywhere; }
 .pd-automation-error button { margin-left: 12px; border: 0; background: transparent; color: inherit; text-decoration: underline; font: inherit; }
-.pd-automation-dialog { margin: auto; width: min(610px, calc(100vw - 40px)); max-height: calc(100dvh - 88px); padding: 0; overflow: hidden; border: 1px solid var(--pd-border); border-radius: var(--pd-radius-xl); background: var(--pd-bg); color: var(--pd-text); box-shadow: var(--pd-shadow-dialog); font-family: inherit; animation: pd-automation-enter var(--pd-motion-normal) var(--pd-ease-enter); }
+.pd-automation-dialog { margin: auto; width: min(610px, calc(100vw - 40px)); max-height: calc(100dvh - 88px); padding: 0; overflow: hidden; border: 1px solid var(--pd-dialog-border); border-radius: var(--pd-radius-xl); background: var(--pd-dialog); color: var(--pd-text); box-shadow: var(--pd-shadow-dialog); font-family: inherit; animation: pd-automation-enter var(--pd-motion-normal) var(--pd-ease-enter); }
 .pd-automation-dialog[open] { display: flex; flex-direction: column; }
 .pd-automation-dialog::backdrop { background: var(--pd-overlay); }
 .pd-automation-dialog > header { display: flex; flex-shrink: 0; align-items: center; justify-content: space-between; gap: 12px; padding: 17px 22px; border-bottom: 1px solid var(--pd-border-soft); }

@@ -44,7 +44,7 @@ export default async function sidebarPinsScenarios(review) {
   const pinned = '.pd-sidebar-group[data-section-key="pinned"]';
   const pinToggle = pinned + ' > .pd-sidebar-group-heading .pd-sidebar-group-toggle';
   const menu = '.pd-sidebar-popover[role="menu"]';
-  const menuAction = menu + ' > [role="menuitem"]:first-child';
+  const menuAction = menu + ' [role="menuitem"][data-action$="pin-project"]';
   const filter = '.pd-sidebar-organize-actions button[aria-label="视图选项"]';
   const projectPaths = '[...document.querySelectorAll(".pd-sidebar-group[data-project-path]")].map(node => node.dataset.projectPath)';
   const regularPaths = '[...document.querySelectorAll(".pd-organized-list > .pd-sidebar-group[data-project-path]")].map(node => node.dataset.projectPath)';
@@ -66,14 +66,13 @@ export default async function sidebarPinsScenarios(review) {
   async function open(name, expected) {
     await review.click(more(name));
     await review.waitFor(`Boolean(document.querySelector(${q(menuAction)}))`);
-    await review.assert(`document.querySelector(${q(menuAction)}).textContent.trim() === ${q(expected)}`, 'Pin/unpin is the first action in the project menu');
+    await review.assert(`document.querySelector(${q(menuAction)}).textContent.trim() === ${q(expected)}`, 'The project menu offers pin/unpin with the matching label');
   }
   async function change(name, shouldPin, keyboard = false) {
     await open(name, shouldPin ? '置顶项目' : '取消置顶');
-    if (keyboard) {
-      await review.assert(`document.activeElement === document.querySelector(${q(menuAction)})`, 'Opening the project menu focuses its first pin action');
-      await review.key('Enter');
-    } else await review.click(menuAction);
+    // Keyboard path: the P accelerator shown beside the row triggers it.
+    if (keyboard) await review.key('p');
+    else await review.click(menuAction);
     await review.waitFor(`${state}.pinned.includes(${q(paths[name])}) === ${shouldPin} && !document.querySelector(${q(menu)})`);
     await review.assert(`${inPinned(name)} === ${shouldPin} && ${unique}`, 'Pinning relocates one project without duplicating projects or conversations');
     await review.assert(unchanged, 'Pinning and unpinning preserve the active conversation and composer draft');

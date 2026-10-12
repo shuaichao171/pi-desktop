@@ -93,7 +93,8 @@ export default async function sidebarProjectsScenarios(review) {
   await right('Alpha'); await review.key('Escape');
   await review.assert(`document.activeElement === document.querySelector(${q(more('Alpha'))})`, 'Escape from a context menu opened on the title restores focus to its more button');
   await review.click(more('Alpha'));
-  await review.clickText(`${menu} [role=menuitem]`, '在资源管理器中打开');
+  await review.click(`${menu} [role=menuitem][aria-haspopup="menu"]`);
+  await review.clickText('.pd-sidebar-submenu [role=menuitem]', '在资源管理器中打开');
   await review.assert(`${state}.reveals.length === 1 && ${state}.reveals[0] === ${q(paths.Alpha)} && !document.querySelector(${q(menu)})`, 'A menu action executes once for the intended project and closes normally');
   await right('Alpha');
   const plus = await point(`${section('Alpha')} .pd-group-more:not([aria-haspopup])`);

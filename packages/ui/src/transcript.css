@@ -101,7 +101,7 @@
 .pd-message-row.is-system .pd-extension-notice-card[data-notification-type='info'] { border-left-color: var(--pd-brand); }
 .pd-message-row.is-system .pd-extension-notice-card[data-notification-type='info'] > svg { color: var(--pd-brand); }
 /* Session statistics dialog (3.1). */
-.pd-session-info { width: min(460px, calc(100vw - 48px)); max-width: none; max-height: none; margin: auto; padding: 0; overflow: hidden; border: 1px solid var(--pd-border-strong); border-radius: var(--pd-radius-dialog); background: var(--pd-bg); color: var(--pd-text); box-shadow: var(--pd-shadow-dialog); }
+.pd-session-info { width: min(460px, calc(100vw - 48px)); max-width: none; max-height: none; margin: auto; padding: 0; overflow: hidden; border: 1px solid var(--pd-dialog-border); border-radius: var(--pd-radius-dialog); background: var(--pd-dialog); color: var(--pd-text); box-shadow: var(--pd-shadow-dialog); }
 .pd-session-info[open] { display: flex; flex-direction: column; }
 .pd-session-info::backdrop { background: var(--pd-overlay); }
 .pd-session-info-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 16px 10px; }
@@ -115,7 +115,7 @@
 .pd-session-info-error { margin: 0; padding: 0 16px 14px; color: var(--pd-text-weak); font-size: var(--pd-font-caption); }
 
 /* Session tree dialog (3.5). */
-.pd-session-tree { width: min(640px, calc(100vw - 48px)); height: min(640px, calc(100dvh - 80px)); max-width: none; max-height: none; margin: auto; padding: 0; overflow: hidden; border: 1px solid var(--pd-border-strong); border-radius: var(--pd-radius-dialog); background: var(--pd-bg); color: var(--pd-text); box-shadow: var(--pd-shadow-dialog); }
+.pd-session-tree { width: min(640px, calc(100vw - 48px)); height: min(640px, calc(100dvh - 80px)); max-width: none; max-height: none; margin: auto; padding: 0; overflow: hidden; border: 1px solid var(--pd-dialog-border); border-radius: var(--pd-radius-dialog); background: var(--pd-dialog); color: var(--pd-text); box-shadow: var(--pd-shadow-dialog); }
 .pd-session-tree[open] { display: flex; flex-direction: column; }
 .pd-session-tree::backdrop { background: var(--pd-overlay); }
 .pd-session-tree-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 16px 8px; }

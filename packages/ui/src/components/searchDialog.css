@@ -1,6 +1,6 @@
 .pd-search-overlay { position: fixed; inset: 0; z-index: var(--pd-z-search); display: flex; align-items: flex-start; justify-content: center; padding: clamp(56px, 10dvh, 80px) 16px 16px; background: var(--pd-overlay); -webkit-app-region: no-drag; }
 .pd-search-overlay * { -webkit-app-region: no-drag; }
-.pd-search-dialog { display: flex; flex-direction: column; width: min(560px, 100%); max-height: 100%; min-height: 0; overflow: hidden; border: 1px solid var(--pd-border); border-radius: var(--pd-radius-xl); background: var(--pd-surface-raised); color: var(--pd-text); box-shadow: var(--pd-shadow-dialog); }
+.pd-search-dialog { display: flex; flex-direction: column; width: min(560px, 100%); max-height: 100%; min-height: 0; overflow: hidden; border: 1px solid var(--pd-dialog-border); border-radius: var(--pd-radius-xl); background: var(--pd-dialog); color: var(--pd-text); box-shadow: var(--pd-shadow-dialog); }
 .pd-search-sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }
 .pd-search-input-row { display: flex; flex: 0 0 auto; align-items: center; gap: 10px; min-width: 0; padding: 14px 14px 9px 18px; }
 .pd-search-input-row > svg { flex: 0 0 auto; color: var(--pd-text-weak); }

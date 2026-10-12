@@ -55,7 +55,9 @@ export function SidebarPopover({ anchor, trigger = anchor, point, label, dialog 
 			const target = event.target as Node;
 			// A context menu may be positioned against an entire row. Only its
 			// actual toggle button is exempt from outside dismissal.
-			if (!ref.current?.contains(target) && !trigger.contains(target)) closeRef.current();
+			// A flyout submenu is portaled outside this menu but still belongs to it.
+			const inSubmenu = target instanceof Element && Boolean(target.closest('.pd-sidebar-submenu'));
+			if (!ref.current?.contains(target) && !trigger.contains(target) && !inSubmenu) closeRef.current();
 		};
 		document.addEventListener('pointerdown', outside, true);
 		document.addEventListener('focusin', outside);
@@ -76,7 +78,14 @@ export function SidebarPopover({ anchor, trigger = anchor, point, label, dialog 
 		style={{ ...position, visibility: positioned ? 'visible' : 'hidden' }} onKeyDown={(event) => {
 			if (event.nativeEvent.isComposing) return;
 			if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); onClose(); trigger.focus(); return; }
-			if (dialog || !['ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) return;
+			if (dialog || event.target instanceof Element && event.target.closest('.pd-sidebar-submenu')) return;
+			// Single-key accelerators shown beside menu rows (data-shortcut), e.g. P = pin.
+			if (!event.ctrlKey && !event.metaKey && !event.altKey && (event.key.length === 1 || event.key === 'Delete')) {
+				const key = event.key.toUpperCase();
+				const target = [...(ref.current?.querySelectorAll<HTMLButtonElement>('button[data-shortcut]:not(:disabled)') ?? [])].find((button) => button.dataset.shortcut?.toUpperCase() === key);
+				if (target) { event.preventDefault(); target.click(); return; }
+			}
+			if (!['ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) return;
 			event.preventDefault();
 			const items = [...(ref.current?.querySelectorAll<HTMLButtonElement>('button:not(:disabled)') ?? [])];
 			const index = items.indexOf(document.activeElement as HTMLButtonElement);

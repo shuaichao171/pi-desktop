@@ -74,6 +74,8 @@ export const IPC_CHANNELS = {
   agentSearchSessions: 'agent:search-sessions',
   agentSwitchSession: 'agent:switch-session',
   sessionRevealFile: 'session:reveal-file',
+  sessionFork: 'session:fork',
+  sessionOpenWindow: 'session:open-window',
   agentListWorkspaces: 'agent:list-workspaces',
   workspaceListConversations: 'workspace:list-conversations',
   conversationStoragePick: 'conversation-storage:pick',
@@ -1126,6 +1128,10 @@ export interface AgentBridge extends InputFeatureBridge, DataFeaturesBridge, Wor
   switchSession(path: string): Promise<void>;
   /** Reveals a conversation file in the OS file manager (zcode session context menu). */
   revealSessionFile(path: string): Promise<void>;
+  /** Copies a whole conversation into a new session beside it and returns the new file path (sidebar "Fork"). */
+  forkSession(path: string, name?: string): Promise<string>;
+  /** Opens a conversation in its own pai chat window (a separate app instance). */
+  openSessionInNewWindow(path: string): Promise<void>;
   updateSessionMeta(path: string, patch: UiSessionMetaPatch): Promise<void>;
   /** Permanently deletes a conversation file (native pi semantics) and clears its desktop metadata. */
   deleteSession(path: string): Promise<void>;

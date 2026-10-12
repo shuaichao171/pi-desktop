@@ -68,9 +68,10 @@ const DEFAULT_TOKENS: Record<ColorMode, Record<string, string>> = {
 		'--pd-text': '#e5e5e5', '--pd-text-subtle': '#b8b8b8', '--pd-text-weak': '#999999',
 		'--pd-brand': '#8aa4f8', '--pd-brand-hover': '#a6bafa', '--pd-brand-ink': '#000000',
 		'--pd-danger': '#f87171', '--pd-warning': '#fbbf24', '--pd-success': '#4ade80',
-		'--pd-chrome-border': '#2b2b2b', '--pd-surface-raised': '#2b2b2b', '--pd-surface-muted': '#0e0e0e',
+		'--pd-chrome-border': '#2b2b2b', '--pd-surface-raised': '#2b2b2b', '--pd-surface-muted': '#0e0e0e', '--pd-menu': '#363636', '--pd-menu-hover': '#404040',
 		'--pd-border-strong': '#404040', '--pd-user-surface': '#222222', '--pd-code-surface': '#0e0e0e',
 		'--pd-code-text': '#e5e5e5', '--pd-overlay': '#00000080',
+		'--pd-dialog': '#222222', '--pd-dialog-inset': '#222222', '--pd-dialog-border': '#2d2d2d', '--pd-field': '#161616', '--pd-field-border': '#2d2d2d',
 		'--pd-selection-bg': '#ffffff2e', '--pd-selection-ink': '#ffffff', '--pd-mark-border': '#ffffff40',
 		'--pd-assistant-mark-bg': '#ffffff14', '--pd-brand-mark-bg': '#ffffff12',
 	},
@@ -80,9 +81,10 @@ const DEFAULT_TOKENS: Record<ColorMode, Record<string, string>> = {
 		'--pd-text': '#262626', '--pd-text-subtle': '#666666', '--pd-text-weak': '#767676',
 		'--pd-brand': '#4a5fc1', '--pd-brand-hover': '#3d50a8', '--pd-brand-ink': '#ffffff',
 		'--pd-danger': '#ef4444', '--pd-warning': '#d97706', '--pd-success': '#16a34a',
-		'--pd-chrome-border': '#e0e0e0', '--pd-surface-raised': '#ffffff', '--pd-surface-muted': '#ececee',
+		'--pd-chrome-border': '#e0e0e0', '--pd-surface-raised': '#ffffff', '--pd-surface-muted': '#ececee', '--pd-menu': '#ffffff', '--pd-menu-hover': '#ececec',
 		'--pd-border-strong': '#c9c9c9', '--pd-user-surface': '#eeeeee', '--pd-code-surface': '#f0f0f0',
-		'--pd-code-text': '#262626', '--pd-overlay': '#0d0d0d40',
+		'--pd-code-text': '#262626', '--pd-overlay': '#141a2438',
+		'--pd-dialog': '#ffffff', '--pd-dialog-inset': '#f6f6f7', '--pd-dialog-border': '#e4e4e7', '--pd-field': '#ffffff', '--pd-field-border': '#d4d4d8',
 		'--pd-selection-bg': '#00000026', '--pd-selection-ink': '#262626', '--pd-mark-border': '#0000002e',
 		'--pd-assistant-mark-bg': '#0000000f', '--pd-brand-mark-bg': '#00000012',
 	},
@@ -238,7 +240,12 @@ export function buildThemeTokens(choice: ThemeColorChoice, mode: ColorMode): Rec
 	// line separates them, so custom presets derive header straight from bg.
 	const header = bg;
 	const muted = safeSurface(tone(0.012 + strength * 0.014));
-	const backgrounds = [bg, surface, raised, hover, selected, user, code, sidebar, header, muted];
+	// Light palettes lift dialogs and fields toward white so they stand off the page;
+	// dark palettes keep dialogs on the surface tone and fields on the page tone.
+	const dialog = light ? safeSurface(mix(bg, '#ffffff', 0.8)) : surface;
+	const dialogInset = light ? safeSurface(tone(0.012 + strength * 0.012)) : surface;
+	const field = light ? safeSurface(mix(bg, '#ffffff', 0.9)) : bg;
+	const backgrounds = [bg, surface, raised, hover, selected, user, code, sidebar, header, muted, dialog, dialogInset, field];
 	const text = readable(colors.ink, backgrounds, 7);
 	const subtle = readable(mix(bg, text, 0.72), backgrounds, 4.5);
 	const weak = readable(mix(bg, text, 0.54), backgrounds, 3);
@@ -256,8 +263,12 @@ export function buildThemeTokens(choice: ThemeColorChoice, mode: ColorMode): Rec
 		'--pd-success': readable(light ? '#237552' : '#93cdb5', backgrounds, 4.5),
 		'--pd-chrome-border': tone(0.08 + strength * 0.09), '--pd-surface-raised': raised,
 		'--pd-surface-muted': muted, '--pd-border-strong': tone(0.2 + strength * 0.2),
+		// Menus float over the sidebar; keep them on its raised scale (zcode).
+		'--pd-menu': sidebarSurface, '--pd-menu-hover': sidebarHover,
 		'--pd-user-surface': user, '--pd-code-surface': code, '--pd-code-text': readable(mix(text, brand, 0.2), [code], 4.5),
 		'--pd-overlay': light ? '#14203044' : '#00000088', '--pd-focus-border': mix(brand, border, 0.35),
+		'--pd-dialog': dialog, '--pd-dialog-inset': dialogInset, '--pd-dialog-border': light ? tone(0.1 + strength * 0.08) : border,
+		'--pd-field': field, '--pd-field-border': light ? tone(0.17 + strength * 0.12) : border,
 		'--pd-danger-surface': `${danger}0f`, '--pd-danger-border': `${danger}52`,
 		'--pd-selection-bg': brand, '--pd-selection-ink': brandInk, '--pd-mark-border': `${brand}52`,
 		'--pd-assistant-mark-bg': `${brand}24`, '--pd-brand-mark-bg': `${brand}20`,

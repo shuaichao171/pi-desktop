@@ -4,7 +4,7 @@ import { mkdtemp, mkdir, readFile, rm, writeFile, access } from 'node:fs/promise
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { test } from 'node:test';
-import { parseDesktopLaunch, rendererLaunchUrl, reservePaiProfile, validatePaiWorkspace } from '../packages/desktop/src/main/desktopLaunch.ts';
+import { paiSessionLaunchArgs, parseDesktopLaunch, rendererLaunchUrl, reservePaiProfile, validatePaiSession, validatePaiWorkspace } from '../packages/desktop/src/main/desktopLaunch.ts';
 
 async function temporary(action) {
   const root = await mkdtemp(join(tmpdir(), 'pi-desktop-launch-'));
@@ -23,6 +23,26 @@ test('pai parses explicit folders without changing regular Electron launch behav
     ['--pai', '--cwd', 'D:\\one', '--cwd', 'D:\\two'], ['--pai', '--pai', '--cwd', 'D:\\one'],
     ['--pai=true', '--cwd', 'D:\\one'], ['--cwd', 'D:\\one'],
   ]) assert.throws(() => parseDesktopLaunch(args, 'win32'), /--pai|--cwd/);
+});
+
+test('pai can open one conversation file in its own window', async () => {
+  assert.deepEqual(parseDesktopLaunch(['pi.exe', '--pai', '--cwd', 'D:\\proj', '--session', 'C:\\pi\\sessions\\a.jsonl'], 'win32'), { windowMode: 'pai', cwd: 'D:\\proj', sessionPath: 'C:\\pi\\sessions\\a.jsonl' });
+  assert.deepEqual(parseDesktopLaunch(['--pai', '--cwd=/work', '--session=/home/u/.pi/s.jsonl'], 'linux'), { windowMode: 'pai', cwd: '/work', sessionPath: '/home/u/.pi/s.jsonl' });
+  for (const args of [
+    ['--session', 'D:\\a.jsonl'], ['--multi', '--session', 'D:\\a.jsonl'],
+    ['--pai', '--cwd', 'D:\\proj', '--session'], ['--pai', '--cwd', 'D:\\proj', '--session', 'relative.jsonl'],
+    ['--pai', '--cwd', 'D:\\proj', '--session', 'D:\\notes.txt'],
+    ['--pai', '--cwd', 'D:\\proj', '--session', 'D:\\a.jsonl', '--session', 'D:\\b.jsonl'],
+  ]) assert.throws(() => parseDesktopLaunch(args, 'win32'), /--session|--pai/);
+  assert.deepEqual(paiSessionLaunchArgs({ packaged: true, appPath: 'ignored', cwd: 'D:\\proj', sessionPath: 'D:\\s.jsonl' }), ['--pai', '--cwd', 'D:\\proj', '--session', 'D:\\s.jsonl']);
+  assert.deepEqual(paiSessionLaunchArgs({ packaged: false, appPath: 'E:\\app', cwd: 'D:\\proj', sessionPath: 'D:\\s.jsonl' }), ['E:\\app', '--pai', '--cwd', 'D:\\proj', '--session', 'D:\\s.jsonl']);
+  await temporary(async root => {
+    const file = join(root, 'conversation.jsonl');
+    await writeFile(file, '{"type":"session"}\\n');
+    assert.equal(validatePaiSession(file), file);
+    assert.throws(() => validatePaiSession(join(root, 'missing.jsonl')));
+    assert.throws(() => validatePaiSession(root), /conversation file/);
+  });
 });
 
 test('pai requires an existing directory and its renderer starts directly in compact mode', async () => {

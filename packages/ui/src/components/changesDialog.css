@@ -3,7 +3,7 @@
 .pd-change-file-state.is-added { color: var(--pd-success); }
 .pd-change-file-state.is-deleted { color: var(--pd-danger); }
 .pd-change-file-state.is-compact { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
-.pd-changes-dialog { width: min(1120px, calc(100vw - 48px)); height: min(780px, calc(100dvh - 80px)); max-width: none; max-height: none; margin: auto; padding: 0; overflow: hidden; border: 1px solid var(--pd-border-strong); border-radius: var(--pd-radius-dialog); background: var(--pd-bg); color: var(--pd-text); box-shadow: var(--pd-shadow-dialog, 0 24px 100px #0005); }
+.pd-changes-dialog { width: min(1120px, calc(100vw - 48px)); height: min(780px, calc(100dvh - 80px)); max-width: none; max-height: none; margin: auto; padding: 0; overflow: hidden; border: 1px solid var(--pd-dialog-border); border-radius: var(--pd-radius-dialog); background: var(--pd-dialog); color: var(--pd-text); box-shadow: var(--pd-shadow-dialog, 0 24px 100px #0005); }
 .pd-changes-dialog[open] { display: flex; flex-direction: column; }
 .pd-changes-dialog::backdrop { background: var(--pd-overlay); }
 .pd-changes-dialog-header { display: flex; flex: 0 0 auto; align-items: center; justify-content: space-between; gap: 12px; padding: 16px 18px 9px; }

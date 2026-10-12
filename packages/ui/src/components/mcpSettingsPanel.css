@@ -92,7 +92,7 @@
 .pd-mcp-tools p { margin: 3px 0 0; color: var(--pd-text-subtle); font-size: var(--pd-font-xs); line-height: 1.5; }
 
 /* Editor dialog ---------------------------------------------------------------- */
-.pd-mcp-editor, .pd-mcp-remove { margin: auto; padding: 0; border: 1px solid var(--pd-border); border-radius: var(--pd-radius-lg); background: var(--pd-surface); color: var(--pd-text); box-shadow: var(--pd-shadow-dialog); }
+.pd-mcp-editor, .pd-mcp-remove { margin: auto; padding: 0; border: 1px solid var(--pd-dialog-border); border-radius: var(--pd-radius-lg); background: var(--pd-dialog); color: var(--pd-text); box-shadow: var(--pd-shadow-dialog); }
 .pd-mcp-editor::backdrop, .pd-mcp-remove::backdrop { background: var(--pd-overlay); }
 .pd-mcp-editor { width: min(540px, calc(100vw - 32px)); max-height: calc(100dvh - 48px); }
 .pd-mcp-editor[open] { display: flex; flex-direction: column; }

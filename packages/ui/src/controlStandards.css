@@ -21,3 +21,23 @@ select option { background: var(--pd-surface); color: var(--pd-text); }
 ::-webkit-scrollbar-thumb { border: 2px solid transparent; border-radius: var(--pd-radius-pill); background: var(--pd-scrollbar-thumb); background-clip: padding-box; }
 ::-webkit-scrollbar-thumb:hover { background-color: color-mix(in srgb, var(--pd-scrollbar-thumb), var(--pd-text) 20%); }
 ::-webkit-scrollbar-button { display: none; width: 0; height: 0; }
+
+/* ---- Light mode surfaces --------------------------------------------------- */
+/* Backdrops dim with a cool, light veil plus a soft blur instead of a muddy grey. */
+:root[data-theme='light'] :is(.pd-settings-overlay, .pd-search-overlay, .pd-commit-backdrop, .pd-overlay-error-host:has(> .pd-scoped-error)) { backdrop-filter: blur(2px); }
+:root[data-theme='light'] dialog::backdrop { backdrop-filter: blur(2px); }
+/* A dialog opened over settings (portaled to body) must not double the dimming. */
+:root[data-theme]:has(.pd-settings-overlay) dialog::backdrop { background: color-mix(in srgb, var(--pd-overlay) 45%, transparent); backdrop-filter: none; }
+/* Fields inside dialogs are white with a visible edge in light mode (grey fills read as disabled). */
+:root[data-theme='light'] :is(dialog, .pd-settings-dialog, .pd-commit-dialog, .pd-sidebar-popover) :is(input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='color']):not([type='file']), select, textarea):not(.pd-project-create-name input, .pd-search-input) { background-color: var(--pd-field); border-color: var(--pd-field-border); }
+:root[data-theme='light'] :is(dialog, .pd-settings-dialog, .pd-commit-dialog) :is(input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='color']):not([type='file']), select, textarea):not(.pd-project-create-name input, .pd-search-input):focus { border-color: var(--pd-focus-border); box-shadow: 0 0 0 3px color-mix(in srgb, var(--pd-brand) 16%, transparent); }
+:root[data-theme='light'] .pd-project-create-name { border-color: var(--pd-field-border); background: var(--pd-field); }
+:root[data-theme='light'] .pd-project-create-name:focus-within { border-color: var(--pd-focus-border); box-shadow: 0 0 0 3px color-mix(in srgb, var(--pd-brand) 16%, transparent); }
+/* Large settings panel: header and navigation on the dialog tone, content on an inset with white cards. */
+:root[data-theme='light'] .pd-settings-content { --pd-surface: var(--pd-dialog); background: var(--pd-dialog-inset); }
+/* Disabled primary actions turn neutral instead of a washed-out accent. */
+:root :is(.pd-settings-primary, .pd-automation-button.is-primary, .pd-plugin-button.is-primary, .pd-mcp-button.is-primary, .pd-engine-button.is-primary, .pd-extension-request-actions > .is-primary, .pd-session-management-rename footer button.is-primary, .pd-branch-switch-dialog footer button.is-primary, .pd-commit-primary, .pd-project-create-submit, .pd-workbench-sync-primary, .pd-update-notice-primary):disabled { border-color: transparent; background: color-mix(in srgb, var(--pd-text) 9%, transparent); color: var(--pd-text-weak); opacity: 1; }
+/* Selected choice cards use the accent tint, not a grey block. */
+:root .pd-model-template-card.is-custom { background: color-mix(in srgb, var(--pd-brand) 8%, var(--pd-dialog)); }
+/* Light composer reads as an input: white field with a soft lift. */
+:root[data-theme='light'] .pd-composer-shell { background: var(--pd-field); box-shadow: 0 1px 2px #0f172a0d, 0 4px 16px #0f172a0a; }

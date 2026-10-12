@@ -7,9 +7,9 @@
   margin: auto;
   padding: 0;
   overflow: hidden;
-  border: 1px solid var(--pd-border);
+  border: 1px solid var(--pd-dialog-border);
   border-radius: var(--pd-radius-dialog);
-  background: var(--pd-surface);
+  background: var(--pd-dialog);
   color: var(--pd-text);
   box-shadow: var(--pd-shadow-dialog);
   font-family: inherit;
