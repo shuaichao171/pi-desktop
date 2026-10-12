@@ -49,6 +49,7 @@ export const AGENT_HOST_METHODS = [
 	'discoverProviderModels',
 	'saveCustomProvider',
 	'removeCustomProvider',
+	'restoreProviderBackup',
 	'saveProviderModels',
 	'setModel',
 	'setThinkingLevel',
