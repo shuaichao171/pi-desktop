@@ -91,6 +91,14 @@
 .pd-mcp-tools code { color: var(--pd-text-weak); font: var(--pd-font-xs) var(--pd-font-mono, ui-monospace, Consolas, monospace); }
 .pd-mcp-tools p { margin: 3px 0 0; color: var(--pd-text-subtle); font-size: var(--pd-font-xs); line-height: 1.5; }
 
+
+/* CLI (mcp.json) read-only section --------------------------------------------- */
+.pd-mcp-cli { display: flex; flex-direction: column; gap: 10px; padding-top: 14px; border-top: 1px solid var(--pd-border-soft); }
+.pd-mcp-cli-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.pd-mcp-cli-head h3 { font-size: var(--pd-font-caption); color: var(--pd-text-subtle); }
+.pd-mcp-cli-head p { margin: 4px 0 0; max-width: 560px; color: var(--pd-text-weak); font-size: var(--pd-font-xs); line-height: 1.55; }
+.pd-mcp-cli-server { border-style: dashed; background: color-mix(in srgb, var(--pd-surface) 55%, transparent); }
+.pd-mcp-cli-server .pd-mcp-server-icon { opacity: .8; }
 /* Editor dialog ---------------------------------------------------------------- */
 .pd-mcp-editor, .pd-mcp-remove { margin: auto; padding: 0; border: 1px solid var(--pd-dialog-border); border-radius: var(--pd-radius-lg); background: var(--pd-dialog); color: var(--pd-text); box-shadow: var(--pd-shadow-dialog); }
 .pd-mcp-editor::backdrop, .pd-mcp-remove::backdrop { background: var(--pd-overlay); }

@@ -109,6 +109,8 @@ export function installModelSettingsFixture(options = {}) {
     cancelProviderModelTest: () => undefined,
     recordUiDiagnostic: () => undefined,
     exportDiagnostics: () => ({ path: '/fixture/diagnostics.zip', entries: 1, skipped: [] }),
+    getDebugApiState: () => ({ enabled: false, port: 47899, authEnabled: false, token: '', running: false, baseUrl: null }),
+    setDebugApiConfig: request => ({ enabled: request.enabled, port: request.port, authEnabled: request.authEnabled, token: request.token ?? '', running: false, baseUrl: null }),
   };
   const subscriptions = ['onAgentEvent', 'onUpdateStateChanged', 'onAppCommand', 'onWindowChromeStateChanged', 'onExtensionDialog', 'onExtensionDialogClosed', 'onWorkspaceCommandEvent', 'onAutomationChanged', 'onWorkspaceChanged'];
   const bridge = {};

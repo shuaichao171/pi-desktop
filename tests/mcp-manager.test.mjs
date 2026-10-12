@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
-import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -118,4 +118,30 @@ test('the real Pi SDK session exposes and executes the MCP adapter and workspace
   assert.ok(!service.active.runtime.session.getActiveToolNames().includes(toolName));
   await assert.rejects(async () => service.connectMcpServer(request), /所属会话已改变/);
   assert.equal((await service.getMcpSnapshot()).servers[0].status, 'disconnected');
+});
+
+test('snapshot lists CLI mcp.json servers read-only, tolerates malformed files and trust gates project scope', async t => {
+  const f = await fixture(t);
+  await writeFile(join(f.agentDir, 'mcp.json'), JSON.stringify({ mcpServers: {
+    rea: { command: 'npx', args: ['-y', 'rea-agents@latest', 'mcp'], env: { REA_ANALYSIS_PROVIDER: 'ida' }, timeout: 600, description: 'Reverse engineering' },
+    docs: { url: 'https://example.com/mcp', headers: { Authorization: 'Bearer token' } },
+    off: { command: 'tool', enabled: false },
+    unrecognized: { unknown: true }
+  } }));
+  await mkdir(join(f.cwd, '.pi'), { recursive: true });
+  await writeFile(join(f.cwd, '.pi', 'mcp.json'), '{ broken');
+  const trusted = await owner(f.manager, f.cwd, 'session-one');
+  const snap = await f.manager.snapshot('session-one');
+  assert.deepEqual(snap.cliServers.map(server => server.name), ['rea', 'docs', 'off']);
+  assert.deepEqual(snap.cliServers.map(server => server.scope), ['user', 'user', 'user']);
+  assert.equal(snap.cliServers[0].transport, 'stdio'); assert.ok(snap.cliServers[0].enabled); assert.equal(snap.cliServers[0].timeoutSeconds, 600);
+  assert.equal(snap.cliServers[0].sourcePath, join(f.agentDir, 'mcp.json'));
+  assert.equal(snap.cliServers[1].transport, 'http'); assert.equal(snap.cliServers[1].url, 'https://example.com/mcp');
+  assert.equal(snap.cliServers[2].enabled, false);
+  assert.equal(snap.servers.length, 0); assert.equal(trusted.tools.size, 0);
+  await writeFile(join(f.cwd, '.pi', 'mcp.json'), JSON.stringify({ mcpServers: { local: { command: 'helper' } } }));
+  assert.equal((await f.manager.snapshot('session-one')).cliServers.filter(server => server.scope === 'project').length, 1);
+  const untrusted = await owner(f.manager, f.cwd, 'session-two', false);
+  assert.equal((await f.manager.snapshot('session-two')).cliServers.filter(server => server.scope === 'project').length, 0);
+  assert.equal(untrusted.tools.size, 0);
 });

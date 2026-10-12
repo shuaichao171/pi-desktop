@@ -5,7 +5,7 @@ export default async function dataMcpScenarios(review) {
   await review.evaluate(`(() => {
     const fixture=window.__modelReview,bridge=window.piDesktop,clone=value=>structuredClone(value),cwd=fixture.snapshot.cwd;
     const machine={rows:[{path:cwd+'/sessions/current.jsonl',id:'current',name:'当前会话',firstMessage:'当前会话',modified:'2026-10-09T08:00:00Z',messageCount:12,cwd,registered:true,running:false,bytes:4096,pinned:true},{path:cwd+'/sessions/other.jsonl',id:'other',name:'其他工作区会话',firstMessage:'其他工作区会话',modified:'2026-10-08T08:00:00Z',messageCount:3,cwd:'E:/elsewhere/project',registered:false,running:false,bytes:2048,archived:true}]};
-    const state={calls:[],machine,mcp:{cwd,sessionId:fixture.snapshot.sessionId,projectTrusted:true,servers:[{id:'review-mcp',scope:'user',name:'本地审查工具',enabled:true,transport:'stdio',command:'node',args:['fixture.mjs'],requestTimeoutMs:30000,status:'disconnected',tools:[]}]}};
+    const state={calls:[],machine,mcp:{cwd,sessionId:fixture.snapshot.sessionId,projectTrusted:true,servers:[{id:'review-mcp',scope:'user',name:'本地审查工具',enabled:true,transport:'stdio',command:'node',args:['fixture.mjs'],requestTimeoutMs:30000,status:'disconnected',tools:[]}],cliServers:[{name:'rea',scope:'user',enabled:true,transport:'stdio',command:'npx',args:['-y','rea-agents@latest','mcp'],timeoutSeconds:600,sourcePath:cwd+'/.pi/../agent/mcp.json'},{name:'local-helper',scope:'project',enabled:false,transport:'http',url:'https://example.com/mcp',sourcePath:cwd+'/.pi/mcp.json'}]}};
     bridge.listMachineSessions=async()=>clone(state.machine.rows);
     bridge.updateSessionMeta=async(path,patch)=>{state.calls.push(['meta',path,clone(patch)]);const row=state.machine.rows.find(item=>item.path===path);if(row)Object.assign(row,patch);};
     bridge.deleteSession=async path=>{state.calls.push(['delete',path]);state.machine.rows=state.machine.rows.filter(item=>item.path!==path);};
@@ -40,6 +40,9 @@ export default async function dataMcpScenarios(review) {
   await review.clickText('.pd-mcp-server button', '断开');
   await review.waitFor("document.querySelector('.pd-mcp-status')?.textContent==='未连接'");
   await review.assert("!document.querySelector('.pd-mcp-server details')", 'Disconnect removes tool availability from the panel');
+  await review.assert("document.querySelectorAll('.pd-mcp-cli-server').length===2 && document.querySelector('.pd-mcp-cli-head').textContent.includes('mcp.json')", 'CLI mcp.json servers render in a separate read-only section');
+  await review.assert("![...document.querySelectorAll('.pd-mcp-cli-server button')].length", 'CLI server cards expose no management buttons');
+  await review.screenshot('data-mcp-02-cli-section');
   await review.clickText('.pd-mcp-toolbar button', '添加服务器');
   await review.waitFor("Boolean(document.querySelector('.pd-mcp-editor[open] .pd-mcp-form'))");
   await review.screenshot('data-mcp-03-form');

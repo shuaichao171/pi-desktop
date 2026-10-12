@@ -11,7 +11,12 @@ export interface UiMcpServer extends UiMcpServerConfig {
 	scope: McpScope; status: 'disconnected' | 'connecting' | 'connected' | 'error';
 	error?: string; tools: UiMcpTool[];
 }
-export interface UiMcpSnapshot { cwd: string; sessionId: string; projectTrusted: boolean; servers: UiMcpServer[] }
+/** Read-only view of a server declared in a CLI `mcp.json` file; managed by `pi mcp`, never mutated here. */
+export interface UiMcpCliServer {
+	name: string; scope: McpScope; enabled: boolean; transport: 'stdio' | 'http';
+	command?: string; args?: string[]; url?: string; timeoutSeconds?: number; sourcePath: string;
+}
+export interface UiMcpSnapshot { cwd: string; sessionId: string; projectTrusted: boolean; servers: UiMcpServer[]; cliServers: UiMcpCliServer[] }
 export interface UiMcpTarget { cwd: string; sessionId: string; scope: McpScope; id: string }
 export interface UiMcpSaveRequest { cwd: string; sessionId: string; scope: McpScope; config: UiMcpServerConfig }
 export interface McpFeaturesBridge {

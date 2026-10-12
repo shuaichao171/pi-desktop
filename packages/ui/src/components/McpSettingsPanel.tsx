@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import type { McpFeaturesBridge, McpScope, UiMcpServer, UiMcpServerConfig, UiMcpSnapshot } from '../../../shared/src/mcpFeatures';
+import type { McpFeaturesBridge, McpScope, UiMcpCliServer, UiMcpServer, UiMcpServerConfig, UiMcpSnapshot } from '../../../shared/src/mcpFeatures';
 import { useChatStore } from '../store';
 import { useT } from '../i18n';
 import { technicalInputAttributes } from '../technicalInputAttributes';
@@ -8,7 +8,7 @@ import { Icon } from './Icons';
 import './mcpSettingsPanel.css';
 
 const errorText = (error: unknown) => error instanceof Error ? error.message : String(error);
-const emptySnapshot: UiMcpSnapshot = { cwd: '', sessionId: '', projectTrusted: false, servers: [] };
+const emptySnapshot: UiMcpSnapshot = { cwd: '', sessionId: '', projectTrusted: false, servers: [], cliServers: [] };
 function refsFromText(value: string): Record<string, string> {
 	const output: Record<string, string> = {};
 	for (const line of value.split(/\r?\n/u).map((item) => item.trim()).filter(Boolean)) {
@@ -20,6 +20,7 @@ function refsFromText(value: string): Record<string, string> {
 }
 const refsText = (value?: Record<string, string>) => Object.entries(value ?? {}).map(([key, reference]) => `${key}=${reference}`).join('\n');
 const commandLine = (server: UiMcpServer) => server.transport === 'stdio' ? [server.command ?? '', ...(server.args ?? [])].filter(Boolean).join(' ') : server.url ?? '';
+const cliCommandLine = (server: UiMcpCliServer) => server.transport === 'stdio' ? [server.command ?? '', ...(server.args ?? [])].filter(Boolean).join(' ') : server.url ?? '';
 
 export function McpSettingsPanel() {
 	const bridge = useChatStore((state) => state.bridge) as McpFeaturesBridge | null;
@@ -149,6 +150,33 @@ export function McpSettingsPanel() {
 				</details>}
 			</article>;
 		})}</div>
+
+		{(snapshot.cliServers ?? []).length > 0 && !loading && <section className="pd-mcp-cli" aria-labelledby="pd-mcp-cli-title">
+			<header className="pd-mcp-cli-head">
+				<div>
+					<h3 id="pd-mcp-cli-title">{label('CLI 配置的服务器（mcp.json）', 'CLI-configured servers (mcp.json)')}</h3>
+					<p>{label('以下服务器由 pi 命令行的 mcp.json 声明，会话启动时由引擎自动加载；此列表只读，请在终端使用 pi mcp 命令管理。', 'These servers are declared in the CLI mcp.json and loaded automatically by the engine. This list is read-only; manage them with pi mcp commands in a terminal.')}</p>
+				</div>
+				<span className="pd-mcp-chip">{label('只读', 'Read-only')}</span>
+			</header>
+			<div className="pd-mcp-servers">{(snapshot.cliServers ?? []).map((server) =>
+				<article key={`${server.scope}:${server.name}`} className={`pd-mcp-server pd-mcp-cli-server${server.enabled ? '' : ' is-disabled'}`} title={server.sourcePath}>
+					<header>
+						<span className="pd-mcp-server-icon"><Icon name={server.transport === 'stdio' ? 'terminal' : 'globe'} width="17" height="17" /></span>
+						<div className="pd-mcp-server-title">
+							<h3>{server.name}</h3>
+							<p>
+								<span className="pd-mcp-chip">{server.scope === 'user' ? label('用户', 'User') : label('项目', 'Project')}</span>
+								<span className="pd-mcp-chip">{server.transport === 'stdio' ? 'stdio' : 'HTTP'}</span>
+								{!server.enabled && <span className="pd-mcp-chip">{label('已禁用', 'Disabled')}</span>}
+								{server.timeoutSeconds !== undefined && <span className="pd-mcp-chip">{label(`超时 ${server.timeoutSeconds}s`, `Timeout ${server.timeoutSeconds}s`)}</span>}
+							</p>
+						</div>
+					</header>
+					<code className="pd-mcp-command" title={cliCommandLine(server)}>{cliCommandLine(server)}</code>
+				</article>)}
+			</div>
+		</section>}
 
 		<dialog ref={editorDialog} className="pd-mcp-editor" aria-labelledby="pd-mcp-editor-title" onCancel={(event) => { event.preventDefault(); if (!busy) setEditing(null); }}>
 			{editing && <form className="pd-mcp-form" onSubmit={(event) => { event.preventDefault(); void run(async () => {

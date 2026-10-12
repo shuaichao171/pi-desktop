@@ -8,7 +8,7 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
-import type { McpScope, UiMcpSaveRequest, UiMcpServer, UiMcpServerConfig, UiMcpSnapshot, UiMcpTarget, UiMcpTool } from '../../shared/src/mcpFeatures';
+import type { McpScope, UiMcpCliServer, UiMcpSaveRequest, UiMcpServer, UiMcpServerConfig, UiMcpSnapshot, UiMcpTarget, UiMcpTool } from '../../shared/src/mcpFeatures';
 
 const MAX_CONFIG_BYTES = 512 * 1024;
 const MAX_TOOL_BYTES = 256 * 1024;
@@ -103,13 +103,41 @@ export class McpManager {
 		if (new Set(servers.map((server) => server.id)).size !== servers.length) throw new McpLocalError('MCP 配置服务器编号重复');
 		return servers;
 	}
-	async snapshot(sessionId: string): Promise<UiMcpSnapshot> {
-		const owner = this.owner(sessionId), servers: UiMcpServer[] = [];
-		for (const scope of ['user', 'project'] as const) for (const config of await this.configs(owner, scope)) {
-			const state = owner.states.get(key(scope, config.id));
-			servers.push({ ...config, scope, status: state?.status ?? 'disconnected', tools: state?.tools ?? [], ...(state?.error ? { error: state.error } : {}) });
+	private cliConfigPath(owner: Owner, scope: McpScope): string { return scope === 'user' ? join(this.agentDir, 'mcp.json') : join(owner.cwd, '.pi', 'mcp.json'); }
+	/** Read-only listing of engine-side `mcp.json` servers for display; never connects to or mutates them. Malformed files are tolerated as empty. */
+	private async cliConfigs(owner: Owner, scope: McpScope): Promise<UiMcpCliServer[]> {
+		if (scope === 'project' && !owner.trusted) return [];
+		const path = this.cliConfigPath(owner, scope);
+		let raw: string;
+		try { raw = await readFile(path, 'utf8'); } catch { return []; }
+		if (Buffer.byteLength(raw) > MAX_CONFIG_BYTES) return [];
+		let value: unknown;
+		try { value = JSON.parse(raw); } catch { return []; }
+		const entries = object(value) && object(value.mcpServers) ? value.mcpServers : null;
+		if (!entries) return [];
+		const servers: UiMcpCliServer[] = [];
+		for (const [name, entry] of Object.entries(entries)) {
+			if (!text(name, 200) || !object(entry)) continue;
+			const command = typeof entry.command === 'string' && entry.command ? entry.command : undefined;
+			const url = typeof entry.url === 'string' && entry.url ? entry.url : undefined;
+			const transport: 'stdio' | 'http' | null = command ? 'stdio' : url ? 'http' : null;
+			if (!transport) continue; // Display-only view: entries without a command or URL are not renderable.
+			const args = Array.isArray(entry.args) && entry.args.every((item) => typeof item === 'string') ? entry.args as string[] : undefined;
+			servers.push({ name, scope, transport, enabled: entry.enabled !== false, ...(command ? { command, ...(args && args.length ? { args } : {}) } : { url }),
+				...(typeof entry.timeout === 'number' && Number.isFinite(entry.timeout) && entry.timeout > 0 ? { timeoutSeconds: entry.timeout } : {}), sourcePath: path });
 		}
-		return { cwd: owner.cwd, sessionId, projectTrusted: owner.trusted, servers };
+		return servers;
+	}
+	async snapshot(sessionId: string): Promise<UiMcpSnapshot> {
+		const owner = this.owner(sessionId), servers: UiMcpServer[] = [], cliServers: UiMcpCliServer[] = [];
+		for (const scope of ['user', 'project'] as const) {
+			for (const config of await this.configs(owner, scope)) {
+				const state = owner.states.get(key(scope, config.id));
+				servers.push({ ...config, scope, status: state?.status ?? 'disconnected', tools: state?.tools ?? [], ...(state?.error ? { error: state.error } : {}) });
+			}
+			cliServers.push(...await this.cliConfigs(owner, scope));
+		}
+		return { cwd: owner.cwd, sessionId, projectTrusted: owner.trusted, servers, cliServers };
 	}
 	private enqueue<T>(action: () => Promise<T>): Promise<T> {
 		const result = this.configQueue.then(action); this.configQueue = result.then(() => undefined, () => undefined); return result;
