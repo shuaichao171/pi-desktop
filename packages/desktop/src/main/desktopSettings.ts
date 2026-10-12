@@ -30,7 +30,7 @@ export interface DesktopDebugApiSettings {
 export const DEFAULT_DEBUG_API_SETTINGS: DesktopDebugApiSettings = {
 	enabled: false,
 	port: 47899,
-	authEnabled: false,
+	authEnabled: true,
 	token: '',
 };
 

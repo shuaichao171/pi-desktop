@@ -1,12 +1,17 @@
 /**
  * Loopback-only HTTP debug endpoint for Pi Desktop (AI debugging aid).
  *
- * Binds 127.0.0.1 exclusively — never reachable from the network. Exposes app
- * status, cloud-sync state, the request-level cloud log and manual cloud-sync
- * triggers so an assistant can diagnose the running app remotely over a local
- * shell. Optional Bearer-token authentication (see debugApiIpc).
+ * Binds 127.0.0.1 exclusively — never reachable from the network — and rejects
+ * requests whose Host header is not a loopback name, which also blocks
+ * DNS-rebinding. CORS headers are deliberately absent: pages in a browser must
+ * not read this API; the intended client is curl/fetch from a local shell.
+ * Exposes app status, cloud-sync state, the request-level cloud log and manual
+ * cloud-sync triggers so an assistant can diagnose the running app remotely.
+ * Bearer-token authentication is on by default and may be disabled in settings
+ * (see debugApiIpc).
  */
 
+import { timingSafeEqual } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { UiDebugApiConfig } from '@pidesktop/shared';
 import { clearCloudRequests, recentCloudRequests } from './cloudSync/requestLog.ts';
@@ -26,7 +31,6 @@ function sendJson(response: ServerResponse, status: number, value: unknown): voi
 	response.writeHead(status, {
 		'content-type': 'application/json; charset=utf-8',
 		'cache-control': 'no-store',
-		'access-control-allow-origin': '*',
 	});
 	response.end(JSON.stringify(value, null, 2));
 }
@@ -39,24 +43,30 @@ async function runCloudAction(response: ServerResponse, action: () => Promise<un
 	}
 }
 
+function isLoopbackHost(host: string | undefined, port: number): boolean {
+	if (!host) return false;
+	const normalized = host.trim().toLowerCase();
+	return normalized === '127.0.0.1' || normalized === 'localhost'
+		|| normalized === `127.0.0.1:${port}` || normalized === `localhost:${port}`;
+}
+
+function hasBearerToken(request: IncomingMessage, token: string): boolean {
+	const received = Buffer.from(request.headers.authorization ?? '');
+	const expected = Buffer.from(`Bearer ${token}`);
+	return received.length === expected.length && timingSafeEqual(received, expected);
+}
+
 export async function createDebugServer(config: UiDebugApiConfig, deps: DebugServerDeps): Promise<DebugServer> {
 	async function handle(request: IncomingMessage, response: ServerResponse): Promise<void> {
 		const url = new URL(request.url ?? '/', 'http://127.0.0.1');
 		const method = (request.method ?? 'GET').toUpperCase();
-		if (method === 'OPTIONS') {
-			response.writeHead(204, {
-				'access-control-allow-origin': '*',
-				'access-control-allow-methods': 'GET, POST, DELETE, OPTIONS',
-				'access-control-allow-headers': 'authorization, content-type',
-			});
-			response.end();
+		if (!isLoopbackHost(request.headers.host, config.port)) {
+			sendJson(response, 403, { ok: false, error: '拒绝访问：Host 头不是本机回环地址 / forbidden: non-loopback Host header' });
 			return;
 		}
-		if (config.authEnabled && config.token) {
-			if ((request.headers.authorization ?? '') !== `Bearer ${config.token}`) {
-				sendJson(response, 401, { ok: false, error: '鉴权失败：需要 Authorization: Bearer <token> / unauthorized' });
-				return;
-			}
+		if (config.authEnabled && config.token && !hasBearerToken(request, config.token)) {
+			sendJson(response, 401, { ok: false, error: '鉴权失败：需要 Authorization: Bearer <token> / unauthorized' });
+			return;
 		}
 		if (method === 'GET' && url.pathname === '/') {
 			sendJson(response, 200, {

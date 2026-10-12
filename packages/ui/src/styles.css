@@ -814,7 +814,7 @@ div.pd-hover-tooltip:has(.pd-update-notes-body) { max-width: min(400px, calc(100
 .is-frameless:has(.pd-chat-title.is-editing) :is(.pd-sidebar-toolbar, .pd-chat-header, .pd-chat-heading) { -webkit-app-region: no-drag; }
 /* While a popover is open the drag regions (title strip etc.) must not
    swallow the outside press that dismisses it. pd-popover-open lives on
-   <html>, is-frameless on the shell div 鈥?so scope via html + :is(). */
+   <html>, is-frameless on the shell div — so scope via html + :is(). */
 html.pd-popover-open :is(.pd-sidebar-toolbar, .pd-chat-header, .pd-chat-heading, .pd-workbench-header) { -webkit-app-region: no-drag; }
 .is-frameless .pd-settings-overlay { top: 56px; }
 .is-frameless .pd-settings-dialog { max-height: min(740px, calc(100vh - 104px)); }
