@@ -2137,11 +2137,23 @@ export class AgentService {
 
 	/** Forwards to the active context; older timeline slices load on demand. */
 	getHistoryPage(offset: number, limit: number): UiHistoryPage {
-		return this.requireActive().getHistoryPage(offset, limit);
+		// Synchronous pure read of loaded history. Plugin/provider reloads can run for
+		// tens of seconds (package resolution) without invalidating the timeline, so
+		// unlike requireActive() this must not reject mid-reload (only transitions swap
+		// the active context; the inner service guards lifecycle itself).
+		if (this.closing) throw new Error('应用正在退出');
+		if (this.transition) throw new Error('会话正在切换，请稍后再试');
+		if (!this.active) throw new Error('Agent is not initialized');
+		return this.active.getHistoryPage(offset, limit);
 	}
 
 	getMessageAttachment(sessionPath: string, messageId: string, index: number): UiAttachment {
-		return this.requireActive().getMessageAttachment(sessionPath, messageId, index);
+		// Same pure-read rule as getHistoryPage: attachments stay valid across plugin
+		// and provider reloads, so never surface the plugin-busy error here.
+		if (this.closing) throw new Error('应用正在退出');
+		if (this.transition) throw new Error('会话正在切换，请稍后再试');
+		if (!this.active) throw new Error('Agent is not initialized');
+		return this.active.getMessageAttachment(sessionPath, messageId, index);
 	}
 
 	/** Forwards to the active context (3.1). */
