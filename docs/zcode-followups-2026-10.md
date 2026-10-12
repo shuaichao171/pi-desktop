@@ -16,6 +16,11 @@
 | 11 | Git 提交图 | 工作台 → Git → 提交历史 | `git-graph/layoutAlgorithm.ts` |
 | 12 | 查找范围切换 | 会话内查找条（Ctrl+F） | `quickpick/conversationFindSearch.ts` |
 | 13 | 搜索历史 | 全局搜索空态「最近搜索」 | `command-center/commandCenterSearchHistory.ts` |
+| 14 | 归档两击确认＋乐观元数据更新 | 侧栏会话行归档按钮 | `TaskList.tsx`/`TaskListItem.tsx`、`zcodeTaskServiceAdapter.ts`（setOverlay） |
+| 15 | 批量删除单刷新＋预检跳过＋未读 CAS 水位线 | 归档视图多选删除、后台未读标记 | `zcodeTaskServiceAdapter.ts`（deleteArchivedTasks）、`taskIndexRepo.ts`（clearTaskUnreadIfMatches/last_unread_at） |
+| 16 | 快速切换对话（导航点击永不拒绝） | 侧栏会话行、「新对话」、项目「＋」与菜单 | `useWorkspaceTaskNavigation.ts`（handleSelectTask 同步本地选中）、`AgentService.runTransition`（最新者胜队列） |
+| 17 | 运行层置顶稳定排序（消除多会话并发时行跳动） | 侧栏会话列表排序 | `taskListOrdering.ts`（两层排序：运行层禁用 updatedAt）、`taskListRowActivity.ts` |
+| 18 | 对话询问按会话隔离 | 插件/扩展问题卡片、提示音与视图切换 | `taskListRowActivity.ts`（pendingInteractions 按任务隔离）、`getTaskListAttention` |
 
 ## 行为细节
 
@@ -38,6 +43,16 @@
 **查找范围（12）**：查找条新增「对话/变更」切换（仅有差异记录时显示）。变更范围用 `changesFind.ts` 在 `UiFileChange.diff` 与路径上做大小写不敏感字面匹配，计数显示「N 个文件 · M 处匹配」；Enter/上下按钮逐文件循环并直接打开对应审查窗口（`ComposerChanges` 暴露的命令式句柄）；切换回对话范围恢复原高亮绘制，两范围互不干扰。
 
 **搜索历史（13）**：`searchHistory.ts`（localStorage，上限 8 条，置顶去重）；选中任一命令/会话/文件结果时记录当前搜索词；空态首屏展示「最近搜索」，支持单条移除与一键清除。
+
+**归档两击确认＋乐观更新（14）**：侧栏归档按钮首次点击进入待确认态（行 `is-archive-confirming`，按钮变 destructive「确认归档」，无需悬停也持续可见），二次点击同行才执行；Esc 或行外任意按压取消，会话离开可见列表／打开行菜单／开始拖拽／切换视图时自动清除；取消归档方向可逆，保持单击立即执行。写路径对齐 zcode setOverlay：`updateSessionMeta` 对 pinned/archived/unread 布尔标记先在所有工作区缓存（含 `sessions` 镜像）同步翻转，IPC 成功后由 `refreshSessionCache` 收敛到权威状态，失败则按快照回滚（运行时事件只合并 runtime，不会冲掉 overlay）。验证：`tests/fixtures/sidebar-titles/archive-confirm.mjs` 六步真实渲染器场景（待确认态、Esc／外点取消、两击提交、归档视图单击恢复、失败回滚）全部通过并出三张截图。
+
+**批量删除与未读一致性（15）**：三处对齐。① 归档视图多选删除改为 `deleteSessions` 批量接口（对齐 deleteArchivedTasks）：逐条桥接调用保持顺序独立（一项失败不回滚其它），批次只做一次预检 `listSessions` 与一次收尾刷新，替代旧实现 N 条会话 N 次全量重拉；当前会话在批次内时仅切一次新会话。② 预检复验选择有效性（对齐 deleteArchivedTask 同事务 `archived===1` 守卫）：确认框停留期间若某会话被移出归档或已不存在，该条以「已跳过」报告而非报错，对话框保持打开供阅读，其余照常删除。③ 未读标记加版本水位线（对齐 `unread_at`/`last_unread_at` 与 `clearTaskUnreadIfMatches`）：每次后台终态盖严格递增的 `unreadAt` 戳（同毫秒 +1），清除分两级——打开会话无条件清（用户正在看），侧栏／菜单的「标记已读」携带渲染层快照的 `expectedUnreadAt` 做 CAS，戳更新则拒绝清除保留圆点；打开会话后迟到的排队终态直接抑制不亮灯；回收站快照剔除该戳保持边车 schema 稳定，旧布尔数据无戳时退化为原行为。验证：`tests/agent-ipc.test.mjs` 新增七断言单元测试（盖戳递增、旧戳拒清、当前戳清、打开抑制）；`tests/fixtures/sidebar-titles/bulk-delete.mjs` 真实渲染器场景覆盖单刷新计数（恰好预检+收尾两次）、跳过与删除并存、关闭后视图收敛。
+
+**快速切换对话（16）**：对齐 zcode「选择是本地即时操作」的语义，消除切换期忙碌卡死。zcode 的 `handleSelectTask` 同步完成本地选中（仅拦模型运行时重建的短暂窗口），对话内容由持久化快照首屏、`resumeTask` 复用 workspace 级进程后台补齐。三层改造：① 渲染层解除点击门闩——`openSession` 不再忽略导航中的新点击，点击当前会话短路（仅清未读）；会话行、「新对话」、项目「＋」与「打开项目」菜单去掉 `status === 'starting' || navigating` 禁用，慢切换期间侧栏永远可点。② agent 侧 `runTransition` 导航类操作（switchSession/newSession/switchWorkspace/activateResidentSession//new）改为「最新者胜」队列：正在运行的切换不可中断（其上下文加载完仍留作热缓存，切回即命中 warm 激活），新导航排队等待，更新的导航取代还在排队的旧导航（旧请求以「已有更新的切换请求」明确拒绝，渲染端导航代次静默吞掉）；init、删除、移除项目保持严格拒绝，避免破坏性/启动操作被静默取消；交接处同步接管切换槽并复检 closing/plugin/provider，不留异步空隙。③ `switchSession`/`newSession` 的 cwd 改在切换体执行时读取：排在其它导航后面时工作区可能已被更新点击换过，旧工作区会话应按「不属于当前工作区」拒绝而非误激活。既有 keep-warm 预览与 `MAX_LOADED_CONTEXTS` 缓存不变。验证：`tests/agent.test.mjs` 新增队列测试（慢切换中排队、取代拒绝、init 仍严格拒绝、最终收敛与 warm 激活）；`tests/fixtures/session-switch-race/scenarios.mjs` 真实渲染器场景（导航滞留期间行不禁用、第二次点击仍发出导航、释放后最后点击胜出）。
+
+**运行层置顶稳定排序（17）**：对齐 zcode `taskListOrdering.ts` 的两层排序，消除多会话并发时侧栏行不断换位。根因：`runtimeModified` 在每个轮次边界（busy/idle 状态事件）刷新，任何一条会话开始或结束一轮都会触发 `sessions-changed` → 列表按 `modified` 降序重排，并发运行的多条会话彼此以及与空闲会话之间反复换位。zcode 的解法：运行中任务整体置顶成一层，层内绝不允许读 updatedAt（包括次级排序），用 createdAt 降序＋taskId 稳定决胜；非运行层才服从用户时间偏好。落地：① `UiSessionSummary` 新增可选 `created`（会话头部 timestamp），磁盘摘要从 SessionInfo.created 带出，运行中上下文从 sessionManager 头部带出，乐观更新继承既有字段；② `selectSidebarSessions` 改两层比较器——`runtime.phase === 'running'` 的行置顶，层内按 created 降序、无 created 的排在有 created 之后保持插入序，waiting/failed/idle 留在时间层（waiting 停靠不再触发状态事件，不会抖动；运行层成员口径与 zcode 一致只认 running）；`oldest` 偏好只翻转时间层，运行层排序不受影响。效果：会话开始运行时一次性跳到顶，运行期间任何轮次边界都不再换位；结束时一次性回到时间层新位置。验证：`tests/sidebar-organization.test.mjs` 新增测试（运行层 created 序、waiting 归层、oldest 偏好不变运行层、modified 抖动不动、落定后单次归位）。
+
+**对话询问按会话隔离（18）**：对齐 zcode per-task interactions，修复某条会话的插件提问在所有对话都可见的问题。根因：`UiExtensionDialogRequest` 不携带会话身份，渲染端 `ExtensionDialogHost` 单队列展示第一个非 notify 请求，与当前打开的对话无关；AppShell 还会在任意提问到来时拉回 chat 视图。zcode 的模型：Elicitation/许可交互归属各自 task，侧栏行通过 `pendingInteractions`（permissionCount/userInputCount）显示注意徽标，用户切到该 task 才看到弹窗。落地：① `UiExtensionDialogRequest` 新增可选 `scope: { cwd, sessionPath, sessionId }`，agent 侧在 `AgentService.newContext` 的非 notify 包装里提问时捕获提问会话快照（sessionId 是新会话落盘前后不变的稳定键；notify 保持无作用域——时间线行本就归属会话，toast 是全局注意力）；② 渲染端 `requestBelongsToConversation`：无 scope 的旧请求照常展示（兼容），cwd 不匹配隐藏，双侧 sessionPath 非空时严格比对，否则回退 sessionId（null 时 fail-open 不让问题无法回答）；`active`/排队计数/layout 类 `has-extension-request` 都按当前会话过滤，其它会话的问题留在队列，切过去即展示；③ pending 信号拆分：`useExtensionRequestPending`（当前会话，驱动视图拉回与布局）与 `useAnyExtensionRequestPending`（任意会话，驱动失焦提示音——后台提问不再拉视图但保留声音注意力，侧栏 waiting 指示器已由 `withRuntimeWait` 提供即 zcode 注意徽标等价物）。验证：`tests/fixtures/extension-scope/scenarios.mjs` 真实渲染器场景（后台提问在其它对话不展示、切到提问会话展示、答后无残留、当前会话提问立即展示）；既有 extension-inline（无 scope 兼容）、question-auto-resolution、new-conversation、session-switch-race fixture 与 agent/store 单测全部通过。
 
 ## 依赖说明
 

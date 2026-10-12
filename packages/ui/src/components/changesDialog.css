@@ -12,9 +12,16 @@
 .pd-changes-dialog-header > div > span:not(.pd-change-stats) { color: var(--pd-text-weak); font-size: var(--pd-font-sm); }
 .pd-changes-description { flex: 0 0 auto; margin: 0; padding: 0 18px 14px; color: var(--pd-text-weak); font-size: var(--pd-font-sm); line-height: 1.5; }
 .pd-changes-review { display: flex; flex: 1; min-height: 0; overflow: hidden; border-top: 1px solid var(--pd-border); }
-.pd-changes-file-list { flex: 0 0 290px; min-width: 0; padding: 8px; overflow: auto; border-right: 1px solid var(--pd-border); background: var(--pd-surface-muted); scrollbar-width: thin; overscroll-behavior: contain; }
-.pd-changes-file { display: flex; align-items: center; gap: 7px; width: 100%; min-width: 0; min-height: 46px; margin-bottom: 3px; padding: 7px 8px; border: 0; border-radius: var(--pd-radius-sm); background: transparent; color: var(--pd-text-subtle); text-align: left; font-size: var(--pd-font-caption); }
-.pd-changes-file .pd-change-filename { flex-direction: column; align-items: stretch; gap: 3px; }
+.pd-changes-file-list { flex: 0 0 320px; min-width: 0; padding: 8px; overflow: auto; border-right: 1px solid var(--pd-border); background: var(--pd-surface-muted); scrollbar-width: thin; overscroll-behavior: contain; }
+.pd-changes-file { display: flex; align-items: flex-start; gap: 7px; width: 100%; min-width: 0; min-height: 0; margin-bottom: 1px; padding: 8px; border: 0; border-radius: var(--pd-radius-sm); background: transparent; color: var(--pd-text-subtle); text-align: left; font-size: var(--pd-font-caption); }
+/* Dialog list: file name first (up to two lines), folder below and shortened from the front. */
+.pd-changes-file .pd-change-filename { flex-direction: column-reverse; align-items: stretch; gap: 2px; }
+.pd-changes-file .pd-change-filename > span { display: -webkit-box; overflow: hidden; color: var(--pd-text); font-weight: 500; line-height: 1.35; white-space: normal; overflow-wrap: anywhere; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.pd-changes-file .pd-change-filename > small { direction: rtl; font-size: var(--pd-font-xs); text-align: left; }
+.pd-changes-file .pd-change-filename > small > bdi { direction: ltr; unicode-bidi: isolate; }
+.pd-changes-file > .pd-change-file-icon { margin-top: 1px; }
+.pd-changes-file > .pd-change-stats { margin-top: 1px; font-size: var(--pd-font-xs); }
+.pd-changes-file .pd-change-file-state.is-modified { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .pd-changes-file .pd-change-filename > span, .pd-changes-file .pd-change-filename > small { flex: 0 1 auto; max-width: 100%; }
 .pd-changes-file:hover, .pd-changes-file.is-selected { background: var(--pd-surface-hover); }
 .pd-changes-file.is-selected { box-shadow: inset 2px 0 var(--pd-brand); }

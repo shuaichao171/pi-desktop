@@ -3,6 +3,7 @@ import { mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSy
 import { tmpdir } from 'node:os';
 import { join, resolve, sep } from 'node:path';
 import { test } from 'node:test';
+import { seedTestModel } from './helpers/testModel.mjs';
 
 async function fixture(run, extension = 'export default function (pi) { pi.registerCommand("plugin-marker", { description: "Fixture", handler: async () => {} }); }') {
   const root = mkdtempSync(join(tmpdir(), 'pi-plugin-lifecycle-'));
@@ -13,6 +14,7 @@ async function fixture(run, extension = 'export default function (pi) { pi.regis
   mkdirSync(cwd); mkdirSync(other); mkdirSync(join(agentDir, 'extensions'), { recursive: true });
   writeFileSync(path, extension);
   const previous = new Map(['PI_CODING_AGENT_DIR', 'PI_OFFLINE'].map((key) => [key, process.env[key]]));
+  seedTestModel(agentDir);
   process.env.PI_CODING_AGENT_DIR = agentDir;
   process.env.PI_OFFLINE = '1';
   let service;

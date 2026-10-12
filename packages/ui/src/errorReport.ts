@@ -1,4 +1,4 @@
-import type { UiDiagnosticEvent } from '@pidesktop/shared';
+import type { UiAgentError, UiDiagnosticEvent } from '@pidesktop/shared';
 
 const PRIVATE_FIELD = /^(?:authorization|proxy-authorization|cookie|set-cookie|.*(?:api[_-]?key|password|secret|token)|messages?|prompts?|input|content|attachments?|request(?:body)?|body|data)$/i;
 function scrubJson(value: unknown, depth = 0): unknown {
@@ -42,10 +42,20 @@ export function redactErrorText(input: string): string {
     + (input.length > 64000 ? '\n[error details truncated at 64 KB]' : '');
 }
 
-export function createErrorReport(error: string, scope: UiDiagnosticEvent['scope'], kind: 'render-error' | 'operation-error', status?: string) {
+export function createErrorReport(error: string, scope: UiDiagnosticEvent['scope'], kind: 'render-error' | 'operation-error', status?: string, info?: UiAgentError | null) {
   const id = globalThis.crypto?.randomUUID?.() ?? `error-${Date.now()}-${Math.random().toString(16).slice(2)}`;
   const time = new Date().toISOString();
   const details = redactErrorText(error);
   const safeStatus = status && /^[a-z-]{1,30}$/.test(status) ? status : undefined;
-  return { id, details, diagnostic: { id, scope, kind, outcome: 'failure' as const }, text: `Pi Desktop error\nDiagnostic ID: ${id}\nTime: ${time}\nArea: ${scope}\nType: ${kind}${safeStatus ? `\nStatus: ${safeStatus}` : ''}\n\n${details}` };
+  // Structured evidence only joins the report when it describes this exact failure.
+  const evidence = info && (info.message === error || error.includes(info.message)) ? [
+    `kind=${info.kind}`, `source=${info.source}`,
+    ...(info.code ? [`code=${info.code}`] : []),
+    ...(info.status !== undefined ? [`status=${info.status}`] : []),
+    ...(info.provider ? [`provider=${info.provider}`] : []),
+    ...(info.retryable !== undefined ? [`retryable=${info.retryable}`] : []),
+    ...(info.traceId ? [`traceId=${info.traceId}`] : []),
+  ].join(' ') : undefined;
+  const nested = evidence && info?.detail ? `\n${redactErrorText(info.detail)}` : '';
+  return { id, details, diagnostic: { id, scope, kind, outcome: 'failure' as const }, text: `Pi Desktop error\nDiagnostic ID: ${id}\nTime: ${time}\nArea: ${scope}\nType: ${kind}${safeStatus ? `\nStatus: ${safeStatus}` : ''}${evidence ? `\nStructured: ${evidence}` : ''}${nested}\n\n${details}` };
 }

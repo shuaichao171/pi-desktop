@@ -97,10 +97,11 @@ test('forced retry persists a project after activation emitted its cwd but savin
   await settle();
   assert.deepEqual(host.calls, [{ cwd: home, options: undefined }, { cwd: home, options: undefined }]);
   assert.deepEqual(refreshes, ['projects', home]);
-  assert.equal(useChatStore.getState().navigationPending, true, 'retry waits for workspace/session refresh');
+  assert.equal(useChatStore.getState().navigationPending, false, 'the switch settles after the RPC; the sidebar refresh converges in the background');
   assert.equal(useChatStore.getState().error, null);
   refreshGate.resolve([{ path: `${home}/saved.jsonl`, id: 'saved', firstMessage: 'Existing conversation', messageCount: 1 }]);
   await retry;
+  await settle();
   assert.equal(useChatStore.getState().navigationPending, false);
   assert.deepEqual(useChatStore.getState().workspaces, [home]);
   assert.equal(useChatStore.getState().sessions[0].id, 'saved');
@@ -123,16 +124,17 @@ test('a late folder selection cannot replace a newer navigation with a new conve
   assert.equal(useChatStore.getState().navigationPending, false);
 });
 
-test('fresh navigation stays pending through refresh and reports failures without changing the draft', async () => {
+test('fresh navigation settles after the RPC and reports failures without changing the draft', async () => {
   const host = fixture();
   const refresh = deferred();
   host.bridge.listSessions = () => refresh.promise;
   const selecting = useChatStore.getState().switchWorkspace(home, { fresh: true });
   await settle();
-  assert.equal(useChatStore.getState().navigationPending, true);
+  assert.equal(useChatStore.getState().navigationPending, false, 'the switch itself is done; only the sidebar refresh is outstanding');
   assert.equal(useChatStore.getState().navigationRequestId, 1);
   refresh.resolve([]);
   await selecting;
+  await settle();
   assert.equal(useChatStore.getState().navigationPending, false);
   const original = useChatStore.getState().sessionPath;
   host.bridge.switchWorkspace = async () => { throw new Error('Cannot open project'); };

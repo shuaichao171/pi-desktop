@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react';
 import { useChatStore } from '../store';
 import { useT } from '../i18n';
-import { classifyAgentError, type UiErrorKind } from '../errorAttribution';
+import { attributeAgentError, type UiErrorKind } from '../errorAttribution';
 import { useConversationCopy } from '../conversationCopy';
 import { ErrorDetails } from './ErrorDetails';
 
@@ -20,6 +20,7 @@ export function RunStatusBar({ onOpenModelManagement }: { onOpenModelManagement?
 	const retryAttempt = useChatStore((s) => s.retryAttempt);
 	const retryMaxAttempts = useChatStore((s) => s.retryMaxAttempts);
 	const error = useChatStore((s) => s.error);
+	const errorInfo = useChatStore((s) => s.errorInfo);
 	const bridge = useChatStore((s) => s.bridge);
 	const [busy, setBusy] = useState(false);
 	const pending = useRef(false);
@@ -46,11 +47,17 @@ export function RunStatusBar({ onOpenModelManagement }: { onOpenModelManagement?
 	}
 
 	// Session-list and other UI failures must not offer an agent restart that
-	// retryAgent cannot perform while the agent is healthy.
-	if (status !== 'error') return <div className="pd-error-banner" role="alert"><span>{error}</span>{status === 'idle' && lastMessage?.role === 'assistant' && lastMessage.status === 'error' && <div><button type="button" className="pd-run-status-action" disabled={busy} onClick={() => void runAction(() => useChatStore.getState().regenerate())}>{busy ? c('regenerating') : t('message.regenerate')}</button>{onOpenModelManagement && <button type="button" className="pd-run-status-action" onClick={onOpenModelManagement}>{t('chat.runStatus.openSettings')}</button>}</div>}<ErrorDetails error={error ?? ''} status={status} /></div>;
-	const kind: UiErrorKind = classifyAgentError(error ?? '');
+	// retryAgent cannot perform while the agent is healthy. Model-availability
+	// gate failures keep the draft, so settings remain reachable from the banner.
+	if (status !== 'error') {
+		const bannerKind = attributeAgentError(error ?? '', errorInfo);
+		const settingsEntry = Boolean(onOpenModelManagement && (bannerKind === 'auth' || bannerKind === 'model-unavailable'));
+		const regenerateEntry = status === 'idle' && lastMessage?.role === 'assistant' && lastMessage.status === 'error';
+		return <div className="pd-error-banner" role="alert"><span>{error}</span>{(regenerateEntry || settingsEntry) && <div>{regenerateEntry && <button type="button" className="pd-run-status-action" disabled={busy} onClick={() => void runAction(() => useChatStore.getState().regenerate())}>{busy ? c('regenerating') : t('message.regenerate')}</button>}{settingsEntry && <button type="button" className="pd-run-status-action" onClick={onOpenModelManagement}>{t('chat.runStatus.openSettings')}</button>}</div>}<ErrorDetails error={error ?? ''} status={status} info={errorInfo} /></div>;
+	}
+	const kind: UiErrorKind = attributeAgentError(error ?? '', errorInfo);
 	const action = !bridge ? null : (
-		kind === 'auth' ? (
+		kind === 'auth' || kind === 'model-unavailable' ? (
 			onOpenModelManagement ? <button type="button" className="pd-run-status-action" onClick={onOpenModelManagement}>{t('chat.runStatus.openSettings')}</button> : null
 		) : kind === 'context' ? (
 			<button type="button" className="pd-run-status-action" disabled={busy || !onCompactAvailable()} onClick={() => { void runAction(runCompact); }}>{t('chat.runStatus.compact')}</button>
@@ -64,7 +71,7 @@ export function RunStatusBar({ onOpenModelManagement }: { onOpenModelManagement?
 			<span>{error}</span>
 			<span className="pd-run-status-hint">{t(`chat.runStatus.${kind}Hint`)}</span>
 			{action}
-			<ErrorDetails error={error ?? ''} status={status} />
+			<ErrorDetails error={error ?? ''} status={status} info={errorInfo} />
 		</div>
 	);
 }

@@ -10,23 +10,33 @@
 .pd-workspace-list-error { border: 1px solid var(--pd-danger-border); border-radius: var(--pd-radius-sm); }
 .pd-workspace-list-error p { margin: 5px 0; color: var(--pd-danger); }
 .pd-workspace-list-error button { min-height: 28px; padding: 3px 9px; border: 1px solid var(--pd-border); border-radius: var(--pd-radius-xs); background: var(--pd-surface); }
-.pd-session-trash-dialog { width: min(460px, calc(100vw - 32px)); max-height: calc(100dvh - 48px); margin: auto; padding: 24px; overflow: auto; border: 1px solid var(--pd-border); border-radius: var(--pd-radius-lg); color: var(--pd-text); background: var(--pd-surface); font-size: var(--pd-font-base); line-height: 1.5; box-shadow: var(--pd-shadow-dialog); }
-.pd-session-trash-dialog::backdrop { background: var(--pd-overlay); }
-.pd-session-trash-dialog h2 { margin: 0 0 18px; font-size: var(--pd-font-lg); }
-.pd-session-trash-dialog > strong, .pd-session-trash-workspace { overflow-wrap: anywhere; }
-.pd-session-trash-workspace { font-size: var(--pd-font-sm); color: var(--pd-text-subtle); }
-.pd-session-trash-error { color: var(--pd-danger); overflow-wrap: anywhere; }
-.pd-session-trash-dialog footer { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-top: 22px; }
-.pd-session-trash-dialog button { display: inline-flex; align-items: center; justify-content: center; min-height: 34px; padding: 6px 12px; border: 1px solid var(--pd-border); border-radius: var(--pd-radius-sm); background: var(--pd-surface); color: var(--pd-text); }
-.pd-session-trash-dialog button.is-danger { color: var(--pd-danger); border-color: var(--pd-danger-border); background: var(--pd-danger-surface); }
-.pd-sidebar-organize-toolbar { display: flex; flex: 0 0 auto; flex-wrap: wrap; align-items: center; gap: 3px; padding: 0 9px 5px; }
-.pd-sidebar-mode { display: flex; flex: 0 0 auto; gap: 1px; padding: 2px; border-radius: var(--pd-radius-pill); background: var(--pd-sidebar-surface); }
-.pd-sidebar-mode button { display: flex; align-items: center; gap: 3px; height: 24px; padding: 0 6px; border: 0; border-radius: var(--pd-radius-pill); background: transparent; color: var(--pd-text); font-size: var(--pd-font-sm); white-space: nowrap; }
-.pd-sidebar-mode button[aria-selected='true'] { background: var(--pd-sidebar-tab); color: var(--pd-text); box-shadow: var(--pd-shadow-low); }
+.pd-session-delete-dialog { width: min(460px, calc(100vw - 32px)); max-height: calc(100dvh - 48px); margin: auto; padding: 24px; overflow: auto; border: 1px solid var(--pd-border); border-radius: var(--pd-radius-lg); color: var(--pd-text); background: var(--pd-surface); font-size: var(--pd-font-base); line-height: 1.5; box-shadow: var(--pd-shadow-dialog); }
+.pd-session-delete-dialog::backdrop { background: var(--pd-overlay); }
+.pd-session-delete-dialog h2 { margin: 0 0 18px; font-size: var(--pd-font-lg); }
+.pd-session-delete-dialog > strong, .pd-session-delete-workspace { overflow-wrap: anywhere; }
+.pd-session-delete-workspace { font-size: var(--pd-font-sm); color: var(--pd-text-subtle); }
+.pd-session-delete-error { color: var(--pd-danger); overflow-wrap: anywhere; }
+.pd-session-delete-skip { color: var(--pd-text-subtle); overflow-wrap: anywhere; }
+.pd-session-delete-dialog footer { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-top: 22px; }
+.pd-session-delete-dialog button { display: inline-flex; align-items: center; justify-content: center; min-height: 34px; padding: 6px 12px; border: 1px solid var(--pd-border); border-radius: var(--pd-radius-sm); background: var(--pd-surface); color: var(--pd-text); }
+.pd-session-delete-dialog button.is-danger { color: var(--pd-danger); border-color: var(--pd-danger-border); background: var(--pd-danger-surface); }
+/* One row: an equal-width view switch, then "new" and the view-options menu. */
+.pd-sidebar-organize-toolbar { display: flex; flex: 0 0 auto; align-items: center; gap: 6px; min-height: 34px; padding: 0 9px 6px 12px; }
+.pd-sidebar-mode { display: flex; flex: 1 1 auto; gap: 2px; max-width: 168px; min-width: 0; padding: 2px; border-radius: var(--pd-radius-md); background: var(--pd-sidebar-surface); }
+.pd-sidebar-mode button { display: flex; flex: 1 1 0; align-items: center; justify-content: center; min-width: 0; height: 26px; padding: 0 10px; border: 0; border-radius: var(--pd-radius-sm); background: transparent; color: var(--pd-text-subtle); font-size: var(--pd-font-caption); white-space: nowrap; transition: background var(--pd-motion-fast), color var(--pd-motion-fast); }
+.pd-sidebar-mode button[aria-selected='true'] { background: var(--pd-sidebar-tab); color: var(--pd-text); font-weight: 500; box-shadow: var(--pd-shadow-low); }
 .pd-sidebar-mode button:hover { color: var(--pd-text); }
-.pd-sidebar-organize-toolbar .pd-icon-button { width: 23px; height: 26px; border-radius: var(--pd-radius-sm); }
-.pd-sidebar-organize-actions { display: flex; align-items: center; gap: 1px; margin-left: auto; }
+.pd-sidebar-organize-toolbar .pd-icon-button { position: relative; width: 28px; height: 28px; border-radius: var(--pd-radius-sm); color: var(--pd-text-subtle); }
+.pd-sidebar-organize-toolbar .pd-icon-button:hover:not(:disabled), .pd-sidebar-organize-toolbar .pd-icon-button[aria-expanded='true'] { background: var(--pd-sidebar-hover); color: var(--pd-text); }
+/* An active filter marks the options button instead of tinting it. */
+.pd-sidebar-organize-toolbar .pd-icon-button.has-dot::after { position: absolute; top: 5px; right: 5px; width: 6px; height: 6px; border-radius: 50%; background: var(--pd-brand); box-shadow: 0 0 0 2px var(--pd-sidebar); content: ''; }
+.pd-sidebar-organize-actions { display: flex; align-items: center; gap: 2px; margin-left: auto; }
 .pd-sidebar-organize-actions .is-active { background: var(--pd-sidebar-selected); color: var(--pd-brand); }
+/* Archive sub-page header: back, title and count. */
+.pd-sidebar-organize-toolbar.is-archive { gap: 4px; padding-left: 6px; }
+.pd-sidebar-archive-title { color: var(--pd-text); font-size: var(--pd-font-base); font-weight: 600; white-space: nowrap; }
+.pd-sidebar-archive-count { min-width: 20px; padding: 0 6px; border-radius: var(--pd-radius-pill); background: color-mix(in srgb, var(--pd-text) 9%, transparent); color: var(--pd-text-subtle); font-size: var(--pd-font-xs); line-height: 18px; text-align: center; }
+.pd-sidebar-popover button[role='menuitem'] > svg { color: var(--pd-text-weak); }
 .pd-organized-list { padding-top: 2px; padding-right: 4px; }
 .pd-sidebar-group { margin-bottom: 7px; }
 .pd-sidebar-group.is-pinned { margin-bottom: 12px; padding-bottom: 7px; border-bottom: 1px solid var(--pd-sidebar-surface); }
@@ -44,6 +54,8 @@
 .pd-sidebar-group.is-custom > .pd-sidebar-group-content { border-left-color: var(--pd-group-color); }
 .pd-organized-list .pd-session-item .pd-session-row { min-height: 36px; padding: 5px 7px; gap: 5px; }
 .pd-organized-list .pd-session-item { --pd-session-actions-width: 30px; }
+/* Draft dashed frame (see styles.css): keep organized draft rows 36px tall too. */
+.pd-organized-list .pd-session-item.is-unsaved .pd-session-row { min-height: 34px; }
 .pd-organized-list .pd-session-copy strong { line-height: 1.5; }
 .pd-organized-list .pd-session-actions { top: 50%; right: 1px; transform: translateY(-50%); }
 .pd-organized-list .pd-session-action { width: 25px; height: 26px; }
@@ -98,3 +110,9 @@ body.pd-sidebar-dragging * { cursor: grabbing !important; }
 .pd-sidebar-group[data-project-drop]::after { content: ''; position: absolute; left: 7px; right: 7px; height: 2px; border-radius: var(--pd-radius-xs); background: var(--pd-brand); pointer-events: none; }
 .pd-sidebar-group[data-project-drop='before']::after { top: -4px; }
 .pd-sidebar-group[data-project-drop='after']::after { bottom: -4px; }
+
+/* zcode workspaceTaskPagination + TaskListLoadingHint. */
+.pd-session-more { display:flex; width:100%; align-items:center; justify-content:center; gap:6px; margin:2px 0 6px; padding:5px 8px; border:0; border-radius:var(--pd-radius-sm); background:transparent; color:inherit; font-size:var(--pd-font-caption); opacity:0.75; cursor:pointer; }
+.pd-session-more:hover, .pd-session-more:focus-visible { background:var(--pd-surface-hover); opacity:1; }
+.pd-session-loading-hint { display:flex; align-items:center; gap:8px; padding:6px 10px; margin:4px 0; font-size:var(--pd-font-caption); opacity:0.8; }
+.pd-session-loading-hint .pd-session-spinner { animation:pd-spin 1s linear infinite; }

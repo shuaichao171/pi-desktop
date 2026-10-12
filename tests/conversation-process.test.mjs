@@ -120,7 +120,12 @@ test('store preserves run identity across live events, never settles on a single
   store().handleEvent({ type: 'run', run: run('a', 'running') });
   assert.equal(store().runs[0].finishedAt, 65000);
   assert.equal(mergeConversationRuns(store().runs, [run('a', 'running')])[0].status, 'completed');
-  store().handleEvent({ type: 'reset', cwd: 'other' }); assert.deepEqual(store().runs, []);
+  // zcode no-blank-out: reset keeps the previous run cards; the paired ready
+  // clears them when the destination session swaps the conversation in.
+  store().handleEvent({ type: 'reset', cwd: 'other' });
+  assert.equal(store().runs.length, 1);
+  store().handleEvent({ type: 'ready', model: 'm', modelProvider: 'p', thinkingLevel: 'off', availableThinkingLevels: [], cwd: 'other', sessionId: 'next', sessionPath: 'next.jsonl', messages: [], activities: [] });
+  assert.deepEqual(store().runs, []);
 });
 
 test('host failure stops a clock without claiming an unobserved finish time', () => {

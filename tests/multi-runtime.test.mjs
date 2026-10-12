@@ -3,6 +3,7 @@ import { existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync,
 import { tmpdir } from 'node:os';
 import { join, resolve, sep } from 'node:path';
 import { test } from 'node:test';
+import { seedTestModel } from './helpers/testModel.mjs';
 
 test('colliding workspace directory encodings never share session ownership or restored history', async () => {
   const tempRoot = mkdtempSync(join(tmpdir(), 'pi-desktop-session-owner-'));
@@ -11,6 +12,7 @@ test('colliding workspace directory encodings never share session ownership or r
   mkdirSync(firstWorkspace, { recursive: true });
   mkdirSync(secondWorkspace, { recursive: true });
   const previous = new Map(['PI_CODING_AGENT_DIR', 'PI_OFFLINE'].map((key) => [key, process.env[key]]));
+  seedTestModel(join(tempRoot, 'agent'));
   process.env.PI_CODING_AGENT_DIR = join(tempRoot, 'agent');
   process.env.PI_OFFLINE = '1';
   let service;
@@ -45,7 +47,7 @@ test('colliding workspace directory encodings never share session ownership or r
       if (value === undefined) delete process.env[key];
       else process.env[key] = value;
     }
-    const resolvedTemp = resolve(tempRoot);
+    const resolvedTemp = realpathSync.native(tempRoot);
     if (!resolvedTemp.startsWith(realpathSync.native(tmpdir()) + sep)) throw new Error('Unsafe temporary path');
     rmSync(resolvedTemp, { recursive: true, force: true });
   }
@@ -57,6 +59,7 @@ test('cached unsaved sessions can be revisited within their workspace before Pi 
   const otherWorkspace = join(tempRoot, 'other');
   mkdirSync(workspace); mkdirSync(otherWorkspace);
   const previous = new Map(['PI_CODING_AGENT_DIR', 'PI_OFFLINE'].map((key) => [key, process.env[key]]));
+  seedTestModel(join(tempRoot, 'agent'));
   process.env.PI_CODING_AGENT_DIR = join(tempRoot, 'agent');
   process.env.PI_OFFLINE = '1';
   let service;
@@ -85,7 +88,7 @@ test('cached unsaved sessions can be revisited within their workspace before Pi 
       if (value === undefined) delete process.env[key];
       else process.env[key] = value;
     }
-    const resolvedTemp = resolve(tempRoot);
+    const resolvedTemp = realpathSync.native(tempRoot);
     if (!resolvedTemp.startsWith(realpathSync.native(tmpdir()) + sep)) throw new Error('Unsafe temporary path');
     rmSync(resolvedTemp, { recursive: true, force: true });
   }
@@ -96,6 +99,7 @@ test('inactive Pi runtimes are bounded and an evicted session can be reopened', 
   const workspace = join(tempRoot, 'workspace');
   mkdirSync(workspace);
   const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+  seedTestModel(join(tempRoot, 'agent'));
   process.env.PI_CODING_AGENT_DIR = join(tempRoot, 'agent');
   let service;
   try {
@@ -138,7 +142,7 @@ test('inactive Pi runtimes are bounded and an evicted session can be reopened', 
     await service?.dispose();
     if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
     else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
-    const resolvedTemp = resolve(tempRoot);
+    const resolvedTemp = realpathSync.native(tempRoot);
     if (!resolvedTemp.startsWith(realpathSync.native(tmpdir()) + sep)) throw new Error('Unsafe temporary path');
     rmSync(resolvedTemp, { recursive: true, force: true });
   }
@@ -159,6 +163,7 @@ test('workspace restoration reuses a busy cached runtime after its remembered un
     }
   `);
   const previous = new Map(['PI_CODING_AGENT_DIR', 'PI_OFFLINE'].map((key) => [key, process.env[key]]));
+  seedTestModel(join(tempRoot, 'agent'));
   process.env.PI_CODING_AGENT_DIR = join(tempRoot, 'agent');
   process.env.PI_OFFLINE = '1';
   let service;
@@ -200,7 +205,7 @@ test('workspace restoration reuses a busy cached runtime after its remembered un
       if (value === undefined) delete process.env[key];
       else process.env[key] = value;
     }
-    const resolvedTemp = resolve(tempRoot);
+    const resolvedTemp = realpathSync.native(tempRoot);
     if (!resolvedTemp.startsWith(realpathSync.native(tmpdir()) + sep)) throw new Error('Unsafe temporary path');
     rmSync(resolvedTemp, { recursive: true, force: true });
   }
@@ -242,6 +247,7 @@ test('Pi extension dialogs reach the desktop callback and a background session k
   `);
 
   const previous = new Map(['PI_CODING_AGENT_DIR', 'PI_OFFLINE'].map((key) => [key, process.env[key]]));
+  seedTestModel(join(tempRoot, 'agent'));
   process.env.PI_CODING_AGENT_DIR = join(tempRoot, 'agent');
   process.env.PI_OFFLINE = '1';
   let service;
@@ -312,7 +318,7 @@ test('Pi extension dialogs reach the desktop callback and a background session k
       if (value === undefined) delete process.env[key];
       else process.env[key] = value;
     }
-    const resolvedTemp = resolve(tempRoot);
+    const resolvedTemp = realpathSync.native(tempRoot);
     if (!resolvedTemp.startsWith(realpathSync.native(tmpdir()) + sep)) throw new Error('Unsafe temporary path');
     rmSync(resolvedTemp, { recursive: true, force: true });
   }
@@ -324,6 +330,7 @@ test('removed projects dispose their idle cached runtimes without deleting sessi
   const otherWorkspace = join(tempRoot, 'other');
   mkdirSync(workspace); mkdirSync(otherWorkspace);
   const previous = new Map(['PI_CODING_AGENT_DIR', 'PI_OFFLINE'].map((key) => [key, process.env[key]]));
+  seedTestModel(join(tempRoot, 'agent'));
   process.env.PI_CODING_AGENT_DIR = join(tempRoot, 'agent');
   process.env.PI_OFFLINE = '1';
   let service;
@@ -347,7 +354,7 @@ test('removed projects dispose their idle cached runtimes without deleting sessi
       if (value === undefined) delete process.env[key];
       else process.env[key] = value;
     }
-    const resolvedTemp = resolve(tempRoot);
+    const resolvedTemp = realpathSync.native(tempRoot);
     if (!resolvedTemp.startsWith(realpathSync.native(tmpdir()) + sep)) throw new Error('Unsafe temporary path');
     rmSync(resolvedTemp, { recursive: true, force: true });
   }

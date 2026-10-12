@@ -57,6 +57,7 @@ test('desktop settings default, persist and survive corruption (4.1/4.2)', async
     writeFileSync(path, JSON.stringify({ notificationsEnabled: false, closeBehavior: 'quit' }));
     assert.deepEqual(readDesktopSettings(path, configuredDefault), {
       notificationsEnabled: false, closeBehavior: 'quit', conversationStorageDirectory: configuredDefault,
+      keepAwakeWhileRunning: false, autoInstallUpdates: false,
       piEngine: { mode: 'builtin' }, debugApi: DEFAULT_DESKTOP_SETTINGS.debugApi,
     });
     const custom = join(temp, 'custom');

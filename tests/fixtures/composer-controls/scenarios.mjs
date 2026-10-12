@@ -174,25 +174,32 @@ export default async function composerControlsScenarios(review) {
   await review.assert(`document.querySelector('${textarea}').value === '' && ${c}.calls.filter(call => call.name === 'abort').length === ${c}.abortsBeforeOverlap + 2 && [${c}.scopeA, ${c}.scopeB].every(scope => ${c}.calls.filter(call => call.name === 'abort' && ${c}.scopeKey(call.request) === ${c}.scopeKey(scope)).length === 1)`, 'Completing session A restores send and each overlapping session was stopped exactly once');
   await review.record('overlapping-stop-requests', `({scopes: [${c}.scopeA, ${c}.scopeB], aborts: ${c}.calls.filter(call => call.name === 'abort'), pending: ${c}.pendingAborts.size})`);
 
-  // Navigation can remain pending while the old host still reports idle/busy.
-  // Preserve the old draft and prevent either primary action during that gap.
+  // New conversations open an editable local draft immediately while Pi prepares
+  // in the background (docs/new-conversation-responsiveness.md). The previous
+  // conversation's draft must not leak into it, a first message is held locally
+  // instead of reaching the previous session, and a failed creation restores it.
   for (const status of ['idle', 'busy']) {
     await review.evaluate(`${c}.ready(${JSON.stringify(status)}); ${c}.pendingNavigation = null`);
     await review.fill(textarea, `切换期间保留草稿 ${status}`);
     await review.evaluate(`${c}.navigationActionsBefore = ${c}.calls.filter(call => call.name === 'submit' || call.name === 'abort').length`);
     await review.click('.pd-new-session');
-    await review.waitFor(`${c}.pendingNavigation !== null && document.querySelector('${textarea}').disabled && document.querySelector('.pd-send-button').disabled`);
+    await review.waitFor(`${c}.pendingNavigation !== null && !document.querySelector('${textarea}').disabled && document.querySelector('${textarea}').value === '' && document.activeElement === document.querySelector('${textarea}')`);
+    await review.fill(textarea, `新会话首条消息 ${status}`);
     await review.key('Enter');
-    await review.assert(`${c}.calls.filter(call => call.name === 'submit' || call.name === 'abort').length === ${c}.navigationActionsBefore && document.querySelector('${textarea}').value === ${JSON.stringify(`切换期间保留草稿 ${status}`)}`, `Pending navigation disables Send while ${status} and retains the old draft`);
+    await review.waitFor(`document.querySelector('${textarea}').value === ''`);
+    await review.assert(`${c}.calls.filter(call => call.name === 'submit' || call.name === 'abort').length === ${c}.navigationActionsBefore`, `A first message typed while a new conversation prepares (${status}) is held locally and never reaches the previous session`);
     if (status === 'busy') await review.screenshot('composer-navigation-pending-dark-1440');
-    await review.evaluate(`${c}.pendingNavigation.reject(new Error('模拟切换失败，保留原会话')); ${c}.pendingNavigation = null`);
-    await review.waitFor(`!document.querySelector('${textarea}').disabled && !document.querySelector('.pd-send-button').disabled`);
-    await review.assert(`document.querySelector('${textarea}').value === ${JSON.stringify(`切换期间保留草稿 ${status}`)}`, 'A failed navigation re-enables the original composer without clearing its draft');
-    // Navigation errors persist in a bottom-right notice until dismissed; clean up
-    // this deliberately injected failure before testing the primary send button.
-    await review.waitFor(`document.querySelector('.pd-operation-notice.is-error')?.textContent.includes('模拟切换失败，保留原会话')`);
-    await review.click('.pd-operation-notice.is-error button[aria-label="关闭提示"]');
-    await review.waitFor(`!document.querySelector('.pd-operation-notice')`);
+    await review.evaluate(`${c}.pendingNavigation.reject(new Error('模拟新建失败，保留草稿')); ${c}.pendingNavigation = null`);
+    await review.waitFor(`document.querySelector('.pd-composer-error')?.textContent.includes('模拟新建失败，保留草稿') && Boolean(document.querySelector('.pd-composer-retry'))`);
+    await review.assert(`document.querySelector('${textarea}').value === ${JSON.stringify(`新会话首条消息 ${status}`)} && !document.querySelector('${textarea}').disabled && ${c}.calls.filter(call => call.name === 'submit' || call.name === 'abort').length === ${c}.navigationActionsBefore`, 'A failed new conversation restores the held message for retry without sending it');
+    // Clear the restored text, then retry: the conversation is created without sending anything.
+    // Previous-draft preservation is covered by tests/fixtures/new-conversation.
+    await review.fill(textarea, '');
+    await review.click('.pd-composer-retry');
+    await review.waitFor(`${c}.pendingNavigation !== null`);
+    await review.evaluate(`${c}.pendingNavigation.resolve()`);
+    await review.waitFor(`${c}.pendingNavigation === null && !document.querySelector('.pd-composer-error') && !document.querySelector('${textarea}').disabled`);
+    await review.assert(`${c}.calls.filter(call => call.name === 'submit' || call.name === 'abort').length === ${c}.navigationActionsBefore`, `Retrying the failed new conversation (${status}) never sends the cleared draft`);
   }
   await review.fill(textarea, '');
 

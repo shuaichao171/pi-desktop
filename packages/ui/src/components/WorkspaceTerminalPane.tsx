@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import type { WorkbenchFeaturesBridge, WorkspaceTerminalEvent, WorkspaceTerminalSnapshot } from '@pidesktop/shared/workbenchFeatures';
@@ -12,12 +13,37 @@ export function WorkspaceTerminalPane({ active }: { active: boolean }) {
   const [terminal, setTerminal] = useState<WorkspaceTerminalSnapshot | null>(null), [error, setError] = useState(''), [busy, setBusy] = useState(false);
   const [revision, setRevision] = useState(0);
   const operation = useRef<symbol | null>(null), generation = useRef(0);
-  useEffect(() => { generation.current++; operation.current = null; setBusy(false); return () => { generation.current++; }; }, [cwd, api]);
+  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
+  useEffect(() => { generation.current++; operation.current = null; setBusy(false); setMenu(null); return () => { generation.current++; }; }, [cwd, api]);
+  useEffect(() => {
+    if (!menu) return;
+    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') { event.stopPropagation(); setMenu(null); } };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [menu]);
   useEffect(() => {
     if (!host.current || !api) return;
     let alive = true, initialized = false; const waiting: WorkspaceTerminalEvent[] = [];
     const xterm = new Terminal({ cursorBlink: true, scrollback: 1500, fontSize: 13, convertEol: false, allowProposedApi: false, theme: { background: '#14161b', foreground: '#e3e5eb' } });
     const addon = new FitAddon(); xterm.loadAddon(addon); xterm.open(host.current); term.current = xterm; fit.current = addon; snapshot.current = null; setTerminal(null); setError('');
+    // zcode terminal clipboard semantics: Ctrl+C copies when a selection
+    // exists and falls through to the PTY (SIGINT) otherwise; Ctrl+V writes
+    // the clipboard once — returning false alone does not cancel the native
+    // paste, which would duplicate the write, so the keydown is cancelled first.
+    const modifier = (event: KeyboardEvent) => (event.ctrlKey || event.metaKey) && !event.shiftKey && !event.altKey;
+    xterm.attachCustomKeyEventHandler(event => {
+      if (event.type !== 'keydown') return true;
+      if (event.key.toLowerCase() === 'c' && modifier(event)) {
+        if (xterm.hasSelection()) { void navigator.clipboard.writeText(xterm.getSelection()).catch(() => {}); return false; }
+        return true;
+      }
+      if (event.key.toLowerCase() === 'v' && modifier(event)) {
+        event.preventDefault();
+        void navigator.clipboard.readText().then(text => { if (text && snapshot.current?.running) xterm.paste(text); }).catch(() => {});
+        return false;
+      }
+      return true;
+    });
     const ack = (id: string, sequence: number) => { if (alive) void api.acknowledgeWorkspaceTerminal({ id, sequence }).catch(() => {}); };
     const receive = (event: WorkspaceTerminalEvent) => {
       const current = snapshot.current; if (!alive || !current || event.id !== current.id || event.sequence <= current.sequence) return;
@@ -51,6 +77,13 @@ export function WorkspaceTerminalPane({ active }: { active: boolean }) {
     <div className="pd-feature-toolbar"><strong>交互终端</strong>{terminal?.running ? <button type="button" disabled={busy} onClick={() => void close()}>终止终端</button> : <button type="button" disabled={busy || !cwd} onClick={() => void start()}>启动终端</button>}<button type="button" onClick={() => term.current?.clear()}>清空显示</button></div>
     <p className="pd-feature-note">{terminal ? `${terminal.shell} · ${terminal.running ? '运行中；Ctrl+C 中断前台命令' : `已结束 (${terminal.exitCode ?? '—'})`}` : '在当前工作区启动一个交互 Shell。切换面板保持运行，关闭应用会终止它。'}</p>
     {terminal?.truncated && <p role="status">较早显示已裁剪；进程仍在运行。</p>}{error && <p role="alert" className="pd-workbench-error">{error}</p>}
-    <div className="pd-terminal-screen" ref={host} />
+    <div className="pd-terminal-screen" ref={host} onContextMenu={event => { event.preventDefault(); setMenu({ x: event.clientX, y: event.clientY }); }} />
+    {menu && createPortal(<div className="pd-terminal-menu-backdrop" onPointerDown={() => setMenu(null)} onContextMenu={event => { event.preventDefault(); setMenu(null); }}>
+      <div className="pd-terminal-menu" role="menu" style={{ left: Math.min(menu.x, window.innerWidth - 168), top: Math.min(menu.y, window.innerHeight - 108) }} onPointerDown={event => event.stopPropagation()}>
+        <button type="button" role="menuitem" disabled={!term.current?.hasSelection()} onClick={() => { const text = term.current?.getSelection(); if (text) void navigator.clipboard.writeText(text).catch(() => {}); setMenu(null); }}>复制选中内容</button>
+        <button type="button" role="menuitem" onClick={() => { void navigator.clipboard.readText().then(text => { if (text && snapshot.current?.running) term.current?.paste(text); }).catch(() => {}); setMenu(null); }}>粘贴</button>
+        <button type="button" role="menuitem" onClick={() => { term.current?.clear(); setMenu(null); }}>清空显示</button>
+      </div>
+    </div>, document.body)}
   </section>;
 }

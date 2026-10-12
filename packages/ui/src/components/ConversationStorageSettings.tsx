@@ -3,6 +3,7 @@ import { useT } from '../i18n';
 import { useChatStore } from '../store';
 import type { SettingsDraftState } from '../settingsLeaveGuard';
 import { Icon } from './Icons';
+import { SettingsRow } from './SettingsRows';
 import './conversationStorageSettings.css';
 
 const errorText = (error: unknown) => error instanceof Error ? error.message : String(error);
@@ -69,14 +70,16 @@ export function ConversationStorageSettings({ onDraftStateChange }: { onDraftSta
 	saveRef.current = save;
 
 	return <section className="pd-conversation-storage" data-setting="conversation-storage" aria-labelledby={`${id}-title`}>
-		<div className="pd-settings-section-head"><h3 id={`${id}-title`}>{t('settings.conversationStorage')}</h3><p id={`${id}-description`}>{t('settings.conversationStorageDescription')}</p></div>
-		{loadError ? <div className="pd-conversation-storage-error" role="alert"><p>{loadError}</p><button type="button" className="pd-conversation-storage-choose" onClick={() => setAttempt(value => value + 1)}>{t('projectCreate.retry')}</button></div> : savedDirectory === null ? <p className="pd-settings-feedback" role="status">{t('settings.conversationStorageLoading')}</p> : <form onSubmit={event => { event.preventDefault(); if (dirty) void save(); }} aria-busy={pending !== null}>
-			<textarea rows={2} name="conversationStorageDirectory" aria-label={t('settings.conversationStorage')} aria-describedby={`${id}-description`} value={directory} disabled={disabled} autoComplete="off" spellCheck={false} onChange={event => { setDirectory(event.target.value); setError(null); setSaved(false); }} onKeyDown={event => {
-				if (event.key === 'Enter' && !event.nativeEvent.isComposing) { event.preventDefault(); if (dirty) void save(); }
-			}} />
-			<div className="pd-conversation-storage-actions"><button type="button" className="pd-conversation-storage-choose" data-action="choose-conversation-storage" disabled={disabled} onClick={() => void chooseDirectory()}><Icon name="folder" width="15" height="15" />{t(pending === 'pick' ? 'projectCreate.choosing' : 'settings.conversationStorageChoose')}</button><button type="submit" className="pd-settings-primary" data-action="save-conversation-storage" disabled={disabled || !dirty || !directory.trim()}>{t(pending === 'save' ? 'settings.processing' : 'settings.save')}</button></div>
-			{error && <p className="pd-conversation-storage-error" role="alert">{error}</p>}
-			{saved && <p className="pd-settings-feedback" role="status">{t('settings.conversationStorageSaved')}</p>}
-		</form>}
+		<SettingsRow stacked title={t('settings.conversationStorage')} description={<span id={`${id}-description`}>{t('settings.conversationStorageDescription')}</span>}>
+			{loadError ? <div className="pd-conversation-storage-error" role="alert"><p>{loadError}</p><button type="button" className="pd-conversation-storage-choose" onClick={() => setAttempt(value => value + 1)}>{t('projectCreate.retry')}</button></div> : savedDirectory === null ? <p className="pd-settings-feedback" role="status">{t('settings.conversationStorageLoading')}</p> : <form onSubmit={event => { event.preventDefault(); if (dirty) void save(); }} aria-busy={pending !== null}>
+				<div className="pd-conversation-storage-field">
+					<input id={`${id}-title`} name="conversationStorageDirectory" aria-label={t('settings.conversationStorage')} aria-describedby={`${id}-description`} value={directory} disabled={disabled} autoComplete="off" spellCheck={false} title={directory || undefined} onChange={event => { setDirectory(event.target.value); setError(null); setSaved(false); }} />
+					<button type="button" className="pd-conversation-storage-choose" data-action="choose-conversation-storage" disabled={disabled} onClick={() => void chooseDirectory()}><Icon name="folder" width="15" height="15" />{t(pending === 'pick' ? 'projectCreate.choosing' : 'settings.conversationStorageChoose')}</button>
+					{dirty && <button type="submit" className="pd-settings-primary" data-action="save-conversation-storage" disabled={disabled || !directory.trim()}>{t(pending === 'save' ? 'settings.processing' : 'settings.save')}</button>}
+				</div>
+				{error && <p className="pd-conversation-storage-error" role="alert">{error}</p>}
+				{saved && <p className="pd-settings-feedback is-success" role="status"><Icon name="check" width="13" height="13" />{t('settings.conversationStorageSaved')}</p>}
+			</form>}
+		</SettingsRow>
 	</section>;
 }

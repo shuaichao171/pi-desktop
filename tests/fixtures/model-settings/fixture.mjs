@@ -35,6 +35,7 @@ export function installModelSettingsFixture(options = {}) {
   };
   const methods = {
     getAgentSnapshot: () => clone(state.snapshot),
+    getFileChangeDiffs: (scope) => clone(state.fileDiffByScope?.[JSON.stringify(scope)] ?? state.fileDiffs ?? []),
     getSessionStats: () => clone(state.sessionStats ?? { sessionId: state.snapshot.sessionId, userMessages: 0, assistantMessages: 0, toolCalls: 0, toolResults: 0, totalMessages: 0, tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 }, cost: 0, timing: { sampledAt: Date.now(), durationMs: state.snapshot.messages.length ? null : 0, running: false, latestRun: null } }),
     getAppInfo: () => ({ appVersion: '0.1.5-review', nodeVersion: '24', electronVersion: 'renderer-fixture', platform: 'win32' }),
     notifyRendererReady: () => { state.ready = true; },
@@ -57,6 +58,9 @@ export function installModelSettingsFixture(options = {}) {
     getWorkspaceBranches: () => ({ isRepository: true, current: 'review-fixture', detached: false, branches: ['review-fixture'] }),
     getWorkspaceGitStatus: () => ({ isRepository: true, branch: 'review-fixture', entries: [], truncated: false }),
     listWorkspaceOpeners: () => [],
+    // The workbench subscribes to file-system changes while open (auto refresh).
+    watchWorkspace: () => undefined,
+    getWorkspaceGitGraph: () => [],
     listModels: () => clone(state.providers.filter((provider) => provider.configured).flatMap((provider) => provider.models.filter((entry) => !provider.disabledModels?.includes(entry.id)))),
     listModelProviders: () => clone(state.providers),
     listProviderAuth: () => state.providers.map(({ provider, configured }) => ({ provider, configured, supportsApiKey: true, ...(configured ? { source: 'stored' } : {}) })),
@@ -81,6 +85,18 @@ export function installModelSettingsFixture(options = {}) {
       if (index >= 0) state.providers[index] = next; else state.providers.push(next);
     },
     removeCustomProvider: (provider) => { state.providers = state.providers.filter((entry) => entry.provider !== provider); },
+    saveProviderModels: ({ provider, upsert = [], remove = [] }) => {
+      const entry = state.providers.find((item) => item.provider === provider);
+      if (!entry) throw new Error('Fixture provider missing');
+      const models = entry.models.filter((item) => !remove.includes(item.id));
+      for (const value of upsert) {
+        const index = models.findIndex((item) => item.id === value.id);
+        const next = model(provider, value.id, value.name || value.id, value);
+        if (index >= 0) models[index] = next; else models.push(next);
+      }
+      entry.models = models;
+      if (entry.configModelIds) entry.configModelIds = [...new Set([...entry.configModelIds.filter((id) => !remove.includes(id)), ...upsert.map((value) => value.id)])];
+    },
     getPersonalization: () => [],
     getInputDraft: () => ({ version: 0, text: '', attachments: [], missing: [] }),
     saveInputDraft: request => ({ version: request.expectedVersion + 1, text: request.text, attachments: [], missing: [] }),
@@ -94,7 +110,7 @@ export function installModelSettingsFixture(options = {}) {
     recordUiDiagnostic: () => undefined,
     exportDiagnostics: () => ({ path: '/fixture/diagnostics.zip', entries: 1, skipped: [] }),
   };
-  const subscriptions = ['onAgentEvent', 'onUpdateStateChanged', 'onAppCommand', 'onWindowChromeStateChanged', 'onExtensionDialog', 'onExtensionDialogClosed', 'onWorkspaceCommandEvent', 'onAutomationChanged'];
+  const subscriptions = ['onAgentEvent', 'onUpdateStateChanged', 'onAppCommand', 'onWindowChromeStateChanged', 'onExtensionDialog', 'onExtensionDialogClosed', 'onWorkspaceCommandEvent', 'onAutomationChanged', 'onWorkspaceChanged'];
   const bridge = {};
   for (const name of subscriptions) bridge[name] = (listener) => {
     if (!listeners.has(name)) listeners.set(name, new Set());

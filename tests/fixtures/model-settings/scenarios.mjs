@@ -6,7 +6,8 @@ export default async function runScenarios(review) {
   const modelDialog = 'dialog[open][data-model-dialog="model"] [data-model-editor="review-reasoner"]';
   const modelRow = '[data-model-id="review-reasoner"]';
   const customModels = 'document.querySelectorAll("[data-model-id]").length';
-  const saveCalls = 'window.__modelReview.calls.filter(call => call.name === "saveCustomProvider")';
+  // Connection saves and models-only saves are both models.json writes.
+  const saveCalls = 'window.__modelReview.calls.filter(call => call.name === "saveCustomProvider" || call.name === "saveProviderModels")';
   const templatesDialog = 'dialog[open][data-model-dialog="templates"]';
   const credentialsDialog = 'dialog[open][data-model-dialog="credentials"]';
   const waitForTemplates = () => review.waitFor(`Boolean(document.querySelector(${JSON.stringify(templatesDialog)}))`);
@@ -35,6 +36,14 @@ export default async function runScenarios(review) {
   await review.assert('document.querySelector(".pd-model-provider-detail [data-provider-editor]") === null', 'Provider detail keeps the connection editor out of the compact view');
   await review.assert('document.querySelector(".pd-model-provider-url code").textContent === "https://models.example.invalid/v1"', 'Provider detail shows the API URL');
   await review.assert(`${customModels} === 3`, 'Model list stays visible without opening the editor');
+  await review.assert('getComputedStyle(document.querySelector("[data-model-id=review-fast] .pd-model-settings-model-tools")).opacity === "0"', 'Model row tools stay hidden until the row is hovered');
+  {
+    const box = await review.evaluate('(() => { const box = document.querySelector("[data-model-id=review-fast]").getBoundingClientRect(); return { x: box.x + box.width / 3, y: box.y + box.height / 2 }; })()');
+    await review.mouseMove(box.x, box.y);
+    await review.waitFor('getComputedStyle(document.querySelector("[data-model-id=review-fast] .pd-model-settings-model-tools")).opacity === "1"');
+    await review.screenshot('01-model-row-hover');
+    await review.mouseMove(5, 5);
+  }
   await review.click('[data-action="edit-provider"]');
   await review.waitFor(`Boolean(document.querySelector(${JSON.stringify(editDialog)}))`);
   const oneConnection = (stage) => review.assert(`document.querySelectorAll(${JSON.stringify(connection)}).length === 1 && document.querySelector(${JSON.stringify(connection)}).isConnected`, `Exactly one connected provider form: ${stage}`);
@@ -135,7 +144,7 @@ export default async function runScenarios(review) {
   await dialogCentered('model');
   await review.assert(`${customModels} === 3`, 'Model rows remain mounted behind the native editor dialog');
   await review.fill(`${modelDialog} [data-field="model.name"]`, '模型编辑失败后仍保留的草稿');
-  await review.evaluate('window.__modelReview.failures.saveCustomProvider = "模拟保存失败，请保留草稿"');
+  await review.evaluate('window.__modelReview.failures.saveProviderModels = "模拟保存失败，请保留草稿"');
   await review.click(`${modelDialog} button[type="submit"]`);
   await review.waitFor('document.body.textContent.includes("模拟保存失败，请保留草稿")');
   await review.assert(`document.querySelector(${JSON.stringify(`${modelDialog} [data-field="model.name"]`)}).value === '模型编辑失败后仍保留的草稿'`, 'Failed model save keeps typed content');
@@ -148,7 +157,7 @@ export default async function runScenarios(review) {
   await noOpenModelDialog();
   await review.assert(`document.querySelector(${JSON.stringify(connection)}) === null`, 'Model discard leaves no stray provider form');
   await review.assert(`${saveCalls}.length === ${failedSaveCount}`, 'Cancelling model editor does not write');
-  await review.evaluate('delete window.__modelReview.failures.saveCustomProvider');
+  await review.evaluate('delete window.__modelReview.failures.saveProviderModels');
   await review.click(`${modelRow} [data-action="edit-model"]`);
   await review.fill(`${modelDialog} [data-field="model.name"]`, '已成功更新的推理模型');
   await review.click(`${modelDialog} button[type="submit"]`);
@@ -166,12 +175,14 @@ export default async function runScenarios(review) {
   await review.evaluate('delete window.__modelReview.modelTestOk');
 
   // Discovery preserves existing models, deduplicates new ids, imports selection.
-  await review.evaluate(`window.__modelReview.discovery = {models: [{id:'review-reasoner',name:'不应覆盖已有名称',contextWindow:2,maxTokens:1}, {id:'import-selected',name:'本次选择导入',contextWindow:128000,maxTokens:8192,input:['text'],reasoning:false}, {id:'import-skipped',name:'本次不导入',contextWindow:128000,maxTokens:8192,input:['text'],reasoning:false}, {id:'import-selected',name:'重复目录项',contextWindow:128000,maxTokens:8192,input:['text'],reasoning:false}],warnings:[]}`);
+  await review.evaluate(`window.__modelReview.discovery = {models: [{id:'review-reasoner',name:'不应覆盖已有名称',contextWindow:2,maxTokens:1}, {id:'import-selected',name:'本次选择导入',contextWindow:128000,maxTokens:8192,input:['text'],reasoning:false}, {id:'import-skipped',name:'本次不导入',contextWindow:128000,maxTokens:8192,input:['text'],reasoning:false}, {id:'import-selected',name:'重复目录项',contextWindow:128000,maxTokens:8192,input:['text'],reasoning:true,thinkingLevels:['off','low','medium','high'],inferred:true}],warnings:['已按内置规则为 1 个模型推测思考能力（标记为“推测”）；重新获取且供应商播报真实数据后将自动覆盖。']}`);
   const beforeDiscoverySaves = await review.evaluate(`${saveCalls}.length`);
   await review.click('[data-action="discover-models"]');
   await review.waitFor('document.querySelectorAll("dialog[open][data-model-dialog=discover] [data-import-model]").length === 2');
   await dialogCentered('discover');
   await review.assert('document.querySelector("dialog[open] [data-import-model=review-reasoner]") === null', 'Discovery excludes existing ids from import candidates');
+  await review.assert('document.querySelector("dialog[open] [data-import-model=import-selected] .pd-model-import-inferred") !== null', 'Inferred models carry the guess badge in the import list');
+  await review.assert('document.querySelector("dialog[open] [data-import-model=import-skipped] .pd-model-import-inferred") === null', 'Advertised models do not carry the guess badge');
   await review.assert(`${saveCalls}.length === ${beforeDiscoverySaves}`, 'Discovery itself does not save');
   await review.click('dialog[open] [data-import-model="import-skipped"] input[type="checkbox"]');
   await review.screenshot('03-discovery-selection');
@@ -280,9 +291,8 @@ export default async function runScenarios(review) {
   await review.waitFor('document.querySelector(".pd-model-provider-option.is-selected")?.dataset.provider === "review-gateway"');
   await review.evaluate('window.__modelReview.snapshot.status = "busy"; window.__modelReview.emitAgent({type:"status",status:"busy"})');
   await review.settle();
-  await review.assert('document.querySelector("[data-action=edit-provider]").disabled === true', 'Busy state blocks provider settings editing');
-  await review.assert('[...document.querySelectorAll("[data-action=add-model],[data-action=edit-model],[data-action=toggle-model],[data-action=discover-models],[data-action=use-model],[data-action=remove-provider],[data-action=edit-provider]")].every(element=>element.disabled)', 'Busy state protects existing models, connections, and provider removal');
-  await review.assert('document.querySelector("[data-action=add-provider]").disabled === false', 'Busy state permits adding a new provider');
+  await review.assert('document.querySelector("[data-action=edit-provider]").disabled === false', 'Busy state keeps provider settings editing available');
+  await review.assert('[...document.querySelectorAll("[data-action=add-model],[data-action=edit-model],[data-action=discover-models],[data-action=remove-provider],[data-action=edit-provider],[data-action=add-provider]")].every(element=>!element.disabled) && [...document.querySelectorAll("[data-action=toggle-model]")].every(element=>!element.disabled)', 'Busy state keeps controls editable; only hiding the in-use model stays blocked');
   await review.screenshot('05-busy-gated-controls');
   await review.click('[data-action="add-provider"]');
   await review.click('dialog[open] [data-template="custom"]');
@@ -302,7 +312,7 @@ export default async function runScenarios(review) {
   await review.assert('window.__modelReview.providers.find(provider=>provider.provider==="created-during-chat")?.configured === true', 'A provider and its credential can be saved while the conversation is busy');
   await review.assert('window.__modelReview.providers.find(provider=>provider.provider==="created-during-chat")?.models[0].id === "busy-import"', 'Discovery in a new provider form remains available during a conversation');
   await review.assert('window.__modelReview.snapshot.status === "busy" && window.__modelReview.snapshot.modelProvider === "openai" && window.__modelReview.snapshot.model === "gpt-review" && window.__modelReview.snapshot.thinkingLevel === "medium"', 'Adding a provider does not interrupt the task or switch its model or thinking level');
-  await review.assert('document.querySelector("[data-action=use-model]").disabled === true && document.querySelector("[data-action=remove-provider]").disabled === true', 'Newly created providers cannot switch the running model or bypass removal protection');
+  await review.assert('document.querySelector("[data-action=use-model]").disabled === false && document.querySelector("[data-action=remove-provider]").disabled === false', 'Busy state allows using a newly created model on the next request and editing providers');
   await review.screenshot('07-created-provider-chat-running');
   await review.click('[data-action="add-provider"]');
   await review.click('dialog[open] [data-template="custom"]');
@@ -437,5 +447,32 @@ export default async function runScenarios(review) {
   await review.waitFor(`${saveCalls}.length === ${beforeBuiltinImport} + 1`);
   await review.waitFor('document.querySelector("dialog[open].pd-model-dialog") === null');
   await review.assert('window.__modelReview.providers.find(provider=>provider.provider==="openai").models.some(model=>model.id==="discovered-model")', 'Importing a builtin catalog pins the discovered model');
+  await review.assert(`(() => { const args = ${saveCalls}.at(-1).args[0]; return ${saveCalls}.at(-1).name === 'saveProviderModels' && args.provider === 'openai' && args.upsert.some(m => m.id === 'discovered-model') && !args.upsert.some(m => m.id === 'gpt-review'); })()`, 'Builtin import writes only the new models, never the builtin catalog');
   await review.screenshot('10-builtin-import');
+
+  // A hand-written provider keeps its connection read-only but its models.json models editable.
+  await review.evaluate(`window.__modelReview.providers.push(${JSON.stringify({
+    provider: 'hand-written', name: '手写配置', custom: true, editable: false, modelsEditable: true, readOnlyReason: 'unsupported-api', configModelIds: ['hand-one'],
+    configured: true, baseUrl: 'https://hand.example.invalid', api: 'mistral-conversations', headerNames: [], disabledModels: [],
+    models: [{ provider: 'hand-written', id: 'hand-one', name: '手写模型', reasoning: false, input: ['text'], contextWindow: 32768, maxTokens: 4096 }, { provider: 'hand-written', id: 'hand-override', name: '覆盖模型', reasoning: false, input: ['text'], contextWindow: 32768, maxTokens: 4096 }],
+  })})`);
+  await review.click('[data-action="refresh-providers"]');
+  await review.waitFor('Boolean(document.querySelector("[data-provider=hand-written]"))');
+  await review.click('[data-provider="hand-written"]');
+  await review.waitFor('document.querySelector(".pd-model-provider-option.is-selected")?.dataset.provider === "hand-written"');
+  await review.assert('Boolean(document.querySelector(".pd-model-catalog [data-action=add-model]")) && document.querySelector(".pd-model-catalog [data-action=discover-models]") === null', 'Read-only connections still allow adding models; unsupported protocols cannot discover');
+  await review.assert('document.querySelector("[data-model-id=hand-one] [data-action=edit-model]") !== null && document.querySelector("[data-model-id=hand-override] [data-action=edit-model]") === null', 'Only models.json entries offer edit and remove');
+  await review.assert('document.querySelector(".pd-model-provider-detail-head [data-action=remove-provider]") === null', 'A read-only connection cannot remove the provider');
+  await review.click('[data-action="edit-provider"]');
+  await review.waitFor(`Boolean(document.querySelector(${JSON.stringify(editDialog)}))`);
+  await review.assert(`document.querySelector(${JSON.stringify(editDialog)}).textContent.includes('协议不在编辑器支持的范围内') && document.querySelector(${JSON.stringify(`${editDialog} [data-provider-editor]`)}) === null`, 'The edit dialog explains why the connection is read-only');
+  await review.click(`${editDialog} .pd-model-dialog-header button`);
+  await noOpenModelDialog();
+  await review.click('[data-model-id="hand-one"] [data-action="edit-model"]');
+  await review.waitFor('Boolean(document.querySelector("dialog[open][data-model-dialog=model] [data-model-editor=hand-one]"))');
+  await review.fill('dialog[open][data-model-dialog=model] [data-field="model.name"]', '手写模型（已改名）');
+  await review.click('dialog[open][data-model-dialog=model] button[type="submit"]');
+  await noOpenModelDialog();
+  await review.assert(`(() => { const call = ${saveCalls}.at(-1); return call.name === 'saveProviderModels' && call.args[0].provider === 'hand-written' && call.args[0].upsert.length === 1 && call.args[0].upsert[0].name === '手写模型（已改名）' && !('baseUrl' in call.args[0]); })()`, 'Editing a model sends only that model, never the connection');
+  await review.waitFor('document.querySelector("[data-model-id=hand-one]").textContent.includes("手写模型（已改名）")');
 }

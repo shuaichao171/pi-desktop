@@ -28,7 +28,7 @@ test('tool kinds and counts use distinct files for reads and edits', () => {
     { tool: 'edit', files: ['a.ts'] }, { tool: 'write', files: ['a.ts'] },
     { tool: 'bash', command: 'pnpm test' },
   ]);
-  assert.deepEqual(counts, { read: 2, search: 2, edit: 1, run: 1, other: 0 });
+  assert.deepEqual(counts, { read: 2, search: 2, edit: 1, run: 1, subagent: 0, other: 0 });
   assert.equal(isExplorationGroup(counts), false);
   assert.deepEqual(toolGroupSummaryParts(counts, 'zh-CN'), ['读取 2 个文件', '搜索 2 次', '编辑 1 个文件', '运行 1 条命令']);
   assert.deepEqual(toolGroupSummaryParts(counts, 'en-US'), ['Read 2 files', '2 searches', 'Edited 1 file', 'Ran 1 command']);

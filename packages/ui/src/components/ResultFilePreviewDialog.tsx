@@ -1,6 +1,8 @@
 import { lazy, Suspense, useEffect, useId, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { ResultFilePreview, ResultFileTarget } from '@pidesktop/shared';
+import { resultFileSessionSnapshot, sameResultFileSession } from '../resultFileContext';
+import { useResultFilePreviewStore } from '../resultFilePreviewStore';
 import { useT } from '../i18n';
 import { useChatStore } from '../store';
 import { Icon } from './Icons';
@@ -33,7 +35,7 @@ export function ResultFilePreviewDialog({ target, onClose }: { target: ResultFil
 	const actionLock = useRef(false);
 	const closeCallback = useRef(onClose);
 	closeCallback.current = onClose;
-	const origin = useRef(useChatStore.getState());
+	const origin = useRef(resultFileSessionSnapshot(useChatStore.getState()));
 	const [retry, setRetry] = useState(0);
 	const [result, setResult] = useState<{ key: string; preview: ResultFilePreview } | null>(null);
 	const [loadError, setLoadError] = useState<string | null>(null);
@@ -53,10 +55,10 @@ export function ResultFilePreviewDialog({ target, onClose }: { target: ResultFil
 	const htmlSource = preview?.kind === 'html' && typeof preview.text === 'string' ? `data:text/html;charset=utf-8,${encodeURIComponent(preview.text)}` : undefined;
 
 	function sameContext() {
-		const current = useChatStore.getState();
-		const initial = origin.current;
-		return current.bridge === initial.bridge && current.cwd === initial.cwd &&
-			current.sessionId === initial.sessionId && current.sessionPath === initial.sessionPath && current.navigationRequestId === initial.navigationRequestId;
+		// The first settle of a new conversation assigns its session file path; that
+		// upgrade is the same session, so an open preview survives the completion
+		// resync instead of vanishing under the click that opened it.
+		return sameResultFileSession(origin.current, resultFileSessionSnapshot(useChatStore.getState()));
 	}
 	function isCurrentContext() { return mounted.current && !closed.current && sameContext(); }
 	function close() {
@@ -164,4 +166,12 @@ export function ResultFilePreviewDialog({ target, onClose }: { target: ResultFil
 				<div className="pd-result-file-preview-state"><Icon name={preview?.kind === 'directory' ? 'folder' : 'file'} width="36" height="36" /><strong>{preview?.kind === 'directory' ? label('文件夹', 'Folder') : label('暂无预览', 'Preview unavailable')}</strong><p>{preview?.kind === 'pdf' ? label('无法显示此 PDF，请使用默认应用打开。', 'This PDF could not be displayed. Open it in its default app.') : unavailableReason()}</p><button type="button" disabled={!bridge || busy !== null} onClick={() => void act('open')}>{openLabel}</button></div>}
 		</div></ScopedErrorBoundary>
 	</dialog>, document.body);
+}
+
+/** Stable owner of the preview dialog: links anywhere in the transcript open into this one instance. */
+export function ResultFilePreviewDialogRoot() {
+	const target = useResultFilePreviewStore(state => state.target);
+	const close = useResultFilePreviewStore(state => state.close);
+	if (!target) return null;
+	return <ResultFilePreviewDialog target={target} onClose={close} />;
 }

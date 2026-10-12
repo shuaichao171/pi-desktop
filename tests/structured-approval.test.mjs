@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { seedTestModel } from './helpers/testModel.mjs';
 import { requireApprovalDetails, requireDialogResponse } from '../packages/shared/src/approval.ts';
 import { requestDesktopConfirmation } from '../packages/agent/src/extensionApproval.ts';
 import { mkdtemp, mkdir, readFile, writeFile, rm } from 'node:fs/promises';
@@ -73,6 +74,7 @@ test('a real loaded Pi extension receives structured rejection feedback through 
     }
   `);
   const previous = new Map(['PI_CODING_AGENT_DIR', 'PI_OFFLINE'].map(key => [key, process.env[key]]));
+  seedTestModel(join(directory, 'agent'));
   process.env.PI_CODING_AGENT_DIR = join(directory, 'agent'); process.env.PI_OFFLINE = '1';
   let service;
   try {

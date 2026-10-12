@@ -1,10 +1,11 @@
 import { McpSettingsPanel } from './McpSettingsPanel';
-import { DataManagementPanel } from './DataManagementPanel';
+import { SessionManagementPanel } from './SessionManagementPanel';
 import { useCallback, useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
 import type { UiDebugApiConfig, UiDebugApiState, UiDesktopSettings, UiProviderAuthStatus, UiUpdateState } from '@pidesktop/shared';
 import { useChatStore } from '../store';
 import { useT, type Translate } from '../i18n';
 import { Icon } from './Icons';
+import { ScopedErrorBoundary } from './ScopedErrorBoundary';
 import { ModelSettingsPanel } from './ModelSettingsPanel';
 import { CloudSyncPanel } from './CloudSyncPanel';
 import { CONTENT_FONT_MIN, CONTENT_FONT_MAX, DEFAULT_CONTENT_FONT_SIZE, readContentFontSize, saveContentFontSize, type ContentFontKind } from '../contentFontSize';
@@ -18,11 +19,19 @@ import { createSettingsLeaveGuard, type SettingsDraftState as DraftState, type S
 import { useBusyInputBehavior } from '../busyInputBehavior';
 import { ConversationMetricsSettings } from './ConversationMetricsSettings';
 import { useTaskNotificationSoundEnabled } from '../taskNotificationSound';
+import { useExtensionNoticeDisplayEnabled } from '../extensionNoticeDisplay';
+import { useMessageStreamShowReasoning } from '../messageStreamShowReasoning';
+import { useQuestionAutoResolutionEnabled } from '../extensionQuestionTimeout';
 import { ConversationStorageSettings } from './ConversationStorageSettings';
 import { EngineSettingsPanel } from './EngineSettingsPanel';
+import { SettingsGroup, SettingsRow, SettingsSwitch } from './SettingsRows';
+
+// Public source repository. window.open is intercepted by the main process,
+// which opens http(s) links in the system browser.
+const PROJECT_REPOSITORY_URL = 'https://github.com/shuaichao171/pi-desktop';
 
 export type ThemePreference = 'system' | 'dark' | 'light';
-type SettingsPage = 'general' | 'appearance' | 'personalization' | 'model' | 'backup' | 'debug' | 'engine' | 'shortcuts' | 'updates' | 'data' | 'mcp';
+type SettingsPage = 'general' | 'appearance' | 'personalization' | 'model' | 'backup' | 'debug' | 'engine' | 'shortcuts' | 'updates' | 'sessions' | 'mcp';
 type DraftFocus = { element: HTMLElement; selection?: { start: number; end: number; direction: 'forward' | 'backward' | 'none' } };
 type PendingLeave = SettingsLeaveRequest<SettingsPage, DraftFocus | null>;
 
@@ -137,6 +146,12 @@ export function SettingsPanel({ initialPage = 'general', modelManagementTarget, 
 	const [busyInputSaveFailed, setBusyInputSaveFailed] = useState(false);
 	const [notificationSound, setNotificationSound] = useTaskNotificationSoundEnabled();
 	const [notificationSoundSaveFailed, setNotificationSoundSaveFailed] = useState(false);
+	const [extensionNotices, setExtensionNotices] = useExtensionNoticeDisplayEnabled();
+	const [extensionNoticesSaveFailed, setExtensionNoticesSaveFailed] = useState(false);
+	const [showReasoning, setShowReasoning] = useMessageStreamShowReasoning();
+	const [showReasoningSaveFailed, setShowReasoningSaveFailed] = useState(false);
+	const [questionAutoResolution, setQuestionAutoResolution] = useQuestionAutoResolutionEnabled();
+	const [questionAutoResolutionSaveFailed, setQuestionAutoResolutionSaveFailed] = useState(false);
 	const [contentFonts, setContentFonts] = useState(() => ({ code: readContentFontSize('code'), command: readContentFontSize('command') }));
 	const [savingLeave, setSavingLeave] = useState(false);
 	const [leaveError, setLeaveError] = useState(false);
@@ -355,7 +370,7 @@ export function SettingsPanel({ initialPage = 'general', modelManagementTarget, 
 	return (
 		<div className="pd-settings-overlay" onMouseDown={(event) => { if (event.target === event.currentTarget && !pendingLeave) requestLeave(); }}>
 			<div ref={dialogRef} className="pd-settings-dialog" role="dialog" aria-modal="true" aria-labelledby="pd-settings-title" onKeyDown={onDialogKeyDown}>
-				<header className="pd-settings-header" inert={Boolean(pendingLeave)}><div><span className="pd-settings-eyebrow">PI DESKTOP</span><h1 id="pd-settings-title">{t('settings.title')}</h1></div><button ref={closeRef} type="button" className="pd-icon-button" disabled={draftState.saving} onClick={() => requestLeave()} aria-label={t('settings.close')}><Icon name="close" /></button></header>
+				<header className="pd-settings-header" inert={Boolean(pendingLeave)}><div><h1 id="pd-settings-title">{t('settings.title')}</h1></div><button ref={closeRef} type="button" className="pd-icon-button" disabled={draftState.saving} onClick={() => requestLeave()} aria-label={t('settings.close')}><Icon name="close" /></button></header>
 				{pendingLeave && <div className="pd-settings-discard" role="alertdialog" aria-modal="true" aria-labelledby="pd-discard-title" aria-describedby="pd-discard-description"><h2 id="pd-discard-title">{t('settings.discardTitle')}</h2><p id="pd-discard-description">{t('settings.discardDescription')}</p><div className="pd-instruction-actions"><button ref={keepEditingRef} className="pd-instruction-button" type="button" disabled={savingLeave} onClick={keepEditing}>{t('personalization.keepEditing')}</button><button className="pd-instruction-button" type="button" disabled={savingLeave} onClick={discardChanges}>{t('personalization.discard')}</button>{draftState.save && <button className="pd-settings-primary" data-action="save-settings-and-leave" type="button" disabled={savingLeave} onClick={() => void saveAndLeave()}>{savingLeave ? t('personalization.saving') : locale === 'zh-CN' ? '保存并继续' : 'Save and continue'}</button>}</div>{leaveError && <p role="alert">{locale === 'zh-CN' ? '保存失败，请继续编辑并查看错误。草稿已保留。' : 'Saving failed. Continue editing to review the error; your draft is preserved.'}</p>}</div>}
 				<div className="pd-settings-layout" inert={Boolean(pendingLeave)}>
 					<nav className="pd-settings-nav" aria-label={t('settings.category')}>
@@ -369,78 +384,100 @@ export function SettingsPanel({ initialPage = 'general', modelManagementTarget, 
 						<button type="button" className={page === 'shortcuts' ? 'is-active' : ''} aria-current={page === 'shortcuts' ? 'page' : undefined} onClick={() => selectPage('shortcuts')}>{t('settings.shortcuts')}</button>
 						{!paiMode && <button type="button" className={page === 'updates' ? 'is-active' : ''} aria-current={page === 'updates' ? 'page' : undefined} onClick={() => selectPage('updates')}>{t('settings.updates')}</button>}
 						<button type="button" className={page === 'mcp' ? 'is-active' : ''} aria-current={page === 'mcp' ? 'page' : undefined} onClick={() => selectPage('mcp')}>MCP</button>
-						{!paiMode && <button type="button" className={page === 'data' ? 'is-active' : ''} aria-current={page === 'data' ? 'page' : undefined} onClick={() => selectPage('data')}>{locale === 'zh-CN' ? '数据管理' : 'Data management'}</button>}
+						{!paiMode && <button type="button" className={page === 'sessions' ? 'is-active' : ''} aria-current={page === 'sessions' ? 'page' : undefined} onClick={() => selectPage('sessions')}>{locale === 'zh-CN' ? '会话管理' : 'Conversations'}</button>}
 					</nav>
 					<div className="pd-settings-content" onFocusCapture={(event) => { if (event.target instanceof HTMLElement) draftFocusRef.current = event.target; }}>
 						{settingsError && <div className="pd-settings-error" role="alert">{settingsError}</div>}
-						{!paiMode && page === 'data' && <DataManagementPanel />}
+						<ScopedErrorBoundary scope="settings" resetKeys={[page]}>
+						{!paiMode && page === 'sessions' && <SessionManagementPanel />}
 						{page === 'mcp' && <McpSettingsPanel />}
 						{page === 'personalization' && <PersonalizationPanel active onDraftStateChange={reportDraftState} />}
 						{page === 'general' && <>
 							<div className="pd-settings-section-head"><h2>{t('settings.general')}</h2><p>{t('settings.generalDescription')}</p></div>
-							<div className="pd-settings-section-head"><h3>{t('settings.language')}</h3><p>{t('settings.languageDescription')}</p></div>
-							<div className="pd-language-options" data-setting="language" role="group" aria-label={t('settings.language')}>
-								<button type="button" className={locale === 'zh-CN' ? 'is-selected' : ''} aria-pressed={locale === 'zh-CN'} onClick={() => setLocale('zh-CN')}>{t('settings.languageZh')}</button>
-								<button type="button" className={locale === 'en-US' ? 'is-selected' : ''} aria-pressed={locale === 'en-US'} onClick={() => setLocale('en-US')}>{t('settings.languageEn')}</button>
-						</div>
-						<ConversationStorageSettings onDraftStateChange={reportDraftState} />
-						<div className="pd-settings-section-head"><h3>{t('settings.busyInputBehavior')}</h3><p>{t('settings.busyInputBehaviorDescription', { modifier: appInfo?.platform === 'darwin' ? 'Cmd' : 'Ctrl' })}</p></div>
-						<div className="pd-language-options" data-setting="busy-input-behavior" role="group" aria-label={t('settings.busyInputBehavior')}>
-							<button type="button" className={busyInputBehavior === 'followUp' ? 'is-selected' : ''} aria-pressed={busyInputBehavior === 'followUp'} onClick={() => setBusyInputSaveFailed(!setBusyInputBehavior('followUp'))}>{t('settings.busyInputQueue')}</button>
-							<button type="button" className={busyInputBehavior === 'steer' ? 'is-selected' : ''} aria-pressed={busyInputBehavior === 'steer'} onClick={() => setBusyInputSaveFailed(!setBusyInputBehavior('steer'))}>{t('settings.busyInputSteer')}</button>
-						</div>
-						{busyInputSaveFailed && <p className="pd-settings-feedback" role="status">{t('settings.busyInputSaveFailed')}</p>}
-						<ConversationMetricsSettings />
-						<div className="pd-settings-section-head"><h3>{t('settings.notifications')}</h3><p>{t('settings.notificationsDescription')}</p></div>
-						{desktopSettingsError && <p role="alert">{desktopSettingsError}</p>}
-						{desktopSettings && (
-							<div className="pd-language-options" data-setting="notifications" role="group" aria-label={t('settings.notifications')}>
-								<button type="button" className={desktopSettings.notificationsEnabled ? 'is-selected' : ''} aria-pressed={desktopSettings.notificationsEnabled}
-									disabled={savingDesktopSettings} onClick={() => { void saveDesktopSettings({ notificationsEnabled: true }); }}>{t('settings.notificationsOn')}</button>
-								<button type="button" className={!desktopSettings.notificationsEnabled ? 'is-selected' : ''} aria-pressed={!desktopSettings.notificationsEnabled}
-									disabled={savingDesktopSettings} onClick={() => { void saveDesktopSettings({ notificationsEnabled: false }); }}>{t('settings.notificationsOff')}</button>
-							</div>
-						)}
-						<div className="pd-settings-section-head"><h3>{t('settings.notificationSound')}</h3><p>{t('settings.notificationSoundDescription')}</p></div>
-						<div className="pd-language-options" data-setting="notification-sound" role="group" aria-label={t('settings.notificationSound')}>
-							<button type="button" className={notificationSound ? 'is-selected' : ''} aria-pressed={notificationSound}
-								onClick={() => setNotificationSoundSaveFailed(!setNotificationSound(true))}>{t('settings.notificationsOn')}</button>
-							<button type="button" className={!notificationSound ? 'is-selected' : ''} aria-pressed={!notificationSound}
-								onClick={() => setNotificationSoundSaveFailed(!setNotificationSound(false))}>{t('settings.notificationsOff')}</button>
-						</div>
-						{notificationSoundSaveFailed && <p className="pd-settings-feedback" role="status">{t('settings.notificationSoundSaveFailed')}</p>}
-						{!paiMode && appInfo?.platform === 'win32' && desktopSettings && (
-							<>
-								<div className="pd-settings-section-head"><h3>{t('settings.closeBehavior')}</h3><p>{t('settings.closeBehaviorDescription')}</p></div>
+							<SettingsGroup title={t('settings.groupBasics')}>
+								<SettingsRow title={t('settings.language')} description={t('settings.languageDescription')}>
+									<div className="pd-language-options" data-setting="language" role="group" aria-label={t('settings.language')}>
+										<button type="button" className={locale === 'zh-CN' ? 'is-selected' : ''} aria-pressed={locale === 'zh-CN'} onClick={() => setLocale('zh-CN')}>{t('settings.languageZh')}</button>
+										<button type="button" className={locale === 'en-US' ? 'is-selected' : ''} aria-pressed={locale === 'en-US'} onClick={() => setLocale('en-US')}>{t('settings.languageEn')}</button>
+									</div>
+								</SettingsRow>
+								<ConversationStorageSettings onDraftStateChange={reportDraftState} />
+							</SettingsGroup>
+							<SettingsGroup title={t('settings.groupConversation')}>
+								<SettingsRow title={t('settings.busyInputBehavior')} description={t('settings.busyInputBehaviorDescription', { modifier: appInfo?.platform === 'darwin' ? 'Cmd' : 'Ctrl' })}
+									footer={busyInputSaveFailed && <p className="pd-settings-feedback" role="status">{t('settings.busyInputSaveFailed')}</p>}>
+									<div className="pd-language-options" data-setting="busy-input-behavior" role="group" aria-label={t('settings.busyInputBehavior')}>
+										<button type="button" className={busyInputBehavior === 'followUp' ? 'is-selected' : ''} aria-pressed={busyInputBehavior === 'followUp'} onClick={() => setBusyInputSaveFailed(!setBusyInputBehavior('followUp'))}>{t('settings.busyInputQueue')}</button>
+										<button type="button" className={busyInputBehavior === 'steer' ? 'is-selected' : ''} aria-pressed={busyInputBehavior === 'steer'} onClick={() => setBusyInputSaveFailed(!setBusyInputBehavior('steer'))}>{t('settings.busyInputSteer')}</button>
+									</div>
+								</SettingsRow>
+								<SettingsRow title={t('settings.showReasoning')} description={t('settings.showReasoningDescription')}
+									footer={showReasoningSaveFailed && <p className="pd-settings-feedback" role="status">{t('settings.showReasoningSaveFailed')}</p>}>
+									<SettingsSwitch setting="show-reasoning" label={t('settings.showReasoning')} checked={showReasoning} onChange={next => setShowReasoningSaveFailed(!setShowReasoning(next))} />
+								</SettingsRow>
+								<SettingsRow title={t('settings.questionAutoResolution')} description={t('settings.questionAutoResolutionDescription')}
+									footer={questionAutoResolutionSaveFailed && <p className="pd-settings-feedback" role="status">{t('settings.questionAutoResolutionSaveFailed')}</p>}>
+									<SettingsSwitch setting="question-auto-resolution" label={t('settings.questionAutoResolution')} checked={questionAutoResolution} onChange={next => setQuestionAutoResolutionSaveFailed(!setQuestionAutoResolution(next))} />
+								</SettingsRow>
+								<SettingsRow title={t('settings.extensionNotices')} description={t('settings.extensionNoticesDescription')}
+									footer={extensionNoticesSaveFailed && <p className="pd-settings-feedback" role="status">{t('settings.extensionNoticesSaveFailed')}</p>}>
+									<SettingsSwitch setting="extension-notices" label={t('settings.extensionNotices')} checked={extensionNotices} onChange={next => setExtensionNoticesSaveFailed(!setExtensionNotices(next))} />
+								</SettingsRow>
+								<ConversationMetricsSettings />
+							</SettingsGroup>
+							<SettingsGroup title={t('settings.groupNotifications')}>
+								{desktopSettingsError && <p role="alert">{desktopSettingsError}</p>}
+								<SettingsRow title={t('settings.notifications')} description={t('settings.notificationsDescription')}>
+									<SettingsSwitch setting="notifications" label={t('settings.notifications')} checked={desktopSettings?.notificationsEnabled ?? false} disabled={!desktopSettings || savingDesktopSettings} onChange={next => { void saveDesktopSettings({ notificationsEnabled: next }); }} />
+								</SettingsRow>
+								<SettingsRow title={t('settings.notificationSound')} description={t('settings.notificationSoundDescription')}
+									footer={notificationSoundSaveFailed && <p className="pd-settings-feedback" role="status">{t('settings.notificationSoundSaveFailed')}</p>}>
+									<SettingsSwitch setting="notification-sound" label={t('settings.notificationSound')} checked={notificationSound} onChange={next => setNotificationSoundSaveFailed(!setNotificationSound(next))} />
+								</SettingsRow>
+							</SettingsGroup>
+							{desktopSettings && <SettingsGroup title={t('settings.groupSystem')}>
+								{!paiMode && appInfo?.platform === 'win32' && <SettingsRow title={t('settings.closeBehavior')} description={t('settings.closeBehaviorDescription')}>
 									<div className="pd-language-options" data-setting="tray" role="group" aria-label={t('settings.closeBehavior')}>
 										<button type="button" className={desktopSettings.closeBehavior === 'tray' ? 'is-selected' : ''} aria-pressed={desktopSettings.closeBehavior === 'tray'}
 											disabled={savingDesktopSettings} onClick={() => { void saveDesktopSettings({ closeBehavior: 'tray' }); }}>{t('settings.closeBehaviorTray')}</button>
 										<button type="button" className={desktopSettings.closeBehavior === 'quit' ? 'is-selected' : ''} aria-pressed={desktopSettings.closeBehavior === 'quit'}
 											disabled={savingDesktopSettings} onClick={() => { void saveDesktopSettings({ closeBehavior: 'quit' }); }}>{t('settings.closeBehaviorQuit')}</button>
 									</div>
-								</>
-						) }
+								</SettingsRow>}
+								<SettingsRow title={t('settings.keepAwake')} description={t('settings.keepAwakeDescription')}>
+									<SettingsSwitch setting="keep-awake" label={t('settings.keepAwake')} checked={desktopSettings.keepAwakeWhileRunning} disabled={savingDesktopSettings} onChange={next => { void saveDesktopSettings({ keepAwakeWhileRunning: next }); }} />
+								</SettingsRow>
+							</SettingsGroup>}
 						</>}
 						{page === 'appearance' && <>
 							<div className="pd-settings-section-head"><h2>{t('settings.appearance')}</h2><p>{t('settings.appearanceDescription')}</p></div>
-							<div className="pd-appearance-options" role="group" aria-label={t('settings.themeLabel')}>
-								{(['system', 'dark', 'light'] as const).map((theme) => <button type="button" key={theme} className={`pd-appearance-choice${themePreference === theme ? ' is-selected' : ''}`} aria-pressed={themePreference === theme} onClick={() => onThemePreferenceChange(theme)}><span className={`pd-theme-swatch is-${theme}`} aria-hidden="true" /><strong>{t(theme === 'system' ? 'settings.themeSystem' : theme === 'dark' ? 'settings.themeDark' : 'settings.themeLight')}</strong></button>)}
-						</div>
-						<div className="pd-settings-section-head"><h3>{t('settings.uiFontSize')}</h3><p>{t('settings.uiFontSizeDescription')}</p></div>
-						<div className="pd-font-size-row" data-setting="font">
-							<input type="range" aria-label={t('settings.uiFontSize')} min={UI_FONT_SIZE_MIN} max={UI_FONT_SIZE_MAX} step={1} value={uiFontSize} onChange={(event) => {
-								const size = Number(event.target.value);
-								setUiFontSize(size);
-								applyUiFontSize(size);
-								saveUiFontSize(size);
-							}} />
-							<span className="pd-font-size-value" aria-live="polite">{uiFontSize}px</span>
-							{uiFontSize !== DEFAULT_UI_FONT_SIZE && <button type="button" className="pd-font-size-reset" onClick={() => { setUiFontSize(DEFAULT_UI_FONT_SIZE); applyUiFontSize(DEFAULT_UI_FONT_SIZE); saveUiFontSize(DEFAULT_UI_FONT_SIZE); }}>{t('settings.uiFontSizeReset')}</button>}
-						</div>
-							<div className="pd-settings-divider" />
-							{(['code', 'command'] as ContentFontKind[]).map(kind => <div className="pd-content-font-setting" data-setting={kind + '-font'} key={kind}><label htmlFor={'pd-' + kind + '-font'}>{locale === 'zh-CN' ? kind === 'code' ? '代码与差异字号' : '命令输出字号' : kind === 'code' ? 'Code and diff font size' : 'Command output font size'}</label><div className="pd-font-size-row"><input id={'pd-' + kind + '-font'} type="range" min={CONTENT_FONT_MIN} max={CONTENT_FONT_MAX} step={1} value={contentFonts[kind]} onChange={event => { const value = Number(event.target.value); saveContentFontSize(kind, value); setContentFonts(old => ({ ...old, [kind]: value })); }} /><output>{contentFonts[kind]}px</output><button type="button" className="pd-font-size-reset" disabled={contentFonts[kind] === DEFAULT_CONTENT_FONT_SIZE} onClick={() => { saveContentFontSize(kind, DEFAULT_CONTENT_FONT_SIZE); setContentFonts(old => ({ ...old, [kind]: DEFAULT_CONTENT_FONT_SIZE })); }}>{t('settings.uiFontSizeReset')}</button></div></div>)}
-							<div className="pd-settings-divider" />
-							<ColorThemeSettings themePreference={themePreference} preferences={colorPreferences} onChange={onColorPreferencesChange} saveFailed={colorSaveFailed} />
+							<SettingsGroup title={t('settings.themeLabel')}>
+								<div className="pd-settings-group-pad">
+									<div className="pd-appearance-options" role="group" aria-label={t('settings.themeLabel')}>
+										{(['system', 'dark', 'light'] as const).map((theme) => <button type="button" key={theme} className={`pd-appearance-choice${themePreference === theme ? ' is-selected' : ''}`} aria-pressed={themePreference === theme} onClick={() => onThemePreferenceChange(theme)}><span className={`pd-theme-swatch is-${theme}`} aria-hidden="true"><i /><i /><i /></span><strong>{t(theme === 'system' ? 'settings.themeSystem' : theme === 'dark' ? 'settings.themeDark' : 'settings.themeLight')}</strong></button>)}
+									</div>
+								</div>
+							</SettingsGroup>
+							<SettingsGroup title={t('settings.groupFontSizes')}>
+								<SettingsRow stacked title={t('settings.uiFontSize')} description={t('settings.uiFontSizeDescription')}>
+									<div className="pd-font-size-row" data-setting="font">
+										<input type="range" aria-label={t('settings.uiFontSize')} min={UI_FONT_SIZE_MIN} max={UI_FONT_SIZE_MAX} step={1} value={uiFontSize} onChange={(event) => {
+											const size = Number(event.target.value);
+											setUiFontSize(size);
+											applyUiFontSize(size);
+											saveUiFontSize(size);
+										}} />
+										<span className="pd-font-size-value" aria-live="polite">{uiFontSize}px</span>
+										<button type="button" className="pd-font-size-reset" disabled={uiFontSize === DEFAULT_UI_FONT_SIZE} onClick={() => { setUiFontSize(DEFAULT_UI_FONT_SIZE); applyUiFontSize(DEFAULT_UI_FONT_SIZE); saveUiFontSize(DEFAULT_UI_FONT_SIZE); }}>{t('settings.uiFontSizeReset')}</button>
+									</div>
+								</SettingsRow>
+								{(['code', 'command'] as ContentFontKind[]).map(kind => <SettingsRow stacked key={kind} setting={kind + '-font'} labelFor={'pd-' + kind + '-font'} title={locale === 'zh-CN' ? kind === 'code' ? '代码与差异字号' : '命令输出字号' : kind === 'code' ? 'Code and diff font size' : 'Command output font size'}>
+									<div className="pd-font-size-row"><input id={'pd-' + kind + '-font'} type="range" min={CONTENT_FONT_MIN} max={CONTENT_FONT_MAX} step={1} value={contentFonts[kind]} onChange={event => { const value = Number(event.target.value); saveContentFontSize(kind, value); setContentFonts(old => ({ ...old, [kind]: value })); }} /><output className="pd-font-size-value">{contentFonts[kind]}px</output><button type="button" className="pd-font-size-reset" disabled={contentFonts[kind] === DEFAULT_CONTENT_FONT_SIZE} onClick={() => { saveContentFontSize(kind, DEFAULT_CONTENT_FONT_SIZE); setContentFonts(old => ({ ...old, [kind]: DEFAULT_CONTENT_FONT_SIZE })); }}>{t('settings.uiFontSizeReset')}</button></div>
+								</SettingsRow>)}
+							</SettingsGroup>
+							<SettingsGroup title={t('settings.color.title')} description={t('settings.color.description')}>
+								<div className="pd-settings-group-pad"><ColorThemeSettings themePreference={themePreference} preferences={colorPreferences} onChange={onColorPreferencesChange} saveFailed={colorSaveFailed} /></div>
+							</SettingsGroup>
 						</>}
 						{page === 'model' && <ModelSettingsPanel key={cwd} initialTarget={modelTarget} onDraftStateChange={reportDraftState} renderCredential={(provider: UiProviderAuthStatus, onDraftStateChange?: (state: DraftState) => void, onRemoveRequest?: (remove: () => void) => void) => <ProviderCredentialRow key={provider.provider} {...provider} onDraftStateChange={onDraftStateChange} onRemoveRequest={onRemoveRequest} />} />}
 						{page === 'backup' && <>
@@ -477,18 +514,29 @@ export function SettingsPanel({ initialPage = 'general', modelManagementTarget, 
 						</>}
 						{!paiMode && page === 'updates' && <>
 							<div className="pd-settings-section-head"><h2>{t('settings.updates')}</h2><p>{t('settings.updateDescription')}</p></div>
-							<div className="pd-update-card" aria-live="polite">
-								<strong>{updateStatus}</strong>
-								<span>{t('settings.updateInstalled', { version: updateState?.currentVersion ?? appInfo?.appVersion ?? '—' })}</span>
-								{updateState?.phase === 'downloading' && <progress max={100} value={updateState.progressPercent ?? 0} aria-label={t('settings.updateProgress')} />}
-								{updateState?.error && <p className="pd-settings-error" role="alert">{updateState.error}</p>}
-								{updateActionError && <p className="pd-settings-error" role="alert">{updateActionError}</p>}
-								<div className="pd-update-actions">
-									<button type="button" data-action="check-updates" className="pd-extension-refresh" onClick={() => void checkForUpdates()} disabled={!bridge || updateBusy || !updateState || !['idle', 'up-to-date', 'available', 'error'].includes(updateState.phase)}>{t('settings.updateCheck')}</button>
-									<button type="button" data-action="install-update" className="pd-extension-refresh" onClick={() => void installUpdate()} disabled={!bridge || updateBusy || !updateAvailable}>{t(updateState?.phase === 'ready' ? 'settings.updateInstall' : 'settings.updateNow')}</button>
+							<SettingsGroup title={t('settings.groupVersion')}>
+								<div className={`pd-update-card is-${updateState?.phase ?? 'idle'}`} aria-live="polite">
+									<div className="pd-update-summary">
+										<span className="pd-update-icon" aria-hidden="true"><Icon name={updateState?.phase === 'error' ? 'close' : updateState?.phase === 'up-to-date' ? 'check' : 'update'} width="18" height="18" /></span>
+										<div><strong>{updateStatus}</strong><span>{t('settings.updateInstalled', { version: updateState?.currentVersion ?? appInfo?.appVersion ?? '—' })}</span></div>
+									</div>
+									{updateState?.phase === 'downloading' && <progress max={100} value={updateState.progressPercent ?? 0} aria-label={t('settings.updateProgress')} />}
+									{updateState?.error && <p className="pd-settings-error" role="alert">{updateState.error}</p>}
+									{updateActionError && <p className="pd-settings-error" role="alert">{updateActionError}</p>}
+									<div className="pd-update-actions">
+										<button type="button" data-action="check-updates" className="pd-extension-refresh" onClick={() => void checkForUpdates()} disabled={!bridge || updateBusy || !updateState || !['idle', 'up-to-date', 'available', 'error'].includes(updateState.phase)}><Icon name="refresh" width="14" height="14" />{t('settings.updateCheck')}</button>
+										<button type="button" data-action="install-update" className={`pd-extension-refresh${updateAvailable ? ' is-primary' : ''}`} onClick={() => void installUpdate()} disabled={!bridge || updateBusy || !updateAvailable}>{t(updateState?.phase === 'ready' ? 'settings.updateInstall' : 'settings.updateNow')}</button>
+										<button type="button" data-action="open-project" className="pd-extension-refresh is-quiet" onClick={() => window.open(PROJECT_REPOSITORY_URL, '_blank', 'noopener')}>{t('settings.updateOpenProject')}<Icon name="arrowRight" width="13" height="13" /></button>
+									</div>
 								</div>
-							</div>
+							</SettingsGroup>
+							{desktopSettings && <SettingsGroup title={t('settings.groupPreferences')}>
+								<SettingsRow title={t('settings.autoInstallUpdates')} description={t('settings.autoInstallUpdatesDescription')}>
+									<SettingsSwitch setting="auto-install-updates" label={t('settings.autoInstallUpdates')} checked={desktopSettings.autoInstallUpdates} disabled={savingDesktopSettings} onChange={next => { void saveDesktopSettings({ autoInstallUpdates: next }); }} />
+								</SettingsRow>
+							</SettingsGroup>}
 						</>}
+						</ScopedErrorBoundary>
 					</div>
 				</div>
 			</div>

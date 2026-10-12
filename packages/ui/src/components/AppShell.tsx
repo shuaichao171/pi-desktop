@@ -10,10 +10,12 @@ import { Sidebar } from './Sidebar';
 import { Icon } from './Icons';
 import { HoverTooltip } from './HoverTooltip';
 import { WindowControls } from './WindowControls';
-import { ExtensionDialogHost, useExtensionRequestPending } from './ExtensionDialogHost';
+import { ExtensionDialogHost, useExtensionRequestPending, useAnyExtensionRequestPending } from './ExtensionDialogHost';
 import { UpdateNotice } from './UpdateNotice';
 import { OperationFeedback } from './OperationFeedback';
 import { FolderProjectDropZone } from './FolderProjectDropZone';
+import { ResultFilePreviewDialogRoot } from './ResultFilePreviewDialog';
+import { installResultFilePressRescue } from '../resultFilePressRescue';
 import { clampWorkbenchWidth } from '../workbenchReading';
 import { WorkbenchSidePane, type WorkbenchOpenRequest } from './WorkbenchSidePane';
 import { useChatStore } from '../store';
@@ -92,6 +94,7 @@ export function AppShell() {
 	const [workbenchResizing, setWorkbenchResizing] = useState(false);
 	const workbenchOverlay = viewportWidth <= 1100;
 	useEffect(() => { const resize = () => setViewportWidth(window.innerWidth); window.addEventListener('resize', resize); return () => window.removeEventListener('resize', resize); }, []);
+	useEffect(() => { installResultFilePressRescue(); }, []);
 	const agentStatus = useChatStore((state) => state.status);
 	const previousStatusRef = useRef(agentStatus);
 	useEffect(() => {
@@ -99,19 +102,28 @@ export function AppShell() {
 		previousStatusRef.current = agentStatus;
 		if (shouldPlayTaskCompletionSound(previous, agentStatus, document.hasFocus())) void playTaskNotificationSound();
 	}, [agentStatus]);
-	// Extension questions only render above the chat composer; when one arrives
-	// while another view is showing, return to the conversation instead of popping up.
+	// Extension questions only render above the chat composer; when one for the OPEN
+	// conversation arrives while another view is showing, return to it instead of
+	// popping up. Questions from other conversations never switch the view — their
+	// sidebar row already holds the waiting indicator (zcode per-task attention).
 	const extensionRequestPending = useExtensionRequestPending();
+	const anyExtensionRequestPending = useAnyExtensionRequestPending();
 	const previousExtensionPendingRef = useRef(false);
+	const previousAnyExtensionPendingRef = useRef(false);
 	useEffect(() => {
 		const previous = previousExtensionPendingRef.current;
 		previousExtensionPendingRef.current = extensionRequestPending;
 		// Only the rising edge switches: browsing plugins while a question waits
 		// must not yank the user back on every render.
 		if (!previous && extensionRequestPending && !paiMode) setMainView('chat');
-		// A run waiting on approval stalls silently in the background; chime like a finished task.
-		if (!previous && extensionRequestPending && !document.hasFocus()) void playTaskNotificationSound();
 	}, [extensionRequestPending, paiMode]);
+	useEffect(() => {
+		const previous = previousAnyExtensionPendingRef.current;
+		previousAnyExtensionPendingRef.current = anyExtensionRequestPending;
+		// A run waiting on a question stalls silently in the background — in ANY
+		// conversation; chime like a finished task without stealing the view.
+		if (!previous && anyExtensionRequestPending && !document.hasFocus()) void playTaskNotificationSound();
+	}, [anyExtensionRequestPending]);
 	useEffect(() => { if (!paiMode) writeStoredPreference('pi-desktop.workbench-width', String(workbenchWidth)); }, [paiMode, workbenchWidth]);
 	useEffect(() => { if (workbenchOpen && narrow) setSidebarOpen(false); }, [workbenchOpen, narrow]);
 	const resizeStart = useRef<{ x: number; width: number } | null>(null);
@@ -418,17 +430,18 @@ export function AppShell() {
 			}} />}
 			<div className="pd-main-view">
 			<div className="pd-chat-view-host" hidden={mainView !== 'chat'} inert={mainView !== 'chat'}><ScopedErrorBoundary scope="conversation" resetKeys={[conversationCwd, conversationId, conversationPath]}><ChatView active={mainView === 'chat'} onToggleSidebar={() => setSidebarOpen((open) => !open)} onOpenModelManagement={openModelManagement} searchTarget={searchMessageTarget} navigationError={navigation.error} historyControls={mainView === 'chat' ? headerControls : undefined} /></ScopedErrorBoundary></div>
-			{mainView === 'automations' && <AutomationPage headerControls={headerControls} onToggleSidebar={() => setSidebarOpen((open) => !open)} onOpenSession={async (cwd, path) => { const selected = await useChatStore.getState().selectSession(cwd, path); if (selected) { setSearchMessageTarget(null); setMainView('chat'); if (narrow) setSidebarOpen(false); } return selected; }} />}
-			{mainView === 'plugins' && <PluginsPage headerControls={headerControls} onToggleSidebar={() => setSidebarOpen((open) => !open)} />}
+			{mainView === 'automations' && <ScopedErrorBoundary scope="automation"><AutomationPage headerControls={headerControls} onToggleSidebar={() => setSidebarOpen((open) => !open)} onOpenSession={async (cwd, path) => { const selected = await useChatStore.getState().selectSession(cwd, path); if (selected) { setSearchMessageTarget(null); setMainView('chat'); if (narrow) setSidebarOpen(false); } return selected; }} /></ScopedErrorBoundary>}
+			{mainView === 'plugins' && <ScopedErrorBoundary scope="plugins"><PluginsPage headerControls={headerControls} onToggleSidebar={() => setSidebarOpen((open) => !open)} /></ScopedErrorBoundary>}
 			<div className="pd-notification-center"><OperationFeedback /><UpdateNotice /><div ref={setNotificationTarget} className="pd-extension-notification-slot" /></div>
 			</div>
 			<button type="button" className={`pd-workbench-scrim${workbenchOpen && mainView === 'chat' ? ' is-open' : ''}`} aria-label={t('app.closeWorkbench')} aria-hidden={!workbenchOpen || mainView !== 'chat'} inert={!workbenchOpen || mainView !== 'chat'} tabIndex={-1} onClick={closeWorkbench} />
 			<ScopedErrorBoundary scope="workbench" resetKeys={[workbenchRequest?.cwd, workbenchRequest?.requestId]}><WorkbenchSidePane open={workbenchOpen && mainView === 'chat'} modal={workbenchOverlay && !settingsOpen && !searchOpen} suspended={settingsOpen || searchOpen} width={clampWorkbenchWidth(workbenchWidth, viewportWidth)} onWidthChange={value => setWorkbenchWidth(clampWorkbenchWidth(value, viewportWidth))} onResizing={setWorkbenchResizing} onClose={closeWorkbench} openRequest={workbenchRequest} terminalRequest={terminalRequest} onTabChange={setWorkbenchTab} /></ScopedErrorBoundary>
 			{mainView === 'chat' && <HoverTooltip title={t('app.workbench')}><button ref={workbenchToggleRef} type="button" className="pd-workbench-toggle pd-icon-button" aria-label={t(workbenchOpen ? 'app.closeWorkbench' : 'app.openWorkbench')} aria-pressed={workbenchOpen} onClick={() => setWorkbenchOpen((value) => !value)}><Icon name="panelRight" width="17" height="17" /></button></HoverTooltip>}
 			{settingsOpen && <SettingsPanel initialPage={settingsInitialPage} modelManagementTarget={settingsInitialPage === 'model' ? modelManagementTarget : undefined} onClose={() => setSettingsOpen(false)} themePreference={themePreference} onThemePreferenceChange={setThemePreference} colorPreferences={colorPreferences} onColorPreferencesChange={setColorPreferences} colorSaveFailed={colorSaveFailed} />}
-			{searchOpen && <SearchDialog commands={searchCommands} onClose={() => setSearchOpen(false)} onSelectSession={selectSearchSession} onSelectFile={selectSearchFile} />}
+			{searchOpen && <div className="pd-overlay-error-host"><ScopedErrorBoundary scope="search" onReset={() => setSearchOpen(false)}><SearchDialog commands={searchCommands} onClose={() => setSearchOpen(false)} onSelectSession={selectSearchSession} onSelectFile={selectSearchFile} /></ScopedErrorBoundary></div>}
 			{isWindows && <WindowControls />}
 			<FolderProjectDropZone onAdded={revealAddedProjects} />
+			<ResultFilePreviewDialogRoot />
 		</div>
 		</ExtensionDialogHost>
 	);

@@ -5,7 +5,7 @@ import { managementCopy } from '../managementCopy';
 import { useChatStore } from '../store';
 import { isConversationWorkspace } from '../sidebarOrganization';
 
-export function SessionTrashDialog({ title, workspace, onDelete, onClose }: { title: string; workspace: string; onDelete(): Promise<void>; onClose(deleted: boolean): void }) {
+export function SessionDeleteDialog({ title, workspace, onDelete, onClose }: { title: string; workspace: string; onDelete(): Promise<void>; onClose(deleted: boolean): void }) {
 	const { locale } = useT();
 	const copy = managementCopy(locale);
 	const conversationWorkspaces = useChatStore(state => state.conversationWorkspaces);
@@ -29,9 +29,9 @@ export function SessionTrashDialog({ title, workspace, onDelete, onClose }: { ti
 		catch (cause) { if (mounted.current) setError(cause instanceof Error ? cause.message : String(cause)); }
 		finally { lock.current = false; if (mounted.current) setBusy(false); }
 	}
-	return createPortal(<dialog ref={dialog} className="pd-session-trash-dialog" aria-labelledby={id} aria-describedby={`${id}-hint`} onCancel={(event) => { event.preventDefault(); if (!lock.current) close(false); }}>
-		<h2 id={id}>{copy.trashTitle}</h2><strong>{title}</strong>{showWorkspace && <p className="pd-session-trash-workspace">{workspace}</p>}<p id={`${id}-hint`}>{copy.trashHint}</p>
-		{error && <p role="alert" className="pd-session-trash-error">{error}</p>}
-		<footer><button autoFocus type="button" disabled={busy} onClick={() => close(false)}>{copy.cancel}</button><button type="button" className="is-danger" disabled={busy} onClick={() => void submit()}>{busy ? copy.deleting : error ? copy.retry : copy.trash}</button></footer>
+	return createPortal(<dialog ref={dialog} className="pd-session-delete-dialog" aria-labelledby={id} aria-describedby={`${id}-hint`} onCancel={(event) => { event.preventDefault(); if (!lock.current) close(false); }}>
+		<h2 id={id}>{copy.deleteTitle}</h2><strong>{title}</strong>{showWorkspace && <p className="pd-session-delete-workspace">{workspace}</p>}<p id={`${id}-hint`}>{copy.deleteHint}</p>
+		{error && <p role="alert" className="pd-session-delete-error">{error}</p>}
+		<footer><button autoFocus type="button" disabled={busy} onClick={() => close(false)}>{copy.cancel}</button><button type="button" className="is-danger" disabled={busy} onClick={() => void submit()}>{busy ? copy.deleting : error ? copy.retry : copy.remove}</button></footer>
 	</dialog>, document.body);
 }

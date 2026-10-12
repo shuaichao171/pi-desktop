@@ -39,6 +39,7 @@ export function EngineSettingsPanel({ onDraftStateChange }: { onDraftStateChange
 	const dirty = savedMode !== null && (mode !== savedMode || (mode === 'custom' && path.trim() !== savedPath));
 	const disabled = !bridge || savedMode === null || pending !== null;
 	const saveRef = useRef<() => Promise<boolean>>(async () => false);
+	const statusRef = useRef<HTMLDivElement>(null);
 	const saveDraft = useCallback(() => saveRef.current(), []);
 
 	useEffect(() => { mounted.current = true; return () => { mounted.current = false; if (probeTimer.current) clearTimeout(probeTimer.current); }; }, []);
@@ -126,44 +127,85 @@ export function EngineSettingsPanel({ onDraftStateChange }: { onDraftStateChange
 		} catch (cause) { if (mounted.current) setError(errorText(cause)); setRestarting(false); setPending(null); }
 	}
 
-	const builtinVersion = status?.builtinVersion ?? null;
-	const activeLabel = status?.active
-		? status.active.mode === 'builtin'
-			? t('settings.engineActiveBuiltin', { version: status.active.version ?? '—' })
-			: t('settings.engineActiveCustom', { version: status.active.version ?? '—' })
-		: null;
+	// Bring the restart prompt into view once a save lands; the save bar sits at the bottom.
+	useEffect(() => { if (saved && status?.pendingRestart) statusRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); }, [saved, status?.pendingRestart]);
 
-	return <section className="pd-conversation-storage" data-setting="pi-engine" aria-labelledby={`${id}-title`}>
+	function discard() {
+		if (savedMode === null || pending !== null) return;
+		setMode(savedMode); setPath(savedPath); setError(null); setSaved(false);
+	}
+
+	const builtinVersion = status?.builtinVersion ?? null;
+	const active = status?.active ?? null;
+	const activeName = active ? t(active.mode === 'builtin' ? 'settings.engineBuiltinTitle' : 'settings.engineCustom') : null;
+	const restartButton = (action: string) => <button type="button" className="pd-engine-button" data-action={action} disabled={pending !== null} onClick={() => void relaunch()}>
+		<Icon name="refresh" width="14" height="14" />{t(restarting ? 'settings.engineRestarting' : 'settings.engineRestart')}
+	</button>;
+	const modes: Array<{ value: EngineMode; title: string; hint: string; icon: 'spark' | 'folder' }> = [
+		{ value: 'builtin', title: t('settings.engineBuiltin', { version: builtinVersion ?? '—' }), hint: t('settings.engineBuiltinHint'), icon: 'spark' },
+		{ value: 'custom', title: t('settings.engineCustom'), hint: t('settings.engineCustomHint'), icon: 'folder' },
+	];
+
+	return <section className="pd-engine" data-setting="pi-engine" aria-labelledby={`${id}-title`}>
 		<div className="pd-settings-section-head"><h2 id={`${id}-title`}>{t('settings.engine')}</h2><p id={`${id}-description`}>{t('settings.engineDescription')}</p></div>
-		{loadError ? <div className="pd-conversation-storage-error" role="alert"><p>{t('settings.engineLoadFailed')}：{loadError}</p><button type="button" className="pd-conversation-storage-choose" onClick={() => setAttempt(value => value + 1)}>{t('projectCreate.retry')}</button></div> : savedMode === null ? <p className="pd-settings-feedback" role="status">{t('settings.engineLoading')}</p> : <>
-			<div className="pd-settings-section-head"><h3>{t('settings.engineStatus')}</h3><p>{activeLabel ? t('settings.engineActiveLine', { engine: activeLabel }) : t('settings.engineIdleLine')}</p></div>
-			{status?.pendingRestart && <div className="pd-conversation-storage-error" role="status"><p>{t('settings.enginePendingRestart')}</p><button type="button" className="pd-conversation-storage-choose" data-action="relaunch-app" disabled={pending !== null} onClick={() => void relaunch()}>{t(restarting ? 'settings.engineRestarting' : 'settings.engineRestart')}</button></div>}
-			<div className="pd-settings-section-head"><h3>{t('settings.engineMode')}</h3><p>{t('settings.engineModeDescription')}</p></div>
-			<div className="pd-language-options" data-setting="engine-mode" role="group" aria-label={t('settings.engineMode')}>
-				<button type="button" className={mode === 'builtin' ? 'is-selected' : ''} aria-pressed={mode === 'builtin'} disabled={pending !== null} onClick={() => { setMode('builtin'); setError(null); setSaved(false); }}>{t('settings.engineBuiltin', { version: builtinVersion ?? '—' })}</button>
-				<button type="button" className={mode === 'custom' ? 'is-selected' : ''} aria-pressed={mode === 'custom'} disabled={pending !== null} onClick={() => { setMode('custom'); setError(null); setSaved(false); }}>{t('settings.engineCustom')}</button>
-			</div>
-			{mode === 'custom' && <form onSubmit={event => { event.preventDefault(); if (dirty) void save(); }} aria-busy={pending !== null}>
-				<div className="pd-settings-section-head"><h3>{t('settings.enginePath')}</h3><p>{t('settings.enginePathDescription')}</p></div>
-				<textarea rows={2} name="piEngineDirectory" aria-label={t('settings.enginePath')} aria-describedby={`${id}-description`} value={path} disabled={disabled} autoComplete="off" spellCheck={false} placeholder={locale === 'zh-CN' ? '例如 D:\\engines\\pi\\node_modules\\@earendil-works\\pi-coding-agent' : 'e.g. D:\\engines\\pi\\node_modules\\@earendil-works\\pi-coding-agent'} onChange={event => { setPath(event.target.value); setError(null); setSaved(false); }} onKeyDown={event => {
-					if (event.key === 'Enter' && !event.nativeEvent.isComposing) { event.preventDefault(); if (dirty) void save(); }
-				}} />
-				<div className="pd-conversation-storage-actions">
-					<button type="button" className="pd-conversation-storage-choose" data-action="choose-engine-directory" disabled={disabled} onClick={() => void chooseDirectory()}><Icon name="folder" width="15" height="15" />{t(pending === 'pick' ? 'projectCreate.choosing' : 'settings.engineChoose')}</button>
-					<button type="button" className="pd-conversation-storage-choose" disabled={disabled || !path.trim() || probing} onClick={() => runProbe(path)}>{t(probing ? 'settings.engineChecking' : 'settings.engineCheck')}</button>
-					<button type="submit" className="pd-settings-primary" data-action="save-engine-settings" disabled={disabled || !dirty || !path.trim()}>{t(pending === 'save' ? 'settings.processing' : 'settings.engineSave')}</button>
+		{loadError ? <div className="pd-engine-callout is-error" role="alert"><p>{t('settings.engineLoadFailed')}：{loadError}</p><button type="button" className="pd-engine-button" onClick={() => setAttempt(value => value + 1)}>{t('projectCreate.retry')}</button></div>
+			: savedMode === null ? <p className="pd-engine-loading" role="status">{t('settings.engineLoading')}</p>
+			: <form className="pd-engine-form" onSubmit={event => { event.preventDefault(); if (dirty) void save(); }} aria-busy={pending !== null}>
+				<div ref={statusRef} className={`pd-engine-status${status?.pendingRestart ? ' is-pending' : ''}`} aria-label={t('settings.engineStatus')}>
+					<span className={`pd-engine-status-icon${active ? ' is-running' : ''}`}><Icon name={active?.mode === 'custom' ? 'folder' : 'spark'} width="18" height="18" /></span>
+					<div className="pd-engine-status-copy">
+						<span className="pd-engine-status-label">{t('settings.engineStatus')}</span>
+						<strong>{active ? `${activeName} ${active.version ?? ''}`.trim() : t('settings.engineNotStarted')}</strong>
+						<p>{active
+							? (active.mode === 'custom' && active.path ? <code title={active.path}>{active.path}</code> : t('settings.engineActiveLine', { engine: t(active.mode === 'builtin' ? 'settings.engineActiveBuiltin' : 'settings.engineActiveCustom', { version: active.version ?? '—' }) }))
+							: t('settings.engineIdleLine')}</p>
+					</div>
+					{active && !status?.pendingRestart && <span className="pd-engine-chip is-success">{t('settings.engineRunning')}</span>}
+					{status?.pendingRestart && <span className="pd-engine-chip is-warning">{t('settings.enginePendingBadge')}</span>}
 				</div>
-				{probing && <p className="pd-settings-feedback" role="status">{t('settings.engineChecking')}</p>}
-				{!probing && probe && probe.ok && <p className="pd-settings-feedback" role="status">{t('settings.engineProbeOk', { version: probe.version ?? '—' })}</p>}
-				{!probing && probe && !probe.ok && <p className="pd-conversation-storage-error" role="alert">{t('settings.engineProbeProblems', { problems: probe.problems.join('；') })}</p>}
-				{probe && probe.warnings.length > 0 && <p className="pd-conversation-storage-error" role="alert">{t('settings.engineWarnings', { warnings: probe.warnings.join('；') })}</p>}
-				<p className="pd-engine-note">{t('settings.engineInstallHint')}</p>
-				<p className="pd-engine-note">{t('settings.engineSharedNote')}</p>
-				<p className="pd-engine-note">{t('settings.engineRiskNote')}</p>
-				{error && <p className="pd-conversation-storage-error" role="alert">{error}</p>}
-				{saved && <p className="pd-settings-feedback" role="status">{t('settings.engineSavedRestart')}</p>}
-				{saved && status?.pendingRestart && <div className="pd-conversation-storage-actions"><button type="button" className="pd-settings-primary" data-action="relaunch-app-after-save" disabled={pending !== null} onClick={() => void relaunch()}>{t(restarting ? 'settings.engineRestarting' : 'settings.engineRestart')}</button></div>}
+				{status?.pendingRestart && <div className="pd-engine-callout is-warning" role="status"><p>{t(saved ? 'settings.engineSavedRestart' : 'settings.enginePendingRestart')}</p>{restartButton('relaunch-app')}</div>}
+
+				<div className="pd-settings-section-head"><h3>{t('settings.engineMode')}</h3><p>{t('settings.engineModeDescription')}</p></div>
+				<div className="pd-engine-modes" data-setting="engine-mode" role="radiogroup" aria-label={t('settings.engineMode')}>
+					{modes.map(item => <button key={item.value} type="button" role="radio" aria-checked={mode === item.value} className={mode === item.value ? 'is-selected' : ''} disabled={pending !== null}
+						onClick={() => { setMode(item.value); setError(null); setSaved(false); }}>
+						<span className="pd-engine-mode-icon"><Icon name={item.icon} width="16" height="16" /></span>
+						<span className="pd-engine-mode-copy"><strong>{item.title}</strong><small>{item.hint}</small></span>
+						<span className="pd-engine-mode-check" aria-hidden>{mode === item.value && <Icon name="check" width="12" height="12" />}</span>
+					</button>)}
+				</div>
+
+				{mode === 'custom' && <div className="pd-engine-custom">
+					<div className="pd-settings-section-head"><h3>{t('settings.enginePath')}</h3><p>{t('settings.enginePathDescription')}</p></div>
+					<div className="pd-engine-path">
+						<input name="piEngineDirectory" aria-label={t('settings.enginePath')} aria-describedby={`${id}-description`} value={path} disabled={disabled} autoComplete="off" spellCheck={false} title={path || undefined}
+							placeholder={locale === 'zh-CN' ? '例如 D:\\engines\\pi' : 'e.g. D:\\engines\\pi'} onChange={event => { setPath(event.target.value); setError(null); setSaved(false); }} />
+						<button type="button" className="pd-engine-button" data-action="choose-engine-directory" disabled={disabled} onClick={() => void chooseDirectory()}><Icon name="folder" width="14" height="14" />{t(pending === 'pick' ? 'projectCreate.choosing' : 'settings.engineChoose')}</button>
+						<button type="button" className="pd-engine-button" data-action="check-engine-directory" disabled={disabled || !path.trim() || probing} onClick={() => runProbe(path)}>{t(probing ? 'settings.engineChecking' : 'settings.engineCheck')}</button>
+					</div>
+					{probing && <p className="pd-engine-probe" role="status"><Icon name="loader" width="14" height="14" className="is-spinning" />{t('settings.engineChecking')}</p>}
+					{!probing && probe?.ok && <div className="pd-engine-probe is-ok" role="status">
+						<Icon name="check" width="14" height="14" />
+						<span>{t('settings.engineProbeOk', { version: probe.version ?? '—' })}{probe.packageDir && <code title={probe.packageDir}>{probe.packageDir}</code>}</span>
+					</div>}
+					{!probing && probe && !probe.ok && <p className="pd-engine-callout is-error" role="alert">{t('settings.engineProbeProblems', { problems: probe.problems.join('；') })}</p>}
+					{probe && probe.warnings.length > 0 && <p className="pd-engine-callout is-warning" role="alert">{t('settings.engineWarnings', { warnings: probe.warnings.join('；') })}</p>}
+					<div className="pd-engine-notes">
+						<strong>{t('settings.engineNotes')}</strong>
+						<ul>
+							<li className="pd-engine-note">{t('settings.engineInstallHint')}</li>
+							<li className="pd-engine-note">{t('settings.engineSharedNote')}</li>
+							<li className="pd-engine-note">{t('settings.engineRiskNote')}</li>
+						</ul>
+					</div>
+				</div>}
+
+				{error && <p className="pd-engine-callout is-error" role="alert">{error}</p>}
+				{dirty && <div className="pd-engine-savebar">
+					<span>{t('settings.engineUnsaved')}</span>
+					<button type="button" className="pd-engine-button is-ghost" disabled={pending !== null} onClick={discard}>{t('settings.engineDiscard')}</button>
+					<button type="submit" className="pd-engine-button is-primary" data-action="save-engine-settings" disabled={disabled || (mode === 'custom' && !path.trim())}>{t(pending === 'save' ? 'settings.processing' : 'settings.engineSave')}</button>
+				</div>}
 			</form>}
-		</>}
 	</section>;
 }

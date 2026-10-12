@@ -152,6 +152,52 @@ export function ToolActivityItem({ activity, onInteract }: { activity: UiToolAct
 	);
 }
 
+/** pi-subagents child-agent card (zcode-style): agent, task, live progress, output reference. */
+const SubagentActivityItem = memo(function SubagentActivityItem({ activity }: { activity: UiToolActivity }) {
+	const { t } = useT();
+	const detailId = useId();
+	const [userExpanded, setUserExpanded] = useDisclosureChoice(`tool:${activity.id}`);
+	const running = activity.status === 'running';
+	const expanded = userExpanded ?? running;
+	const sub = activity.subagent!;
+	const duration = useDurationLabel(activity);
+	const detail = activity.detail ?? '';
+	const tokens = sub.tokens != null ? (sub.tokens >= 1000 ? `${(sub.tokens / 1000).toFixed(1)}K` : String(sub.tokens)) : null;
+	const recent = sub.recentTools ?? [];
+	return (
+		<div className={'pd-activity-item pd-subagent-item is-' + activity.status}>
+			<button type="button" className="pd-activity-head" onClick={() => { setUserExpanded(!expanded); }} aria-expanded={expanded} aria-controls={detailId}>
+				<span className={'pd-activity-icon is-' + activity.status} aria-hidden="true"><Icon name="plugins" width="14" height="14" /></span>
+				<span className="pd-activity-copy">
+					<span className="pd-activity-kind" title={activity.tool}><ActivityLabel active={running}>{t('chat.subagent.label')}</ActivityLabel></span>
+					<span className="pd-subagent-agent">{sub.agent}</span>
+					{sub.async === true && <span className="pd-subagent-async-tag">{t('chat.subagent.asyncTag')}</span>}
+					{sub.model && <span className="pd-subagent-model" title={sub.model}>{sub.model}</span>}
+				</span>
+				{running && sub.turnCount != null && <span className="pd-subagent-progress">{t('chat.subagent.progress', { turn: sub.turnCount, tools: sub.toolCount ?? 0 })}</span>}
+				{tokens && <span className="pd-subagent-tokens">{tokens}</span>}
+				{duration && <span className="pd-activity-duration">{duration}</span>}
+				<span className={'pd-activity-status is-' + activity.status}>{t(running && sub.async === true ? 'chat.subagent.background' : 'chat.tool.' + activity.status)}</span>
+				<Icon name="chevronDown" className={'pd-chevron' + (expanded ? ' is-open' : '')} width="14" height="14" />
+			</button>
+			<ActivityDisclosure id={detailId} expanded={expanded}>
+				<div className="pd-activity-detail pd-subagent-detail">
+					{sub.task && <p className="pd-subagent-task" title={sub.task}>{sub.task}</p>}
+					{running && sub.currentTool && <p className="pd-subagent-current">{t('chat.subagent.currentTool')}：<code>{sub.currentTool}</code></p>}
+					{sub.async === true && <p className="pd-subagent-async-hint">{t('chat.subagent.asyncHint')}</p>}
+					{sub.runId && <p className="pd-subagent-runid" title={sub.runId}>run {sub.runId.slice(0, 8)}</p>}
+					{recent.length > 0 && <div className="pd-subagent-recent">{recent.map((item, index) => <span key={index} className="pd-subagent-recent-chip" title={item.args}>{item.tool}</span>)}</div>}
+					{sub.outputReference && <div className="pd-subagent-output">
+						<span>{t('chat.subagent.output')}</span>
+						<code title={sub.outputReference}>{sub.outputReference}</code>
+					</div>}
+					{detail ? <pre className="pd-activity-output is-wrapped">{detail}</pre> : <p className="pd-activity-no-output">{t(running ? 'chat.tool.waiting' : 'chat.tool.noOutput')}</p>}
+				</div>
+			</ActivityDisclosure>
+		</div>
+	);
+});
+
 export const ToolActivityPanel = memo(function ToolActivityPanel({ sourceActivities, indices, inline = false }: { sourceActivities: UiToolActivity[]; indices: number[]; inline?: boolean }) {
 	const { t, locale } = useT();
 	const detailId = useId();
@@ -172,7 +218,7 @@ export const ToolActivityPanel = memo(function ToolActivityPanel({ sourceActivit
 		interruptedCount > 0 ? t('chat.tool.interruptedCount', { count: interruptedCount }) : null,
 	].filter(Boolean).join(' · ');
 	if (activities.length === 0) return null;
-	if (inline) return <div className="pd-activity-list is-inline" aria-label={t('chat.tool.activity')}>{activities.map(activity => <ToolActivityItem key={activity.id} activity={activity} />)}</div>;
+	if (inline) return <div className="pd-activity-list is-inline" aria-label={t('chat.tool.activity')}>{activities.map(activity => activity.subagent ? <SubagentActivityItem key={activity.id} activity={activity} /> : <ToolActivityItem key={activity.id} activity={activity} />)}</div>;
 	return (
 		<section className="pd-activity-group" aria-label={t('chat.tool.activity')}>
 			<button type="button" className="pd-activity-summary" onClick={() => setUserExpanded(!expanded)} aria-expanded={expanded} aria-controls={detailId}>
@@ -182,7 +228,7 @@ export const ToolActivityPanel = memo(function ToolActivityPanel({ sourceActivit
 				<Icon name="chevronDown" className={'pd-chevron' + (expanded ? ' is-open' : '')} width="14" height="14" />
 			</button>
 			<ActivityDisclosure id={detailId} expanded={expanded}>
-				<div className="pd-activity-list">{activities.map((activity) => <ToolActivityItem key={activity.id} activity={activity} onInteract={() => setUserExpanded(true)} />)}</div>
+				<div className="pd-activity-list">{activities.map((activity) => activity.subagent ? <SubagentActivityItem key={activity.id} activity={activity} /> : <ToolActivityItem key={activity.id} activity={activity} onInteract={() => setUserExpanded(true)} />)}</div>
 			</ActivityDisclosure>
 		</section>
 	);

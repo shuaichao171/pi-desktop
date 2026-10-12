@@ -264,9 +264,9 @@ export default async function sidebarDragScenarios(review) {
   await review.click('[data-mode="project"]');
   await review.click('[data-mode="grouped"]');
   await review.assert(`document.querySelector(${q(toggle('ungrouped'))}).getAttribute('aria-expanded')==='false'`, 'Ungrouped collapse survives changing sidebar views');
-  await review.click('.pd-sidebar-organize-toolbar button[aria-label="展开全部"],.pd-sidebar-organize-toolbar button[aria-label="Expand all"]');
+  await review.click('.pd-sidebar-organize-actions button[aria-label="视图选项"]'); await review.clickText('.pd-sidebar-popover [role="menuitem"]', '展开全部分组');
   await review.assert(`[...document.querySelectorAll('.pd-sidebar-group-toggle')].every(button=>button.getAttribute('aria-expanded')==='true')`, 'Expand all includes Ungrouped');
-  await review.click('.pd-sidebar-organize-toolbar button[aria-label="收起全部"],.pd-sidebar-organize-toolbar button[aria-label="Collapse all"]');
+  await review.click('.pd-sidebar-organize-actions button[aria-label="视图选项"]'); await review.clickText('.pd-sidebar-popover [role="menuitem"]', '收起全部分组');
   await review.assert(`[...document.querySelectorAll('.pd-sidebar-group-toggle')].every(button=>button.getAttribute('aria-expanded')==='false') && JSON.parse(localStorage.getItem('pi-desktop.sidebar-organization.v1')).collapsed.includes('ungrouped')`, 'Collapse all includes and persists Ungrouped');
   await review.screenshot('sidebar-drag-04-collapse-all');
   await review.assert(`${state}.pointerEvents.some(event=>event.type==='pointermove' && event.buttons===1) && ${state}.pointerEvents.every(event=>event.trusted && event.pointerType==='mouse')`, 'Drag coverage used trusted mouse input with the button continuously held');
@@ -281,7 +281,7 @@ export default async function sidebarDragScenarios(review) {
   await review.screenshot('sidebar-drag-05-reloaded-collapsed-light-20px');
 
   // Group headings also reorder with a real press; release must not become a toggle click.
-  await review.click('.pd-sidebar-organize-toolbar button[aria-label="展开全部"],.pd-sidebar-organize-toolbar button[aria-label="Expand all"]');
+  await review.click('.pd-sidebar-organize-actions button[aria-label="视图选项"]'); await review.clickText('.pd-sidebar-popover [role="menuitem"]', '展开全部分组');
   const groupBefore = await writes();
   pointerAudit = await review.evaluate(`({navigation:${state}.navigation.length,collapsed:JSON.stringify(JSON.parse(localStorage.getItem('pi-desktop.sidebar-organization.v1')).collapsed)})`);
   const groupStart = await point(toggle('group:alpha'));

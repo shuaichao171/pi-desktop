@@ -9,6 +9,7 @@ const ACTIONS: Record<string, readonly [string, string]> = {
   grep: ['搜索', 'Search'],
   find: ['查找', 'Find'],
   ls: ['列出', 'List'],
+  subagent: ['子代理', 'Subagent'],
 };
 
 export function activityPresentation(activity: UiToolActivity, locale: Locale) {

@@ -71,3 +71,4 @@ export class DiagnosticsService {
 let diagnostics: DiagnosticsService | null = null;
 export function initializeDiagnostics(directory: string): DiagnosticsService { return diagnostics ??= new DiagnosticsService(directory); }
 export function recordDiagnostic(event: DiagnosticEvent): void { diagnostics?.record(event); }
+export function flushDiagnostics(): Promise<void> { return diagnostics ? diagnostics.flush() : Promise.resolve(); }

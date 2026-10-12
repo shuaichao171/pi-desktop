@@ -21,7 +21,7 @@ export default async function managementScenarios(review) {
     };
     bridge.updateSessionMeta = async (path,patch) => { Object.assign(Object.values(state.rows).flat().find(row=>row.path===path),patch); };
     bridge.deleteSession = async path => { state.deletes.push(path); return new Promise((resolve,reject)=>{state.pendingDelete={resolve,reject,path};}); };
-    state.rejectDelete = () => { const pending=state.pendingDelete;state.pendingDelete=null;pending.reject(new Error('模拟回收站暂时不可写')); };
+    state.rejectDelete = () => { const pending=state.pendingDelete;state.pendingDelete=null;pending.reject(new Error('模拟删除失败')); };
     state.finishDelete = () => { const pending=state.pendingDelete;state.pendingDelete=null;for(const path of Object.keys(state.rows))state.rows[path]=state.rows[path].filter(row=>row.path!==pending.path);pending.resolve(); };
     state.runtime = (path,phase,message) => { const row=state.rows[cwd].find(entry=>entry.path===path);if(row)row.runtime={phase,message};fixture.emitAgent({type:'session-runtime',cwd,path,runtime:{phase,message}}); };
     const task={id:'review-task',name:'每日项目审查',prompt:'检查项目并整理需要处理的问题',cwd,model:{provider:'openai',id:'gpt-review'},thinkingLevel:'high',schedule:{kind:'weekly',days:[1,2,3,4,5],time:'09:00'},timeZone:'Asia/Shanghai',enabled:true,createdAt:'2026-09-20T00:00:00Z',updatedAt:'2026-09-25T00:00:00Z',nextRunAt:'2026-09-28T01:00:00Z',lastRunAt:'2026-09-26T01:00:00Z'};
@@ -56,21 +56,21 @@ export default async function managementScenarios(review) {
 
   await openSessionMenu();
   await review.click('.pd-sidebar-menu-danger');
-  await review.waitFor("Boolean(document.querySelector('.pd-session-trash-dialog[open]'))");
-  await review.assert("document.querySelector('.pd-session-trash-dialog').textContent.includes('后台审查会话') && document.querySelector('.pd-session-trash-workspace').textContent===window.__managementReview.cwd", 'Trash dialog retains the exact title and workspace');
+  await review.waitFor("Boolean(document.querySelector('.pd-session-delete-dialog[open]'))");
+  await review.assert("document.querySelector('.pd-session-delete-dialog').textContent.includes('后台审查会话') && document.querySelector('.pd-session-delete-workspace').textContent===window.__managementReview.cwd", 'Trash dialog retains the exact title and workspace');
   await review.key('Escape');
-  await review.assert("!document.querySelector('.pd-session-trash-dialog') && window.__managementReview.deletes.length===0", 'Esc cancels without a deletion request');
+  await review.assert("!document.querySelector('.pd-session-delete-dialog') && window.__managementReview.deletes.length===0", 'Esc cancels without a deletion request');
   await openSessionMenu();
   await review.click('.pd-sidebar-menu-danger');
-  await review.click('.pd-session-trash-dialog button.is-danger');
+  await review.click('.pd-session-delete-dialog button.is-danger');
   await review.key('Enter');
-  await review.assert("document.querySelector('.pd-session-trash-dialog button.is-danger').disabled && window.__managementReview.deletes.length===1", 'Repeated activation while deleting submits only once');
+  await review.assert("document.querySelector('.pd-session-delete-dialog button.is-danger').disabled && window.__managementReview.deletes.length===1", 'Repeated activation while deleting submits only once');
   await review.evaluate('window.__managementReview.rejectDelete()');
-  await review.waitFor("Boolean(document.querySelector('.pd-session-trash-error'))");
-  await review.screenshot('management-02-trash-retry');
-  await review.click('.pd-session-trash-dialog button.is-danger');
+  await review.waitFor("Boolean(document.querySelector('.pd-session-delete-error'))");
+  await review.screenshot('management-02-delete-retry');
+  await review.click('.pd-session-delete-dialog button.is-danger');
   await review.evaluate('window.__managementReview.finishDelete()');
-  await review.waitFor("!document.querySelector('.pd-session-trash-dialog') && document.querySelectorAll('[data-session-path]').length===1");
+  await review.waitFor("!document.querySelector('.pd-session-delete-dialog') && document.querySelectorAll('[data-session-path]').length===1");
   await review.record('trash-restored-focus', "({activeTag:document.activeElement.tagName,activeClass:document.activeElement.className,activePath:document.activeElement.closest('[data-session-path]')?.dataset.sessionPath,deletes:window.__managementReview.deletes,target:window.__managementReview.firstPath})");
   await review.assert("document.activeElement.matches('.pd-session-row,.pd-organized-list') && window.__managementReview.deletes.every(path=>path===window.__managementReview.firstPath)", 'Retry preserves its target and success restores list focus');
 

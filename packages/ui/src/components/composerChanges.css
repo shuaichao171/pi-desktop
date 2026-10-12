@@ -1,5 +1,6 @@
 /* Codex-style conversation change card and compact running summary. */
 .pd-transcript-end.pd-transcript-changes { width: min(780px, calc(100% - 44px)); padding: 10px 0 12px; }
+.pd-turn-changes { margin-top: 12px; }
 .pd-transcript-changes:empty, .pd-composer-changes-slot:empty { display: none; }
 .pd-composer-changes-slot { position: relative; display: flex; justify-content: center; min-width: 0; margin-bottom: 10px; z-index: var(--pd-z-composer-dock); }
 .pd-composer-changes { min-width: 0; color: var(--pd-text); }

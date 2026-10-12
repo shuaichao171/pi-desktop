@@ -1,6 +1,8 @@
 import type { ManagementFeaturesBridge } from './managementFeatures';
 import type { UiDiagnosticEvent } from './uiDiagnostics';
 export * from './uiDiagnostics.ts';
+import type { UiAgentError } from './agentErrors';
+export * from './agentErrors.ts';
 import type { UiApprovalDetails, UiExtensionDialogResponse } from './approval';
 export * from './approval.ts';
 import type { PluginUpdatesBridge } from './pluginUpdates';
@@ -75,6 +77,7 @@ export const IPC_CHANNELS = {
   agentListSessions: 'agent:list-sessions',
   agentSearchSessions: 'agent:search-sessions',
   agentSwitchSession: 'agent:switch-session',
+  sessionRevealFile: 'session:reveal-file',
   agentListWorkspaces: 'agent:list-workspaces',
   workspaceListConversations: 'workspace:list-conversations',
   conversationStoragePick: 'conversation-storage:pick',
@@ -101,6 +104,7 @@ export const IPC_CHANNELS = {
   agentDiscoverProviderModels: 'agent:discover-provider-models',
   agentSaveCustomProvider: 'agent:save-custom-provider',
   agentRemoveCustomProvider: 'agent:remove-custom-provider',
+  agentSaveProviderModels: 'agent:save-provider-models',
   agentSetModel: 'agent:set-model',
   agentSetThinkingLevel: 'agent:set-thinking-level',
   agentListSlashCommands: 'agent:list-slash-commands',
@@ -290,8 +294,10 @@ export interface UiDiscoveredProviderModel {
   maxTokens?: number;
   reasoning?: boolean;
   input?: ('text' | 'image')[];
-  /** Only present when advertised by the provider, never inferred from its name. */
+  /** Present when advertised by the provider, or filled from builtin rules (see inferred). */
   thinkingLevels?: UiThinkingLevel[];
+  /** True when reasoning/thinkingLevels were filled by builtin rules, not advertised by the provider. */
+  inferred?: boolean;
 }
 
 export interface UiProviderModelDiscovery {
@@ -312,12 +318,32 @@ export interface UiSaveCustomProviderRequest {
   mode?: 'create' | 'update';
 }
 
+/** Changes only models.json `models` entries; every connection field stays untouched. */
+export interface UiSaveProviderModelsRequest {
+  provider: string;
+  /** Added or replaced by id; existing entries keep fields the editor does not manage. */
+  upsert?: UiCustomProviderModel[];
+  /** Ids of models.json entries to drop; builtin catalog models cannot be removed. */
+  remove?: string[];
+}
+
+/** Why the connection (name, URL, protocol, headers) cannot be edited in settings. */
+export type UiProviderReadOnlyReason = 'builtin' | 'extension' | 'invalid-config' | 'oauth' | 'model-overrides' | 'unsupported-api' | 'unsafe-url' | 'no-models' | 'model-endpoint';
+
 /** Full settings catalog, including models without configured credentials. */
 export interface UiModelProvider {
   provider: string;
   name: string;
   custom: boolean;
+  /** The id belongs to a Pi builtin provider (a models.json entry only overlays it). */
+  builtin?: boolean;
+  /** The connection can be edited and the provider removed. */
   editable: boolean;
+  /** models.json `models` entries can be added, edited, removed or imported. */
+  modelsEditable?: boolean;
+  /** Ids defined by models.json `models`; other catalog models come from Pi or overrides. */
+  configModelIds?: string[];
+  readOnlyReason?: UiProviderReadOnlyReason;
   configured: boolean;
   baseUrl: string | null;
   api: string | null;
@@ -408,7 +434,7 @@ export interface UiMessage {
   order: number;
   role: 'user' | 'assistant' | 'system';
   /** System-row flavor: compaction/branch summaries and extension notices (role 'system' only). */
-  systemKind?: 'compaction' | 'branch-summary' | 'custom' | 'extension-notice';
+  systemKind?: 'compaction' | 'branch-summary' | 'custom' | 'extension-notice' | 'subagent-notify';
   /** Extension-notice flavor: info/warning/error styling (systemKind 'extension-notice' only). */
   notificationType?: 'info' | 'warning' | 'error';
   /** Accumulated text (grows while streaming). */
@@ -420,6 +446,7 @@ export interface UiMessage {
   thinkingTruncated?: boolean;
   status: 'streaming' | 'done' | 'error';
   errorMessage?: string;
+  error?: UiAgentError;
   attachments?: UiAttachment[];
   /** Historical attachments omitted from this transport payload; persisted content is retained. */
   attachmentsOmitted?: number;
@@ -484,14 +511,41 @@ export interface UiQueuedMessage {
   attachments?: UiQueuedAttachment[];
 }
 
-/** Changes made during this session, relative to the file just before its first tool edit. */
+/** Changes made during one conversation turn (run) or the whole session,
+ * relative to the file just before its first tool edit in that scope.
+ * The diff itself is computed on demand via getFileChangeDiffs (lazy loading). */
 export interface UiFileChange {
   path: string;
   kind: 'added' | 'modified' | 'deleted';
   additions: number | null;
   deletions: number | null;
+  preview?: 'binary' | 'too-large' | 'unavailable';
+}
+
+/** Lazily computed diff for one changed file within a scope. */
+export interface UiFileDiff {
+  path: string;
   diff: string | null;
   preview?: 'binary' | 'too-large' | 'unavailable';
+}
+
+/** Files changed within one conversation run; runId null groups changes
+ * recorded before run tracking existed (legacy sessions). */
+export interface UiFileChangeTurn {
+  runId: string | null;
+  items: UiFileChange[];
+}
+
+/** Scope for lazy diff loading: the whole session or one run's turn. */
+export type UiFileDiffScope =
+  | { kind: 'conversation' }
+  | { kind: 'turn'; runId: string };
+
+/** Full change view published with every file-changes update. */
+export interface UiFileChangesView {
+  items: UiFileChange[];
+  turns: UiFileChangeTurn[];
+  activeRunId: string | null;
 }
 
 export interface UiExtensionDialogRequest {
@@ -505,6 +559,8 @@ export interface UiExtensionDialogRequest {
   timeout?: number;
   notificationType?: 'info' | 'warning' | 'error';
   approval?: UiApprovalDetails;
+  /** Conversation that raised the question (zcode per-task interactions). The renderer only shows the card while that conversation is open; absent means legacy/global. */
+  scope?: { cwd: string; sessionPath: string | null; sessionId: string | null };
 }
 
 export interface UiToolActivity {
@@ -532,6 +588,27 @@ export interface UiToolActivity {
   command?: string | null;
   /** Pi edit-tool diff text (`+3 added` / `-2 removed` / ` 1 context` rows). */
   diff?: string | null;
+  /** Structured snapshot when the call runs a pi-subagents child agent. */
+  subagent?: UiSubagentActivity;
+}
+
+/** One child-agent step shown in the subagent card's live progress. */
+export interface UiSubagentRecentTool { tool: string; args: string }
+
+/** Defensive projection of a pi-subagents `subagent` tool payload; every field optional. */
+export interface UiSubagentActivity {
+  agent: string;
+  task?: string | null;
+  runId?: string | null;
+  async?: boolean;
+  model?: string | null;
+  turnCount?: number | null;
+  toolCount?: number | null;
+  tokens?: number | null;
+  currentTool?: string | null;
+  recentTools?: UiSubagentRecentTool[] | null;
+  outputReference?: string | null;
+  durationMs?: number | null;
 }
 
 /**
@@ -541,22 +618,23 @@ export interface UiToolActivity {
 export type AgentUiEvent =
   | { type: 'reset'; cwd: string }
   | { type: 'status'; status: AgentStatus; message?: string; attempt?: number; maxAttempts?: number }
-  | { type: 'ready'; resumeKind?: 'cold' | 'warm'; model: string; modelName?: string | null; modelProvider: string; thinkingLevel: UiThinkingLevel; availableThinkingLevels: UiThinkingLevel[]; contextUsage: UiContextUsage | null; cwd: string; sessionId: string; sessionPath: string | null; messages: UiMessage[]; activities: UiToolActivity[]; fileChanges: UiFileChange[]; historyTotal?: number; runs?: UiConversationRun[] }
+  | { type: 'ready'; /** Same branch re-published as-is (settled-turn id swap, idle notice): a content change, not navigation — reading positions are not restored. */ resync?: boolean; resumeKind?: 'cold' | 'warm'; model: string; modelName?: string | null; modelProvider: string; thinkingLevel: UiThinkingLevel; availableThinkingLevels: UiThinkingLevel[]; contextUsage: UiContextUsage | null; cwd: string; sessionId: string; sessionPath: string | null; messages: UiMessage[]; activities: UiToolActivity[]; fileChanges: UiFileChange[]; fileChangeTurns?: UiFileChangeTurn[]; fileChangeActiveRunId?: string | null; historyTotal?: number; runs?: UiConversationRun[] }
   | { type: 'model'; model: string; modelName?: string | null; modelProvider: string; thinkingLevel: UiThinkingLevel; availableThinkingLevels: UiThinkingLevel[]; contextUsage: UiContextUsage | null }
   | { type: 'context-usage'; contextUsage: UiContextUsage | null }
   | { type: 'thinking-level'; level: UiThinkingLevel }
   | { type: 'user-message'; id: string; order: number; text: string; attachments?: UiAttachment[]; attachmentsOmitted?: number; attachmentReferences?: UiAttachmentReference[]; runId?: string }
+  | { type: 'system-message'; id: string; order: number; text: string; systemKind?: 'compaction' | 'branch-summary' | 'custom' | 'extension-notice' | 'subagent-notify'; runId?: string }
   | { type: 'assistant-start'; id: string; order: number; runId?: string }
   | { type: 'run'; run: UiConversationRun }
   | { type: 'assistant-delta'; id: string; delta: string }
   | ({ type: 'assistant-thinking'; id: string } & UiThinkingOutput)
-  | ({ type: 'assistant-end'; id: string; text: string; aborted?: boolean; errorMessage?: string } & Partial<UiThinkingOutput>)
+  | ({ type: 'assistant-end'; id: string; text: string; aborted?: boolean; errorMessage?: string; error?: UiAgentError } & Partial<UiThinkingOutput>)
   | { type: 'tool'; activity: UiToolActivity }
   | { type: 'queue'; count: number; items: UiQueuedMessage[] }
-  | { type: 'file-changes'; items: UiFileChange[] }
+  | { type: 'file-changes'; items: UiFileChange[]; turns: UiFileChangeTurn[]; activeRunId: string | null }
   | { type: 'sessions-changed'; cwd: string }
   | { type: 'session-runtime'; cwd: string; path: string; runtime: UiSessionRuntimeState }
-  | { type: 'error'; message: string };
+  | { type: 'error'; message: string; error?: UiAgentError };
 
 export interface AgentEventEnvelope {
   sequence: number;
@@ -588,9 +666,14 @@ export interface AgentSnapshot {
   queuedCount: number;
   queuedMessages: UiQueuedMessage[];
   fileChanges: UiFileChange[];
+  /** Per-turn change groups for turn-level settlement cards (runId null = legacy). */
+  fileChangeTurns: UiFileChangeTurn[];
+  /** The run whose changes are accumulating while the agent is busy. */
+  fileChangeActiveRunId: string | null;
   /** Full timeline entry count of the loaded branch; absent or equal to messages+activities means no older pages. */
   historyTotal?: number;
   error: string | null;
+  errorInfo?: UiAgentError | null;
 }
 
 /** One slice of a session branch's timeline, ordered oldest-first by `order`. */
@@ -656,10 +739,14 @@ export interface UiSessionSummary {
   name?: string;
   firstMessage: string;
   modified: string;
+  /** Session creation time (header timestamp). Stable key for the running tier — unlike modified it never advances while a turn streams (zcode createdAt semantics). */
+  created?: string;
   messageCount: number;
   pinned?: boolean;
   archived?: boolean;
   unread?: boolean;
+  /** Strictly increasing unread watermark (epoch ms). Present only while unread; used for compare-and-swap clears (zcode unread_at semantics). */
+  unreadAt?: number;
   /** Live runtime state; independent of persisted unread metadata. */
   runtime?: UiSessionRuntimeState;
   /** Manual sidebar position. Undefined entries keep their time-based sort. */
@@ -671,6 +758,10 @@ export interface UiSessionMetaPatch {
   pinned?: boolean;
   archived?: boolean;
   unread?: boolean;
+  /** Persisted unread watermark; written by the main process on every background settle, never by the renderer. */
+  unreadAt?: number;
+  /** Request-only CAS precondition for unread=false clears: skip the clear when the persisted watermark is newer (a fresher background unread arrived). Not persisted. */
+  expectedUnreadAt?: number;
   /** Manual sidebar position; null clears it back to time-based sorting. */
   order?: number | null;
 }
@@ -728,6 +819,12 @@ export interface WorkspaceGitStatus {
 
 /** Network Git actions from the workbench (ZCode git action menu). */
 export type WorkspaceGitSyncAction = 'fetch' | 'pull' | 'push';
+
+/** Structured result for a branch switch. Known worktree blockers stay in-band so the UI can offer a safe recovery flow. */
+export interface WorkspaceGitCheckoutIssue { code: 'dirty' | 'branch-in-use' | 'conflict' | 'unknown'; message: string; paths: string[] }
+export type WorkspaceGitCheckoutResult =
+  | { ok: true; branch: string; previous: string | null; didChange: boolean }
+  | { ok: false; branch: string; previous: string | null; issue: WorkspaceGitCheckoutIssue };
 
 /** One commit in the workbench git history (4.5). */
 export interface WorkspaceGitLogEntry {
@@ -794,7 +891,7 @@ export interface AppInfo {
   nodeVersion: string;
   electronVersion: string;
   platform: string;
-  windowMode?: 'full' | 'pai';
+  windowMode?: 'full' | 'pai' | 'multi';
 }
 
 // 'available' = an update was found but nothing downloads until the user consents.
@@ -852,6 +949,10 @@ export interface UiSaveInstructionResult {
 export interface UiDesktopSettings {
   notificationsEnabled: boolean;
   closeBehavior: 'tray' | 'quit';
+  /** Keep the OS awake (powerSaveBlocker) while a task or automation run is active. */
+  keepAwakeWhileRunning: boolean;
+  /** Periodic update checks download and install automatically (updates page toggle). */
+  autoInstallUpdates: boolean;
   conversationStorageDirectory: string;
   /** Which Pi engine drives the agent host (restart to apply). */
   piEngine: UiPiEngineSelection;
@@ -962,7 +1063,7 @@ export interface AgentBridge extends InputFeatureBridge, DataFeaturesBridge, Wor
   /** Local branch list and current ref for the composer branch picker. */
   getWorkspaceBranches(): Promise<WorkspaceBranches>;
   /** Checks out an existing local branch in the active workspace. */
-  checkoutWorkspaceBranch(branch: string): Promise<void>;
+  checkoutWorkspaceBranch(branch: string): Promise<WorkspaceGitCheckoutResult>;
   /** Stages or unstages specific paths (4.5). */
   setWorkspaceGitStaged(paths: string[], staged: boolean): Promise<void>;
   /** Discards worktree changes; the caller confirms with the real diff first (4.5). */
@@ -1031,8 +1132,10 @@ export interface AgentBridge extends InputFeatureBridge, DataFeaturesBridge, Wor
   listSessions(cwd?: string): Promise<UiSessionSummary[]>;
   searchSessions(query: string): Promise<{ sessions: UiSessionSearchResult[]; truncated: boolean; skipped?: number }>;
   switchSession(path: string): Promise<void>;
+  /** Reveals a conversation file in the OS file manager (zcode session context menu). */
+  revealSessionFile(path: string): Promise<void>;
   updateSessionMeta(path: string, patch: UiSessionMetaPatch): Promise<void>;
-  /** Moves a conversation file to the app trash and clears its desktop metadata (3.3). */
+  /** Permanently deletes a conversation file (native pi semantics) and clears its desktop metadata. */
   deleteSession(path: string): Promise<void>;
   listSessionGroups(): Promise<UiSessionGroup[]>;
   updateSessionGroups(change: UiSidebarGroupChange): Promise<UiSessionGroup[]>;
@@ -1043,6 +1146,7 @@ export interface AgentBridge extends InputFeatureBridge, DataFeaturesBridge, Wor
   discoverProviderModels(request: UiDiscoverProviderModelsRequest): Promise<UiProviderModelDiscovery>;
   saveCustomProvider(request: UiSaveCustomProviderRequest): Promise<void>;
   removeCustomProvider(provider: string): Promise<void>;
+  saveProviderModels(request: UiSaveProviderModelsRequest): Promise<void>;
   setModel(provider: string, id: string): Promise<void>;
   setThinkingLevel(level: UiThinkingLevel): Promise<void>;
   listProviderAuth(): Promise<UiProviderAuthStatus[]>;
@@ -1054,8 +1158,9 @@ export interface AgentBridge extends InputFeatureBridge, DataFeaturesBridge, Wor
   listExtensions(): Promise<UiExtensionSummary[]>;
   setExtensionEnabled(path: string, enabled: boolean): Promise<void>;
   prompt(text: string, behavior?: 'steer' | 'followUp', attachments?: UiAttachment[]): Promise<void>;
-  /** Rewind to a sent user message and resend the edited text (zcode-style edit). */
-  editMessage(entryId: string, text: string, attachments?: UiAttachment[]): Promise<void>;
+  /** Rewind to a sent user message and resend the edited text (zcode-style edit).
+   * fileMode 'rewind' also restores files touched by later rounds before resending. */
+  editMessage(entryId: string, text: string, attachments?: UiAttachment[], fileMode?: 'keep' | 'rewind'): Promise<void>;
   /** Fork the conversation at an assistant message: the visible branch rewinds to it and the next prompt grows a new branch (zcode-style fork). */
   forkAssistantMessage(entryId: string): Promise<void>;
   /** Edit, remove, or steer-early a queued instruction while the agent is busy (Codex-style queue management). */

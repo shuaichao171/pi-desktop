@@ -12,6 +12,7 @@ import { translate } from './i18n.ts';
 import { parseSlashCommand } from './composerSlash.ts';
 import { mergeRuntimeStates, sessionRuntimeKey, type WorkspaceSessionRequest } from './managementState.ts';
 import { mergeConversationRuns } from './conversationRuns.ts';
+import type { UiAgentError } from '@pidesktop/shared';
 import type {
 	AgentBridge,
 	AgentEventEnvelope,
@@ -22,12 +23,14 @@ import type {
 	UiAttachment,
 	UiInputScope,
 	UiFileChange,
+	UiFileChangeTurn,
 	UiContextUsage,
 	UiMessage,
 	UiConversationRun,
 	UiModelSummary,
 	UiModelProvider,
 	UiSaveCustomProviderRequest,
+	UiSaveProviderModelsRequest,
 	UiProviderAuthStatus,
 	UiQueuedMessage,
 	UiSessionSummary,
@@ -66,6 +69,8 @@ interface ChatState {
 	sessionRuntimes: Record<string, UiSessionRuntimeState>;
 	sessionId: string | null;
 	sessionPath: string | null;
+	/** The painted transcript is a keep-warm preview of this session (zcode warm store). */
+	conversationPreviewPath: string | null;
 	sessions: UiSessionSummary[];
 	messages: UiMessage[];
 	activities: UiToolActivity[];
@@ -79,7 +84,13 @@ interface ChatState {
 	queuedCount: number;
 	queuedMessages: UiQueuedMessage[];
 	fileChanges: UiFileChange[];
+	/** Per-turn change groups for turn-level settlement cards (runId null = legacy). */
+	fileChangeTurns: UiFileChangeTurn[];
+	/** The run whose changes are accumulating while the agent is busy. */
+	fileChangeActiveRunId: string | null;
 	error: string | null;
+	/** Structured evidence for the last agent failure; text-only errors stay null. */
+	errorInfo: UiAgentError | null;
 	appInfo: AppInfo | null;
 	/** Latest explicit project/session navigation intent; stale requests cannot overwrite it. */
 	navigationRequestId: number;
@@ -102,13 +113,16 @@ interface ChatState {
 	switchWorkspace(cwd: string, options?: { fresh?: boolean; force?: boolean }): Promise<void>;
 	removeWorkspace(cwd: string): Promise<void>;
 	updateSessionMeta(path: string, patch: UiSessionMetaPatch): Promise<void>;
-	/** Moves a conversation to the app trash after a confirmation; active sessions switch away first (3.3). */
+	/** Permanently deletes a conversation after a confirmation; active sessions switch away first. */
 	deleteSession(path: string): Promise<void>;
+	/** Trash several conversations in one batch: sequential bridge calls with independent failures (one bad path never rolls back the rest), a pre-flight re-validation of the selection, and a single cache refresh for the whole batch. */
+	deleteSessions(paths: string[], options?: { expectArchived?: boolean }): Promise<{ deleted: string[]; failed: Record<string, string>; skipped: Record<string, string> }>;
 	updateSessionOrders(entries: { path: string; order: number | null }[]): Promise<void>;
 	refreshModels(): Promise<void>;
 	refreshModelProviders(): Promise<void>;
 	saveCustomProvider(request: UiSaveCustomProviderRequest): Promise<void>;
 	removeCustomProvider(provider: string): Promise<void>;
+	saveProviderModels(request: UiSaveProviderModelsRequest): Promise<void>;
 	setModelEnabled(provider: string, modelId: string, enabled: boolean): Promise<void>;
 	setModel(provider: string, id: string): Promise<void>;
 	setThinkingLevel(level: UiThinkingLevel): Promise<void>;
@@ -120,7 +134,7 @@ interface ChatState {
 	selectResidentSession(cwd: string, sessionId: string, sessionPath: string | null): Promise<boolean>;
 	send(text: string, behavior?: 'steer' | 'followUp', attachments?: UiAttachment[], inputId?: string): Promise<void>;
 	/** Rewind to a sent user message and resend the edited text (zcode-style edit). */
-	editMessage(entryId: string, text: string, attachments?: UiAttachment[]): Promise<void>;
+	editMessage(entryId: string, text: string, attachments?: UiAttachment[], fileMode?: 'keep' | 'rewind'): Promise<void>;
 	/** Rewind to the latest user message and resend it, keeping the old reply as a branch (3.4). */
 	regenerate(replyId?: string): Promise<void>;
 	/** Fork the conversation at an assistant message (rewinds the visible branch to it). */
@@ -246,6 +260,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 	sessionRuntimes: {},
 	sessionId: null,
 	sessionPath: null,
+	conversationPreviewPath: null,
 	sessions: [],
 	messages: [],
 	activities: [],
@@ -258,7 +273,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
 	queuedCount: 0,
 	queuedMessages: [],
 	fileChanges: [],
+	fileChangeTurns: [],
+	fileChangeActiveRunId: null,
 	error: null,
+	errorInfo: null,
 	appInfo: null,
 	navigationRequestId: 0,
 	navigationPending: false,
@@ -279,6 +297,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
 		historyLoadRequest += 1;
 		const generation = bridgeGeneration;
 		sessionListRequests.clear();
+		// A new host may not share session files; keep-warm previews never cross bridges.
+		sessionConversationPreviews.clear();
 		resetSettingsRequests();
 		set({
 			...useChatStore.getInitialState(),
@@ -339,8 +359,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
 					queuedCount: snapshot.queuedCount,
 					queuedMessages: snapshot.queuedMessages ?? [],
 					fileChanges: snapshot.fileChanges ?? [],
+					fileChangeTurns: snapshot.fileChangeTurns ?? [],
+					fileChangeActiveRunId: snapshot.fileChangeActiveRunId ?? null,
 					historyTotal: snapshot.historyTotal ?? snapshot.messages.length + snapshot.activities.length,
 					error: snapshot.error,
+					errorInfo: snapshot.errorInfo ?? null,
 				});
 				bootstrapping = false;
 				for (const envelope of buffered) {
@@ -432,16 +455,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
 					sessionId: null,
 					sessionPath: null,
 					sessions: get().sessionsByWorkspace[event.cwd] ?? [],
-					messages: [],
-					activities: [],
-					runs: [],
-					timelineRevision: get().timelineRevision + 1,
+					// zcode no-blank-out: reset only re-scopes the view. The previous
+					// conversation, its queue and change cards stay rendered until the
+					// paired ready replaces them wholesale — clearing here made every
+					// switch flash a blank transcript.
 					historyGeneration: get().historyGeneration + 1,
-					historyTotal: 0,
 					loadingOlder: false,
-					queuedCount: 0,
-					queuedMessages: [],
-					fileChanges: [],
 					error: null,
 				});
 				return;
@@ -491,16 +510,25 @@ export const useChatStore = create<ChatState>((set, get) => ({
 					sessions: get().sessionsByWorkspace[event.cwd] ?? [],
 					sessionId: event.sessionId,
 					sessionPath: event.sessionPath,
+					// Authoritative content replaced any painted preview; the transcript's
+					// session is again the identity sessionPath itself.
+					conversationPreviewPath: null,
 					messages,
 					activities: event.activities,
 					runs: event.runs ?? [],
 					historyTotal: (event.historyTotal ?? event.messages.length + event.activities.length) + (messages.length - event.messages.length),
 					timelineRevision: get().timelineRevision + 1,
-					historyGeneration: previous.historyGeneration + 1,
+					// A settled turn / idle notice re-publishes the same branch (resync):
+					// that is a content commit, not navigation. Keeping the generation lets the
+					// renderer hold the reading position instead of re-running restore and
+					// yanking a scrolled-up reader to the bottom (zcode: following ? pin : hold).
+					historyGeneration: event.resync && sameSession ? previous.historyGeneration : previous.historyGeneration + 1,
 					loadingOlder: sameSession && previous.loadingOlder,
 					queuedCount: 0,
 					queuedMessages: [],
 					fileChanges: event.fileChanges ?? [],
+					fileChangeTurns: event.fileChangeTurns ?? [],
+					fileChangeActiveRunId: event.fileChangeActiveRunId ?? null,
 					error: null,
 				});
 				// agent_settled resyncs re-send only the newest window; restore pages the user already opened.
@@ -526,6 +554,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
 			case 'run':
 				set(state => ({ runs: mergeConversationRuns(state.runs, [event.run]) }));
 				return;
+			case 'system-message': {
+				// Live system rows (subagent completion notices) append in transcript order.
+				set(s => ({
+					messages: [...s.messages, { id: event.id, order: event.order, runId: event.runId, role: 'system', systemKind: event.systemKind, text: event.text, status: 'done' }],
+					timelineRevision: s.timelineRevision + 1,
+				}));
+				return;
+			}
 			case 'user-message': {
 				const pending = currentPreparedInput();
 				// This is the first submitted input in a brand-new session. A slash
@@ -582,7 +618,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 								}
 							: m,
 					),
-					...(event.errorMessage ? { error: event.errorMessage } : {}),
+					...(event.errorMessage ? { error: event.errorMessage, errorInfo: event.error ?? null } : {}),
 				}));
 				return;
 			case 'tool': {
@@ -603,7 +639,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 				set({ queuedCount: event.count, queuedMessages: event.items ?? [] });
 				return;
 			case 'file-changes':
-				set({ fileChanges: event.items });
+				set({ fileChanges: event.items, fileChangeTurns: event.turns, fileChangeActiveRunId: event.activeRunId });
 				return;
 			case 'sessions-changed':
 				void get().refreshWorkspaceSessions(event.cwd);
@@ -620,7 +656,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 				return;
 			}
 			case 'error':
-				set({ error: event.message });
+				set({ error: event.message, errorInfo: event.error ?? null });
 				return;
 		}
 	},
@@ -634,6 +670,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
 		const { bridge, cwd, sessionId, sessionPath, navigationRequestId } = get();
 		if (!bridge || get().loadingOlder || !Number.isInteger(pageSize) || pageSize < 1) return false;
 		if (get().historyTotal <= get().messages.length + get().activities.length) return false;
+		// A keep-warm preview may be painted while the host still holds the source
+		// session; paging against it would fetch the wrong conversation's history.
+		if (get().navigationPending || get().sessionLoading) return false;
 		const request = ++historyLoadRequest;
 		const isCurrentSession = () => {
 			const current = get();
@@ -707,7 +746,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
 			await bridge.switchWorkspace(cwd, options?.fresh === undefined ? undefined : { fresh: options.fresh });
 			sessionOpenMetrics.rpc(request);
 			if (!currentSessionNavigation(bridge, request)) return;
-			await Promise.all([get().refreshWorkspaces(), get().refreshWorkspaceSessions(cwd)]);
+			// List refreshes feed the sidebar, not the conversation view; keep them
+			// off the workspace-switch critical path (zcode keeps navigation local).
+			void get().refreshWorkspaces();
+			void get().refreshWorkspaceSessions(cwd);
 		} catch (error) {
 			if (currentSessionNavigation(bridge, request)) set({ error: errorMessage(error) });
 			throw error;
@@ -743,9 +785,19 @@ export const useChatStore = create<ChatState>((set, get) => ({
 		if (!bridge) return;
 		const workspace = Object.entries(get().sessionsByWorkspace).find(([, sessions]) => sessions.some((session) => session.path === path))?.[0] ?? cwd;
 		const isCurrent = () => currentSessionNavigation(bridge, navigationRequestId) && get().cwd === cwd && get().sessionId === sessionId;
-		// Editors own mutation errors and retain their drafts. Do not turn a
-		// failed title/metadata edit into a chat failure, especially after switching.
-		await bridge.updateSessionMeta(path, patch);
+		// zcode setOverlay semantics: boolean flags flip in the cached lists
+		// immediately, persistence converges through the authoritative refetch,
+		// and a failed write restores the captured rows (runtime events merge
+		// onto cached entries, so an in-flight overlay survives them).
+		const overlay = applySessionMetaOverlay(path, patch);
+		try {
+			// Editors own mutation errors and retain their drafts. Do not turn a
+			// failed title/metadata edit into a chat failure, especially after switching.
+			await bridge.updateSessionMeta(path, patch);
+		} catch (error) {
+			restoreSessionMetaOverlay(overlay);
+			throw error;
+		}
 		if (get().bridge !== bridge) return;
 		if (workspace) await refreshSessionCache(workspace, isCurrent());
 	},
@@ -758,6 +810,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
 			// The main process rejects deleting the open session; switch to a fresh one first.
 			if (get().sessionPath === path) await get().newSession();
 			await bridge.deleteSession(path);
+			// Deleted conversations must not resurface from the keep-warm cache.
+			sessionConversationPreviews.delete(path);
 			set((state) => ({
 				sessionsByWorkspace: Object.fromEntries(Object.entries(state.sessionsByWorkspace)
 					.map(([workspace, sessions]) => [workspace, sessions.filter((session) => session.path !== path)])),
@@ -769,6 +823,73 @@ export const useChatStore = create<ChatState>((set, get) => ({
 			set({ error: errorMessage(error) });
 			throw error;
 		}
+	},
+	
+	async deleteSessions(paths, options) {
+		const { bridge } = get();
+		const targets = [...new Set(paths)].filter(Boolean);
+		if (!bridge || !targets.length) return { deleted: [], failed: {}, skipped: {} };
+		set({ error: null });
+		const failed: Record<string, string> = {};
+		const skipped: Record<string, string> = {};
+		const deleted: string[] = [];
+		const dropFromCache = (path: string) => set((state) => ({
+			sessionsByWorkspace: Object.fromEntries(Object.entries(state.sessionsByWorkspace)
+				.map(([workspace, sessions]) => [workspace, sessions.filter((session) => session.path !== path)])),
+			sessions: state.sessions.filter((session) => session.path !== path),
+		}));
+		try {
+			// zcode deleteArchivedTask guards on archived===1 inside the delete transaction:
+			// the selection may go stale while the confirmation sits open. Re-validate each
+			// path against its owning workspace's authoritative listSessions snapshot up
+			// front and report changed paths as skipped instead of hard-failing them. The
+			// archive view aggregates conversations from every workspace, so validating only
+			// the active cwd would mark every foreign-workspace selection stale.
+			let candidates = targets;
+			if (options?.expectArchived) {
+				const cached = get().sessionsByWorkspace;
+				const workspaceOf = (path: string) => Object.entries(cached)
+					.find(([, sessions]) => sessions.some((session) => session.path === path))?.[0] ?? get().cwd;
+				const snapshots = new Map<string, Map<string, UiSessionSummary>>();
+				for (const workspace of [...new Set(targets.map(workspaceOf))].filter(Boolean)) {
+					try {
+						const sessions = await bridge.listSessions(workspace);
+						snapshots.set(workspace, new Map(sessions.map((session) => [session.path, session])));
+					} catch (cause) {
+						// One workspace's listing failure must not sink the whole batch: those paths
+						// surface as per-path failures so the dialog can show the actual reason.
+						const reason = cause instanceof Error ? cause.message : String(cause);
+						for (const path of targets) if (workspaceOf(path) === workspace) failed[path] = reason;
+					}
+				}
+				candidates = targets.filter((path) => {
+					if (failed[path]) return false;
+					const session = snapshots.get(workspaceOf(path))?.get(path);
+					if (!session) { skipped[path] = '会话已不存在'; return false; }
+					if (!session.archived) { skipped[path] = '会话已移出归档'; return false; }
+					return true;
+				});
+			}
+			// zcode deleteArchivedTasks: per-item deletion stays sequential and independent —
+			// one failure must neither roll back earlier successes nor hide later ones.
+			if (candidates.includes(get().sessionPath ?? '')) await get().newSession();
+			for (const path of candidates) {
+				try {
+					await bridge.deleteSession(path);
+					deleted.push(path);
+					dropFromCache(path);
+					// Deleted conversations must not resurface from the keep-warm cache.
+					sessionConversationPreviews.delete(path);
+				} catch (cause) { failed[path] = cause instanceof Error ? cause.message : String(cause); }
+			}
+			// One refresh for the whole batch instead of one per deletion (zcode emits a
+			// single workspace event after the batch loop, not one per item).
+			const workspace = Object.keys(get().sessionsByWorkspace).find((cwd) => cwd === get().cwd);
+			if (workspace) await get().refreshWorkspaceSessions(workspace);
+		} catch (error) {
+			set({ error: errorMessage(error) });
+		}
+		return { deleted, failed, skipped };
 	},
 
 	async updateSessionOrders(entries) {
@@ -824,6 +945,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
 	async removeCustomProvider(provider) {
 		await updateCustomProvider((bridge) => bridge.removeCustomProvider(provider));
+	},
+
+	async saveProviderModels(request) {
+		await updateCustomProvider((bridge) => bridge.saveProviderModels(request));
 	},
 
 	async setModelEnabled(provider, modelId, enabled) {
@@ -911,11 +1036,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
 		if (!bridge) return;
 		const request = beginSessionNavigation({ cwd: get().cwd, path });
 		const loadingGeneration = beginSessionLoadIndicator(set);
+		// Keep-warm hit: paint the cached conversation before the host loads it.
+		applySessionConversationPreview(path);
 		try {
 			await bridge.switchSession(path);
 			sessionOpenMetrics.rpc(request);
 			if (!currentSessionNavigation(bridge, request)) return;
-			await get().refreshSessions();
+			// Sidebar list refresh stays off the switch critical path (zcode keeps
+			// navigation local): switchSession resolves after the conversation events
+			// were applied, so the refresh only feeds the sidebar and converges later.
+			void get().refreshSessions();
 		} catch (error) {
 			if (currentSessionNavigation(bridge, request)) set({ error: errorMessage(error) });
 			throw error;
@@ -927,6 +1057,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
 		if (!bridge?.activateResidentSession) return false;
 		const request = beginSessionNavigation({ cwd, path: sessionPath, sessionId });
 		const generation = beginSessionLoadIndicator(set);
+		// Keep-warm hit: paint the cached conversation before activation resolves.
+		if (sessionPath) applySessionConversationPreview(sessionPath);
 		try {
 			const selected = await bridge.activateResidentSession({ cwd, sessionId, sessionPath });
 			sessionOpenMetrics.rpc(request);
@@ -945,6 +1077,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
 		if (!bridge || !cwd || !path) return false;
 		const request = beginSessionNavigation({ cwd, path });
 		const loadingGeneration = beginSessionLoadIndicator(set);
+		// Keep-warm hit: paint the cached conversation before the host loads it.
+		applySessionConversationPreview(path);
 		const workspaceChanged = get().cwd !== cwd;
 		try {
 			if (workspaceChanged) {
@@ -954,7 +1088,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
 			await bridge.switchSession(path);
 			sessionOpenMetrics.rpc(request);
 			if (!currentSessionNavigation(bridge, request)) return false;
-			await Promise.all([get().refreshWorkspaceSessions(cwd), ...(workspaceChanged ? [get().refreshWorkspaces()] : [])]);
+			// List refreshes only feed the sidebar (zcode keeps them off the switch
+			// critical path): the conversation itself is already loaded because
+			// switchSession resolves after its reset/ready events were applied.
+			void get().refreshWorkspaceSessions(cwd);
+			if (workspaceChanged) void get().refreshWorkspaces();
 			return currentSessionNavigation(bridge, request);
 		} catch (error) {
 			if (!currentSessionNavigation(bridge, request)) return false;
@@ -1000,12 +1138,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
 		} finally { if (navigationRequest !== undefined) finishSessionNavigation(bridge, navigationRequest); }
 	},
 
-	async editMessage(entryId, text, attachments) {
-		const { bridge, status, cwd, sessionId } = get();
+	async editMessage(entryId, text, attachments, fileMode) {
+		const { bridge, status, cwd, sessionId, navigationPending, sessionLoading } = get();
 		const trimmed = text.trim();
 		const original = get().messages.find((message) => message.id === entryId);
 		if (!bridge || (!trimmed && !attachments?.length && !original?.attachmentsOmitted)) return;
-		if (status !== 'idle') {
+		if (status !== 'idle' || navigationPending || sessionLoading) {
 			const error = new Error(translate('store.sessionBusy'));
 			set({ error: error.message });
 			throw error;
@@ -1014,7 +1152,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 		try {
 			const message = get().messages.find((entry) => entry.id === entryId);
 			// An incomplete history preview is not an edited attachment list.
-			await bridge.editMessage(entryId, trimmed, message?.attachmentsOmitted ? undefined : attachments);
+			await bridge.editMessage(entryId, trimmed, message?.attachmentsOmitted ? undefined : attachments, ...(fileMode ? [fileMode] : []));
 		} catch (error) {
 			if (get().bridge === bridge && get().cwd === cwd && get().sessionId === sessionId) set({ error: errorMessage(error) });
 			throw error;
@@ -1041,9 +1179,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
 	},
 
 	async forkMessage(entryId) {
-		const { bridge, status, cwd, sessionId } = get();
+		const { bridge, status, cwd, sessionId, navigationPending, sessionLoading } = get();
 		if (!bridge || !entryId) return;
-		if (status !== 'idle') {
+		// A keep-warm preview may be painted while the host still holds the source
+		// session; entry ids from it must not be forked against the wrong session.
+		if (status !== 'idle' || navigationPending || sessionLoading) {
 			const error = new Error(translate('store.sessionBusy'));
 			set({ error: error.message });
 			throw error;
@@ -1058,9 +1198,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
 	},
 
 	async updateQueuedMessage(id, action, text) {
-		const { bridge, cwd, sessionId } = get();
+		const { bridge, cwd, sessionId, navigationPending, sessionLoading } = get();
 		if (!bridge || !id) return;
 		const trimmed = action === 'edit' ? (text ?? '').trim() : undefined;
+		// Queue entries belong to one session; block edits aimed at a preview of
+		// another conversation while its switch is still in flight.
+		if (navigationPending || sessionLoading) return;
 		set({ error: null });
 		try {
 			await bridge.updateQueuedMessage(id, action, trimmed);
@@ -1193,7 +1336,7 @@ function prepareConversation(kind: SessionPreparation['kind'], options?: { cwd?:
 	sessionPreparation = preparing;
 	useChatStore.setState(state => ({ sessionPreparation: { requestId: request, draftScope }, cwd: options?.cwd ?? '', sessionId: null, sessionPath: null,
 		status: 'idle', statusMessage: undefined, retryAttempt: undefined, retryMaxAttempts: undefined,
-		messages: [], activities: [], runs: [], fileChanges: [], contextUsage: null,
+		messages: [], activities: [], runs: [], fileChanges: [], fileChangeTurns: [], fileChangeActiveRunId: null, contextUsage: null,
 		queuedMessages: [], queuedCount: 0, historyTotal: 0, loadingOlder: false, sessionLoading: false,
 		timelineRevision: state.timelineRevision + 1, historyGeneration: state.historyGeneration + 1 }));
 	return preparing.promise;
@@ -1201,9 +1344,11 @@ function prepareConversation(kind: SessionPreparation['kind'], options?: { cwd?:
 
 function conversationView(state: ChatState): Partial<ChatState> {
 	const { cwd, sessionId, sessionPath, status, statusMessage, messages, activities, runs, fileChanges,
+		fileChangeTurns, fileChangeActiveRunId,
 		contextUsage, queuedMessages, queuedCount, historyTotal, model, modelName, modelProvider, thinkingLevel,
 		availableThinkingLevels, sessions, retryAttempt, retryMaxAttempts } = state;
 	return { cwd, sessionId, sessionPath, status, statusMessage, messages, activities, runs, fileChanges,
+		fileChangeTurns, fileChangeActiveRunId,
 		contextUsage, queuedMessages, queuedCount, historyTotal, model, modelName, modelProvider, thinkingLevel,
 		availableThinkingLevels, sessions, retryAttempt, retryMaxAttempts };
 }
@@ -1332,6 +1477,59 @@ async function refreshSessionCache(cwd: string, reportError = true): Promise<voi
 		if (reportError && currentSessionNavigation(bridge, navigationRequestId) && sessionListRequests.get(cwd) === request) useChatStore.setState({ error: errorMessage(error) });
 	}
 }
+/** Cached rows captured before an optimistic metadata overlay; [] when nothing was flipped. */
+type SessionMetaOverlay = { workspace: string; entry: UiSessionSummary }[];
+
+/**
+ * Flip boolean metadata flags across every cached workspace list at once
+ * (zcode setOverlay): the sidebar re-filters instantly while persistence is
+ * still in flight. Name and order edits keep their non-optimistic flow.
+ */
+function applySessionMetaOverlay(path: string, patch: UiSessionMetaPatch): SessionMetaOverlay {
+	const flags = (['pinned', 'archived', 'unread'] as const).filter((key) => typeof patch[key] === 'boolean');
+	if (!flags.length) return [];
+	const overlay: SessionMetaOverlay = [];
+	useChatStore.setState((state) => {
+		let changed = false;
+		const sessionsByWorkspace = { ...state.sessionsByWorkspace };
+		for (const [workspace, sessions] of Object.entries(state.sessionsByWorkspace)) {
+			const index = sessions.findIndex((session) => session.path === path);
+			if (index < 0) continue;
+			overlay.push({ workspace, entry: sessions[index]! });
+			const entry: UiSessionSummary = { ...sessions[index]! };
+			for (const key of flags) entry[key] = patch[key];
+			const next = [...sessions];
+			next[index] = entry;
+			sessionsByWorkspace[workspace] = next;
+			changed = true;
+		}
+		if (!changed) return state;
+		return { sessionsByWorkspace, ...(state.cwd && sessionsByWorkspace[state.cwd] ? { sessions: sessionsByWorkspace[state.cwd] } : {}) };
+	});
+	return overlay;
+}
+
+/**
+ * Roll an optimistic overlay back after a failed write: restore the captured
+ * rows verbatim (the write never reached the main process). Lists that no
+ * longer hold the session — deleted or refreshed meanwhile — are left alone.
+ */
+function restoreSessionMetaOverlay(overlay: SessionMetaOverlay): void {
+	if (!overlay.length) return;
+	useChatStore.setState((state) => {
+		let changed = false;
+		const sessionsByWorkspace = { ...state.sessionsByWorkspace };
+		for (const { workspace, entry } of overlay) {
+			const sessions = sessionsByWorkspace[workspace];
+			if (!sessions?.some((session) => session.path === entry.path)) continue;
+			sessionsByWorkspace[workspace] = sessions.map((session) => session.path === entry.path ? entry : session);
+			changed = true;
+		}
+		if (!changed) return state;
+		return { sessionsByWorkspace, ...(state.cwd && sessionsByWorkspace[state.cwd] ? { sessions: sessionsByWorkspace[state.cwd] } : {}) };
+	});
+}
+
 
 function sameInputScope(first: UiInputScope, second?: UiInputScope): boolean {
 	return first.cwd === second?.cwd && first.sessionPath === second?.sessionPath;
@@ -1342,6 +1540,68 @@ function rememberRecoverableNewDraft(preparing: SessionPreparation): void {
 		recoverableNewDrafts.push({ bridge: preparing.bridge, cwd: preparing.options?.cwd, scope: preparing.draftScope });
 	}
 }
+/** Conversation snapshot kept when navigating away (zcode SessionDataLayer keep-warm). */
+interface SessionConversationPreview {
+	at: number;
+	messages: UiMessage[];
+	activities: UiToolActivity[];
+	runs: UiConversationRun[];
+	fileChanges: UiFileChange[];
+	fileChangeTurns: UiFileChangeTurn[];
+	fileChangeActiveRunId: string | null;
+	historyTotal: number;
+}
+const sessionConversationPreviews = new Map<string, SessionConversationPreview>();
+const SESSION_PREVIEW_TTL_MS = 60_000;
+const SESSION_PREVIEW_LIMIT = 8;
+
+/** Capture the conversation being left so a quick switch back paints instantly. */
+function stashSessionConversationPreview(): void {
+	const { sessionPath, messages, activities, runs, fileChanges, fileChangeTurns, fileChangeActiveRunId, historyTotal } = useChatStore.getState();
+	if (!sessionPath || messages.length + activities.length === 0) return;
+	sessionConversationPreviews.delete(sessionPath);
+	sessionConversationPreviews.set(sessionPath, { at: Date.now(), messages, activities, runs, fileChanges, fileChangeTurns, fileChangeActiveRunId, historyTotal });
+	while (sessionConversationPreviews.size > SESSION_PREVIEW_LIMIT) {
+		const oldest = sessionConversationPreviews.keys().next();
+		if (oldest.done) break;
+		sessionConversationPreviews.delete(oldest.value);
+	}
+}
+
+/**
+ * Paint a cached snapshot of the target conversation before the host RPC
+ * resolves. The authoritative ready replaces it wholesale (never merges), so
+ * staleness self-heals; identity fields (sessionId/sessionPath/cwd) stay on the
+ * source session until reset/ready re-scope them.
+ */
+function applySessionConversationPreview(path: string): boolean {
+	if (useChatStore.getState().sessionPath === path) return false;
+	const preview = sessionConversationPreviews.get(path);
+	if (!preview) return false;
+	if (Date.now() - preview.at > SESSION_PREVIEW_TTL_MS) {
+		sessionConversationPreviews.delete(path);
+		return false;
+	}
+	sessionConversationPreviews.delete(path);
+	sessionConversationPreviews.set(path, preview);
+	useChatStore.setState((state) => ({
+		messages: preview.messages,
+		activities: preview.activities,
+		runs: preview.runs,
+		fileChanges: preview.fileChanges,
+		fileChangeTurns: preview.fileChangeTurns,
+		fileChangeActiveRunId: preview.fileChangeActiveRunId,
+		historyTotal: preview.historyTotal,
+		timelineRevision: state.timelineRevision + 1,
+		// The painted transcript belongs to the previewed session even though the
+		// identity fields stay on the source session; the renderer keys reading-
+		// position restore off this so a warm switch-back lands directly on the
+		// remembered position instead of bottom-then-jump (zcode warm restore).
+		conversationPreviewPath: path,
+	}));
+	return true;
+}
+
 
 function beginSessionNavigation(target: { cwd?: string; path?: string | null; sessionId?: string } = {}, retainedDraftScope?: UiInputScope): number {
 	const abandoned = sessionPreparation;
@@ -1350,10 +1610,13 @@ function beginSessionNavigation(target: { cwd?: string; path?: string | null; se
 		rememberRecoverableNewDraft(abandoned);
 	}
 	cancelPreparedInput();
+	// Keep-warm: capture the conversation being left before any state changes,
+	// so navigating back to it within the TTL paints instantly from the cache.
 	const request = useChatStore.getState().navigationRequestId + 1;
 	const state = useChatStore.getState(), bridge = state.bridge;
 	sessionOpenMetrics.begin(request, target, event => { void Promise.resolve().then(() => bridge?.recordUiDiagnostic?.(event)).catch(() => {}); },
 		state.sessionId ? { cwd: state.cwd, path: state.sessionPath, sessionId: state.sessionId } : undefined);
+	stashSessionConversationPreview();
 	useChatStore.setState({ navigationRequestId: request, navigationPending: true, sessionPreparation: null, draftTransfer: null, error: null });
 	return request;
 }

@@ -5,12 +5,13 @@ import { literalMatches, readingRows } from '../workbenchReading';
 
 import { useReadingAnalysis } from '../useReadingAnalysis';
 import { WordDiffText } from './WordDiffText';
+import { Icon } from './Icons';
 
 /** Whole selected lines with their numbers, for "add to chat" (ZCode code comments). */
 export interface TextViewQuote { text: string; startLine?: number; endLine?: number }
 
 /** The copy action always uses the original text; line numbers and marks are presentation only. */
-export function WorkbenchTextView({ text, path = '', diff = false, command = false, omitted = false, errorRanges = [], onClear, onQuote }: { text: string; path?: string; diff?: boolean; command?: boolean; omitted?: boolean; errorRanges?: Array<{ start: number; end: number }>; onClear?(): void; onQuote?(quote: TextViewQuote): void }) {
+export function WorkbenchTextView({ text, path = '', diff = false, command = false, omitted = false, errorRanges = [], onClear, onQuote, onTopLineChange }: { text: string; path?: string; diff?: boolean; command?: boolean; omitted?: boolean; errorRanges?: Array<{ start: number; end: number }>; onClear?(): void; onQuote?(quote: TextViewQuote): void; onTopLineChange?(line: number): void }) {
   const { locale } = useT();
   const label = (zh: string, en: string) => locale === 'zh-CN' ? zh : en;
   const [query, setQuery] = useState('');
@@ -20,6 +21,30 @@ export function WorkbenchTextView({ text, path = '', diff = false, command = fal
   const [following, setFollowing] = useState(true);
   const body = useRef<HTMLDivElement>(null);
   const find = useRef<HTMLInputElement>(null);
+  // zcode code-viewer line anchor: report the first visible logical line
+  // (diff rows report the new-file line, falling back to the old line) so
+  // "open in editor" can land where the user is reading. rAF-throttled.
+  const topFrame = useRef<number | null>(null);
+  const reportTopLine = () => {
+    const element = body.current;
+    if (!element || !onTopLineChange) return;
+    // Viewport-relative rects are immune to the offsetParent chain: the reader
+    // body is not positioned, so offsetTop would resolve against the page.
+    const containerTop = element.getBoundingClientRect().top;
+    const lines = element.querySelectorAll<HTMLElement>('[data-row]');
+    let index: number | null = null;
+    for (const line of lines) {
+      if (line.getBoundingClientRect().bottom > containerTop + 2) { index = Number(line.dataset.row); break; }
+    }
+    const row = rows[index ?? Math.max(0, lines.length - 1)];
+    const logical = row?.newLine ?? row?.oldLine;
+    if (typeof logical === 'number') onTopLineChange(logical);
+  };
+  const scheduleTopLine = () => {
+    if (topFrame.current !== null) return;
+    topFrame.current = requestAnimationFrame(() => { topFrame.current = null; reportTopLine(); });
+  };
+  useEffect(() => () => { if (topFrame.current !== null) cancelAnimationFrame(topFrame.current); }, []);
   const rows = useMemo(() => readingRows(text, diff), [text, diff]);
   const matches = useMemo(() => literalMatches(text, query), [text, query]);
   const matchesByRow = useMemo(() => {
@@ -45,6 +70,7 @@ export function WorkbenchTextView({ text, path = '', diff = false, command = fal
   useLayoutEffect(() => {
     if (command && following && !query && body.current) body.current.scrollTop = body.current.scrollHeight;
   }, [text, following, command, query]);
+  useLayoutEffect(() => { if (onTopLineChange) scheduleTopLine(); }, [rows, shown, onTopLineChange]);
   // Selecting code offers "Add to chat" with the selected rows (always whole lines).
   const [selectedRows, setSelectedRows] = useState<{ start: number; end: number; left: number; top: number } | null>(null);
   const inspectSelection = () => {
@@ -105,16 +131,18 @@ export function WorkbenchTextView({ text, path = '', diff = false, command = fal
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'f') { event.preventDefault(); event.stopPropagation(); find.current?.focus(); }
   }}>
     <div className="pd-workbench-reader-tools">
-      <input ref={find} type="search" aria-label={label('查找内容', 'Find in content')} placeholder={label('查找', 'Find')} value={query} onChange={event => { setQuery(event.target.value); setFollowing(false); }} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); move(event.shiftKey ? -1 : 1); } }} />
-      <span role="status">{matches.length ? `${index + 1}/${matches.length}` : query ? '0/0' : ''}</span>
-      <button type="button" disabled={!matches.length} aria-label={label('上一处', 'Previous match')} onClick={() => move(-1)}>↑</button><button type="button" disabled={!matches.length} aria-label={label('下一处', 'Next match')} onClick={() => move(1)}>↓</button>
-      <button type="button" onClick={() => void copy()}>{label('复制原文', 'Copy raw')}</button>
+      <label className="pd-workbench-reader-find"><Icon name="search" width="12" height="12" /><input ref={find} type="search" aria-label={label('查找内容', 'Find in content')} placeholder={label('查找  Ctrl+F', 'Find  Ctrl+F')} value={query} onChange={event => { setQuery(event.target.value); setFollowing(false); }} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); move(event.shiftKey ? -1 : 1); } }} /></label>
+      {/* Match navigation only appears while searching; copy stays as a quiet icon. */}
+      {query && <><span role="status">{matches.length ? `${index + 1}/${matches.length}` : '0/0'}</span>
+      <button type="button" className="pd-workbench-reader-icon" disabled={!matches.length} aria-label={label('上一处', 'Previous match')} title={label('上一处', 'Previous match')} onClick={() => move(-1)}><Icon name="arrowUp" width="13" height="13" /></button><button type="button" className="pd-workbench-reader-icon" disabled={!matches.length} aria-label={label('下一处', 'Next match')} title={label('下一处', 'Next match')} onClick={() => move(1)}><Icon name="arrowDown" width="13" height="13" /></button></>}
+      <span className="pd-workbench-reader-spacer" />
+      <button type="button" className="pd-workbench-reader-icon" aria-label={label('复制原文', 'Copy raw')} title={label('复制原文', 'Copy raw')} onClick={() => void copy()}><Icon name="copy" width="13" height="13" /></button>
       {onClear && <button type="button" onClick={onClear}>{label('清空显示', 'Clear display')}</button>}
       {command && <button type="button" aria-pressed={following} onClick={() => { setQuery(''); setLimit(rows.length); setFollowing(true); }}>{label('回到底部', 'Follow output')}</button>}
     </div>
     {(omitted || diff && /… (?:仅显示|输出已截断)|Diff preview limited|Output truncated/.test(text)) && <p className="pd-workbench-reader-notice" role="status">{label('较早输出或超限内容已省略；当前预览并非完整内容。', 'Earlier output or content beyond the limit was omitted; this preview is incomplete.')}</p>}
     {notice && <p className="pd-workbench-reader-notice" role="status">{notice}</p>}
-    <div ref={body} className="pd-workbench-reader-body" tabIndex={0} aria-label={label('文本内容', 'Text content')} onScroll={() => { const element = body.current; if (command && element) setFollowing(element.scrollHeight - element.scrollTop - element.clientHeight < 24); }}>
+    <div ref={body} className="pd-workbench-reader-body" tabIndex={0} aria-label={label('文本内容', 'Text content')} onScroll={() => { const element = body.current; if (command && element) setFollowing(element.scrollHeight - element.scrollTop - element.clientHeight < 24); scheduleTopLine(); }}>
       <div className="pd-workbench-reader-lines">{rows.slice(0, command ? rows.length : shown).map((row, i) => <div key={i} data-row={i} className={`pd-workbench-code-line is-${row.kind}${errorRanges.some(range => range.start < row.offset + row.text.length && range.end > row.offset) ? ' is-stderr' : ''}`}>
         {diff && <span className="pd-workbench-line-number" aria-hidden="true">{row.oldLine}</span>}<span className="pd-workbench-line-number" aria-hidden="true">{row.newLine}</span><code>{content(row, i)}</code>
       </div>)}</div>

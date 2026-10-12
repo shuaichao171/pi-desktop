@@ -53,8 +53,17 @@ if (!process.versions.electron) {
       await window.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(createSplashHtml())}`);
       // Hidden offscreen windows do not reliably schedule requestAnimationFrame.
       // capturePage obtains the rendered SVG without opening a visible window.
-      await new Promise((resolve) => setTimeout(resolve, 100));
-      const screenshot = await window.webContents.capturePage();
+      // Chromium's viz compositor can transiently fail captures of hidden
+      // offscreen windows ("UnknownVizError"), especially on GPU-less CI
+      // runners; retry until a frame is produced instead of failing the build.
+      let screenshot;
+      for (let attempt = 0; ; attempt += 1) {
+        try { screenshot = await window.webContents.capturePage(); break; }
+        catch (error) {
+          if (attempt >= 5) throw error;
+          await new Promise((resolve) => setTimeout(resolve, 250 * (attempt + 1)));
+        }
+      }
       assert.deepEqual(screenshot.getSize(), { width: SIZE, height: SIZE });
       const bgra = screenshot.toBitmap();
       const stride = Math.ceil(SIZE * 3 / 4) * 4;

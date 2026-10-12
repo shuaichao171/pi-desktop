@@ -8,6 +8,7 @@
 .pd-theme-preset-select:focus-visible { outline: 2px solid var(--pd-brand); outline-offset: 2px; }
 .pd-theme-color-reset { flex-shrink: 0; margin-left: auto; padding: 6px 0; border: 0; background: transparent; color: var(--pd-text-subtle); font-size: var(--pd-font-sm); }
 .pd-theme-color-reset:hover:not(:disabled) { color: var(--pd-text); text-decoration: underline; }
+.pd-theme-color-reset:disabled { visibility: hidden; }
 .pd-theme-color-fields { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
 .pd-theme-color-field { min-width: 0; }
 .pd-theme-color-field > label { display: block; margin-bottom: 7px; color: var(--pd-text-subtle); font-size: var(--pd-font-caption); }

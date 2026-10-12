@@ -66,6 +66,13 @@ export default async function sidebarRuntimeScenarios(review) {
   await check(await rowProp('已完成的对话', `getComputedStyle(item.querySelector('.pd-session-pin')).opacity === '1'`), 'Hovering a row reveals the left pin action');
   await review.screenshot('sidebar-runtime-hover-pin');
   await review.mouseMove(900, 500);
+  // Hovering a conversation row must not open the right-side hover tooltip anymore.
+  const rowCenter = await review.evaluate(`(() => { const item = ${rowOf('已完成的对话')}; const box = item.getBoundingClientRect(); return { x: Math.round(box.x + box.width / 2), y: Math.round(box.y + box.height / 2) }; })()`);
+  await review.mouseMove(rowCenter.x, rowCenter.y);
+  await review.waitFor(`Date.now() > ${Date.now() + 450}`);
+  await check(await review.evaluate(`document.querySelector('.pd-hover-tooltip') === null`), 'Hovering a conversation row no longer opens the right-side tooltip');
+  await review.screenshot('sidebar-runtime-row-hover-no-tooltip');
+  await review.mouseMove(900, 500);
   // Project view keeps the same row vocabulary.
   await review.click('[data-mode="project"]');
   await review.waitFor(`document.querySelectorAll('.pd-sidebar-group[data-project-path]').length > 0`);

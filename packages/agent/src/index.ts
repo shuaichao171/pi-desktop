@@ -43,17 +43,22 @@ import type {
 	AgentEventEnvelope,
 	AgentSnapshot,
 	AgentUiEvent,
+	UiAgentError,
 	UiAttachment,
 	UiContextSource,
 	UiContextUsage,
 	UiExtensionDialogRequest,
 	UiExtensionDialogResponse,
 	UiExtensionSummary,
-	UiFileChange,
+	UiFileChangesView,
+	UiFileCheckpoint,
+	UiFileDiff,
+	UiFileDiffScope,
 	UiMessage,
 	UiConversationRun,
 	UiModelSummary,
 	UiModelProvider,
+	UiProviderReadOnlyReason,
 	UiDiscoverProviderModelsRequest,
 	UiProviderModelDiscovery,
 	UiProviderApi,
@@ -63,6 +68,7 @@ import type {
 	UiPluginResourcePreview,
 	UiPluginScope,
 	UiSaveCustomProviderRequest,
+	UiSaveProviderModelsRequest,
 	UiProviderAuthStatus,
 	UiHistoryPage,
 	UiSessionStats,
@@ -78,9 +84,11 @@ import type {
 	UiThinkingStatus,
 	UiSaveInstructionRequest,
 	UiToolActivity,
+	UiSubagentActivity,
 } from '@pidesktop/shared';
+import { createAgentError, normalizeAgentError } from '../../shared/src/agentErrors.ts';
 import { BUILTIN_SLASH_COMMANDS, expandSlashPrompt, validateSlashCommandRequest, validSlashCommandName } from './slashCommands.ts';
-import { commitProviderDocument, CUSTOM_PROVIDER_APIS, getCachedDisabledModels, getBuiltinProviderIds, isEditableProvider, literalApiKey, loadModelPrefs, mergeProvider, parseProviderDocumentText, readProviderDocument, restoreProviderBackupFiles, safeProviderUrl, setModelDisabled, validateDiscoveryRequest, validateProviderId, validateProviderRequest, validateProviderWithSdk, type ProviderBackupFiles, type ProviderDocument } from './customProviders.ts';
+import { CUSTOM_PROVIDER_APIS, assertWritableDocument, commitProviderDocument, connectionReadOnlyReason, getBuiltinProviderIds, getCachedDisabledModels, literalApiKey, loadModelPrefs, mergeProvider, mergeProviderModels, parseProviderDocumentText, readProviderDocument, restoreProviderBackupFiles, safeProviderUrl, setModelDisabled, validateDiscoveryRequest, validateProviderId, validateProviderModelsRequest, validateProviderRequest, validateProviderWithSdk, type ProviderBackupFiles, type ProviderDocument, type ProviderModelsChange } from './customProviders.ts';
 import { discoverProviderModels, ProviderDiscoveryError } from './providerDiscovery.ts';
 import { bindProviderNetwork, runWithProviderNetwork } from './providerNetwork.ts';
 export { configureProviderNetwork } from './providerNetwork.ts';
@@ -146,7 +154,7 @@ async function listWorkspaceSessions(cwd: string) {
 async function workspaceSessions(cwd: string): Promise<UiSessionSummary[]> {
 	return (await listWorkspaceSessions(cwd)).map((session) => ({
 		path: session.path, id: session.id, name: session.name,
-		firstMessage: session.firstMessage, modified: session.modified.toISOString(),
+		firstMessage: session.firstMessage, modified: session.modified.toISOString(), created: session.created.toISOString(),
 		messageCount: session.messageCount,
 	}));
 }
@@ -196,7 +204,7 @@ function createRuntimeFactory(
 	requestProjectTrust: RequestProjectTrust,
 	projectTrustByCwd: Map<string, boolean>,
 	trackFileChanges: (session: PiRuntime['session'], tracker: SessionFileChanges) => void,
-	publishFileChanges: (sessionId: string, changes: UiFileChange[]) => void,
+	publishFileChanges: (sessionId: string, view: UiFileChangesView) => void,
 	mcp: McpManager,
 ): CreateAgentSessionRuntimeFactory {
 	return async ({ cwd, agentDir, sessionManager, sessionStartEvent }) => {
@@ -307,7 +315,10 @@ class SingleAgentService {
 		queuedCount: 0,
 		queuedMessages: [],
 		fileChanges: [],
+		fileChangeTurns: [],
+		fileChangeActiveRunId: null,
 		error: null,
+		errorInfo: null,
 	};
 
 	cwd = '';
@@ -323,7 +334,7 @@ class SingleAgentService {
 		this.projectTrustByCwd = projectTrustByCwd;
 		this.createRuntime = createRuntimeFactory(requestProjectTrust, this.projectTrustByCwd,
 			(session, tracker) => { this.fileChangeTrackers.set(session, tracker); },
-			(sessionId, items) => { if (this.runtime?.session.sessionId === sessionId) this.fire({ type: 'file-changes', items }); }, mcp);
+			(sessionId, view) => { if (this.runtime?.session.sessionId === sessionId) this.fireFileChanges(view); }, mcp);
 		this.requestExtensionDialog = requestExtensionDialog;
 		this.reserveSessionSwitch = reserveSessionSwitch;
 	}
@@ -359,7 +370,7 @@ class SingleAgentService {
 		const firstMessage = firstUser?.type === 'message' && firstUser.message.role === 'user'
 			? userText(firstUser.message) : this.state.messages.find((message) => message.role === 'user')?.text ?? '';
 		return { path: this.state.sessionPath, id: this.state.sessionId, name: manager?.getSessionName(), firstMessage,
-			modified: this.runtimeModified, messageCount: this.state.messages.length, runtime };
+			modified: this.runtimeModified, ...(manager ? { created: manager.getHeader()?.timestamp } : {}), messageCount: this.state.messages.length, runtime };
 	}
 
 	matchesSession(scope: { cwd: string; sessionId: string; sessionPath: string | null }): boolean {
@@ -377,6 +388,8 @@ class SingleAgentService {
 			runs: this.state.runs?.map(run => ({ ...run })),
 			queuedMessages: this.state.queuedMessages.map(cloneQueuedMessage),
 			fileChanges: this.state.fileChanges.map((file) => ({ ...file })),
+			fileChangeTurns: this.state.fileChangeTurns.map((turn) => ({ runId: turn.runId, items: turn.items.map((file) => ({ ...file })) })),
+			fileChangeActiveRunId: this.state.fileChangeActiveRunId,
 		};
 	}
 	getSessionBranchHead(): { path: string; leafId: string | null } | null { const manager = this.runtime?.session.sessionManager; const path = this.runtime?.session.sessionFile; return manager && path ? { path, leafId: manager.getLeafId() } : null; }
@@ -427,11 +440,25 @@ class SingleAgentService {
 	}
 
 	getFileCheckpoint() { const session = this.runtime?.session; return session ? this.fileChangeTrackers.get(session)?.getCheckpoint() ?? Promise.resolve(null) : Promise.resolve(null); }
+	/** Historical-turn file rewind preview for message editing (edit-rewind). */
+	getEditRewindPreview(entryId: string): Promise<UiFileCheckpoint | null> {
+		const session = this.runtime?.session;
+		if (!session || typeof entryId !== 'string' || !entryId) return Promise.resolve(null);
+		return this.fileChangeTrackers.get(session)?.editRewindPreview(entryId) ?? Promise.resolve(null);
+	}
+
+	/** Lazily computed diffs for one turn or the whole conversation (turn settlement). */
+	getFileChangeDiffs(scope: UiFileDiffScope): UiFileDiff[] {
+		if (!scope || typeof scope !== 'object') return [];
+		if (scope.kind === 'turn' ? typeof scope.runId !== 'string' || !scope.runId : scope.kind !== 'conversation') return [];
+		const session = this.runtime?.session;
+		return session ? this.fileChangeTrackers.get(session)?.diffs(scope) ?? [] : [];
+	}
 	async rewindFileCheckpoint(request: { id: string; version: string }) {
 		const session = this.requireIdleSession(), tracker = this.fileChangeTrackers.get(session);
 		if (!tracker) throw new Error('此会话没有可回退的文件检查点');
 		return this.runLifecycle(async () => { const result = await tracker.rewindCheckpoint(request);
-			this.fire({ type: 'file-changes', items: tracker.restore() }); return result; });
+			this.fireFileChanges(tracker.restore()); return result; });
 	}
 
 	/** Writes the visible branch to disk in the requested format. */
@@ -628,26 +655,38 @@ class SingleAgentService {
 		return this.runtime?.session.modelRuntime.getRegisteredProviderIds().includes(provider) ?? false;
 	}
 
-	listModelProviders(document: ProviderDocument): UiModelProvider[] {
+	listModelProviders(document: ProviderDocument, builtinIds: ReadonlySet<string>): UiModelProvider[] {
 		const runtime = this.runtime?.session.modelRuntime;
 		if (!runtime) return [];
 		const providers = new Map(runtime.getProviders().map((provider) => [provider.id, provider]));
 		const ids = new Set([...providers.keys(), ...Object.keys(document.data.providers)]);
 		const registered = new Set(runtime.getRegisteredProviderIds());
+		const invalid = new Set(document.invalid);
 		const disabledByProvider = getCachedDisabledModels();
 		return [...ids].map((id): UiModelProvider => {
-			const config = Object.hasOwn(document.data.providers, id) ? document.data.providers[id] : undefined;
-			const custom = config !== undefined;
+			const entry = Object.hasOwn(document.data.providers, id) ? document.data.providers[id] : undefined;
+			const custom = entry !== undefined;
+			const config = entry !== null && typeof entry === 'object' && !Array.isArray(entry) ? entry : undefined;
 			const credential = readStoredCredential(id, join(this.agentDirectory, 'auth.json'));
 			const catalog = runtime.getModels(id);
-			// Builtin providers surface their catalog baseUrl/api so the UI can offer
-			// live model discovery for them; custom providers keep config-only values.
-			const catalogApi = !custom && typeof catalog[0]?.api === 'string' ? catalog[0].api : null;
+			const builtin = builtinIds.has(id);
+			// The connection editor writes name/URL/protocol/headers back verbatim, so it
+			// needs a config it can round-trip; model entries are rewritten in isolation.
+			const configReason = config ? connectionReadOnlyReason(config) : null;
+			const readOnlyReason: UiProviderReadOnlyReason | undefined = registered.has(id) ? 'extension' : invalid.has(id) ? 'invalid-config'
+				: builtin && (!config || (configReason && config.api === undefined)) ? 'builtin'
+				: credential && credential.type !== 'api_key' ? 'oauth' : configReason ?? undefined;
+			const modelsEditable = !registered.has(id) && !invalid.has(id) && (custom || builtin);
+			// Missing config fields inherit the catalog (builtin or overlay); a present
+			// but unsafe URL is hidden rather than replaced by the catalog value.
 			return {
 				provider: id, name: typeof config?.name === 'string' ? config.name : providers.get(id)?.name ?? id,
-				custom, editable: custom && !registered.has(id) && isEditableProvider(config!) && (!credential || credential.type === 'api_key'),
+				custom, builtin, editable: custom && !readOnlyReason, modelsEditable,
+				...(Array.isArray(config?.models) ? { configModelIds: config.models.filter((model): model is { id: string } => typeof model?.id === 'string').map((model) => model.id) } : {}),
+				...(readOnlyReason ? { readOnlyReason } : {}),
 				configured: runtime.getProviderAuthStatus(id).configured,
-				baseUrl: safeProviderUrl(config?.baseUrl) ?? (custom ? null : safeProviderUrl(catalog[0]?.baseUrl)), api: typeof config?.api === 'string' ? config.api : catalogApi,
+				baseUrl: config && Object.hasOwn(config, 'baseUrl') ? safeProviderUrl(config.baseUrl) : safeProviderUrl(catalog[0]?.baseUrl),
+				api: typeof config?.api === 'string' ? config.api : typeof catalog[0]?.api === 'string' ? catalog[0].api : null,
 				headerNames: config?.headers && typeof config.headers === 'object' && !Array.isArray(config.headers) ? Object.keys(config.headers) : [],
 				...(typeof config?.desktopUseSystemProxy === 'boolean' ? { useSystemProxy: config.desktopUseSystemProxy } : {}),
 				models: catalog.map((model) => ({ provider: model.provider, id: model.id, name: model.name, reasoning: model.reasoning,
@@ -664,7 +703,8 @@ class SingleAgentService {
 		const provider = request.provider;
 		const model = provider ? runtime.getModels(provider)[0] : undefined;
 		if (provider && !runtime.getProvider(provider)) throw new Error('供应商不存在，请刷新后重试');
-		const config = provider && Object.hasOwn(document.data.providers, provider) ? document.data.providers[provider] : undefined;
+		const entry = provider && Object.hasOwn(document.data.providers, provider) ? document.data.providers[provider] : undefined;
+		const config = entry !== null && typeof entry === 'object' && !Array.isArray(entry) ? entry : undefined;
 		const savedUrl = safeProviderUrl(config?.baseUrl) ?? safeProviderUrl(model?.baseUrl);
 		const baseUrl = request.baseUrl ?? savedUrl;
 		const api = request.api ?? config?.api ?? model?.api;
@@ -813,7 +853,7 @@ class SingleAgentService {
 
 	/** Select the session model, optionally retaining the user's existing default. */
 	async setModel(provider: string, id: string, persist = true): Promise<void> {
-		const session = this.requireIdleSession();
+		const session = this.requireSessionForModelSettings();
 		if (typeof provider !== 'string' || typeof id !== 'string') throw new Error('模型参数无效');
 		const model = session.modelRuntime.getAvailableSnapshot().find((item) => item.provider === provider && item.id === id);
 		if (!model) throw new Error(`模型不可用：${provider}/${id}`);
@@ -827,9 +867,28 @@ class SingleAgentService {
 		}
 	}
 
+	/** Host-authoritative send gate: the live catalog must still resolve the selected
+	 * model (and accept image attachments when present). Runs before the busy transition
+	 * and any ACK, so a blocked send never consumes the draft or the input queue. */
+	private assertPromptModelAvailable(session: PiRuntime['session'], attachments: UiAttachment[]): void {
+		const selected = this.state.model ? session.modelRuntime.getAvailableSnapshot()
+			.find((item) => item.provider === this.state.modelProvider && item.id === this.state.model) : undefined;
+		const disabled = selected ? getCachedDisabledModels()[selected.provider]?.includes(selected.id) : false;
+		if (!selected || disabled) {
+			const message = `当前模型不可用：${this.state.modelProvider || '?'}/${this.state.model || '?'}。请在模型设置中选择可用模型后重试。`;
+			this.fireError(createAgentError({ message, kind: 'model-unavailable' }));
+			throw createAgentError({ message, kind: 'model-unavailable' });
+		}
+		if (attachments.some((attachment) => attachment.kind === 'image') && !selected.input.includes('image')) {
+			const message = `当前模型 ${selected.name} 不支持图片输入，请移除图片或切换到支持视觉的模型。`;
+			this.fireError(createAgentError({ message, kind: 'model-unavailable' }));
+			throw createAgentError({ message, kind: 'model-unavailable' });
+		}
+	}
+
 	/** Pi clamps the requested level to the selected model's supported levels. */
 	async setThinkingLevel(level: UiThinkingLevel, persist = true): Promise<void> {
-		const session = this.requireIdleSession();
+		const session = this.requireSessionForModelSettings();
 		if (!THINKING_LEVELS.includes(level)) throw new Error('思考级别无效');
 		session.setThinkingLevel(level, { persist });
 		if (this.state.thinkingLevel !== session.thinkingLevel) {
@@ -839,7 +898,7 @@ class SingleAgentService {
 
 	/** Store one API key through pi's persistent credential store. */
 	async setProviderApiKey(provider: string, key: string): Promise<void> {
-		const session = this.requireIdleSession();
+		const session = this.requireSessionForModelSettings();
 		if (typeof provider !== 'string' || typeof key !== 'string' || !key.trim()) throw new Error('Provider 或 API Key 无效');
 		const method = session.modelRuntime.getProvider(provider)?.auth.apiKey;
 		if (!method?.login) throw new Error('该 Provider 不支持 API Key 登录');
@@ -861,7 +920,7 @@ class SingleAgentService {
 
 	/** Delete pi's stored credential; environment-based auth remains intact. */
 	async removeProviderCredential(provider: string): Promise<void> {
-		const session = this.requireIdleSession();
+		const session = this.requireSessionForModelSettings();
 		if (typeof provider !== 'string' || !session.modelRuntime.getProvider(provider)) throw new Error('Provider 无效');
 		this.activeConfigurationCalls += 1;
 		try {
@@ -948,7 +1007,7 @@ class SingleAgentService {
 					// Preserve the original initialization error for the user.
 				}
 			}
-			this.fire({ type: 'error', message: errorMessage(error) });
+			this.fireError(error);
 			this.fire({ type: 'status', status: 'error', message: errorMessage(error) });
 			throw error;
 		}
@@ -1005,11 +1064,19 @@ class SingleAgentService {
 		if (this.activePromptCalls > 0 && session.isIdle) {
 			throw new Error('上一条消息仍在接收中，请稍后重试');
 		}
+		// Attachment validation is local and model-independent, so malformed
+		// input reports its precise error even when no model is available yet.
 		const promptText = withTextAttachments(text, attachments);
 		const images = imageAttachments(attachments);
 		const tracker = this.conversationRuns;
 		const inputQueue = this.inputQueue, inputId = this.inputRequest.getStore()?.id;
-		const startedRun = session.isIdle && !tracker?.active ? tracker?.begin() : undefined;
+		const startsRun = session.isIdle && !tracker?.active;
+		// Host-authoritative send gate (model availability): a send that starts a
+		// new run needs a usable model before the busy transition and any ACK so
+		// a blocked send never consumes the draft. Queueing onto a running session
+		// defers model use to delivery and must stay available meanwhile.
+		if (startsRun) this.assertPromptModelAvailable(session, attachments);
+		const startedRun = startsRun ? tracker?.begin() : undefined;
 		if (this.state.status === 'idle') this.fire({ type: 'status', status: 'busy' });
 		this.activePromptCalls += 1;
 		await new Promise<void>((resolve, reject) => {
@@ -1034,8 +1101,9 @@ class SingleAgentService {
 			})).then(() => {
 				if (inputId) inputQueue?.completePrompt(inputId);
 			}).catch((error: unknown) => {
-				if (session.isIdle) { this.finishInterruptedAssistant(errorMessage(error)); tracker?.finish('failed'); }
-				this.fire({ type: 'error', message: errorMessage(error) });
+				const info = normalizeAgentError(error);
+				if (session.isIdle) { this.finishInterruptedAssistant(info.message, info); tracker?.finish('failed'); }
+				this.fire({ type: 'error', message: info.message, error: info });
 				if (!acknowledged) {
 					acknowledged = true;
 					reject(error);
@@ -1053,10 +1121,11 @@ class SingleAgentService {
 	}
 
 	/** Rewind the visible branch to just before a sent user message and resend the edited text. */
-	async editUserMessage(entryId: string, text: string, attachments?: UiAttachment[]): Promise<void> {
+	async editUserMessage(entryId: string, text: string, attachments?: UiAttachment[], fileMode?: 'keep' | 'rewind'): Promise<void> {
 		const runtime = this.runtime;
 		if (!runtime) throw new Error('Agent is not initialized');
 		this.requireIdleSession();
+		if (fileMode === 'rewind') await this.rewindEditFiles(entryId);
 		// History previews may omit heavy attachments. Read the originals before
 		// rewinding so an edit/regenerate never silently loses those attachments.
 		const entry = runtime.session.sessionManager.getEntry(entryId);
@@ -1064,6 +1133,28 @@ class SingleAgentService {
 		const result = await this.runExtensionSessionAction(runtime, () => runtime.session.navigateTree(entryId));
 		if (result.cancelled) return;
 		await this.prompt(text, undefined, preserved);
+	}
+
+	/** Restore files touched by rounds after the edited entry before the tree rewind (edit-rewind). */
+	private async rewindEditFiles(entryId: string): Promise<void> {
+		const runtime = this.runtime;
+		if (!runtime) return;
+		const tracker = this.fileChangeTrackers.get(runtime.session);
+		if (!tracker) return;
+		let view = await tracker.editRewindPreview(entryId);
+		if (!view) return;
+		if (view.files.some((file) => file.status === 'conflict')) {
+			throw new Error('部分文件在编辑点之后被外部修改，未做任何更改；请先处理冲突或选择保留文件模式。');
+		}
+		if (view.recovery) {
+			// Complete the interrupted restore first; the next rewind applies the target state.
+			view = await tracker.rewindEditCheckpoint(entryId, { id: view.id, version: view.version });
+		}
+		if (view.files.some((file) => file.status === 'ready')) {
+			const result = await tracker.rewindEditCheckpoint(entryId, { id: view.id, version: view.version });
+			this.fireFileChanges(tracker.restore());
+			if (!result.restored) throw new Error('文件回退未完成，请重试编辑或选择保留文件模式。');
+		}
 	}
 
 	/** Fork the conversation in place: move the visible branch leaf to an assistant message so the next prompt grows a new branch. */
@@ -1149,7 +1240,7 @@ class SingleAgentService {
 				// Keep the original error.
 			}
 			this.fire({ type: 'reset', cwd: this.cwd });
-			this.fire({ type: 'error', message: errorMessage(error) });
+			this.fireError(error);
 			this.fire({ type: 'status', status: 'error' });
 			throw error;
 		}
@@ -1185,7 +1276,7 @@ class SingleAgentService {
 				// Keep the original error.
 			}
 			this.fire({ type: 'reset', cwd: this.cwd });
-			this.fire({ type: 'error', message: errorMessage(error) });
+			this.fireError(error);
 			this.fire({ type: 'status', status: 'error' });
 			throw error;
 		}
@@ -1232,6 +1323,17 @@ class SingleAgentService {
 		return session;
 	}
 
+	/** Settings mutations that only rewrite selection state read by the NEXT
+	 * model request (model/thinking/credentials); they stay safe while a turn is
+	 * running, so unlike requireIdleSession we do not reject a busy session. */
+	private requireSessionForModelSettings(): PiRuntime['session'] {
+		if (this.closing) throw new Error('应用正在退出');
+		if (this.lifecycleOperation) throw new Error('会话正在切换，请稍后再修改设置');
+		const session = this.runtime?.session;
+		if (!session) throw new Error('Agent is not initialized');
+		return session;
+	}
+
 	private async bindSession(): Promise<void> {
 		const runtime = this.runtime;
 		if (!runtime) return;
@@ -1269,7 +1371,7 @@ class SingleAgentService {
 				const execution = this.slashCommandExecution.getStore();
 				if (execution && event === 'command' && extensionPath === `command:${execution.name}`) execution.error = message;
 				if (event === 'command') this.conversationRuns?.assistantEnd('error');
-				this.fire({ type: 'error', message });
+				this.fire({ type: 'error', message, error: normalizeAgentError(message, 'extension') });
 			},
 		});
 		if (this.inputQueueSession !== runtime.session) {
@@ -1282,7 +1384,7 @@ class SingleAgentService {
 					let image = 0; return { text: userText(message as MessageLike), attachments: (userAttachments(message as MessageLike) ?? []).map(({ kind, name, mimeType }) => ({ kind, mimeType, name: kind === 'image' ? names[image++]?.name ?? name : name })) };
 				},
 				changed: () => { const snapshot = this.inputQueue?.snapshot(); if (snapshot) this.fire({ type: 'queue', count: snapshot.items.length, items: snapshot.items }); },
-				error: (message) => this.fire({ type: 'error', message }),
+				error: (message) => this.fire({ type: 'error', message, error: normalizeAgentError(message) }),
 				resume: () => this.scheduleQueueResume(),
 			});
 		}
@@ -1294,7 +1396,7 @@ class SingleAgentService {
 		queueMicrotask(() => {
 			this.queueResumePending = false;
 			if (this.closing || this.lifecycleOperation || this.activePromptCalls || !this.runtime?.session.isIdle) return;
-			void this.inputQueue?.resumeIdle().catch((error: unknown) => this.fire({ type: 'error', message: errorMessage(error) }));
+			void this.inputQueue?.resumeIdle().catch((error: unknown) => this.fireError(error));
 		});
 	}
 
@@ -1363,7 +1465,7 @@ class SingleAgentService {
 					session.sessionManager.appendCustomEntry(EXTENSION_NOTICE_CUSTOM_TYPE, { message, notificationType: type });
 					// Appending outside the SDK emits no event; resync while idle so the
 					// row appears immediately. During a run the settle resync picks it up.
-					if (session.isIdle) this.fireReady();
+					if (session.isIdle) this.fireReady(true);
 				} catch {
 					void request({ id: randomUUID(), kind: 'notify', title: message, notificationType: type });
 				}
@@ -1429,10 +1531,21 @@ class SingleAgentService {
 		this.reduce(event);
 		this.emit({ sequence: ++this.sequence, event });
 	}
+	/** Normalize any failure through the structured renderer contract before emitting.
+	 * Strings (already-rendered diagnostics) classify by message evidence only. */
+	private fireError(error: unknown, source: UiAgentError['source'] = 'runtime'): void {
+		const info = normalizeAgentError(error, source);
+		this.fire({ type: 'error', message: info.message, error: info });
+	}
 
-	private fireReady(): void {
+	/** Publish a full change view; the renderer and snapshot state share one shape. */
+	private fireFileChanges(view: UiFileChangesView): void {
+		this.fire({ type: 'file-changes', items: view.items, turns: view.turns, activeRunId: view.activeRunId });
+	}
+	private fireReady(resync = false): void {
 		const session = this.runtime?.session;
 		if (!session) return;
+		const changes = this.fileChangeTrackers.get(session)?.restore();
 		this.clearPendingThinking();
 		this.assistantId = null;
 		this.toolTitles.clear();
@@ -1443,6 +1556,10 @@ class SingleAgentService {
 		this.timelineOrder = timeline.nextOrder;
 		this.fire({
 			type: 'ready',
+			// Pure content re-publish of the same branch: the renderer must treat it as a
+			// stream/layout commit (following readers pin, others hold), never as
+			// navigation that re-runs reading-position restore (zcode scroll anchor).
+			...(resync ? { resync: true } : {}),
 			...modelSelection(session),
 			cwd: this.cwd,
 			sessionId: session.sessionId,
@@ -1450,7 +1567,9 @@ class SingleAgentService {
 			messages: recent.messages,
 			activities: recent.activities,
 			runs: recent.runs,
-			fileChanges: this.fileChangeTrackers.get(session)?.restore() ?? [],
+			fileChanges: changes?.items ?? [],
+			fileChangeTurns: changes?.turns ?? [],
+			fileChangeActiveRunId: changes?.activeRunId ?? null,
 			historyTotal: recent.historyTotal,
 		});
 		this.publishQueue({ steering: session.getSteeringMessages(), followUp: session.getFollowUpMessages() });
@@ -1559,6 +1678,8 @@ class SingleAgentService {
 					queuedCount: 0,
 					queuedMessages: [],
 					fileChanges: [],
+					fileChangeTurns: [],
+					fileChangeActiveRunId: null,
 					error: null,
 				};
 				break;
@@ -1588,6 +1709,8 @@ class SingleAgentService {
 					queuedCount: 0,
 					queuedMessages: [],
 					fileChanges: event.fileChanges.map((file) => ({ ...file })),
+					fileChangeTurns: (event.fileChangeTurns ?? []).map((turn) => ({ runId: turn.runId, items: turn.items.map((file) => ({ ...file })) })),
+					fileChangeActiveRunId: event.fileChangeActiveRunId ?? null,
 					historyTotal: event.historyTotal ?? event.messages.length + event.activities.length,
 					error: null,
 				};
@@ -1608,6 +1731,10 @@ class SingleAgentService {
 				break;
 			case 'user-message':
 				this.state.messages.push({ id: event.id, order: event.order, runId: event.runId, role: 'user', text: event.text, attachments: event.attachments, attachmentsOmitted: event.attachmentsOmitted, attachmentReferences: event.attachmentReferences, status: 'done' });
+				this.state.historyTotal = (this.state.historyTotal ?? this.state.messages.length - 1) + 1;
+				break;
+			case 'system-message':
+				this.state.messages.push({ id: event.id, order: event.order, runId: event.runId, role: 'system', systemKind: event.systemKind, text: event.text, status: 'done' });
 				this.state.historyTotal = (this.state.historyTotal ?? this.state.messages.length - 1) + 1;
 				break;
 			case 'assistant-start':
@@ -1646,8 +1773,9 @@ class SingleAgentService {
 						: undefined);
 					message.status = event.aborted || event.errorMessage ? 'error' : 'done';
 					message.errorMessage = event.errorMessage;
+					message.error = event.error ?? message.error;
 				}
-				if (event.errorMessage) this.state.error = event.errorMessage;
+				if (event.errorMessage) { this.state.error = event.errorMessage; this.state.errorInfo = event.error ?? null; }
 				break;
 			}
 			case 'tool': {
@@ -1665,9 +1793,12 @@ class SingleAgentService {
 				break;
 			case 'file-changes':
 				this.state.fileChanges = event.items.map((file) => ({ ...file }));
+				this.state.fileChangeTurns = event.turns.map((turn) => ({ runId: turn.runId, items: turn.items.map((file) => ({ ...file })) }));
+				this.state.fileChangeActiveRunId = event.activeRunId;
 				break;
 			case 'error':
 				this.state.error = event.message;
+				this.state.errorInfo = event.error ?? null;
 				break;
 		}
 	}
@@ -1703,13 +1834,13 @@ class SingleAgentService {
 		}, THINKING_UPDATE_INTERVAL_MS);
 	}
 
-	private finishInterruptedAssistant(failure?: string): void {
+	private finishInterruptedAssistant(failure?: string, info?: UiAgentError): void {
 		if (!this.assistantId) return;
 		const id = this.assistantId;
 		const message = this.state.messages.find((item) => item.id === id);
 		this.assistantId = null;
 		this.clearPendingThinking();
-		this.fire({ type: 'assistant-end', id, text: message?.text ?? '', aborted: !failure, errorMessage: failure,
+		this.fire({ type: 'assistant-end', id, text: message?.text ?? '', aborted: !failure, errorMessage: failure, error: info,
 			...(message?.thinkingStatus ? {
 				thinking: message.thinking ?? '', thinkingStatus: failure ? 'error' : 'interrupted',
 				thinkingTruncated: message.thinkingTruncated ?? false,
@@ -1736,7 +1867,7 @@ class SingleAgentService {
 				// live-streamed messages carry real session entry ids (message edit/fork needs
 				// them). Interrupted turns have no transcript entry for the partial reply, so
 				// skip the resync to keep the interrupted row visible.
-				if (!hadPendingAssistant) this.fireReady();
+				if (!hadPendingAssistant) this.fireReady(true);
 				this.fire({ type: 'status', status: 'idle' });
 				return;
 			}
@@ -1759,6 +1890,13 @@ class SingleAgentService {
 					const session = this.runtime?.session;
 					if (session) this.fire({ type: 'model', ...modelSelection(session) });
 				}
+				// pi-subagents completion notices (custom_message, display:false) are invisible
+				// without a TUI renderer; project them live so the wake is visible in the UI.
+				if (event.entry.type === 'custom_message' && event.entry.customType === 'subagent-notify'
+					&& typeof event.entry.content === 'string' && event.entry.content.trim()) {
+					this.fire({ type: 'system-message', id: event.entry.id, order: this.timelineOrder++,
+						text: event.entry.content, systemKind: 'subagent-notify', runId: this.conversationRuns?.active?.id });
+				}
 				return;
 			}
 			case 'thinking_level_changed': {
@@ -1772,7 +1910,7 @@ class SingleAgentService {
 					if (input?.queued && input.behavior === 'followUp' && this.conversationRuns?.active && this.conversationRuns.hasMessages) this.conversationRuns.finish();
 					const run = this.conversationRuns?.begin();
 					if (this.conversationRuns) this.conversationRuns.hasMessages = true;
-					try { this.inputQueue?.consumed(message, this.inputRequest.getStore()?.id); } catch (error) { this.fire({ type: 'error', message: `输入消费回执无法保存：${errorMessage(error)}。重启后需核对再恢复。` }); }
+					try { this.inputQueue?.consumed(message, this.inputRequest.getStore()?.id); } catch (error) { this.fireError(`输入消费回执无法保存：${errorMessage(error)}。重启后需核对再恢复。`); }
 					if (queuedMessageText(message) === '') {
 						const deliveredId = this.queuedPreviewIds.get(message);
 						const delivered = this.queuedMessages.find((record) => record.item.id === deliveredId);
@@ -1833,6 +1971,7 @@ class SingleAgentService {
 						...thinking,
 						aborted: event.message.stopReason === 'aborted',
 						errorMessage: event.message.stopReason === 'error' ? event.message.errorMessage || '模型调用失败' : undefined,
+						error: event.message.stopReason === 'error' ? normalizeAgentError(event.message.errorMessage || '模型调用失败', 'provider') : undefined,
 					});
 				}
 				return;
@@ -1847,6 +1986,7 @@ class SingleAgentService {
 						id: event.toolCallId, order, runId: this.conversationRuns?.active?.id, tool: event.toolName, title, status: 'running',
 						startedAt: Date.now(),
 						...toolCallMeta(event.args),
+						...toolSubagentMeta(event.toolName, event.args, undefined, undefined),
 					},
 				});
 				return;
@@ -1868,7 +2008,8 @@ class SingleAgentService {
 					startedAt: previous?.startedAt ?? null,
 					files: previous?.files ?? null,
 					command: previous?.command ?? null,
-					...toolResultText(event.partialResult),
+				...toolResultText(event.partialResult),
+				...toolSubagentMeta(event.toolName, undefined, event.partialResult, previous?.subagent),
 				} });
 				return;
 			}
@@ -1894,6 +2035,7 @@ class SingleAgentService {
 						command: previous?.command ?? null,
 						...toolResultText(event.result),
 						...toolResultMeta(event.toolName, event.isError, rawText),
+						...toolSubagentMeta(event.toolName, undefined, event.result, previous?.subagent),
 					},
 				});
 				return;
@@ -1922,6 +2064,7 @@ export class AgentService {
 	private backgroundActivity: (cwd: string, path: string) => void = () => {};
 	private sequence = 0;
 	private transition: Promise<void> | null = null;
+	private queuedNavigation: { operation: () => Promise<void>; resolve: () => void; reject: (error: unknown) => void } | null = null;
 	private trimOperation: Promise<void> | null = null;
 	private credentialOperation: Promise<void> | null = null;
 	private providerOperation: Promise<void> | null = null;
@@ -1965,7 +2108,7 @@ export class AgentService {
 		return snapshot ? { ...snapshot, sequence: this.sequence, sessionRuntimes } : {
 			sequence: this.sequence, status: 'uninitialized', model: '', modelName: null, modelProvider: '',
 			thinkingLevel: 'off', availableThinkingLevels: ['off'], contextUsage: null, cwd: '', sessionId: null,
-			sessionPath: null, messages: [], activities: [], queuedCount: 0, queuedMessages: [], fileChanges: [], error: null,
+			sessionPath: null, messages: [], activities: [], queuedCount: 0, queuedMessages: [], fileChanges: [], fileChangeTurns: [], fileChangeActiveRunId: null, error: null,
 		};
 	}
 
@@ -1988,7 +2131,7 @@ export class AgentService {
 			if (path && this.isSessionReserved(path)) throw new Error('会话正在切换或删除，请稍后重试');
 			this.activate(entry[0], entry[1]);
 			activated = true;
-		});
+		}, { supersede: true });
 		return activated;
 	}
 
@@ -2059,7 +2202,7 @@ export class AgentService {
 	async init({ cwd, sessionPath, fresh, excludeSessionPaths }: AgentInitOptions): Promise<void> {
 		if (typeof cwd !== 'string' || !cwd.trim()) throw new Error('工作区路径无效');
 		if (sessionPath && fresh) throw new Error('不能同时指定已有会话和新会话');
-		if (!sessionPath && !fresh) return this.switchWorkspace(cwd, excludeSessionPaths);
+		if (!sessionPath && !fresh) return this.runTransition(() => this.transitionSwitchWorkspace(cwd, excludeSessionPaths ?? []));
 		await this.runTransition(async () => {
 			if (sessionPath) {
 				if (this.isSessionReserved(sessionPath)) throw new Error(this.reservedSessionPaths.has(sessionPath) ? '扩展正在切换此会话，请稍后重试' : '会话正在删除，请稍后重试');
@@ -2078,39 +2221,42 @@ export class AgentService {
 
 	async switchWorkspace(cwd: string, excludeSessionPaths: string[] = []): Promise<void> {
 		if (typeof cwd !== 'string' || !cwd.trim()) throw new Error('工作区路径无效');
-		await this.runTransition(async () => {
-			const previous = this.active;
-			const previousKey = this.activeKey;
-			const remembered = this.lastContextByCwd.get(cwd);
-			const existing = remembered ? this.contexts.get(remembered) : undefined;
-			if (existing?.hasSession && !excludeSessionPaths.includes(existing.getSnapshot().sessionPath ?? '')) {
-				this.activate(remembered!, existing);
-				return;
-			}
-			const sessionPath = (await this.listSessions(cwd)).find((session) => !excludeSessionPaths.includes(session.path))?.path;
-			if (sessionPath && this.isSessionReserved(sessionPath)) throw new Error('会话正在切换或删除，请稍后重试');
-			const loaded = sessionPath ? [...this.contexts.entries()].find(([, context]) =>
-				context.hasSession && context.cwd === cwd && context.getSnapshot().sessionPath === sessionPath) : undefined;
-			if (loaded) {
-				this.activate(loaded[0], loaded[1]);
-				return;
-			}
-			const key = existing ? remembered! : randomUUID();
-			const service = existing ?? this.newContext(key);
-			this.active = service;
-			this.activeKey = key;
-			try {
-				await service.init({ cwd, sessionPath, fresh: !sessionPath });
-				this.lastContextByCwd.set(cwd, key);
-				await this.trimContexts();
-			} catch (error) {
-				if (!existing) this.contexts.delete(key);
-				this.active = previous;
-				this.activeKey = previousKey;
-				if (previous && previousKey) this.activate(previousKey, previous);
-				throw error;
-			}
-		});
+		await this.runTransition(() => this.transitionSwitchWorkspace(cwd, excludeSessionPaths), { supersede: true });
+	}
+
+	/** switchWorkspace 的切换体。init 的无会话入口复用它，但保持严格串行（排队会破坏重叠初始化的拒绝语义）。 */
+	private async transitionSwitchWorkspace(cwd: string, excludeSessionPaths: string[]): Promise<void> {
+		const previous = this.active;
+		const previousKey = this.activeKey;
+		const remembered = this.lastContextByCwd.get(cwd);
+		const existing = remembered ? this.contexts.get(remembered) : undefined;
+		if (existing?.hasSession && !excludeSessionPaths.includes(existing.getSnapshot().sessionPath ?? '')) {
+			this.activate(remembered!, existing);
+			return;
+		}
+		const sessionPath = (await this.listSessions(cwd)).find((session) => !excludeSessionPaths.includes(session.path))?.path;
+		if (sessionPath && this.isSessionReserved(sessionPath)) throw new Error('会话正在切换或删除，请稍后重试');
+		const loaded = sessionPath ? [...this.contexts.entries()].find(([, context]) =>
+			context.hasSession && context.cwd === cwd && context.getSnapshot().sessionPath === sessionPath) : undefined;
+		if (loaded) {
+			this.activate(loaded[0], loaded[1]);
+			return;
+		}
+		const key = existing ? remembered! : randomUUID();
+		const service = existing ?? this.newContext(key);
+		this.active = service;
+		this.activeKey = key;
+		try {
+			await service.init({ cwd, sessionPath, fresh: !sessionPath });
+			this.lastContextByCwd.set(cwd, key);
+			await this.trimContexts();
+		} catch (error) {
+			if (!existing) this.contexts.delete(key);
+			this.active = previous;
+			this.activeKey = previousKey;
+			if (previous && previousKey) this.activate(previousKey, previous);
+			throw error;
+		}
 	}
 
 	/** Dispose every idle runtime belonging to a project removed from the desktop workspace list. */
@@ -2144,9 +2290,11 @@ export class AgentService {
 	}
 
 	async switchSession(path: string): Promise<void> {
-		const cwd = this.cwd;
-		if (!cwd) throw new Error('请先打开工作区');
+		// cwd 在切换体执行时才读取：排队等在其它导航后面时，工作区可能已被更新点击换过，
+		// 旧工作区的会话应按「不属于当前工作区」拒绝，而不是被误加载成激活上下文。
 		await this.runTransition(async () => {
+			const cwd = this.cwd;
+			if (!cwd) throw new Error('请先打开工作区');
 			if (this.isSessionReserved(path)) throw new Error('会话正在切换或删除，请稍后重试');
 			if (this.active?.getSnapshot().sessionPath === path) return;
 			const existing = [...this.contexts.entries()].find(([, service]) =>
@@ -2158,14 +2306,16 @@ export class AgentService {
 			if (!(await sessionBelongsToWorkspace(path, cwd))) throw new Error('会话不属于当前工作区');
 			await this.openContext({ cwd, sessionPath: path });
 			this.fire({ type: 'sessions-changed', cwd });
-		});
+		}, { supersede: true });
 	}
 
 	async newSession(): Promise<void> {
-		const cwd = this.cwd;
-		if (!cwd) throw new Error('请先打开工作区');
-		await this.runTransition(() => this.openContext({ cwd, fresh: true }));
-		this.fire({ type: 'sessions-changed', cwd });
+		await this.runTransition(async () => {
+			const cwd = this.cwd;
+			if (!cwd) throw new Error('请先打开工作区');
+			await this.openContext({ cwd, fresh: true });
+		}, { supersede: true });
+		this.fire({ type: 'sessions-changed', cwd: this.cwd });
 	}
 
 	async renameSession(path: string, name: string, cwd = this.cwd): Promise<void> {
@@ -2224,8 +2374,8 @@ export class AgentService {
 	async listModelProviders(): Promise<UiModelProvider[]> {
 		if (this.providerOperation) { try { await this.providerOperation; } catch { /* Read restored state after an unsuccessful edit. */ } }
 		const service = this.requireActive();
-		const [document] = await Promise.all([readProviderDocument(join(service.agentDirectory, 'models.json')), getBuiltinProviderIds(), loadModelPrefs(service.agentDirectory)]);
-		return service.listModelProviders(document);
+		const [document, builtinIds] = await Promise.all([readProviderDocument(join(service.agentDirectory, 'models.json')), getBuiltinProviderIds(), loadModelPrefs(service.agentDirectory)]);
+		return service.listModelProviders(document, builtinIds);
 	}
 	async setModelEnabled(provider: string, modelId: string, enabled: boolean): Promise<void> {
 		const providerId = validateProviderId(provider);
@@ -2308,7 +2458,12 @@ export class AgentService {
 		finally {
 			for (const release of releases) release();
 			if (this.providerOperation === operation) this.providerOperation = null;
-		}
+	}
+	}
+
+	async saveProviderModels(input: UiSaveProviderModelsRequest): Promise<void> {
+		const request = validateProviderModelsRequest(input);
+		await this.updateCustomProvider(request.provider, undefined, request);
 	}
 	listSlashCommands(): UiSlashCommand[] { return this.active?.listSlashCommands() ?? []; }
 	async executeSlashCommand(request: UiSlashCommandRequest): Promise<void> {
@@ -2334,7 +2489,7 @@ export class AgentService {
 				if (this.active !== service || service.getSnapshot().sessionId !== request.sessionId) throw new Error('当前会话已变化，请重试指令');
 				service.assertIdleSlashCommand();
 				await this.openContext({ cwd: request.cwd, fresh: true });
-			});
+			}, { supersede: true });
 			this.fire({ type: 'sessions-changed', cwd: request.cwd });
 			return;
 		}
@@ -2390,9 +2545,11 @@ export class AgentService {
 	mutateInputQueue(request: UiInputQueueMutation): UiInputQueue { return this.requireActive().mutateInputQueue(request); }
 	getFileCheckpoint() { return this.requireActive().getFileCheckpoint(); }
 	rewindFileCheckpoint(request: { id: string; version: string }) { return this.requireActive().rewindFileCheckpoint(request); }
-	editUserMessage(entryId: string, text: string, attachments?: UiAttachment[]): Promise<void> {
+	getEditRewindPreview(entryId: string) { return this.requireActive().getEditRewindPreview(entryId); }
+	getFileChangeDiffs(scope: UiFileDiffScope) { return this.requireActive().getFileChangeDiffs(scope); }
+	editUserMessage(entryId: string, text: string, attachments?: UiAttachment[], fileMode?: 'keep' | 'rewind'): Promise<void> {
 		if (this.pluginOperation) return Promise.reject(new Error('插件设置正在更新，请稍后发送消息'));
-		return this.requireActive().editUserMessage(entryId, text, attachments).finally(() => { void this.trimContexts(); });
+		return this.requireActive().editUserMessage(entryId, text, attachments, fileMode).finally(() => { void this.trimContexts(); });
 	}
 
 	forkAssistantMessage(entryId: string): Promise<void> {
@@ -2493,7 +2650,8 @@ export class AgentService {
 		}
 	}
 
-	private async updateCustomProvider(provider: string, request?: UiSaveCustomProviderRequest): Promise<void> {
+	/** One serialized models.json transaction: save (`request`), models-only edit (`models`), or removal (neither). */
+	private async updateCustomProvider(provider: string, request?: UiSaveCustomProviderRequest, models?: ProviderModelsChange): Promise<void> {
 		const service = this.requireActive();
 		if (this.transition || this.credentialOperation || this.trimOperation) throw new Error('会话或设置正在更新，请稍后再试');
 		const contexts = [...this.contexts.values()];
@@ -2505,32 +2663,38 @@ export class AgentService {
 		const operation = Promise.resolve().then(async () => {
 			const directory = service.agentDirectory;
 			const path = join(directory, 'models.json');
-			const [document] = await Promise.all([readProviderDocument(path), getBuiltinProviderIds()]);
+			const [document, builtinIds] = await Promise.all([readProviderDocument(path), getBuiltinProviderIds()]);
+			assertWritableDocument(document);
 			if (contexts.some((context) => context.usesExtensionProvider(provider))) throw new Error('此供应商 ID 已由已打开工作区的扩展管理，请使用其他 ID');
-			const listed = service.listModelProviders(document);
+			const listed = service.listModelProviders(document, builtinIds);
 			const existing = listed.find((entry) => entry.provider === provider);
-			if (request?.mode === 'create' && existing) throw new Error('供应商 ID 已存在，请使用其他 ID');
-			// Importing a live model list for a configured builtin provider pins it as a
-			// custom catalog entry; only the builtin's own api/baseUrl may be written.
-			const builtinImport = Boolean(request && existing && !existing.custom && existing.configured
-				&& request.api === existing.api && request.baseUrl === existing.baseUrl && CUSTOM_PROVIDER_APIS.includes(request.api));
-			if (request?.mode === 'update' && !existing) throw new Error('自定义供应商不存在，请刷新后重试');
-			if (existing && !existing.editable && !builtinImport) throw new Error('此供应商由内置、扩展或高级外部配置管理，不能在此修改');
-			if (!request && !existing?.custom) throw new Error('自定义供应商不存在');
+			if (models) {
+				if (!existing) throw new Error('供应商不存在，请刷新后重试');
+				if (!existing.modelsEditable) throw new Error('此供应商的模型由扩展管理或配置格式无效，不能在此修改');
+			} else {
+				if (request?.mode === 'create' && existing) throw new Error('供应商 ID 已存在，请使用其他 ID');
+				if (request?.mode === 'update' && !existing) throw new Error('自定义供应商不存在，请刷新后重试');
+				if (existing && !existing.editable) throw new Error('此供应商由内置、扩展或高级外部配置管理，不能在此修改');
+				if (!request && !existing?.custom) throw new Error('自定义供应商不存在');
+			}
 			for (const context of contexts) {
 				const selected = context.getSnapshot();
-				if (selected.modelProvider === provider && (request?.mode === 'create' || !request || !request.models.some((model) => model.id === selected.model))) {
-					throw new Error('供应商或模型仍被已打开的会话使用，请先为这些会话切换模型');
-				}
+				if (selected.modelProvider !== provider) continue;
+				const dropsSelected = models ? models.remove.includes(selected.model ?? '')
+					: request?.mode === 'create' || !request || !request.models.some((model) => model.id === selected.model);
+				if (dropsSelected) throw new Error('供应商或模型仍被已打开的会话使用，请先为这些会话切换模型');
 			}
-			const next = request ? mergeProvider(document, request) : { ...document.data, providers: { ...document.data.providers } };
-			if (!request) delete next.providers[provider];
-			else await validateProviderWithSdk(directory, provider, next.providers[provider]!);
+			const next = models ? mergeProviderModels(document, models, existing!.api)
+				: request ? mergeProvider(document, request) : { ...document.data, providers: { ...document.data.providers } };
+			if (!request && !models) delete next.providers[provider];
+			else if (Object.hasOwn(next.providers, provider)) await validateProviderWithSdk(directory, provider, next.providers[provider]!);
 			const previousCredential = readStoredCredential(provider, join(directory, 'auth.json'));
+			// A builtin keeps working after its overlay is removed, so its login stays.
+			const removesCredential = !request && !models && !builtinIds.has(provider);
 			let rollback: (() => Promise<void>) | undefined;
 			let credentialChanged = false;
 			try {
-				if (!request && previousCredential) {
+				if (removesCredential && previousCredential) {
 					credentialChanged = true;
 					await service.writeProviderCredential(provider, undefined);
 				}
@@ -2552,7 +2716,7 @@ export class AgentService {
 				if (request && credentialChanged) await restoreCredential();
 				if (rollback) { try { await rollback(); } catch { recovered = false; } }
 				try { await this.refreshCustomProviderContexts(contexts, provider, false); } catch { recovered = false; }
-				if (!request && credentialChanged) await restoreCredential();
+				if (removesCredential && credentialChanged) await restoreCredential();
 				try { await this.refreshCustomProviderContexts(contexts, provider); } catch { recovered = false; }
 				throw new Error(recovered ? '供应商保存失败，原配置已恢复；请检查 URL、协议和凭据存储' : '供应商保存失败，部分配置未能恢复；请检查 models.json 及其 pi-desktop-backup 备份');
 			}
@@ -2571,7 +2735,13 @@ export class AgentService {
 		const service: SingleAgentService = new SingleAgentService(
 			(cwd) => this.withRuntimeWait(service, { phase: 'waiting-approval' }, () => this.requestProjectTrust(cwd)),
 			(request, signal) => request.kind === 'notify' ? this.requestExtensionDialog(request, signal)
-				: this.withRuntimeWait(service, { phase: request.kind === 'confirm' ? 'waiting-approval' : 'waiting-input', message: request.title }, () => this.requestExtensionDialog(request, signal)),
+			: this.withRuntimeWait(service, { phase: request.kind === 'confirm' ? 'waiting-approval' : 'waiting-input', message: request.title }, () => {
+				// zcode per-task interactions: carry the asking conversation so the
+				// renderer shows the card only while that conversation is open. Captured at
+				// raise time; the sessionId is the stable key across fresh-session persistence.
+				const snapshot = service.getSnapshot();
+				return this.requestExtensionDialog({ ...request, scope: { cwd: service.cwd, sessionPath: snapshot.sessionPath, sessionId: snapshot.sessionId } }, signal);
+			}),
 			this.projectTrustByCwd, (path) => {
 			if (this.transition || this.isSessionReserved(path)) throw new Error('会话正在切换或删除，请稍后重试');
 			if ([...this.contexts.values()].some((context) => context !== service && context.getSnapshot().sessionPath === path)) {
@@ -2671,7 +2841,7 @@ export class AgentService {
 		});
 		this.fire({ type: 'status', status: snapshot.status, message: snapshot.statusMessage });
 		this.fire({ type: 'queue', count: snapshot.queuedCount, items: snapshot.queuedMessages });
-		if (snapshot.error) this.fire({ type: 'error', message: snapshot.error });
+		if (snapshot.error) this.fire({ type: 'error', message: snapshot.error, error: snapshot.errorInfo ?? undefined });
 	}
 
 	private fire(event: AgentUiEvent): void { this.emit({ sequence: ++this.sequence, event }); }
@@ -2695,14 +2865,38 @@ export class AgentService {
 		try { await work; } finally { if (this.trimOperation === work) this.trimOperation = null; }
 	}
 
-	private async runTransition(operation: () => Promise<void>): Promise<void> {
+	// zcode 语义：会话导航点击永远被接受。正在运行的切换不可中断（其上下文加载完仍留作
+	// 热缓存，切回即命中），期间到达的新导航进入「最新者胜」队列：更新的导航会取代还在
+	// 排队的旧导航（旧请求以明确错误收场，渲染端导航代次会静默吞掉这类过期错误）。
+	// 非导航类切换（init、删除、移除项目）保持严格拒绝，避免破坏性或启动操作被静默取消。
+	private async runTransition(operation: () => Promise<void>, options: { supersede?: boolean } = {}): Promise<void> {
 		if (this.closing) throw new Error('应用正在退出');
 		if (this.pluginOperation) throw new Error('插件设置正在更新，请稍后再切换会话');
 		if (this.providerOperation) throw new Error('供应商配置正在更新，请稍后再切换会话');
-		if (this.transition) throw new Error('会话正在切换，请稍后再试');
+		if (this.transition) {
+			if (!options.supersede) throw new Error('会话正在切换，请稍后再试');
+			return await new Promise<void>((resolve, reject) => {
+				this.queuedNavigation?.reject(new Error('已有更新的切换请求，本次切换已让位'));
+				this.queuedNavigation = { operation, resolve, reject };
+			});
+		}
+		return await this.beginTransition(operation);
+	}
+
+	private beginTransition(operation: () => Promise<void>): Promise<void> {
 		const promise = Promise.resolve().then(operation);
 		this.transition = promise;
-		try { await promise; } finally { if (this.transition === promise) this.transition = null; }
+		return promise.finally(() => {
+			if (this.transition !== promise) return;
+			this.transition = null;
+			const queued = this.queuedNavigation;
+			this.queuedNavigation = null;
+			if (!queued) return;
+			if (this.closing) { queued.reject(new Error('应用正在退出')); return; }
+			if (this.pluginOperation || this.providerOperation) { queued.reject(new Error('插件或供应商配置正在更新，切换已取消')); return; }
+			// 同步接管切换槽：当前切换结束与排队导航开跑之间不留异步空隙，其它操作无法插队。
+			void this.beginTransition(queued.operation).then(queued.resolve, queued.reject);
+		});
 	}
 }
 
@@ -2888,7 +3082,8 @@ function historyTimeline(entries: SessionEntry[], liveRun?: UiConversationRun | 
 	for (const entry of entries) {
 		const runId = entryRuns.get(entry.id);
 		// Project compaction/branch summaries and visible extension notices into system rows (3.6).
-		if (entry.type === 'compaction' || entry.type === 'branch_summary' || (entry.type === 'custom_message' && entry.display)) {
+		if (entry.type === 'compaction' || entry.type === 'branch_summary'
+			|| (entry.type === 'custom_message' && (entry.display || entry.customType === 'subagent-notify'))) {
 			const text = entry.type === 'custom_message'
 				? (typeof entry.content === 'string' ? entry.content : '')
 				: entry.summary;
@@ -2897,7 +3092,7 @@ function historyTimeline(entries: SessionEntry[], liveRun?: UiConversationRun | 
 				runId,
 				order: nextOrder++,
 				role: 'system',
-				systemKind: entry.type === 'compaction' ? 'compaction' : entry.type === 'branch_summary' ? 'branch-summary' : 'custom',
+				systemKind: entry.type === 'compaction' ? 'compaction' : entry.type === 'branch_summary' ? 'branch-summary' : (entry.type === 'custom_message' && entry.customType === 'subagent-notify') ? 'subagent-notify' : 'custom',
 				text,
 				status: 'done',
 			});
@@ -2938,6 +3133,7 @@ function historyTimeline(entries: SessionEntry[], liveRun?: UiConversationRun | 
 					...thinking,
 					status: message.stopReason === 'aborted' || errorMessage ? 'error' : 'done',
 					errorMessage,
+					...(errorMessage ? { error: normalizeAgentError(errorMessage, 'provider') } : {}),
 				});
 			}
 			const startedAt = timestampOf(entry.timestamp);
@@ -2952,6 +3148,7 @@ function historyTimeline(entries: SessionEntry[], liveRun?: UiConversationRun | 
 					status: 'running',
 					startedAt,
 					...toolCallMeta(part.arguments),
+					...toolSubagentMeta(part.name, part.arguments, undefined, undefined),
 				});
 			}
 		} else if (message.role === 'toolResult') {
@@ -2970,6 +3167,7 @@ function historyTimeline(entries: SessionEntry[], liveRun?: UiConversationRun | 
 				command: previous?.command ?? null,
 				...toolResultText(message),
 				...toolResultMeta(message.toolName, message.isError, rawText),
+				...toolSubagentMeta(message.toolName, undefined, message, previous?.subagent),
 			});
 		}
 	}
@@ -3149,10 +3347,65 @@ function describeToolUse(tool: string, args: unknown): string {
 		}
 		return undefined;
 	};
+	// pi-subagents calls carry agent/task instead of file/command keys.
+	if (tool === 'subagent') {
+		const agent = firstString('agent', 'workflow') ?? 'subagent';
+		const task = firstString('task', 'prompt', 'action');
+		return task ? `subagent(${agent}: ${truncate(task, 48)})` : `subagent(${agent})`;
+	}
 	const detail =
 		firstString('file', 'path', 'command', 'pattern', 'url', 'prompt') ??
 		safeJson(args, 56);
 	return detail ? `${tool}(${truncate(detail, 72)})` : tool;
+}
+
+/** Structured projection of pi-subagents `subagent` tool calls for zcode-style cards.
+ *  Defensive by design: the payload belongs to a third-party extension, so every
+ *  field is optional and malformed shapes degrade to plain-text rendering. */
+export function subagentSnapshot(args: unknown, payload: unknown, previous?: UiSubagentActivity): UiSubagentActivity | undefined {
+	const argRecord = isPlainRecord(args) ? args : {};
+	const payloadRecord = isPlainRecord(payload) ? payload : {};
+	const details = isPlainRecord(payloadRecord.details) ? payloadRecord.details : undefined;
+	const progress = Array.isArray(details?.progress) ? details.progress.find(isPlainRecord) : undefined;
+	const result = Array.isArray(details?.results) ? details.results.find(isPlainRecord) : undefined;
+	const str = (value: unknown): string | undefined => typeof value === 'string' && value.trim() ? value.trim() : undefined;
+	const num = (value: unknown): number | undefined => typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : undefined;
+	const recent = Array.isArray(progress?.recentTools)
+		? progress.recentTools.filter(isPlainRecord).slice(-5).map(item => ({ tool: str(item.tool) ?? '?', args: truncate(str(item.args) ?? '', 60) }))
+		: undefined;
+	const outputRef = isPlainRecord(result?.outputReference) ? result.outputReference : undefined;
+	const task = truncate(str(argRecord.task) ?? previous?.task ?? '', 160) || null;
+	// Delegation calls default to background: the extension's asyncByDefault is on,
+	// and the detached ACK ("Async: <agent> [<runId>]") is the reliable marker.
+	const isDelegation = task != null || str(argRecord.agent) != null;
+	const ackRunId = /Async: \S+\s*\[([0-9a-f][0-9a-f-]{7,})\]/i.exec(toolResultRawText(payload) ?? '')?.[1];
+	const asyncFlag = argRecord.async === false || argRecord.run_in_background === false
+		? false
+		: isDelegation ? (previous?.async ?? true) : (argRecord.async === true || argRecord.run_in_background === true || previous?.async === true || undefined);
+	return {
+		agent: str(argRecord.agent) ?? previous?.agent ?? 'subagent',
+		task,
+		runId: str(result?.runId) ?? str(details?.runId) ?? (ackRunId ? truncate(ackRunId, 64) : undefined) ?? previous?.runId ?? null,
+		async: asyncFlag,
+		model: str(progress?.model) ?? str(result?.model) ?? previous?.model ?? null,
+		turnCount: num(progress?.turnCount) ?? previous?.turnCount ?? null,
+		toolCount: num(progress?.toolCount) ?? previous?.toolCount ?? null,
+		tokens: num(progress?.tokens) ?? previous?.tokens ?? null,
+		currentTool: str(progress?.currentTool) ?? previous?.currentTool ?? null,
+		recentTools: recent ?? previous?.recentTools ?? null,
+		outputReference: str(outputRef?.message) ?? str(result?.outputReference) ?? previous?.outputReference ?? null,
+		durationMs: num(progress?.durationMs) ?? previous?.durationMs ?? null,
+	};
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/** Attach the structured snapshot only for pi-subagents `subagent` tool calls. */
+function toolSubagentMeta(tool: string, args: unknown, payload: unknown, previous?: UiSubagentActivity): Pick<UiToolActivity, 'subagent'> {
+	if (tool !== 'subagent') return {};
+	return { subagent: subagentSnapshot(args, payload, previous) };
 }
 
 function safeJson(value: unknown, max: number): string | undefined {

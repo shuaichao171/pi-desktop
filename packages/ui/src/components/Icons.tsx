@@ -22,6 +22,7 @@ export type IconName =
 	| 'square'
 	| 'spark'
 	| 'brain'
+	| 'lightbulb'
 	| 'clock'
 	| 'automation'
 	| 'plugins'
@@ -52,13 +53,17 @@ export type IconName =
 	| 'trash'
 	| 'pin'
 	| 'eye'
-	| 'eyeOff';
+	| 'eyeOff'
+	| 'globe'
+	| 'alert'
+	| 'play';
 
 const paths: Record<IconName, ReactNode> = {
 	image: <><rect x="3" y="3" width="18" height="18" rx="2" /><circle cx="8" cy="8" r="1.5" /><path d="m21 15-5-5L5 21" /></>,
 	eye: <><path d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0" /><circle cx="12" cy="12" r="3" /></>,
 	eyeOff: <><path d="M10.733 5.076a10.744 10.744 0 0 1 11.205 6.575 1 1 0 0 1 0 .696 10.747 10.747 0 0 1-1.444 2.49" /><path d="M14.084 14.158a3 3 0 0 1-4.242-4.242" /><path d="M17.479 17.499a10.75 10.75 0 0 1-15.417-5.151 1 1 0 0 1 0-.696 10.75 10.75 0 0 1 4.446-5.143" /><path d="m2 2 20 20" /></>,
 	loader: <path d="M21 12a9 9 0 1 1-9-9" />,
+	globe: <><circle cx="12" cy="12" r="9" /><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18" /></>,
 	hash: <path d="m10 3-4 18M18 3l-4 18M4 9h17M3 15h17" />,
 	filter: <path d="M4 6h16M7 12h10M10 18h4" />,
 	expandAll: <><path d="M8 3H3v5M3 3l6 6M16 21h5v-5M21 21l-6-6" /></>,
@@ -87,6 +92,9 @@ const paths: Record<IconName, ReactNode> = {
 	arrowRight: <><path d="M5 12h14" /><path d="m13 6 6 6-6 6" /></>,
 	square: <rect x="6" y="6" width="12" height="12" rx="1.5" fill="currentColor" stroke="none" />,
 	spark: <><path d="m12 3 1.9 6.1L20 11l-6.1 1.9L12 19l-1.9-6.1L4 11l6.1-1.9Z" /><path d="m19 17 .5 1.5L21 19l-1.5.5L19 21l-.5-1.5L17 19l1.5-.5Z" /></>,
+	play: <><path d="M7 4.5v15l12-7.5z" /></>,
+	alert: <><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z" /><path d="M12 9v4M12 17h.01" /></>,
+	lightbulb: <><path d="M9 18h6M10 21h4" /><path d="M12 3a6 6 0 0 0-3.6 10.8c.6.5 1.1 1.3 1.1 2.2h5c0-.9.5-1.7 1.1-2.2A6 6 0 0 0 12 3Z" /></>,
 	brain: <><path d="M12 18V5a3 3 0 0 0-5.8-1A4 4 0 0 0 3 10a4 4 0 0 0 .5 7A4 4 0 0 0 12 18ZM12 5a3 3 0 0 1 5.8-1A4 4 0 0 1 21 10a4 4 0 0 1-.5 7A4 4 0 0 1 12 18" /><path d="M8 8a3 3 0 0 1-2 3M16 8a3 3 0 0 0 2 3M8 16a3 3 0 0 0-2-2M16 16a3 3 0 0 1 2-2" /></>,
 	clock: <><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></>,
 	automation: <path d="m13 2-10 12h8l-1 8 11-12h-8l1-8Z" />,

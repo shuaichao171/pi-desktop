@@ -8,7 +8,7 @@ import type { Locale } from './i18n';
  * as reading or searching, so exploration looks like exploration.
  */
 
-export type ToolActivityKind = 'read' | 'search' | 'edit' | 'run' | 'other';
+export type ToolActivityKind = 'read' | 'search' | 'edit' | 'run' | 'subagent' | 'other';
 
 const READ_PROGRAMS = /^(?:cat|head|tail|less|more|type|get-content|gc|bat|nl|wc|stat|file|readlink|realpath|pwd|which|where|get-location|test-path|resolve-path)$/i;
 const SEARCH_PROGRAMS = /^(?:rg|grep|egrep|fgrep|ag|ack|find|fd|ls|dir|tree|gci|get-childitem|select-string|sls|locate)$/i;
@@ -64,14 +64,15 @@ export function classifyToolActivity(activity: Pick<UiToolActivity, 'tool' | 'co
 	if (tool === 'grep' || tool === 'find' || tool === 'ls' || tool === 'glob') return 'search';
 	if (tool === 'edit' || tool === 'write' || tool === 'multiedit') return 'edit';
 	if (tool === 'bash') return activity.command ? classifyShellCommand(activity.command) ?? 'run' : 'run';
+	if (tool === 'subagent') return 'subagent';
 	return 'other';
 }
 
-export interface ToolGroupCounts { read: number; search: number; edit: number; run: number; other: number }
+export interface ToolGroupCounts { read: number; search: number; edit: number; run: number; subagent: number; other: number }
 
 /** Reads and edits count distinct files when known; everything else counts calls. */
 export function countToolGroup(activities: readonly Pick<UiToolActivity, 'tool' | 'command' | 'files'>[]): ToolGroupCounts {
-	const counts: ToolGroupCounts = { read: 0, search: 0, edit: 0, run: 0, other: 0 };
+	const counts: ToolGroupCounts = { read: 0, search: 0, edit: 0, run: 0, subagent: 0, other: 0 };
 	const files = { read: new Set<string>(), edit: new Set<string>() };
 	for (const activity of activities) {
 		const kind = classifyToolActivity(activity);
@@ -96,6 +97,7 @@ export function toolGroupSummaryParts(counts: ToolGroupCounts, locale: Locale): 
 	if (counts.search) parts.push(zh ? `搜索 ${counts.search} 次` : en(counts.search, 'search', 'searches'));
 	if (counts.edit) parts.push(zh ? `编辑 ${counts.edit} 个文件` : `Edited ${en(counts.edit, 'file', 'files')}`);
 	if (counts.run) parts.push(zh ? `运行 ${counts.run} 条命令` : `Ran ${en(counts.run, 'command', 'commands')}`);
+	if (counts.subagent) parts.push(zh ? `子代理 ${counts.subagent} 次` : en(counts.subagent, 'subagent call', 'subagent calls'));
 	if (counts.other) parts.push(zh ? `其他 ${counts.other} 次` : en(counts.other, 'other call', 'other calls'));
 	return parts;
 }

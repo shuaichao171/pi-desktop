@@ -4,9 +4,7 @@ import type { readSessionContext, searchSessions, searchWorkspaceFiles, searchSe
 
 type AgentServiceMethod = { [Key in keyof AgentService]: AgentService[Key] extends (...args: never[]) => unknown ? Key : never }[keyof AgentService];
 type SearchMethods = {
- getUsageReport: (query: import('@pidesktop/shared').UsageQuery, workspaces: string[], automatedPaths: string[]) => Promise<import('@pidesktop/shared').UsageReport>;
- cancelUsageReport: (id: string) => void;
- searchSessionsPage: (workspaces: string[], request: import('@pidesktop/shared').SessionSearchRequest, metadata: Record<string, import('@pidesktop/shared').RecoverableSessionMetadata>, excludedPaths: string[]) => ReturnType<typeof searchSessionsPage>;
+ searchSessionsPage: (workspaces: string[], request: import('@pidesktop/shared').SessionSearchRequest, metadata: Record<string, import('@pidesktop/shared').SessionSearchMetadata>, excludedPaths: string[]) => ReturnType<typeof searchSessionsPage>;
  searchProjectFiles: typeof searchProjectFiles;
  rebuildSearchIndex: (workspaces: string[]) => ReturnType<typeof rebuildSearchIndex>;
  cancelDataSearch: typeof cancelDataSearch;
@@ -19,8 +17,7 @@ type SearchMethods = {
 
 export const AGENT_HOST_METHODS = [
  'checkPluginUpdate', 'getMcpSnapshot', 'saveMcpServer', 'removeMcpServer', 'connectMcpServer', 'disconnectMcpServer', 'testMcpServer',
- 'getUsageReport', 'cancelUsageReport',
- 'submitInput', 'getInputQueue', 'mutateInputQueue', 'getFileCheckpoint', 'rewindFileCheckpoint',
+'submitInput', 'getInputQueue', 'mutateInputQueue', 'getFileCheckpoint', 'rewindFileCheckpoint', 'getEditRewindPreview', 'getFileChangeDiffs',
  'searchSessionsPage', 'searchProjectFiles', 'rebuildSearchIndex', 'cancelDataSearch', 'getProjectSearchRules', 'setProjectSearchRules',
  'testProviderModel', 'cancelProviderModelTest', 'getProjectDefaults', 'saveProjectDefaults',
 	'getPersonalization',
@@ -53,6 +50,7 @@ export const AGENT_HOST_METHODS = [
 	'saveCustomProvider',
 	'removeCustomProvider',
 	'restoreProviderBackup',
+	'saveProviderModels',
 	'setModel',
 	'setThinkingLevel',
 	'listProviderAuth',

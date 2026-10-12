@@ -38,8 +38,8 @@ test('file previews compare against actual tool preimages, accumulate and rebase
     assert.equal(change.kind, 'modified');
     assert.equal(change.additions, 1);
     assert.equal(change.deletions, 0);
-    assert.match(change.diff, /\+model one/);
-    assert.doesNotMatch(change.diff, /\+existing user change/);
+    assert.match(f.tracker.diffs({ kind: 'conversation' })[0].diff, /\+model one/);
+    assert.doesNotMatch(f.tracker.diffs({ kind: 'conversation' })[0].diff, /\+existing user change/);
     await f.tracker.beforeTool('two', 'edit', { path: 'dirty.txt' });
     await writeFile(path, 'existing user change\nmodel one\nmodel two\n');
     await f.tracker.afterTool('two');
@@ -50,12 +50,12 @@ test('file previews compare against actual tool preimages, accumulate and rebase
     await f.tracker.afterTool('three');
     change = f.tracker.snapshot()[0];
     assert.equal(change.additions, 1);
-    assert.match(change.diff, /\+model three/);
-    assert.doesNotMatch(change.diff, /\+manual extra/);
+    assert.match(f.tracker.diffs({ kind: 'conversation' })[0].diff, /\+model three/);
+    assert.doesNotMatch(f.tracker.diffs({ kind: 'conversation' })[0].diff, /\+manual extra/);
     const snapshot = f.tracker.snapshot();
     const restored = f.tracker.restore();
-    assert.deepEqual(restored, snapshot);
-    restored[0].path = 'corrupted';
+    assert.deepEqual(restored.items, snapshot);
+    restored.items[0].path = 'corrupted';
     assert.equal(f.tracker.snapshot()[0].path, 'dirty.txt');
     await f.tracker.beforeTool('revert', 'write', { path: 'dirty.txt' });
     await writeFile(path, 'existing user change\nmodel one\nmodel two\nmanual extra\n');
@@ -84,8 +84,8 @@ test('shell snapshots include clean tracked, already dirty and untracked files w
     await f.tracker.afterTool('shell');
     const changes = f.tracker.snapshot();
     assert.deepEqual(changes.map(({ path, kind }) => [path, kind]), [['added.txt', 'added'], ['removed.txt', 'deleted'], ['tracked.txt', 'modified'], ['untracked.txt', 'modified']]);
-    assert.match(changes.find(({ path }) => path === 'added.txt').diff, /@@ -0,0 \+1,1 @@/);
-    assert.match(changes.find(({ path }) => path === 'removed.txt').diff, /@@ -1,1 \+0,0 @@/);
+    assert.match(f.tracker.diffs({ kind: 'conversation' }).find(({ path }) => path === 'added.txt').diff, /@@ -0,0 \+1,1 @@/);
+    assert.match(f.tracker.diffs({ kind: 'conversation' }).find(({ path }) => path === 'removed.txt').diff, /@@ -1,1 \+0,0 @@/);
     assert.equal(changes.find(({ path }) => path === 'untracked.txt').additions, 1);
   } finally { await f.cleanup(); }
 });
@@ -149,13 +149,13 @@ test('unified previews preserve final-newline markers and omit EOF markers outsi
     await f.tracker.beforeTool('newline', 'edit', { path: 'newline.txt' });
     await writeFile(join(f.workspace, 'newline.txt'), 'new\n');
     await f.tracker.afterTool('newline');
-    assert.match(f.tracker.snapshot()[0].diff, /-old\n\\ No newline at end of file\n\+new\n/);
+    assert.match(f.tracker.diffs({ kind: 'conversation' })[0].diff, /-old\n\\ No newline at end of file\n\+new\n/);
     const tail = Array.from({ length: 12 }, (_, i) => `tail ${i}`).join('\n');
     await writeFile(join(f.workspace, 'head.txt'), `old\n${tail}`);
     await f.tracker.beforeTool('head', 'edit', { path: 'head.txt' });
     await writeFile(join(f.workspace, 'head.txt'), `new\n${tail}`);
     await f.tracker.afterTool('head');
-    assert.doesNotMatch(f.tracker.snapshot().find(({ path }) => path === 'head.txt').diff, /No newline/);
+    assert.doesNotMatch(f.tracker.diffs({ kind: 'conversation' }).find(({ path }) => path === 'head.txt').diff, /No newline/);
   } finally { await f.cleanup(); }
 });
 
@@ -189,7 +189,7 @@ test('real SDK tool execution captures preimages, survives extension reload, swi
     };
     await writeFile(join(workspace, 'existing.txt'), 'user original\n');
     await run('edit', { path: 'existing.txt', oldText: 'user original', newText: 'model replacement' });
-    assert.match(service.getSnapshot().fileChanges[0].diff, /-user original\n\+model replacement/);
+    assert.match(service.getFileChangeDiffs({ kind: 'conversation' })[0].diff, /-user original\n\+model replacement/);
     const path = service.getSnapshot().sessionPath;
     await service.active.runtime.session.reload();
     await run('write', { path: 'created.txt', content: 'created by model\n' });
@@ -210,4 +210,58 @@ test('real SDK tool execution captures preimages, survives extension reload, swi
     assert.ok(resolve(root).startsWith(resolve(tmpdir()) + sep));
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test('changes settle per turn with run records, lazy turn diffs and legacy grouping', async () => {
+  const f = await fixture();
+  const { CONVERSATION_RUN_ENTRY } = await import('../packages/agent/src/conversationRuns.ts');
+  // Begin and finish records of one run must share startedAt (readConversationRuns dedupes on it).
+  const startedAts = new Map();
+  const runRecord = (id, status) => {
+    const startedAt = startedAts.get(id) ?? Date.now();
+    startedAts.set(id, startedAt);
+    f.manager.appendCustomEntry(CONVERSATION_RUN_ENTRY, { version: 1, run: { id, startedAt, finishedAt: status === 'running' ? null : Date.now(), status } });
+  };
+  try {
+    const shared = join(f.workspace, 'shared.txt'), solo = join(f.workspace, 'solo.txt');
+    await writeFile(shared, 'v1\n');
+    runRecord('run-one', 'running');
+    assert.equal(f.tracker.view().activeRunId, 'run-one');
+    await f.tracker.beforeTool('a1', 'edit', { path: 'shared.txt' });
+    await writeFile(shared, 'v1\nv2\n');
+    await f.tracker.afterTool('a1');
+    runRecord('run-one', 'completed');
+    runRecord('run-two', 'running');
+    await f.tracker.beforeTool('a2', 'edit', { path: 'shared.txt' });
+    await writeFile(shared, 'v1\nv2\nv3\n');
+    await f.tracker.afterTool('a2');
+    await f.tracker.beforeTool('b2', 'write', { path: 'solo.txt' });
+    await writeFile(solo, 'only turn two\n');
+    await f.tracker.afterTool('b2');
+    runRecord('run-two', 'completed');
+
+    const live = f.tracker.view();
+    assert.equal(live.activeRunId, null);
+    assert.deepEqual(live.turns.map(turn => [turn.runId, turn.items.map(item => item.path)]), [['run-one', ['shared.txt']], ['run-two', ['shared.txt', 'solo.txt']]]);
+    // Conversation scope spans both turns: first preimage to final state.
+    const conversation = f.tracker.diffs({ kind: 'conversation' }).find(({ path }) => path === 'shared.txt');
+    assert.match(conversation.diff, /\+v2\n\+v3/);
+    // Turn scopes restart the chain at each run boundary.
+    const turnOne = f.tracker.diffs({ kind: 'turn', runId: 'run-one' }).find(({ path }) => path === 'shared.txt');
+    const turnTwo = f.tracker.diffs({ kind: 'turn', runId: 'run-two' }).find(({ path }) => path === 'shared.txt');
+    assert.match(turnOne.diff, /\+v2/);
+    assert.doesNotMatch(turnOne.diff, /v3/);
+    assert.match(turnTwo.diff, /\+v3/);
+    assert.doesNotMatch(turnTwo.diff, /\+v2/);
+    assert.deepEqual(f.tracker.diffs({ kind: 'turn', runId: 'missing' }), []);
+    // Replay from persisted records reproduces the same settlement.
+    const restored = f.tracker.restore();
+    assert.deepEqual(restored.items, live.items);
+    assert.deepEqual(restored.turns, live.turns);
+
+    // Records outside any run (legacy sessions) group under runId null.
+    f.manager.appendCustomEntry('pi-desktop:file-changes-v1', { files: [{ path: 'legacy.txt', before: { exists: false, fingerprint: 'missing', text: '' }, after: { exists: true, fingerprint: 'legacy-after', text: 'legacy\n' } }] });
+    const legacy = f.tracker.restore();
+    assert.equal(legacy.turns.some(turn => turn.runId === null && turn.items.some(item => item.path === 'legacy.txt')), true);
+  } finally { await f.cleanup(); }
 });

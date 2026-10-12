@@ -130,7 +130,12 @@ export default async function sidebarTitlesScenarios(review) {
   await review.waitFor(`${state}.rows.find(row => row.id === 'long').pinned === true`);
   await review.assert(`${state}.writes.length === 1 && ${state}.writes[0].patch.pinned === true && ${state}.navigation.length === 0`, 'The overlaid pin button updates exactly its conversation without opening it');
   await moveTo('border');
+  // zcode-style inline confirm: the first click only arms the row.
+  await review.click(`${row('border')} [data-session-action="archive"]`);
+  await review.waitFor(`${row('border')}.classList.contains('is-archive-confirming')`);
+  await review.assert(`(() => { const item = document.querySelector(${q(row('border'))}); const button = item.querySelector('[data-session-action="archive"]'); return button.classList.contains('is-confirming') && button.getAttribute('aria-label').startsWith('确认归档') && getComputedStyle(item.querySelector('.pd-session-actions')).opacity === '1' && ${state}.writes.length === 1; })()`, 'The first archive click arms an inline confirm (visible without hover) and writes nothing yet');
+  await review.screenshot('sidebar-titles-archive-confirming');
   await review.click(`${row('border')} [data-session-action="archive"]`);
   await review.waitFor(`!document.querySelector(${q(row('border'))})`);
-  await review.assert(`${state}.writes.length === 2 && ${state}.rows.find(row => row.id === 'border').archived === true && ${state}.navigation.length === 0`, 'The overlaid archive button updates exactly its conversation without opening it');
+  await review.assert(`${state}.writes.length === 2 && ${state}.writes[1].patch.archived === true && ${state}.rows.find(row => row.id === 'border').archived === true && ${state}.navigation.length === 0`, 'The second click archives exactly its conversation without opening it');
 }

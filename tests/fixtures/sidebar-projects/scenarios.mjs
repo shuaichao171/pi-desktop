@@ -116,8 +116,9 @@ export default async function sidebarProjectsScenarios(review) {
   await review.assert('document.activeElement === document.querySelector("#pd-sidebar-group-name") && Boolean(document.querySelector(".pd-sidebar-popover[role=dialog]"))', 'Changing the group menu into a rename dialog keeps focus in the new editor');
   await review.key('Escape');
   await review.click('[data-mode="project"]');
-  if (await review.evaluate('Boolean(document.querySelector(".pd-sidebar-organize-toolbar button[aria-label=展开全部]"))')) await review.click('.pd-sidebar-organize-toolbar button[aria-label="展开全部"]');
-  await review.click('.pd-sidebar-organize-toolbar button[aria-label="收起全部"],.pd-sidebar-organize-toolbar button[aria-label="Collapse all"]');
+  await review.click('.pd-sidebar-organize-actions button[aria-label="视图选项"]');
+  if (await review.evaluate(`[...document.querySelectorAll('.pd-sidebar-popover [role="menuitem"]')].some(item => item.textContent.trim() === '展开全部分组')`)) { await review.clickText('.pd-sidebar-popover [role="menuitem"]', '展开全部分组'); await review.click('.pd-sidebar-organize-actions button[aria-label="视图选项"]'); }
+  await review.clickText('.pd-sidebar-popover [role="menuitem"]', '收起全部分组');
   await review.click('.pd-sidebar-group[data-section-key="pinned"] > .pd-sidebar-group-heading .pd-sidebar-group-toggle');
   await review.screenshot('sidebar-projects-menus-and-count-free-headings');
 

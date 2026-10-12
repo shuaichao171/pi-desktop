@@ -5,7 +5,6 @@
  * Pi runs in an Electron utility process so SDK work cannot block the window's
  * main process. Only plain data crosses this internal RPC boundary.
  */
-import { UsageService } from './usageService';
 import { AgentService, configureProviderNetwork } from '@pidesktop/agent';
 import { getAgentDir } from '@earendil-works/pi-coding-agent';
 import { join } from 'node:path';
@@ -70,10 +69,7 @@ const agent = new AgentService(
 agent.onEvent((envelope) => post({ kind: 'event', envelope }));
 agent.onBackgroundActivity((cwd, path) => post({ kind: 'background-activity', cwd, path }));
 
-const usage = new UsageService(join(getAgentDir(), 'sessions'), join(getAgentDir(), 'desktop-usage-index.json'));
 const methods = createAgentHostMethods(agent, {
- getUsageReport: (query, workspaces, automatedPaths) => usage.report(query, workspaces, automatedPaths),
- cancelUsageReport: id => usage.cancel(id),
  searchSessionsPage: (workspaces, request, metadata, excludedPaths) => searchSessionsPage(join(getAgentDir(), 'sessions'), workspaces, request, metadata, agent.getSessionBranchHeads(), excludedPaths),
  searchProjectFiles, cancelDataSearch, getProjectSearchRules, setProjectSearchRules,
  rebuildSearchIndex: workspaces => rebuildSearchIndex(join(getAgentDir(), 'sessions'), workspaces),

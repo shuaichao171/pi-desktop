@@ -138,7 +138,7 @@ test('model settings use pi catalog and credential store without exposing secret
       if (value === undefined) delete process.env[name];
       else process.env[name] = value;
     }
-    const resolvedTemp = resolve(tempRoot);
+    const resolvedTemp = realpathSync.native(tempRoot);
     const resolvedParent = realpathSync.native(tmpdir());
     if (!resolvedTemp.startsWith(resolvedParent + sep)) {
       throw new Error('Refusing to remove a test directory outside the temporary folder');

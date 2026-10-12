@@ -92,7 +92,7 @@ export function ChatHeaderMenu({ title, sessionPath, cwd, onRename, onOpenCommit
 		{anchor && <SidebarPopover anchor={anchor} label={t('chat.menuLabel')} onClose={close}>
 			{item(t('sidebar.rename'), () => { close(); onRename(); }, !saved)}
 			{item(t(session?.pinned ? 'sidebar.unpin' : 'sidebar.pin'), () => perform({ pinned: !session?.pinned }), !saved)}
-			{item(t(session?.unread ? 'sidebar.markRead' : 'sidebar.markUnread'), () => perform({ unread: !session?.unread }), !saved)}
+			{item(t(session?.unread ? 'sidebar.markRead' : 'sidebar.markUnread'), () => perform(session?.unread ? { unread: false, expectedUnreadAt: session.unreadAt } : { unread: true }), !saved)}
 			{item(t(session?.archived ? 'sidebar.unarchive' : 'sidebar.archive'), () => perform({ archived: !session?.archived }), !saved)}
 			<hr />
 			{item(t('chat.menuCopyTitle'), () => { void copyText(title); })}

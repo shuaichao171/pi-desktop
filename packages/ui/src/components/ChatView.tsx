@@ -1,16 +1,20 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { useT } from '../i18n';
+import { useExtensionNoticeDisplayEnabled } from '../extensionNoticeDisplay';
 import { useChatStore } from '../store';
 import { sessionOpenMetrics } from '../sessionOpenMetrics';
 import { bindingKeysFor, matchesShortcut } from '../shortcuts/bindings';
 import type { ModelManagementTarget } from '../modelManagement';
+import type { UiFileDiffScope } from '@pidesktop/shared';
 import { buildConversationTimeline, entryContainsMessage, type ConversationTimelineEntry } from '../conversationTimeline';
 import { ConversationDisclosureProvider } from '../conversationDisclosure';
 import { ConversationRail } from './ConversationRail';
 import { useExtensionRequestPending } from './ExtensionDialogHost';
 import { Composer } from './Composer';
-import { ComposerChanges, type ComposerChangesHandle } from './ComposerChanges';
+import { ChangesCard, LiveChangesSummary } from './ComposerChanges';
+import { ChangesDialog } from './ChangesDialog';
+import { useFileChangeDiffs } from '../fileChangeDiffs';
 import { findChangeMatches } from '../changesFind';
 import { RunStatusBar } from './RunStatusBar';
 import { ComposerContextBar } from './ComposerContextBar';
@@ -27,6 +31,7 @@ import { ActivityLabel } from './ActivityDisclosure';
 import { TranscriptFind } from './TranscriptFind';
 import { useConversationCopy } from '../conversationCopy';
 import { findOccurrences, readReading, recentReading, readingKey, saveReading, type ReadingPosition } from '../conversationState';
+import { resolveFollowsBottom } from '../scrollFollow';
 import { locateHistoryMessage } from '../conversationNavigation';
 import { TranscriptSearchContext, paintTranscriptMatches, revealTranscriptRange } from '../transcriptSearch';
 import './conversationEnhancements.css';
@@ -64,6 +69,16 @@ function SessionLoading() {
 	);
 }
 
+/** Slim top progress bar shown while a switch keeps the previous conversation visible (zcode no-blank-out). */
+function SessionSwitchingBar() {
+	const { t } = useT();
+	return (
+		<div className="pd-session-switching" role="status" aria-label={t('chat.loadingSession')}>
+			<span className="pd-session-switching-track" aria-hidden="true"><span className="pd-session-switching-fill" /></span>
+		</div>
+	);
+}
+
 export interface SearchMessageTarget { sessionPath: string; messageId: string; snippet?: string; requestId: number }
 
 export function ChatView({ onToggleSidebar, onOpenModelManagement, searchTarget, historyControls, navigationError, compact = false, active = true }: { onToggleSidebar(): void; onOpenModelManagement(target: ModelManagementTarget): void; searchTarget?: SearchMessageTarget | null; historyControls?: ReactNode; navigationError?: string | null; compact?: boolean; /** False while another main view hides the chat; rising edges re-apply the remembered reading position (12). */ active?: boolean }) {
@@ -77,6 +92,14 @@ export function ChatView({ onToggleSidebar, onOpenModelManagement, searchTarget,
 	const fileChanges = useChatStore((s) => s.fileChanges);
 	const [changesDock, setChangesDock] = useState<HTMLDivElement | null>(null);
 	const changesRegionRef = useRef<HTMLDivElement>(null);
+	const fileChangeTurns = useChatStore((s) => s.fileChangeTurns);
+	const fileChangeActiveRunId = useChatStore((s) => s.fileChangeActiveRunId);
+	// Turn-level settlement: each completed run's changes render at that turn's tail.
+	const changesByRun = useMemo(() => new Map(fileChangeTurns.map(turn => [turn.runId, turn.items])), [fileChangeTurns]);
+	const liveChanges = fileChangeActiveRunId
+		? changesByRun.get(fileChangeActiveRunId) ?? []
+		: changesByRun.get(null) ?? fileChanges;
+	const legacyChanges = changesByRun.get(null) ?? [];
 	const sessions = useChatStore((s) => s.sessions);
 	const sessionPath = useChatStore((s) => s.sessionPath);
 	const sessionId = useChatStore((s) => s.sessionId);
@@ -123,6 +146,10 @@ export function ChatView({ onToggleSidebar, onOpenModelManagement, searchTarget,
 	const getScrollElement = useCallback(() => scrollRef.current, []);
 	const messageListRef = useRef<HTMLDivElement>(null);
 	const followsBottomRef = useRef(true);
+	// Last observed scrollTop: distinguishes real upward scrolling (user intent to
+	// stop following the newest content) from transient layout shifts that leave
+	// the offset momentarily past BOTTOM_THRESHOLD without moving the view.
+	const lastScrollTopRef = useRef(0);
 	const scrollAnimationRef = useRef<number | null>(null);
 	const [showBackToBottom, setShowBackToBottom] = useState(false);
 	// Re-showing the chat view restores a stale scrollTop and fires a scroll event
@@ -157,9 +184,14 @@ export function ChatView({ onToggleSidebar, onOpenModelManagement, searchTarget,
 		if (pending.restoresReading) restoring.current = false;
 	}, []);
 	const readingAnchor = useRef<ReadingPosition | null>(null);
-	const memoryKey = readingKey(cwd, sessionPath, messages.at(-1)?.id ?? 'empty');
+	const conversationPreviewPath = useChatStore((s) => s.conversationPreviewPath);
+	// Reading memory keys off the session the painted transcript belongs to: a
+	// keep-warm preview paints the target's content while the identity fields
+	// still name the source session (zcode warm-store scope key).
+	const contentSessionPath = conversationPreviewPath ?? sessionPath;
+	const memoryKey = readingKey(cwd, contentSessionPath, messages.at(-1)?.id ?? 'empty');
 	const memoryKeyRef = useRef(memoryKey);
-	const memoryIdentity = useRef({ cwd, sessionPath, historyGeneration });
+	const memoryIdentity = useRef({ cwd, sessionPath: contentSessionPath, historyGeneration });
 	const activeSession = sessions.find((session) => session.path === sessionPath);
 	const firstUserText = messages.find((message) => message.role === 'user')?.text;
 	const title = activeSession?.name?.trim() || activeSession?.firstMessage?.trim().split(/\r?\n/)[0] || firstUserText?.trim().split(/\r?\n/)[0] || t('chat.newSession');
@@ -173,9 +205,21 @@ export function ChatView({ onToggleSidebar, onOpenModelManagement, searchTarget,
 	const [findScope, setFindScope] = useState<'conversation' | 'changes'>('conversation');
 	// -1: no file opened yet, so the first step lands on the first (or last) match.
 	const [changesFindFile, setChangesFindFile] = useState(-1);
-	const changesReviewRef = useRef<ComposerChangesHandle>(null);
-	const changesFindable = useMemo(() => fileChanges.some(change => change.diff), [fileChanges]);
-	const changesFind = useMemo(() => findScope === 'changes' && findOpen ? findChangeMatches(fileChanges, findQuery) : null, [findScope, findOpen, fileChanges, findQuery]);
+	// One shared review dialog serves cards, the live summary and find stepping.
+	const [changesReview, setChangesReview] = useState<{ scope: UiFileDiffScope; path: string; trigger: HTMLElement | null } | null>(null);
+	const openChangesReview = useCallback((scope: UiFileDiffScope, path: string, trigger?: HTMLElement | null) => {
+		setChangesReview({ scope, path, trigger: trigger ?? null });
+	}, []);
+	const reviewItems = useMemo(() => {
+		if (!changesReview) return [];
+		if (changesReview.scope.kind === 'conversation') return fileChanges;
+		return changesByRun.get(changesReview.scope.runId) ?? [];
+	}, [changesReview, fileChanges, changesByRun]);
+	useEffect(() => { if (changesReview && reviewItems.length === 0) setChangesReview(null); }, [changesReview, reviewItems.length]);
+	const reviewDiffs = useFileChangeDiffs(changesReview?.scope ?? null);
+	const findDiffs = useFileChangeDiffs(findOpen && findScope === 'changes' ? { kind: 'conversation' } : null);
+	const changesFindable = fileChanges.length > 0;
+	const changesFind = useMemo(() => findScope === 'changes' && findOpen ? findChangeMatches(fileChanges, findQuery, findDiffs) : null, [findScope, findOpen, fileChanges, findQuery, findDiffs]);
 	useEffect(() => { setChangesFindFile(-1); }, [findQuery]);
 	useEffect(() => { if (changesFind && changesFindFile >= changesFind.files.length) setChangesFindFile(-1); }, [changesFind, changesFindFile]);
 	const stepChangesFind = (delta: 1 | -1, files = changesFind?.files ?? [], current = changesFindFile) => {
@@ -184,8 +228,13 @@ export function ChatView({ onToggleSidebar, onOpenModelManagement, searchTarget,
 			? (delta > 0 ? 0 : files.length - 1)
 			: (current + delta + files.length) % files.length;
 		setChangesFindFile(next);
-		changesReviewRef.current?.openReview(files[next]!.path);
+		openChangesReview({ kind: 'conversation' }, files[next]!.path);
 	};
+	// Lazy diffs arrive after the scope switches; land on the first match then.
+	useEffect(() => {
+		if (!findDiffs || !findOpen || findScope !== 'changes' || changesFindFile >= 0) return;
+		if (changesFind?.files.length) stepChangesFind(1);
+	}, [findDiffs]);
 	const findIndex = Math.max(0, findMatches.findIndex((item) => item.key === findKey));
 	const activeFind = findOpen ? findMatches[findIndex] : undefined;
 	const activeFindId = activeFind?.messageId ?? null;
@@ -218,9 +267,16 @@ export function ChatView({ onToggleSidebar, onOpenModelManagement, searchTarget,
 			}
 			if (matchesShortcut(event, bindingKeysFor('stopGeneration'))) {
 				const state = useChatStore.getState();
-				if (state.status !== 'busy' || document.querySelector('[role="dialog"][aria-modal="true"]')) return;
-				const target = event.target as HTMLElement | null;
-				if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) return;
+				if (state.status !== 'busy') return;
+				// zcode escapeStop: events whose path crosses an open dialog are
+				// ignored (the dialog itself consumes Esc to close). Focus inside the
+				// composer must NOT block stopping — typing while a run streams and
+				// pressing Esc is the most common stop path. The composer cancels a
+				// history recall first and stops propagation, so that Esc never gets here.
+				// (The global query at the top of this listener additionally keeps the
+				// old conservative gate: while any modal dialog is open, stop stays silent.)
+				const origin = event.target instanceof Element ? event.target : null;
+				if (origin?.closest('dialog[open], [role="dialog"][aria-modal="true"]')) return;
 				event.preventDefault();
 				void state.abort();
 			}
@@ -251,6 +307,55 @@ export function ChatView({ onToggleSidebar, onOpenModelManagement, searchTarget,
 		},
 	});
 
+
+	// Latest virtualizer handle for the restore path, kept in refs so the restore
+	// effect stays keyed to content identity instead of list gating.
+	const virtualizerRef = useRef(virtualizer);
+	virtualizerRef.current = virtualizer;
+	const virtualizeRef = useRef(virtualize);
+	virtualizeRef.current = virtualize;
+	/** Exact one-write restore (zcode restoreScrollMemory): the anchor row must be mounted. */
+	const applyReadingRow = useCallback((saved: ReadingPosition): boolean => {
+		const node = scrollRef.current;
+		if (!node || !saved.messageId) return false;
+		const row = node.querySelector<HTMLElement>(`[data-message-id="${CSS.escape(saved.messageId)}"]`);
+		if (!row || row.closest('[inert],[hidden],[aria-hidden="true"]')) return false;
+		node.scrollTop += row.getBoundingClientRect().top - node.getBoundingClientRect().top - saved.offset;
+		readingAnchor.current = saved;
+		followsBottomRef.current = false;
+		lastScrollTopRef.current = node.scrollTop;
+		setShowBackToBottom(true);
+		return true;
+	}, []);
+	// Virtualized restore refinement: the anchor can exist in the loaded timeline
+	// while sitting outside the mounted window. The switch lands at the bottom
+	// first (coherent paint), then moves the window after paint and applies the
+	// saved offset once the row mounts. User input cancels; the loop is bounded.
+	const pendingRestoreRef = useRef<{ saved: ReadingPosition; tries: number; frame: number } | null>(null);
+	const cancelPendingRestore = useCallback(() => {
+		const pending = pendingRestoreRef.current;
+		if (!pending) return;
+		cancelAnimationFrame(pending.frame);
+		pendingRestoreRef.current = null;
+		restoring.current = false;
+	}, []);
+	function schedulePendingRestore() {
+		const pending = pendingRestoreRef.current;
+		if (!pending) return;
+		pending.frame = requestAnimationFrame(() => {
+			const current = pendingRestoreRef.current;
+			if (current !== pending) return;
+			if (applyReadingRow(current.saved)) { pendingRestoreRef.current = null; restoring.current = false; return; }
+			if (current.tries === 0 && virtualizeRef.current && current.saved.messageId) {
+				const index = timelineRef.current?.entries.findIndex((entry) => entryContainsMessage(entry, current.saved.messageId!)) ?? -1;
+				if (index >= 0) virtualizerRef.current.scrollToIndex(index, { align: 'start' });
+			}
+			current.tries += 1;
+			if (current.tries < 90) { schedulePendingRestore(); return; }
+			pendingRestoreRef.current = null;
+			restoring.current = false;
+		});
+	}
 	const scrollToRow = useCallback((id: string) => {
 		const transcript = scrollRef.current;
 		if (!transcript) return false;
@@ -263,6 +368,7 @@ export function ChatView({ onToggleSidebar, onOpenModelManagement, searchTarget,
 
 	const jumpToMessage = useCallback((id: string, restoreReading?: () => void) => {
 		cancelPendingJump();
+		cancelPendingRestore();
 		const transcript = scrollRef.current;
 		if (!transcript) return;
 		cancelScrollAnimation();
@@ -313,6 +419,29 @@ export function ChatView({ onToggleSidebar, onOpenModelManagement, searchTarget,
 		}
 	}, [messages, activities, runs, fileChanges, error, awaitingResponse]);
 
+	// A settled turn re-publishes the visible window so live rows swap to persisted
+	// entry ids. The row the reader anchored on can change identity without moving
+	// (zcode: content commits never move the reader), so re-derive the anchor from the
+	// live DOM before it is saved; otherwise the dead id later fails to restore and
+	// forces a jump to the bottom on reopen.
+	useLayoutEffect(() => {
+		if (restoring.current) return;
+		const anchor = readingAnchor.current;
+		if (!anchor?.messageId || messages.some((message) => message.id === anchor.messageId)) return;
+		const node = scrollRef.current;
+		if (!node) return;
+		const top = node.getBoundingClientRect().top;
+		let position: ReadingPosition | null = null;
+		for (const row of node.querySelectorAll<HTMLElement>('[data-message-id]')) {
+			if (row.closest('[inert],[hidden],[aria-hidden="true"]')) continue;
+			const rect = row.getBoundingClientRect();
+			if (rect.bottom <= top) continue;
+			position = { messageId: row.dataset.messageId ?? null, offset: rect.top - top, followsBottom: anchor.followsBottom };
+			break;
+		}
+		readingAnchor.current = position;
+	}, [messages]);
+
 	useLayoutEffect(() => {
 		const list = messageListRef.current;
 		if (!list) return;
@@ -342,39 +471,58 @@ export function ChatView({ onToggleSidebar, onOpenModelManagement, searchTarget,
 		return () => { observer.disconnect(); if (frame !== null) cancelAnimationFrame(frame); };
 	}, [isEmpty]);
 
+	// Reading-position restore on conversation switches (zcode ConversationTimeline
+	// restoreScrollMemory): one synchronous scrollTop write in the same commit that
+	// swaps the transcript. The old path chased the anchor through RPC history pages
+	// and then scrollIntoView'd to it via animation frames — the reader saw bottom,
+	// shaking prepends, a centered jump and an offset nudge, i.e. the transcript
+	// "jumping around" on every sidebar click.
 	useLayoutEffect(() => {
 		cancelScrollAnimation(); locationRequest.current?.abort(); setLocationStatus(null); setLocationTarget(null); readingAnchor.current = null;
+		cancelPendingRestore();
+		lastScrollTopRef.current = scrollRef.current?.scrollTop ?? 0;
 		memoryKeyRef.current = memoryKey;
+		// zcode keep-visible: while the painted content has no known session (a reset
+		// kept the previous conversation but cleared identity) or a search navigation
+		// is about to take ownership, the view stays frozen wherever the reader left
+		// it. Writing scroll offsets against stale content — or deriving follow state
+		// from a garbage memory key — is what made switches visibly lurch.
+		if (!contentSessionPath) return;
+		if (searchTarget?.sessionPath === sessionPath && handledSearchRequest.current !== searchTarget.requestId) return;
 		const exact = readReading(memoryKey);
-		const earlier = exact ? undefined : recentReading(cwd, sessionPath);
-		const saved = exact ?? earlier?.position;
+		const saved = exact ?? recentReading(cwd, contentSessionPath)?.position;
 		followsBottomRef.current = saved?.followsBottom ?? true;
 		setShowBackToBottom(!followsBottomRef.current);
-		if (sessionLoading || (searchTarget?.sessionPath === sessionPath && handledSearchRequest.current !== searchTarget.requestId)) return;
-		if (!saved || saved.followsBottom || !saved.messageId) { if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight; return; }
-		const controller = new AbortController(); locationRequest.current = controller; restoring.current = true;
-		void (async () => {
-			if (earlier && !await locateHistoryMessage(earlier.tailId, controller.signal)) return null;
-			return locateHistoryMessage(saved.messageId!, controller.signal);
-		})().then((id) => {
-			if (controller.signal.aborted) return;
-			if (!id) { restoring.current = false; followsBottomRef.current = true; if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight; return; }
-			jumpToMessage(id, () => {
-				if (controller.signal.aborted) return;
-				const node = scrollRef.current; const row = node?.querySelector<HTMLElement>(`[data-message-id="${CSS.escape(id)}"]`);
-				if (node && row) node.scrollTop += row.getBoundingClientRect().top - node.getBoundingClientRect().top - saved.offset;
-				readingAnchor.current = saved; restoring.current = false;
-			});
-		});
-		return () => { controller.abort(); restoring.current = false; };
-	}, [cwd, sessionId, sessionPath, historyGeneration, sessionLoading]);
+		const node = scrollRef.current;
+		if (!node) return;
+		if (!saved || saved.followsBottom || !saved.messageId) { node.scrollTop = node.scrollHeight; return; }
+		// The committed rows render in this same commit (ready and the keep-warm preview
+		// swap messages atomically), so a mounted anchor restores with a single
+		// pre-paint write — no flash of the bottom before the remembered position.
+		if (applyReadingRow(saved)) return;
+		// The anchor is outside the loaded window (long session, cold cache): land at
+		// the bottom like zcode's clamped restore. The replaced RPC page-chase
+		// reloaded history with uncompensated prepends and then jumped — exactly the
+		// jumping the switch fix removes.
+		node.scrollTop = node.scrollHeight;
+		followsBottomRef.current = true;
+		setShowBackToBottom(false);
+		const anchorId = saved.messageId;
+		if (anchorId && (timelineRef.current?.entries.some((entry) => entryContainsMessage(entry, anchorId)) ?? false)) {
+			// The anchor exists in the loaded (virtualized) timeline but is not mounted;
+			// refine after the first paint.
+			pendingRestoreRef.current = { saved, tries: 0, frame: 0 };
+			restoring.current = true;
+			schedulePendingRestore();
+		}
+	}, [cwd, sessionId, sessionPath, conversationPreviewPath, historyGeneration, sessionLoading, applyReadingRow, cancelPendingRestore]);
 	useLayoutEffect(() => {
 		const previous = memoryIdentity.current;
-		if (previous.cwd === cwd && previous.sessionPath === sessionPath && previous.historyGeneration === historyGeneration && readingAnchor.current && !restoring.current) saveReading(memoryKey, readingAnchor.current);
-		memoryKeyRef.current = memoryKey; memoryIdentity.current = { cwd, sessionPath, historyGeneration };
-	}, [memoryKey, cwd, sessionPath, historyGeneration]);
+		if (previous.cwd === cwd && previous.sessionPath === contentSessionPath && previous.historyGeneration === historyGeneration && readingAnchor.current && !restoring.current) saveReading(memoryKey, readingAnchor.current);
+		memoryKeyRef.current = memoryKey; memoryIdentity.current = { cwd, sessionPath: contentSessionPath, historyGeneration };
+	}, [memoryKey, cwd, contentSessionPath, historyGeneration]);
 
-	useEffect(() => () => cancelScrollAnimation(), []);
+	useEffect(() => () => { cancelScrollAnimation(); cancelPendingRestore(); }, []);
 
 	useLayoutEffect(() => {
 		// Empty drafts can scroll as a whole; clear that offset when the dock moves.
@@ -384,6 +532,7 @@ export function ChatView({ onToggleSidebar, onOpenModelManagement, searchTarget,
 	const jumpRef = useRef(jumpToMessage); jumpRef.current = jumpToMessage;
 	const locate = useCallback((id: string, snippet?: string) => {
 		locationRequest.current?.abort(); const controller = new AbortController(); locationRequest.current = controller;
+		cancelPendingRestore();
 		setLocationTarget({ id, snippet });
 		followsBottomRef.current = false; restoring.current = true; setLocationStatus('loading');
 		void locateHistoryMessage(id, controller.signal, snippet).then((found) => {
@@ -412,16 +561,25 @@ export function ChatView({ onToggleSidebar, onOpenModelManagement, searchTarget,
 		// events are layout noise, not reading intent.
 		if (restoring.current || sessionLoading) return;
 		const nearBottom = node.scrollHeight - node.scrollTop - node.clientHeight <= BOTTOM_THRESHOLD;
-		if (scrollAnimationRef.current === null) followsBottomRef.current = nearBottom;
+		if (scrollAnimationRef.current === null) {
+			// Sending a message resizes the composer and appends rows, so a view that
+			// was pinned to the bottom can transiently sit past BOTTOM_THRESHOLD with
+			// its scrollTop unchanged. resolveFollowsBottom keeps that transient from
+			// cancelling bottom-following: only an actual upward scroll breaks it,
+			// and arriving near the bottom re-arms it.
+			followsBottomRef.current = resolveFollowsBottom(followsBottomRef.current, nearBottom, node.scrollTop, lastScrollTopRef.current);
+		}
+		lastScrollTopRef.current = node.scrollTop;
+		const follows = followsBottomRef.current;
 		setShowBackToBottom(!nearBottom);
 		// Save before navigation or history loading can replace the visible rows.
 		const top = node.getBoundingClientRect().top;
-		let position: ReadingPosition = { messageId: null, offset: 0, followsBottom: nearBottom };
+	let position: ReadingPosition = { messageId: null, offset: 0, followsBottom: follows };
 		for (const row of node.querySelectorAll<HTMLElement>('[data-message-id]')) {
 			if (row.closest('[inert],[hidden],[aria-hidden="true"]')) continue;
 			const rect = row.getBoundingClientRect();
 			if (rect.bottom <= top) continue;
-			position = { messageId: row.dataset.messageId ?? null, offset: rect.top - top, followsBottom: nearBottom };
+			position = { messageId: row.dataset.messageId ?? null, offset: rect.top - top, followsBottom: follows };
 			break;
 		}
 		// A scroll over cleared content has no anchor row; never overwrite a real
@@ -439,8 +597,17 @@ export function ChatView({ onToggleSidebar, onOpenModelManagement, searchTarget,
 		scrollAnimationRef.current = null;
 	}
 
+	// Direct user interaction with the transcript cancels programmatic motion and any
+	// pending restore refinement: the reader takes ownership of the view (zcode
+	// user-scroll cancels pendingDetachedScrollRestore).
+	function cancelUserScrollOwnership() {
+		cancelScrollAnimation();
+		cancelPendingRestore();
+	}
+
 	function scrollToBottom() {
 		cancelPendingJump();
+		cancelPendingRestore();
 		const node = scrollRef.current;
 		if (!node) return;
 		cancelScrollAnimation();
@@ -480,17 +647,19 @@ export function ChatView({ onToggleSidebar, onOpenModelManagement, searchTarget,
 		if (message.role === 'assistant' && (message.text.trim() || message.status === 'error')) { lastReplyId = message.id; break; }
 	}
 	const canRegenerateLatest = agentStatus === 'idle' && lastReplyId !== null;
+	// Idle plugin notices render as standalone cards; the display setting removes them.
+	const [noticesVisible] = useExtensionNoticeDisplayEnabled();
 	const renderEntry = (entry: ConversationTimelineEntry) => entry.kind === 'message'
-		? <MessageItem
+		? (messages[entry.index]!.systemKind === 'extension-notice' && !noticesVisible ? null : <MessageItem
 			key={`message-${entry.id}`}
 			message={messages[entry.index]!}
 			highlighted={(highlightedMessage?.sessionPath === sessionPath && highlightedMessage.messageId === entry.id) || activeFindId === entry.id}
 			findMatch={findOpen && entry.id !== activeFindId && findMatchSet.has(entry.id)}
 			showHeading={entry.showAssistantHeading}
 			canRegenerate={canRegenerateLatest && entry.id === lastReplyId}
-		/>
+		/>)
 		: <ConversationTurn key={`${disclosureScope}:${entry.id}`} entry={entry} messages={messages} activities={activities}
-			run={runs.find(run => run.id === entry.runId)} legacyRunning={agentStatus === 'busy' && entry === timeline.at(-1)}
+			run={runs.find(run => run.id === entry.runId)} changes={entry.runId && entry.lastForRun ? changesByRun.get(entry.runId) : undefined} changesReview={openChangesReview} legacyRunning={agentStatus === 'busy' && entry === timeline.at(-1)}
 			highlightedId={activeFindId ?? (highlightedMessage?.sessionPath === sessionPath ? highlightedMessage.messageId : null)}
 			findIds={findOpen ? findMatchSet : new Set()} query={findOpen ? findQuery : ''} reveal={revealMessage?.scope === disclosureScope ? revealMessage : null}
 			canRegenerateId={canRegenerateLatest ? lastReplyId : null} />;
@@ -506,6 +675,8 @@ export function ChatView({ onToggleSidebar, onOpenModelManagement, searchTarget,
 
 			<div ref={bodyRef} className={`pd-conversation-body${isEmpty ? ' is-empty' : ''}${extensionRequestPending ? ' has-extension-request' : ''}`}>
 				<div className="pd-chat-content">
+					{/* zcode-style slim switch indicator: overlays the kept conversation instead of blanking it. */}
+					{!isEmpty && layoutPending && <SessionSwitchingBar />}
 					{findOpen && <div className="pd-transcript-find-anchor">
 						<TranscriptFind
 							query={findQuery}
@@ -525,8 +696,6 @@ export function ChatView({ onToggleSidebar, onOpenModelManagement, searchTarget,
 							onScopeChange={(next) => {
 								setFindScope(next);
 								setChangesFindFile(-1);
-								// changesFind is still null in this render; match against the diffs directly.
-								if (next === 'changes') stepChangesFind(1, findChangeMatches(fileChanges, findQuery).files, -1);
 							}}
 							hasChanges={changesFindable}
 							changesSummary={changesFind ? { files: changesFind.files.length, total: changesFind.total } : null}
@@ -536,10 +705,11 @@ export function ChatView({ onToggleSidebar, onOpenModelManagement, searchTarget,
 					{locationStatus && <div className="pd-conversation-location" role="status">{c(locationStatus === 'loading' ? 'locating' : 'missing')}{locationStatus === 'missing' && locationTarget && <button type="button" onClick={() => locate(locationTarget.id, locationTarget.snippet)}>{c('retry')}</button>}</div>}
 					<TranscriptSearchContext.Provider value={findOpen && findScope === 'conversation' ? findQuery : ''}>
 					<ConversationDisclosureProvider scope={disclosureScope}>
-					<div ref={scrollRef} className="pd-transcript" onScroll={handleScroll} onWheel={cancelScrollAnimation} onTouchStart={cancelScrollAnimation} onPointerDown={cancelScrollAnimation} onKeyDown={(event) => {
-						if (['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' '].includes(event.key)) cancelScrollAnimation();
+					<div ref={scrollRef} className="pd-transcript" onScroll={handleScroll} onWheel={cancelUserScrollOwnership} onTouchStart={cancelUserScrollOwnership} onPointerDown={cancelUserScrollOwnership} onKeyDown={(event) => {
+						if (['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' '].includes(event.key)) cancelUserScrollOwnership();
 					}}>
-						{sessionLoading ? <SessionLoading /> : isEmpty ? <EmptyState /> : (
+						{/* zcode no-blank-out: the previous conversation stays visible while the target loads; the full-screen placeholder is only for the very first load when there is no previous content to keep showing. */}
+						{isEmpty ? (sessionLoading ? <SessionLoading /> : <EmptyState />) : (
 							<div ref={messageListRef} className="pd-message-list" style={virtualize ? { display: 'block', position: 'relative', height: `${virtualizer.getTotalSize()}px` } : undefined}>
 								{virtualize && hasOlderHistory && <div className="pd-load-older" role="status"><ActivityLabel active={loadingOlder}>{t(loadingOlder ? 'chat.loadingOlder' : 'chat.hasOlder')}</ActivityLabel></div>}
 								{virtualize
@@ -551,7 +721,10 @@ export function ChatView({ onToggleSidebar, onOpenModelManagement, searchTarget,
 									: timeline.map((entry) => renderEntry(entry))}
 							</div>
 						)}
-							<div ref={changesRegionRef} className="pd-transcript-end pd-transcript-changes">{!sessionLoading && <ComposerChanges ref={changesReviewRef} key={`changes:${disclosureScope}`} items={fileChanges} running={agentStatus === 'busy'} liveTarget={changesDock} />}</div>
+							<div ref={changesRegionRef} className="pd-transcript-end pd-transcript-changes">{!sessionLoading && <>
+								{agentStatus === 'busy' && liveChanges.length > 0 && <LiveChangesSummary items={liveChanges} scope={fileChangeActiveRunId ? { kind: 'turn', runId: fileChangeActiveRunId } : { kind: 'conversation' }} target={changesDock} review={openChangesReview} />}
+								{agentStatus !== 'busy' && legacyChanges.length > 0 && <ChangesCard key={`legacy:${disclosureScope}`} items={legacyChanges} scope={{ kind: 'conversation' }} variant="conversation" review={openChangesReview} />}
+							</>}</div>
 						{awaitingResponse && <div className="pd-transcript-end"><div className="pd-message-column"><div className="pd-response-pending" role="status"><ActivityLabel active>{t('message.preparing')}</ActivityLabel></div></div></div>}
 						{error && <div className="pd-transcript-end">
 							{navigationError
@@ -570,6 +743,13 @@ export function ChatView({ onToggleSidebar, onOpenModelManagement, searchTarget,
 				<Composer header={isNewConversation ? <ComposerContextBar /> : undefined} onOpenModelManagement={onOpenModelManagement} changesSlotRef={setChangesDock} />
 			</div>
 			{commitOpen && <ChatCommitDialog onClose={() => setCommitOpen(false)} />}
+			{changesReview !== null && reviewItems.length > 0 && <ChangesDialog
+				key={`${changesReview.scope.kind}:${changesReview.scope.kind === 'turn' ? changesReview.scope.runId : ''}:${changesReview.path}`}
+				items={reviewItems} diffs={changesReview.scope.kind === 'conversation' && findOpen && findScope === 'changes' ? findDiffs : reviewDiffs}
+				initialPath={changesReview.path} returnFocus={changesReview.trigger}
+				getReturnFocus={() => document.querySelector<HTMLElement>('.pd-conversation-changes .pd-changes-card-main, .pd-composer-changes.is-running .pd-changes-live-main') ?? document.querySelector<HTMLTextAreaElement>('.pd-composer-shell textarea')}
+				onClose={() => setChangesReview(null)} />}
+
 		</main>
 	);
 }

@@ -276,6 +276,34 @@ test('pai boot accepts a Windows drive root workspace without trying to mkdir it
   assert.doesNotMatch(harness.splash.url, /EPERM/, 'the splash does not fall back to the startup error page');
 });
 
+test('multi boot opens a full-size isolated instance without the singleton, tray or updater', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'pi-multi-startup-'));
+  const harness = await createStartupHarness(t, { launchArgs: ['--multi'], userData: root, closeBehavior: 'tray' });
+  t.after(async () => { await rm(root, { recursive: true, force: true, maxRetries: 4 }); });
+  const main = await harness.start();
+  assert.deepEqual(harness.calls.init, [[{ cwd: process.cwd(), fresh: true }]], 'a multi instance starts a fresh conversation in the default workspace');
+  assert.equal(harness.calls.windowMode, 'multi');
+  assert.equal(harness.calls.singleInstanceLocks, 0, 'multi does not contend for the main application singleton');
+  assert.equal(harness.calls.trays, 0);
+  assert.equal(harness.calls.startUpdates, 0);
+  assert.equal(main.options.width, 1280);
+  assert.equal(main.options.height, 820);
+  assert.equal(main.options.title, 'Pi Desktop');
+  assert.ok(harness.calls.paths.userData.startsWith(join(root, 'multi-profiles')));
+  assert.deepEqual(main.query, {}, 'the full renderer launches without a mode parameter');
+  main.load.resolve(); main.emit('ready-to-show'); harness.initialization.resolve();
+  await harness.rendererReady(main);
+  let prevented = false;
+  main.emit('close', { preventDefault() { prevented = true; } });
+  await settle();
+  assert.equal(prevented, true);
+  assert.equal(harness.calls.quit, 1, 'multi exits even if the saved close behavior requests a tray');
+  harness.app.emit('before-quit', { preventDefault() {} });
+  await settle();
+  assert.equal(harness.calls.dispose, 1);
+  assert.equal(harness.calls.quit, 2);
+});
+
 test('renderer readiness only reveals its own main window after load and first paint', async (t) => {
   const harness = await createStartupHarness(t);
   const main = await harness.start();
