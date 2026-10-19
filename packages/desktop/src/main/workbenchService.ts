@@ -102,10 +102,9 @@ export class WorkbenchService {
 
 	async openWorkspaceFolder(cwd: string, openPath: (path: string) => Promise<string>): Promise<void> {
 		if (typeof cwd !== 'string' || !cwd || cwd.includes('\0') || !isAbsolute(cwd)) throw new Error('工作区路径无效');
-		if (cwd !== this.getWorkspace()) throw new Error('工作区已切换，请重试');
-		const generation = this.commandGeneration;
+		// The sidebar's conversation and project menus pass any known workspace,
+		// not only the active one; the target just has to be an existing directory.
 		const root = await this.workspaceRoot(cwd);
-		if (generation !== this.commandGeneration || cwd !== this.getWorkspace()) throw new Error('工作区已切换，请重试');
 		const error = await openPath(root);
 		if (error) throw new Error(`无法打开工作区文件夹：${error}`);
 	}
@@ -150,10 +149,9 @@ export class WorkbenchService {
 	async openWorkspaceWith(cwd: string, openerId: string): Promise<void> {
 		if (typeof cwd !== 'string' || !cwd || cwd.includes('\0') || !isAbsolute(cwd)) throw new Error('工作区路径无效');
 		if (typeof openerId !== 'string' || !openerId || openerId === 'explorer') throw new Error('打开方式无效');
-		if (cwd !== this.getWorkspace()) throw new Error('工作区已切换，请重试');
-		const generation = this.commandGeneration;
+		// Any known workspace is a valid target: the conversation and project
+		// context menus can open folders outside the currently active workspace.
 		const root = await this.workspaceRoot(cwd);
-		if (generation !== this.commandGeneration || cwd !== this.getWorkspace()) throw new Error('工作区已切换，请重试');
 		const editor = (await this.detectedEditors()).find((item) => item.definition.id === openerId);
 		if (editor) { await launchEditor(editor, root); return; }
 		if (openerId !== 'vscode') throw new Error('未找到该应用，可能已被卸载，请刷新后重试');

@@ -107,6 +107,7 @@ import type { ModelTestRequest, ProjectDefaultsWrite } from '../../shared/src/ma
 import { ModelTestService } from './modelTest.ts';
 import { ProjectDefaultsService } from './projectDefaults.ts';
 import { McpManager } from './mcpManager.ts';
+import { createWindowsBashToolOverride } from './winShellEncoding.ts';
 import type { UiMcpSaveRequest, UiMcpTarget } from '../../shared/src/mcpFeatures.ts';
 import type { PluginUpdateCheck } from '../../shared/src/pluginUpdates.ts';
 import { checkPluginUpdate } from './pluginUpdates.ts';
@@ -246,7 +247,15 @@ function createRuntimeFactory(
 		});
 		bindProviderNetwork(services.modelRuntime, join(agentDir, 'models.json'));
 		void loadModelPrefs(agentDir).catch(() => {});
-		const created = await createAgentSessionFromServices({ services, sessionManager, sessionStartEvent });
+		// Windows GBK console output would otherwise decode as U+FFFD mojibake;
+		// the override keeps pi's local shell but re-encodes non-UTF-8 lines.
+		const bashToolOverride = await createWindowsBashToolOverride(cwd, settingsManager);
+		const created = await createAgentSessionFromServices({
+			services,
+			sessionManager,
+			sessionStartEvent,
+			customTools: bashToolOverride ? [bashToolOverride] : undefined,
+		});
 		trackFileChanges(created.session, fileChanges);
 		return {
 			...created,

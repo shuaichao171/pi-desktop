@@ -40,7 +40,9 @@ export function ConversationMetrics() {
 		return () => { active = false; if (interval !== undefined) window.clearInterval(interval); };
 	}, [enabled, bridge, scope, sessionId, navigating, status, runs, messageCount]);
 	// Nothing has run yet: an all-zero stats line is just noise under a fresh composer.
-	if (!enabled || (runs.length === 0 && messageCount === 0 && status !== 'busy')) return null;
+	// A pending switch transiently clears runs/messages — keep the row mounted
+	// (showing em-dashes) so the composer dock never jumps while loading.
+	if (!enabled || (!navigating && runs.length === 0 && messageCount === 0 && status !== 'busy')) return null;
 	const stats = !navigating && sample?.scope === scope ? sample.stats : null;
 	const metrics = conversationMetricsAt(stats, now, status === 'busy');
 	const latestRun = runs.at(-1);

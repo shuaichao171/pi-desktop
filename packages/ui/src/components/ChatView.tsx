@@ -130,16 +130,26 @@ export function ChatView({ onToggleSidebar, onOpenModelManagement, searchTarget,
 		const first = requestAnimationFrame(() => { second = requestAnimationFrame(() => sessionOpenMetrics.painted(request)); });
 		return () => { cancelAnimationFrame(first); cancelAnimationFrame(second); };
 	}, [layoutPending, cwd, sessionPath, sessionId]);
-	const settledEmptyLayout = useRef(false);
-	// A reset temporarily has no messages. Preserve the previous layout until
-	// the destination is ready, so an existing chat never becomes a blank draft.
-	const isNewConversation = layoutPending ? settledEmptyLayout.current : emptyTimeline;
-	useLayoutEffect(() => {
-		if (!layoutPending) settledEmptyLayout.current = emptyTimeline;
-	}, [layoutPending, emptyTimeline]);
-	const isEmpty = isNewConversation && !error;
-	const awaitingResponse = !layoutPending && agentStatus === 'busy' && !runs.some(run => run.status === 'running') && !error && !messages.some((message) => message.status === 'streaming') && !activities.some((activity) => activity.status === 'running');
 	const disclosureScope = `${cwd}\0${sessionPath}\0${sessionId}`;
+	// Layout memory is scoped to a conversation. While the same session stays
+	// pending (resync/restart), the settled layout is preserved so an existing
+	// chat never flashes its blank draft. A pending switch to a different
+	// session follows the live timeline instead: the store clears it on a cold
+	// switch so the loading placeholder marks the wait (zcode instant switch),
+	// and a warm keep-warm preview renders immediately.
+	const settledLayout = useRef<{ scope: string; empty: boolean } | null>(null);
+	const isNewConversation = layoutPending
+		? settledLayout.current && settledLayout.current.scope === disclosureScope ? settledLayout.current.empty : emptyTimeline
+		: emptyTimeline;
+	useLayoutEffect(() => {
+		if (!layoutPending) settledLayout.current = { scope: disclosureScope, empty: emptyTimeline };
+	}, [layoutPending, disclosureScope, emptyTimeline]);
+	const isEmpty = isNewConversation && !error;
+	// Empty-draft chrome — centered composer, transparent header, project context
+	// bar — belongs to a settled new conversation. A pending switch keeps the
+	// bottom composer layout and shows only the loading placeholder.
+	const settledEmpty = isEmpty && !sessionLoading;
+	const awaitingResponse = !layoutPending && agentStatus === 'busy' && !runs.some(run => run.status === 'running') && !error && !messages.some((message) => message.status === 'streaming') && !activities.some((activity) => activity.status === 'running');
 	const [revealMessage, setRevealMessage] = useState<{ id: string; request: number; scope: string } | null>(null);
 	const bodyRef = useRef<HTMLDivElement>(null);
 	const scrollRef = useRef<HTMLDivElement>(null);
@@ -665,7 +675,7 @@ export function ChatView({ onToggleSidebar, onOpenModelManagement, searchTarget,
 			canRegenerateId={canRegenerateLatest ? lastReplyId : null} />;
 
 	return (
-		<main className={`pd-main${isEmpty ? ' is-empty' : ''}`}>
+		<main className={`pd-main${settledEmpty ? ' is-empty' : ''}`}>
 			<header className="pd-chat-header">
 				{historyControls}
 				{!compact && <HoverTooltip title={t('chat.toggleSidebar')}><button type="button" className="pd-icon-button pd-header-sidebar-toggle" onClick={onToggleSidebar} aria-label={t('chat.toggleSidebar')}><Icon name="panel" /></button></HoverTooltip>}
@@ -673,7 +683,7 @@ export function ChatView({ onToggleSidebar, onOpenModelManagement, searchTarget,
 				<div className="pd-chat-header-actions"><WorkspaceOpenButton cwd={cwd} /></div>
 			</header>
 
-			<div ref={bodyRef} className={`pd-conversation-body${isEmpty ? ' is-empty' : ''}${extensionRequestPending ? ' has-extension-request' : ''}`}>
+			<div ref={bodyRef} className={`pd-conversation-body${settledEmpty ? ' is-empty' : ''}${extensionRequestPending ? ' has-extension-request' : ''}`}>
 				<div className="pd-chat-content">
 					{/* zcode-style slim switch indicator: overlays the kept conversation instead of blanking it. */}
 					{!isEmpty && layoutPending && <SessionSwitchingBar />}
@@ -740,7 +750,7 @@ export function ChatView({ onToggleSidebar, onOpenModelManagement, searchTarget,
 					</button>
 				</div>
 				{!isEmpty && !sessionLoading && <ConversationRail messages={messages} getScrollElement={getScrollElement} markedIds={railMarkedIds ?? undefined} onJumpToMessage={jumpToMessage} />}
-				<Composer header={isNewConversation ? <ComposerContextBar /> : undefined} onOpenModelManagement={onOpenModelManagement} changesSlotRef={setChangesDock} />
+				<Composer header={settledEmpty ? <ComposerContextBar /> : undefined} onOpenModelManagement={onOpenModelManagement} changesSlotRef={setChangesDock} />
 			</div>
 			{commitOpen && <ChatCommitDialog onClose={() => setCommitOpen(false)} />}
 			{changesReview !== null && reviewItems.length > 0 && <ChangesDialog

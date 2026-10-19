@@ -1129,7 +1129,7 @@ test('switching back to a recently left session paints the keep-warm preview bef
   await settle();
   const previewed = useChatStore.getState();
   assert.deepEqual(previewed.messages, [userMessage], 'keep-warm preview paints the cached conversation instantly');
-  assert.equal(previewed.sessionPath, bPath, 'identity fields stay on the source session until reset/ready re-scope them');
+  assert.equal(previewed.sessionPath, aPath, 'the selection moves to the target the moment the switch begins (zcode instant selection)');
   assert.equal(previewed.conversationPreviewPath, aPath, 'the painted transcript is marked as the previewed session so reading-position restore keys off it');
   assert.equal(previewed.navigationPending, true);
   host.emit(4, { type: 'reset', cwd: baseSnapshot.cwd });

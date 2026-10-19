@@ -294,6 +294,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 		unsubscribeAgentEvent = null;
 		bridgeGeneration += 1;
 		activeSessionLoads = 0;
+		settledConversation = null;
 		historyLoadRequest += 1;
 		const generation = bridgeGeneration;
 		sessionListRequests.clear();
@@ -370,6 +371,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 					if (envelope.sequence > snapshot.sequence) get().handleEvent(envelope.event);
 				}
 				buffered.length = 0;
+				captureSettledConversation();
 				void get().refreshSessions();
 				void get().refreshWorkspaces();
 				return;
@@ -432,9 +434,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
 			return;
 		}
 		switch (event.type) {
-			case 'reset':
+			case 'reset': {
 				resetSettingsRequests();
 				historyLoadRequest += 1;
+				// zcode instant selection: a reset that lands while a navigation is
+				// pending belongs to that switch; it must not drop the optimistically
+				// selected target (scoped to the pending workspace so an unrelated
+				// workspace reset still clears the selection).
+				const pendingSelection = get().navigationPending && get().cwd === event.cwd ? get().sessionPath : null;
 				set({
 					status: 'uninitialized',
 					statusMessage: undefined,
@@ -453,7 +460,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 					settingsError: null,
 					cwd: event.cwd,
 					sessionId: null,
-					sessionPath: null,
+					sessionPath: pendingSelection,
 					sessions: get().sessionsByWorkspace[event.cwd] ?? [],
 					// zcode no-blank-out: reset only re-scopes the view. The previous
 					// conversation, its queue and change cards stay rendered until the
@@ -464,6 +471,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 					error: null,
 				});
 				return;
+			}
 			case 'status': {
 				const pending = currentPreparedInput();
 				if (pending?.dispatched) pending.runtimeStatus = event.status;
@@ -533,6 +541,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
 				});
 				// agent_settled resyncs re-send only the newest window; restore pages the user already opened.
 				if (olderLoaded > 0) void get().loadOlderMessages(Math.min(olderLoaded, 500));
+				// This ready is the authoritative conversation view; remember it so a
+				// later failed navigation can put the renderer back on the session the
+				// host still shows.
+				captureSettledConversation();
 				return;
 			}
 			case 'model':
@@ -1036,8 +1048,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
 		if (!bridge) return;
 		const request = beginSessionNavigation({ cwd: get().cwd, path });
 		const loadingGeneration = beginSessionLoadIndicator(set);
-		// Keep-warm hit: paint the cached conversation before the host loads it.
-		applySessionConversationPreview(path);
+		// zcode instant selection: the sidebar highlights the target immediately; the
+		// transcript paints from cache or clears to the loading placeholder.
+		beginOptimisticSessionSwitch(set, { sessionPath: path });
 		try {
 			await bridge.switchSession(path);
 			sessionOpenMetrics.rpc(request);
@@ -1047,7 +1060,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 			// were applied, so the refresh only feeds the sidebar and converges later.
 			void get().refreshSessions();
 		} catch (error) {
-			if (currentSessionNavigation(bridge, request)) set({ error: errorMessage(error) });
+			if (currentSessionNavigation(bridge, request)) { restoreSettledConversation(set); set({ error: errorMessage(error) }); }
 			throw error;
 		} finally { finishSessionNavigation(bridge, request); finishSessionLoadIndicator(set, loadingGeneration); }
 	},
@@ -1057,8 +1070,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
 		if (!bridge?.activateResidentSession) return false;
 		const request = beginSessionNavigation({ cwd, path: sessionPath, sessionId });
 		const generation = beginSessionLoadIndicator(set);
-		// Keep-warm hit: paint the cached conversation before activation resolves.
-		if (sessionPath) applySessionConversationPreview(sessionPath);
+		// zcode instant selection: commit the resident target before activation resolves.
+		if (sessionPath) beginOptimisticSessionSwitch(set, { cwd, sessionPath, sessionId });
 		try {
 			const selected = await bridge.activateResidentSession({ cwd, sessionId, sessionPath });
 			sessionOpenMetrics.rpc(request);
@@ -1067,7 +1080,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 			if (selected) void Promise.all([get().refreshWorkspaces(), get().refreshWorkspaceSessions(cwd)]);
 			return selected;
 		} catch (error) {
-			if (currentSessionNavigation(bridge, request)) set({ error: errorMessage(error) });
+			if (currentSessionNavigation(bridge, request)) { restoreSettledConversation(set); set({ error: errorMessage(error) }); }
 			throw error;
 		} finally { finishSessionNavigation(bridge, request); finishSessionLoadIndicator(set, generation); }
 	},
@@ -1077,9 +1090,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
 		if (!bridge || !cwd || !path) return false;
 		const request = beginSessionNavigation({ cwd, path });
 		const loadingGeneration = beginSessionLoadIndicator(set);
-		// Keep-warm hit: paint the cached conversation before the host loads it.
-		applySessionConversationPreview(path);
 		const workspaceChanged = get().cwd !== cwd;
+		// zcode instant selection: the sidebar highlights the target immediately; the
+		// transcript paints from cache or clears to the loading placeholder.
+		beginOptimisticSessionSwitch(set, { cwd, sessionPath: path });
 		try {
 			if (workspaceChanged) {
 				await bridge.switchWorkspace(cwd);
@@ -1096,6 +1110,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 			return currentSessionNavigation(bridge, request);
 		} catch (error) {
 			if (!currentSessionNavigation(bridge, request)) return false;
+			restoreSettledConversation(set);
 			set({ error: errorMessage(error) });
 			throw error;
 		} finally { finishSessionNavigation(bridge, request); finishSessionLoadIndicator(set, loadingGeneration); }
@@ -1571,8 +1586,9 @@ function stashSessionConversationPreview(): void {
 /**
  * Paint a cached snapshot of the target conversation before the host RPC
  * resolves. The authoritative ready replaces it wholesale (never merges), so
- * staleness self-heals; identity fields (sessionId/sessionPath/cwd) stay on the
- * source session until reset/ready re-scope them.
+ * staleness self-heals; the selection identity (cwd/sessionPath) was already
+ * committed optimistically by beginOptimisticSessionSwitch, and ready
+ * re-scopes the remaining runtime fields (sessionId, model, queue).
  */
 function applySessionConversationPreview(path: string): boolean {
 	if (useChatStore.getState().sessionPath === path) return false;
@@ -1602,6 +1618,78 @@ function applySessionConversationPreview(path: string): boolean {
 	return true;
 }
 
+
+/**
+ * The last conversation the host fully loaded (ready event or boot snapshot).
+ * A failed navigation restores this view: when the switch RPC rejects, the host
+ * is still on this session, so the renderer must land back on it too.
+ */
+type SettledConversation = Pick<ChatState, 'cwd' | 'sessionId' | 'sessionPath' | 'messages' | 'activities' | 'runs'
+	| 'fileChanges' | 'fileChangeTurns' | 'fileChangeActiveRunId' | 'historyTotal'>;
+let settledConversation: SettledConversation | null = null;
+function captureSettledConversation(): void {
+	const state = useChatStore.getState();
+	settledConversation = {
+		cwd: state.cwd, sessionId: state.sessionId, sessionPath: state.sessionPath,
+		messages: state.messages, activities: state.activities, runs: state.runs,
+		fileChanges: state.fileChanges, fileChangeTurns: state.fileChangeTurns,
+		fileChangeActiveRunId: state.fileChangeActiveRunId, historyTotal: state.historyTotal,
+	};
+}
+function restoreSettledConversation(set: (partial: Partial<ChatState>) => void): void {
+	const state = useChatStore.getState();
+	const settled = settledConversation;
+	set({
+		cwd: settled?.cwd ?? state.cwd,
+		sessionId: settled?.sessionId ?? null,
+		sessionPath: settled?.sessionPath ?? null,
+		conversationPreviewPath: null,
+		messages: settled?.messages ?? [],
+		activities: settled?.activities ?? [],
+		runs: settled?.runs ?? [],
+		fileChanges: settled?.fileChanges ?? [],
+		fileChangeTurns: settled?.fileChangeTurns ?? [],
+		fileChangeActiveRunId: settled?.fileChangeActiveRunId ?? null,
+		historyTotal: settled?.historyTotal ?? 0,
+		loadingOlder: false,
+		timelineRevision: state.timelineRevision + 1,
+	});
+}
+
+/**
+ * zcode instant selection: commit the clicked conversation's identity the
+ * moment navigation begins, so the sidebar selection and header move
+ * immediately instead of waiting for the host to load the session. The
+ * transcript paints from the keep-warm cache when one is fresh; otherwise it
+ * clears so the chat area swaps to its loading placeholder. The paired ready
+ * event stays authoritative and replaces whatever was painted.
+ */
+function beginOptimisticSessionSwitch(set: (partial: Partial<ChatState>) => void, target: { cwd?: string; sessionPath: string | null; sessionId?: string | null }): void {
+	const state = useChatStore.getState();
+	const nextCwd = target.cwd ?? state.cwd;
+	// The runtime session id stays on the loaded session until ready re-scopes it:
+	// the pending host still runs it (a queued /new may supersede the switch), and
+	// selection identity is only cwd + sessionPath.
+	const nextSessionId = target.sessionId ?? state.sessionId;
+	const painted = target.sessionPath !== null && applySessionConversationPreview(target.sessionPath);
+	if (nextCwd === state.cwd && target.sessionPath === state.sessionPath && nextSessionId === state.sessionId && !painted) return;
+	set({
+		cwd: nextCwd,
+		sessionId: nextSessionId,
+		sessionPath: target.sessionPath,
+		sessions: state.sessionsByWorkspace[nextCwd] ?? [],
+		...(painted ? {} : {
+			// Cold switch: clear the conversation being left so the chat area's
+			// loading placeholder — not the previous transcript — marks the wait.
+			messages: [], activities: [], runs: [],
+			fileChanges: [], fileChangeTurns: [], fileChangeActiveRunId: null,
+			queuedCount: 0, queuedMessages: [],
+			historyTotal: 0, loadingOlder: false,
+			timelineRevision: state.timelineRevision + 1,
+			conversationPreviewPath: null,
+		}),
+	});
+}
 
 function beginSessionNavigation(target: { cwd?: string; path?: string | null; sessionId?: string } = {}, retainedDraftScope?: UiInputScope): number {
 	const abandoned = sessionPreparation;

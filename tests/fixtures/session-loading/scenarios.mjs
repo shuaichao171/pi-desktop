@@ -104,17 +104,31 @@ export default async function sessionLoadingScenarios(review) {
   await review.waitFor(`Boolean(document.querySelector(${q(row('second'))}))`);
   await review.screenshot('session-loading-history-before');
 
-  for (const [width, target] of [[1440, 'second'], [900, 'first']]) {
+  // First pass: cold switch (no cached preview) — instant selection + full
+  // loading placeholder. Second pass: warm switch-back — keep-warm preview
+  // paints instantly with the slim switching bar instead of a placeholder.
+  for (const [width, target, mode] of [[1440, 'second', 'cold'], [900, 'first', 'warm']]) {
     await review.viewport(width, 1000);
     await review.evaluate(`${state}.beginSamples()`);
     await review.click(row(target));
     await review.waitFor(`${state}.phase === 'before-reset'`);
-    await assertBottom(`History composer remains at the bottom before reset at ${width}px`);
+    await review.assert(`document.querySelector(${q(row(target))})?.getAttribute('aria-current') === 'page'`, `zcode instant selection: the ${mode} switch highlights ${target} the moment the click lands`);
+    if (mode === 'cold') {
+      await review.assert(`Boolean(document.querySelector('.pd-session-loading')) && !document.querySelector('.pd-message-row') && !document.querySelector('.pd-session-switching')`, `a cold swap shows the full loading placeholder before reset at ${width}px`);
+    } else {
+      await review.assert(`!document.querySelector('.pd-session-loading') && Boolean(document.querySelector('.pd-message-row')) && Boolean(document.querySelector('.pd-session-switching'))`, `a warm switch-back paints the cached conversation instantly with the slim switching bar at ${width}px`);
+    }
+    await assertBottom(`Composer remains at the bottom before reset at ${width}px`);
     await advance('reset', 'reset');
-    await review.assert(`!document.querySelector('.pd-session-loading') && Boolean(document.querySelector('.pd-message-row')) && Boolean(document.querySelector('.pd-session-switching'))`, 'zcode no-blank-out: a delayed reset keeps the previous history painted with the slim switching bar instead of a full placeholder');
+    if (mode === 'cold') {
+      await review.assert(`Boolean(document.querySelector('.pd-session-loading')) && document.querySelector(${q(row(target))})?.getAttribute('aria-current') === 'page'`, `the delayed reset keeps the placeholder and the optimistic selection at ${width}px`);
+    } else {
+      await review.assert(`!document.querySelector('.pd-session-loading') && Boolean(document.querySelector('.pd-message-row'))`, `the delayed reset keeps the painted preview at ${width}px`);
+    }
     await assertBottom(`Reset never centers the composer or adds the new-conversation project header at ${width}px`);
-    await review.screenshot(`session-loading-reset-${width}`);
+    await review.screenshot(`session-loading-${mode}-reset-${width}`);
     await advance('ready', 'refresh');
+    await review.assert(`!document.querySelector('.pd-session-loading') && Boolean(document.querySelector('.pd-message-row'))`, `ready repaints the target history at ${width}px`);
     await assertBottom(`Ready history keeps the same composer position while sidebar refresh is pending at ${width}px`);
     await advance('refresh', 'complete');
     await review.waitFor(ready(target));

@@ -15,7 +15,7 @@ function removeSafeTemp(tempRoot) {
   rmSync(target, { recursive: true, force: true });
 }
 
-test('opening the workspace validates the directory, propagates native failures and rejects stale selections', async () => {
+test('opening the workspace validates the directory and propagates native failures across workspaces', async () => {
   const tempRoot = mkdtempSync(join(tmpdir(), 'pi-desktop-open-folder-'));
   const workspace = join(tempRoot, 'workspace');
   const other = join(tempRoot, 'other');
@@ -30,7 +30,9 @@ test('opening the workspace validates the directory, propagates native failures 
   try {
     await service.openWorkspaceFolder(workspace, openPath);
     assert.deepEqual(opened, [await realpath(workspace)]);
-    await assert.rejects(service.openWorkspaceFolder(other, openPath), /工作区已切换/);
+    // Another project's conversation menu passes a non-active workspace; it opens normally.
+    await service.openWorkspaceFolder(other, openPath);
+    assert.deepEqual(opened, [await realpath(workspace), await realpath(other)]);
     for (const invalid of [null, '', '.', 'https://example.invalid', 'file:\/\/\/tmp', workspace + '\0']) {
       await assert.rejects(service.openWorkspaceFolder(invalid, openPath), /工作区路径无效/);
     }
@@ -42,14 +44,15 @@ test('opening the workspace validates the directory, propagates native failures 
     await assert.rejects(service.openWorkspaceFolder(cwd, async () => 'Native file manager unavailable'), /Native file manager unavailable/);
     await assert.rejects(service.openWorkspaceFolder(cwd, async () => { throw new Error('Native dispatch rejected'); }), /Native dispatch rejected/);
 
+    // An explicit target survives a workspace switch or service reset mid-flight.
     const changed = service.openWorkspaceFolder(cwd, openPath);
     cwd = other;
-    await assert.rejects(changed, /工作区已切换/);
+    await changed;
     cwd = workspace;
     const reset = service.openWorkspaceFolder(cwd, openPath);
     await service.reset();
-    await assert.rejects(reset, /工作区已切换/);
-    assert.equal(opened.length, 1, 'failed validation and asynchronous switches never invoke the native opener');
+    await reset;
+    assert.equal(opened.length, 4, 'each valid open invokes the native opener exactly once');
   } finally {
     await service.dispose();
     removeSafeTemp(tempRoot);
