@@ -31,7 +31,7 @@ function useSwapFocus(entry: { current: boolean }, alternative: () => HTMLElemen
  * before run tracking existed (legacy sessions).
  */
 export function ChangesCard({ items, scope, variant, review }: { items: UiFileChange[]; scope: UiFileDiffScope; variant: 'turn' | 'conversation'; review: ChangesReviewApi }) {
-	const { t, locale } = useT(), zh = locale === 'zh-CN';
+	const { t } = useT();
 	const [showAll, setShowAll] = useState(false);
 	const primary = useRef<HTMLButtonElement | null>(null);
 	const entryHasFocus = useRef(false);
@@ -47,7 +47,7 @@ export function ChangesCard({ items, scope, variant, review }: { items: UiFileCh
 	useSwapFocus(entryHasFocus, () => document.querySelector<HTMLElement>('.pd-composer-changes.is-running .pd-changes-live-main'));
 	if (!items.length) return null;
 	const single = items.length === 1 ? items[0]! : null;
-	const title = single ? (zh ? `已修改 ${single.path.split(/[\\/]/).at(-1)}` : `Edited ${single.path.split(/[\\/]/).at(-1)}`) : t('changes.count', { count: items.length });
+	const title = single ? (t('composerChanges.editedSingle', { name: single.path.split(/[\\/]/).at(-1) ?? '' })) : t('changes.count', { count: items.length });
 	const visible = showAll ? items : items.slice(0, INITIAL_FILES);
 	const openReview = (path: string, event: MouseEvent<HTMLButtonElement>) => review(scope, path, event.currentTarget);
 	const fileRows = (files: UiFileChange[]) => files.map(item => <button key={item.path} type="button" className="pd-composer-changes-file" data-change-path={item.path} title={item.path} aria-label={t('changes.diffFor', { path: item.path })} aria-haspopup="dialog" onClick={event => openReview(item.path, event)}>
@@ -57,19 +57,19 @@ export function ChangesCard({ items, scope, variant, review }: { items: UiFileCh
 		<div className="pd-changes-card-header">
 			<button ref={primary} type="button" className="pd-changes-card-main" aria-haspopup="dialog" onClick={event => openReview(items[0]!.path, event)}>
 				<span className="pd-changes-card-icon"><Icon name="file" width="21" height="21" /></span>
-				<span className="pd-changes-card-copy"><strong title={single?.path}>{title}</strong><span className="pd-changes-card-subtitle"><span>{variant === 'turn' ? (zh ? '本轮' : 'This turn') : (zh ? '本次对话' : 'This conversation')}</span><ChangeStats items={items} /></span></span>
+				<span className="pd-changes-card-copy"><strong title={single?.path}>{title}</strong><span className="pd-changes-card-subtitle"><span>{variant === 'turn' ? (t('composerChanges.thisTurn')) : (t('composerChanges.thisConversation'))}</span><ChangeStats items={items} /></span></span>
 			</button>
 			<button type="button" className="pd-composer-changes-review" aria-haspopup="dialog" onClick={event => openReview(items[0]!.path, event)}>{t('changes.review')}<Icon name="arrowRight" width="13" height="13" /></button>
 		</div>
 		{!single && <div id={listId} className="pd-composer-changes-files">{fileRows(visible)}
-			{items.length > INITIAL_FILES && <button type="button" className="pd-changes-show-more" aria-expanded={showAll} aria-controls={listId} onClick={() => setShowAll(value => !value)}>{showAll ? (zh ? '收起文件列表' : 'Collapse files') : (zh ? `显示其余 ${items.length - INITIAL_FILES} 个文件` : `Show ${items.length - INITIAL_FILES} more files`)}<Icon name={showAll ? 'chevronUp' : 'chevronDown'} width="13" height="13" /></button>}
+			{items.length > INITIAL_FILES && <button type="button" className="pd-changes-show-more" aria-expanded={showAll} aria-controls={listId} onClick={() => setShowAll(value => !value)}>{showAll ? (t('composerChanges.collapse')) : (t('composerChanges.showMore', { count: items.length - INITIAL_FILES }))}<Icon name={showAll ? 'chevronUp' : 'chevronDown'} width="13" height="13" /></button>}
 		</div>}
 	</section>;
 }
 
 /** Compact running summary above the input: the active turn's changes so far. */
 export function LiveChangesSummary({ items, scope, target, review }: { items: UiFileChange[]; scope: UiFileDiffScope; target: HTMLElement | null; review: ChangesReviewApi }) {
-	const { t, locale } = useT(), zh = locale === 'zh-CN';
+	const { t } = useT();
 	const [liveFilesOpen, setLiveFilesOpen] = useState(false);
 	const primary = useRef<HTMLButtonElement | null>(null);
 	const popupToggle = useRef<HTMLButtonElement | null>(null);
@@ -108,8 +108,8 @@ export function LiveChangesSummary({ items, scope, target, review }: { items: Ui
 			<button ref={primary} type="button" className="pd-composer-changes-review pd-changes-live-main" aria-haspopup="dialog" title={t('changes.files')} onClick={event => openReview(items[0]!.path, event)}>
 				<Icon name="file" width="15" height="15" /><span>{t('changes.count', { count: items.length })}</span><ChangeStats items={items} />
 			</button>
-			<button ref={popupToggle} type="button" className="pd-composer-changes-toggle" aria-expanded={liveFilesOpen} aria-controls={listId} aria-label={zh ? '查看已修改的文件列表' : 'Show changed files'} onClick={() => setLiveFilesOpen(value => !value)}><Icon name="chevronDown" width="14" height="14" /></button>
+			<button ref={popupToggle} type="button" className="pd-composer-changes-toggle" aria-expanded={liveFilesOpen} aria-controls={listId} aria-label={t('composerChanges.show')} onClick={() => setLiveFilesOpen(value => !value)}><Icon name="chevronDown" width="14" height="14" /></button>
 		</div>
-		{liveFilesOpen && <div id={listId} className="pd-changes-live-popover" role="region" aria-label={t('changes.files')}><div className="pd-changes-live-scope">{zh ? '本轮' : 'This turn'}</div>{fileRows(items)}</div>}
+		{liveFilesOpen && <div id={listId} className="pd-changes-live-popover" role="region" aria-label={t('changes.files')}><div className="pd-changes-live-scope">{t('composerChanges.thisTurn')}</div>{fileRows(items)}</div>}
 	</section>, target);
 }

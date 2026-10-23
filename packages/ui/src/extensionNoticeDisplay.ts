@@ -1,10 +1,10 @@
 import { useSyncExternalStore } from 'react';
 
 /**
- * Whether plugin (extension) notifications surface anywhere in the UI: the
- * inline notice cards inside conversations and the transient toast stack.
- * Turned off, plugin notices are neither recorded visibly nor toasted — the
- * underlying system messages stay in the transcript untouched.
+ * Whether plugin (extension) notifications surface in the UI: the transient
+ * stack that pops above the composer. Turned off, plugin notices are neither
+ * shown nor toasted — the underlying system messages stay in the transcript
+ * untouched.
  */
 
 const STORAGE_KEY = 'pi-desktop:extension-notice-display';

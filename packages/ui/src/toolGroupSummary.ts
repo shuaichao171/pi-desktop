@@ -1,5 +1,5 @@
 import type { UiToolActivity } from '@pidesktop/shared';
-import type { Locale } from './i18n';
+import { translate, type Locale } from './i18n.ts';
 
 /**
  * Semantic summary for a group of tool calls (ZCode exploreToolCall /
@@ -90,14 +90,13 @@ export function isExplorationGroup(counts: ToolGroupCounts): boolean {
 }
 
 export function toolGroupSummaryParts(counts: ToolGroupCounts, locale: Locale): string[] {
-	const zh = locale === 'zh-CN';
-	const en = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`;
+	const part = (count: number, one: string, many: string) => translate(count === 1 ? one : many, { count }, locale);
 	const parts: string[] = [];
-	if (counts.read) parts.push(zh ? `读取 ${counts.read} 个文件` : `Read ${en(counts.read, 'file', 'files')}`);
-	if (counts.search) parts.push(zh ? `搜索 ${counts.search} 次` : en(counts.search, 'search', 'searches'));
-	if (counts.edit) parts.push(zh ? `编辑 ${counts.edit} 个文件` : `Edited ${en(counts.edit, 'file', 'files')}`);
-	if (counts.run) parts.push(zh ? `运行 ${counts.run} 条命令` : `Ran ${en(counts.run, 'command', 'commands')}`);
-	if (counts.subagent) parts.push(zh ? `子代理 ${counts.subagent} 次` : en(counts.subagent, 'subagent call', 'subagent calls'));
-	if (counts.other) parts.push(zh ? `其他 ${counts.other} 次` : en(counts.other, 'other call', 'other calls'));
+	if (counts.read) parts.push(part(counts.read, 'toolGroup.readOne', 'toolGroup.read'));
+	if (counts.search) parts.push(part(counts.search, 'toolGroup.searchOne', 'toolGroup.search'));
+	if (counts.edit) parts.push(part(counts.edit, 'toolGroup.editOne', 'toolGroup.edit'));
+	if (counts.run) parts.push(part(counts.run, 'toolGroup.runOne', 'toolGroup.run'));
+	if (counts.subagent) parts.push(part(counts.subagent, 'toolGroup.subagentOne', 'toolGroup.subagent'));
+	if (counts.other) parts.push(part(counts.other, 'toolGroup.otherOne', 'toolGroup.other'));
 	return parts;
 }

@@ -138,6 +138,11 @@
 .pd-automation-run-state { align-self: flex-start; margin-bottom: 4px; padding: 0 9px; border-radius: 999px; background: color-mix(in srgb, var(--pd-brand) 12%, transparent); font-weight: 500; line-height: 22px; }
 .pd-automation-card > footer { gap: 6px; }
 .pd-automation-card > footer .pd-automation-button { min-height: 30px; padding: 4px 10px; border-radius: var(--pd-radius-sm); }
-.pd-automation-card > footer .pd-automation-button:not(.is-quiet) { border-color: var(--pd-border); }
+.pd-automation-card > footer .pd-automation-button:not(.is-quiet) { border-color: var(--pd-border-strong); background: transparent; }
+/* Three tiers only: bordered secondary actions, a text-only tertiary link, an icon-only delete.
+   Disabled secondaries keep their outline so they read as unavailable, not as plain text. */
+.pd-automation-card > footer .pd-automation-button:disabled { opacity: 1; border-color: var(--pd-border); color: var(--pd-text-weak); }
+.pd-automation-card > footer .pd-automation-button.is-quiet { color: var(--pd-text-subtle); }
+.pd-automation-card > footer .pd-automation-button.is-quiet:hover:not(:disabled) { color: var(--pd-text); }
 .pd-automation-card-delete { width: 30px; height: 30px; color: var(--pd-text-subtle); }
 .pd-automation-card-delete:hover:not(:disabled) { background: var(--pd-danger-surface); color: var(--pd-danger); }

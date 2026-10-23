@@ -33,6 +33,11 @@ function installSidebarFolderDropFixture() {
     fixture.emitAgent({ ...clone(fixture.snapshot), type: 'ready' });
     fixture.emitAgent({ type: 'status', status: 'idle' });
   };
+  // The first sent message is what turns an empty new conversation into a sidebar row.
+  state.sendFirstMessage = text => {
+    fixture.snapshot.messages = [{ id: 'draft-user-' + state.newSessions, order: 0, role: 'user', text, status: 'done' }];
+    fixture.emitAgent({ ...clone(fixture.snapshot), type: 'ready' });
+  };
   mock('getDefaultWorkspace', () => paths.home);
   mock('listConversationWorkspaces', () => [paths.home, ...state.conversationWorkspaces]);
   mock('listWorkspaces', () => { state.reads.push('workspaces'); return clone(state.workspaces); });
@@ -103,7 +108,8 @@ export default async function sidebarFolderDropScenarios(review) {
   const unassigned = '.pd-sidebar-group[data-section-key="unassigned"]';
   const overlay = '.pd-project-folder-drop-overlay';
   const composer = '.pd-composer-shell';
-  const noMetadata = '!document.querySelector(".pd-session-row time, .pd-session-row .pd-session-copy small")';
+  // Rows carry a compact recency label at their end, but never a project subtitle under the title.
+  const noMetadata = '!document.querySelector(".pd-session-row .pd-session-copy small, .pd-session-row .pd-session-copy time")';
   const uniqueRows = '(() => { const paths = [...document.querySelectorAll(".pd-session-item[data-session-path]")].map(row => row.dataset.sessionPath); return paths.length === new Set(paths).size; })()';
   const projectOrder = '[...document.querySelectorAll(".pd-sidebar-group[data-project-path]")].map(node => node.dataset.projectPath)';
   const dropped = [{ name: 'Added', directory: true }];
@@ -118,7 +124,7 @@ export default async function sidebarFolderDropScenarios(review) {
   await review.reducedMotion(true);
   await review.reloadWithFixture(`(${installSidebarFolderDropFixture.toString()})()`);
   await review.waitFor(`document.querySelectorAll('.pd-session-item[data-session-path]').length === 4`);
-  await review.assert(`${noMetadata} && ${uniqueRows}`, 'Conversation rows have no timestamp or project subtitle and remain unique in custom-group mode');
+  await review.assert(`${noMetadata} && ${uniqueRows}`, 'Conversation rows have no project subtitle and remain unique in custom-group mode');
   await review.assert(`document.querySelector(${q('[data-section-key="group:folder-review-group"]')})?.textContent.includes('Alpha 项目对话') && document.querySelector('[data-section-key=pinned]')?.textContent.includes('没有项目的置顶对话')`, 'Custom grouping and pinned conversations remain available');
   await review.click('[data-mode="project"]');
   await review.waitFor(`Boolean(document.querySelector(${q(unassigned)}))`);
@@ -128,9 +134,12 @@ export default async function sidebarFolderDropScenarios(review) {
   await review.assert(noMetadata, 'Project-grouped saved conversation rows omit timestamp and project subtitle');
 
   await review.click('.pd-new-session');
-  await review.waitFor(`${state}.newSessions === 1 && Boolean(document.querySelector(${q(unassigned + ' .pd-session-row[aria-current="page"]')}))`);
-  await review.assert(`${snapshot}.cwd === ${state}.conversationWorkspaces[0] && ${snapshot}.cwd !== ${state}.paths.home && !${state}.navigation.at(-1).options?.cwd && ${projectOrder}.length === 2`, 'Global New conversation creates a separate directory without adding an explicit project');
-  await review.assert(`document.querySelector(${q(unassigned + ' .pd-session-row[aria-current="page"] strong')}).textContent === document.querySelector('.pd-new-session').getAttribute('aria-label') && ${noMetadata}`, 'A new conversation without a project appears under Unassigned with no secondary metadata');
+  await review.waitFor(`${state}.newSessions === 1 && ${snapshot}.cwd === ${state}.conversationWorkspaces[0]`);
+  await review.assert(`${snapshot}.cwd !== ${state}.paths.home && !${state}.navigation.at(-1).options?.cwd && ${projectOrder}.length === 2`, 'Global New conversation creates a separate directory without adding an explicit project');
+  await review.assert('!document.querySelector(".pd-session-item.is-unsaved")', 'An empty new conversation stays out of the sidebar until its first message');
+  await review.evaluate(`${state}.sendFirstMessage('没有项目的新对话')`);
+  await review.waitFor(`Boolean(document.querySelector(${q(unassigned + ' .pd-session-item.is-unsaved .pd-session-row[aria-current="page"]')}))`);
+  await review.assert(`document.querySelector(${q(unassigned + ' .pd-session-row[aria-current="page"] strong')}).textContent === '没有项目的新对话' && ${noMetadata}`, 'A new conversation without a project appears under Unassigned, titled by its first message, with no secondary metadata');
   await review.fill(composer + ' > textarea', '添加项目时保留当前对话和这段草稿。');
   await review.screenshot('sidebar-unassigned-and-compact-conversation-rows');
   await review.evaluate(`${state}.beforeDrop = { cwd: ${snapshot}.cwd, sessionId: ${snapshot}.sessionId, sessionPath: ${snapshot}.sessionPath, navigation: ${state}.navigation.length, text: document.querySelector(${q(composer + ' > textarea')}).value, reads: ${state}.reads.length }`);

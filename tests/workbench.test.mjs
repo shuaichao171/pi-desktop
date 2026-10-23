@@ -12,7 +12,9 @@ function removeSafeTemp(tempRoot) {
   const rel = relative(base, target);
   if (!rel || rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)
     || !rel.startsWith('pi-desktop-')) throw new Error('Unsafe temporary path');
-  rmSync(target, { recursive: true, force: true });
+  // Windows releases a just-exited child's directory handles asynchronously; retry the
+  // EPERM/EBUSY window instead of failing the test on cleanup.
+  rmSync(target, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 }
 
 test('opening the workspace validates the directory and propagates native failures across workspaces', async () => {

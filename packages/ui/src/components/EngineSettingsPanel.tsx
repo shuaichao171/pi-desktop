@@ -16,7 +16,7 @@ type EngineMode = 'builtin' | 'custom';
  * after the app restarts; the panel offers a one-click relaunch.
  */
 export function EngineSettingsPanel({ onDraftStateChange }: { onDraftStateChange(state: SettingsDraftState): void }) {
-	const { t, locale } = useT();
+	const { t } = useT();
 	const bridge = useChatStore(state => state.bridge);
 	const id = useId();
 	const mounted = useRef(false);
@@ -179,7 +179,7 @@ export function EngineSettingsPanel({ onDraftStateChange }: { onDraftStateChange
 					<div className="pd-settings-section-head"><h3>{t('settings.enginePath')}</h3><p>{t('settings.enginePathDescription')}</p></div>
 					<div className="pd-engine-path">
 						<input name="piEngineDirectory" aria-label={t('settings.enginePath')} aria-describedby={`${id}-description`} value={path} disabled={disabled} autoComplete="off" spellCheck={false} title={path || undefined}
-							placeholder={locale === 'zh-CN' ? '例如 D:\\engines\\pi' : 'e.g. D:\\engines\\pi'} onChange={event => { setPath(event.target.value); setError(null); setSaved(false); }} />
+							placeholder={t('engine.pathPlaceholder')} onChange={event => { setPath(event.target.value); setError(null); setSaved(false); }} />
 						<button type="button" className="pd-engine-button" data-action="choose-engine-directory" disabled={disabled} onClick={() => void chooseDirectory()}><Icon name="folder" width="14" height="14" />{t(pending === 'pick' ? 'projectCreate.choosing' : 'settings.engineChoose')}</button>
 						<button type="button" className="pd-engine-button" data-action="check-engine-directory" disabled={disabled || !path.trim() || probing} onClick={() => runProbe(path)}>{t(probing ? 'settings.engineChecking' : 'settings.engineCheck')}</button>
 					</div>

@@ -11,6 +11,12 @@ export interface DesktopSettings {
 	notificationsEnabled: boolean;
 	/** What the window close button does on Windows: hide to tray (default) or quit (4.2). */
 	closeBehavior: 'tray' | 'quit';
+	/**
+	 * Ask before closing the window while a task or automation run is active. The busy-close
+	 * dialog's "remember my choice" checkbox clears this; picking a close behavior in Settings
+	 * sets it back so the confirmation is never silently lost (4.2).
+	 */
+	confirmBusyClose: boolean;
 	/** Hold an Electron powerSaveBlocker while a task or automation run is active (prevents idle sleep only). */
 	keepAwakeWhileRunning: boolean;
 	/** Periodic update checks chain straight into download + silent install + restart. */
@@ -52,6 +58,7 @@ export function isValidDesktopSettings(value: unknown): value is DesktopSettings
 	const candidate = value as Partial<DesktopSettings>;
 	return typeof candidate.notificationsEnabled === 'boolean'
 		&& (candidate.closeBehavior === 'tray' || candidate.closeBehavior === 'quit')
+		&& (candidate.confirmBusyClose === undefined || typeof candidate.confirmBusyClose === 'boolean')
 		&& (candidate.conversationStorageDirectory === undefined || isConversationStorageDirectory(candidate.conversationStorageDirectory))
 		&& (candidate.keepAwakeWhileRunning === undefined || typeof candidate.keepAwakeWhileRunning === 'boolean')
 		&& (candidate.autoInstallUpdates === undefined || typeof candidate.autoInstallUpdates === 'boolean')
@@ -60,7 +67,8 @@ export function isValidDesktopSettings(value: unknown): value is DesktopSettings
 }
 
 export const DEFAULT_DESKTOP_SETTINGS: DesktopSettings = {
-	notificationsEnabled: true, closeBehavior: 'tray', conversationStorageDirectory: join(homedir(), 'PiDesktopWorkspace'),
+	notificationsEnabled: true, closeBehavior: 'tray', confirmBusyClose: true,
+	conversationStorageDirectory: join(homedir(), 'PiDesktopWorkspace'),
 	keepAwakeWhileRunning: false, autoInstallUpdates: false,
 	piEngine: { mode: 'builtin' },
 	debugApi: DEFAULT_DEBUG_API_SETTINGS,

@@ -752,6 +752,14 @@ test('standalone conversations get independent folders and retain discoverable h
   assert.equal(changed.conversationStorageDirectory, changedRoot);
   assert.equal(changed.notificationsEnabled, false);
   assert.equal(changed.closeBehavior, 'quit');
+  assert.equal(changed.confirmBusyClose, true, 'a legacy settings file starts by asking on a busy close');
+  // The close dialog's "remember my choice" silences the prompt; picking a behavior in Settings asks again.
+  await ipc.saveCloseChoice('tray');
+  assert.equal(call(IPC_CHANNELS.desktopSettingsGet).confirmBusyClose, false);
+  assert.equal(call(IPC_CHANNELS.desktopSettingsGet).closeBehavior, 'tray', 'the remembered choice is the behavior Settings shows');
+  const reversed = await call(IPC_CHANNELS.desktopSettingsSet, { closeBehavior: 'quit' });
+  assert.equal(reversed.confirmBusyClose, true, 'choosing a behavior in Settings restores the confirmation');
+  assert.equal(reversed.closeBehavior, 'quit');
   assert.equal(call(IPC_CHANNELS.workspaceDefault), changedRoot);
   await call(IPC_CHANNELS.agentNewSession);
   assert.equal(dirname(initialized.at(-1)), changedRoot);

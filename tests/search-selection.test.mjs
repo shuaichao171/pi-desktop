@@ -5,6 +5,7 @@ import { test } from 'node:test';
 import vm from 'node:vm';
 import * as sidebarOrganization from '../packages/ui/src/sidebarOrganization.ts';
 import * as searchHistory from '../packages/ui/src/searchHistory.ts';
+import * as dateFormat from '../packages/ui/src/dateFormat.ts';
 
 const desktopRequire = createRequire(new URL('../packages/desktop/package.json', import.meta.url));
 const typescript = desktopRequire('typescript');
@@ -62,6 +63,7 @@ function mountSearch(bridge) {
       if (specifier === './Icons') return { Icon: 'Icon' };
       if (specifier === './FileDisplayIcon') return { FileDisplayIcon: 'FileDisplayIcon' };
       if (specifier === '../searchHistory') return searchHistory;
+      if (specifier === '../dateFormat') return dateFormat;
       if (specifier === '../editorPreference') return { preferredEditorId: () => 'cursor' };
       return {};
     },

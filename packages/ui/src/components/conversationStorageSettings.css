@@ -1,7 +1,7 @@
 .pd-conversation-storage { min-width: 0; }
 .pd-conversation-storage form { min-width: 0; }
 .pd-conversation-storage-field { display: flex; gap: 8px; min-width: 0; }
-.pd-conversation-storage-field > input { flex: 1; min-width: 0; height: 34px; padding: 0 11px; border: 1px solid var(--pd-border); border-radius: var(--pd-radius-sm); background: var(--pd-bg); color: var(--pd-text); font: var(--pd-font-sm) var(--pd-font-mono, ui-monospace, Consolas, monospace); text-overflow: ellipsis; }
+.pd-conversation-storage-field > input { flex: 1; min-width: 0; height: 34px; padding: 0 11px; border: 1px solid var(--pd-border); border-radius: var(--pd-radius-sm); background: var(--pd-bg); color: var(--pd-text); font: var(--pd-font-caption) var(--pd-font-sans); text-overflow: ellipsis; }
 .pd-conversation-storage-field > input:focus { outline: none; border-color: var(--pd-focus-border, var(--pd-brand)); }
 .pd-conversation-storage-field > input:disabled { opacity: .7; }
 .pd-conversation-storage-field > button { flex: 0 0 auto; min-height: 34px; }

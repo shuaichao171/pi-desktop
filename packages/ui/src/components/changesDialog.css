@@ -21,7 +21,10 @@
 .pd-changes-file .pd-change-filename > small > bdi { direction: ltr; unicode-bidi: isolate; }
 .pd-changes-file > .pd-change-file-icon { margin-top: 1px; }
 .pd-changes-file > .pd-change-stats { margin-top: 1px; font-size: var(--pd-font-xs); }
-.pd-changes-file .pd-change-file-state.is-modified { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+/* "Modified" is the default kind: only added/deleted earn a visible badge; screen readers still hear it. */
+.pd-change-file-state.is-modified { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.pd-change-stats.is-partial { cursor: help; }
+.pd-change-stats.is-partial .pd-change-partial { color: var(--pd-text-weak); text-decoration: underline dotted; text-underline-offset: 2px; }
 .pd-changes-file .pd-change-filename > span, .pd-changes-file .pd-change-filename > small { flex: 0 1 auto; max-width: 100%; }
 .pd-changes-file:hover, .pd-changes-file.is-selected { background: var(--pd-surface-hover); }
 .pd-changes-file.is-selected { box-shadow: inset 2px 0 var(--pd-brand); }

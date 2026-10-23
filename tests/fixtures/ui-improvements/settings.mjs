@@ -63,7 +63,8 @@ export default async function settingsReview(review) {
   await review.clickText('.pd-sidebar-popover button','Open in VS Code');
   await review.waitFor('Boolean(document.querySelector(".pd-operation-notice.is-error"))');
   await review.assert('!document.querySelector(".pd-sidebar-popover")', 'Operation failure remains after its menu closes');
-  await review.click('.pd-operation-notice summary');
+  // A one-line failure reason shows directly under the title; no extra disclosure is needed.
+  await review.assert('document.querySelector(".pd-operation-notice-reason")?.textContent.includes("Editor unavailable for this test") && document.querySelector(".pd-operation-notice strong")?.textContent.endsWith("failed") && !document.querySelector(".pd-operation-notice summary")', 'Operation failures state what failed and why without opening details');
   await review.screenshot('operation-error-details');
   await review.clickText('.pd-operation-notice button','Retry');
   await review.waitFor('!document.querySelector(".pd-operation-notice")');
@@ -75,6 +76,16 @@ export default async function settingsReview(review) {
   await review.assert('!document.querySelector(".pd-composer-picker-model[data-model-id=review-fast]") && Boolean(document.querySelector(".pd-composer-picker-model[data-model-id=review-reasoner]"))', 'Image filter excludes incompatible models without selecting another model');
   await review.assert('window.__modelReview.snapshot.model==="gpt-review"', 'Compatibility filtering never changes the selected model');
   await review.screenshot('model-image-capabilities');
+  // 供应商模型多了以后，列表必须滚动，而不是把每行压扁——压扁会让行内文字压到下一行。
+  await review.click('.pd-model-image-filter input');
+  await review.key('Escape');
+  await review.evaluate(`(() => { const provider = window.__modelReview.providers.find(item => item.provider === 'review-gateway'); for (let index = 0; index < 6; index++) provider.models.push({ provider: 'review-gateway', id: 'crowded-' + index, name: '挤压回归模型 ' + index, reasoning: true, input: ['text'], contextWindow: 128000, maxTokens: 8192 }); return provider.models.length; })()`);
+  await review.click('.pd-composer-model-trigger');
+  await review.click('.pd-composer-provider-list [data-provider="review-gateway"]');
+  await review.waitFor('document.querySelectorAll(".pd-composer-picker-model").length > 5');
+  await review.assert('(() => { const list = document.querySelector(".pd-composer-provider-models .pd-composer-picker-list"); return list.scrollHeight > list.clientHeight; })()', 'Crowded model list scrolls instead of shrinking its rows');
+  await review.assert('[...document.querySelectorAll(".pd-composer-picker-model")].every(row => { const content = row.querySelector(":scope > span"); return content.getBoundingClientRect().bottom <= row.getBoundingClientRect().bottom + 0.5; })', 'Model rows keep full height so their text never paints over the next row');
+  await review.screenshot('model-picker-crowded-list');
   await review.key('Escape');
   await review.evaluate(`(() => { const fixture=window.__modelReview; fixture.installAttempts=0; window.piDesktop.installUpdate=async()=>{fixture.installAttempts++;if(fixture.installAttempts===1)throw new Error('Update unavailable for this test');return new Promise(resolve=>{fixture.finishInstallation=resolve;});};fixture.emit('onUpdateStateChanged',{phase:'available',currentVersion:'0.1.5',availableVersion:'0.1.6'});})()`);
   await review.click('.pd-sidebar-update');

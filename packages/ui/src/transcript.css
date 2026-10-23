@@ -89,17 +89,6 @@
 .pd-system-notice[data-system-kind='compaction'] summary { color: var(--pd-warning); }
 .pd-system-notice-body { max-height: 240px; overflow: auto; margin: 0; padding: 8px 14px 12px; border-top: 1px solid var(--pd-border-soft); color: var(--pd-text-subtle); font-size: var(--pd-font-caption); line-height: 1.7; white-space: pre-wrap; overflow-wrap: anywhere; scrollbar-width: thin; }
 
-/* Plugin notices: inline system cards from extension ui.notify (never context-injected). */
-.pd-extension-notice-card { display: flex; align-items: baseline; gap: 7px; max-width: 100%; min-width: 0; padding: 6px 12px; border: 1px solid var(--pd-border-soft); border-left-width: 3px; border-radius: var(--pd-radius-md); background: var(--pd-surface-muted); color: var(--pd-text); font-size: var(--pd-font-caption); line-height: 1.6; }
-.pd-extension-notice-card > svg { flex: 0 0 auto; align-self: center; color: var(--pd-text-weak); }
-.pd-extension-notice-card-label { flex: 0 0 auto; color: var(--pd-text-weak); font-size: var(--pd-font-xs); user-select: none; }
-.pd-extension-notice-card-text { min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
-.pd-extension-notice-card[data-notification-type='warning'] { border-left-color: var(--pd-warning); }
-.pd-extension-notice-card[data-notification-type='warning'] > svg { color: var(--pd-warning); }
-.pd-extension-notice-card[data-notification-type='error'] { border-left-color: var(--pd-danger); }
-.pd-extension-notice-card[data-notification-type='error'] > svg { color: var(--pd-danger); }
-.pd-message-row.is-system .pd-extension-notice-card[data-notification-type='info'] { border-left-color: var(--pd-brand); }
-.pd-message-row.is-system .pd-extension-notice-card[data-notification-type='info'] > svg { color: var(--pd-brand); }
 /* Session statistics dialog (3.1). */
 .pd-session-info { width: min(460px, calc(100vw - 48px)); max-width: none; max-height: none; margin: auto; padding: 0; overflow: hidden; border: 1px solid var(--pd-dialog-border); border-radius: var(--pd-radius-dialog); background: var(--pd-dialog); color: var(--pd-text); box-shadow: var(--pd-shadow-dialog); }
 .pd-session-info[open] { display: flex; flex-direction: column; }

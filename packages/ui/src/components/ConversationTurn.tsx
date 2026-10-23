@@ -1,7 +1,6 @@
 import { memo, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import type { UiConversationRun, UiFileChange, UiMessage, UiToolActivity } from '@pidesktop/shared';
 import { useT } from '../i18n';
-import { useExtensionNoticeDisplayEnabled } from '../extensionNoticeDisplay';
 import { useMessageStreamShowReasoning } from '../messageStreamShowReasoning';
 import { formatRunDuration } from '../conversationRuns';
 import { turnAnswer, type ConversationTurnEntry } from '../conversationTimeline';
@@ -41,7 +40,7 @@ export const ConversationTurn = memo(function ConversationTurn({ entry, messages
   legacyRunning: boolean; highlightedId: string | null; findIds: Set<string>; query: string;
   reveal: { id: string; request: number } | null; canRegenerateId: string | null;
 }) {
-  const { locale } = useT(), zh = locale === 'zh-CN';
+  const { t, locale } = useT();
   const detailId = useId();
   const running = run ? run.status === 'running' : legacyRunning;
   const phase = running ? 'running' : 'settled';
@@ -51,17 +50,12 @@ export const ConversationTurn = memo(function ConversationTurn({ entry, messages
   const answer = turnAnswer(entry, messages, running);
   const ownMessages = entry.entries.flatMap(item => item.kind === 'message' ? [messages[item.index]!] : []);
   const ownTools = entry.entries.flatMap(item => item.kind === 'tools' ? item.indices.map(index => activities[index]!) : []);
-  // Plugin notices ride inside the run's fold: while the run is live they are
-  // visible in chronological position among the steps, and once the run
-  // settles they fold away with the process instead of staying expanded
-  // beside the answer. The display setting hides them entirely.
-  const [noticesVisible] = useExtensionNoticeDisplayEnabled();
+  // Plugin notices pop above the composer instead of joining the transcript, so
+  // they never sit in the run's fold or split the turn.
   const [showReasoning] = useMessageStreamShowReasoning();
-  const notices = ownMessages.filter(message => message.systemKind === 'extension-notice');
-  const shownNotices = noticesVisible ? notices : [];
   const processMessages = ownMessages.filter(message => message.id !== answer?.id && message.systemKind !== 'extension-notice');
-  const foldMessages = noticesVisible ? [...processMessages, ...notices] : processMessages;
-  const hasProcess = ownTools.length > 0 || shownNotices.length > 0 || processMessages.some(message => message.text || (showReasoning && (message.thinking || message.thinkingStatus)) || message.status === 'error') || Boolean(showReasoning && (answer?.thinking || answer?.thinkingStatus));
+  const foldMessages = processMessages;
+  const hasProcess = ownTools.length > 0 || processMessages.some(message => message.text || (showReasoning && (message.thinking || message.thinkingStatus)) || message.status === 'error') || Boolean(showReasoning && (answer?.thinking || answer?.thinkingStatus));
   const searchExpands = Boolean(query && foldMessages.some(message => `${message.text}\n${message.thinking ?? ''}`.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase())));
   const expanded = hasProcess && (searchExpands || (choice ?? running));
   const mountedProcess = useRef(false);
@@ -77,14 +71,14 @@ export const ConversationTurn = memo(function ConversationTurn({ entry, messages
   const toolCounts = countToolGroup(ownTools);
   const toolSummary = toolGroupSummaryParts(toolCounts, locale).join(' · ');
   const exploring = isExplorationGroup(toolCounts) && !processMessages.some(message => message.status === 'error');
-  const label = ({ running: zh ? (exploring ? '正在探索' : '进行中') : (exploring ? 'Exploring' : 'Working'), completed: zh ? (exploring ? '已探索' : '已完成') : (exploring ? 'Explored' : 'Worked'), cancelled: zh ? '已停止' : 'Stopped', failed: zh ? '运行失败' : 'Failed', interrupted: zh ? '运行中断' : 'Interrupted' })[status];
+  const label = ({ running: t(exploring ? 'turn.exploring' : 'turn.working'), completed: t(exploring ? 'turn.explored' : 'turn.worked'), cancelled: t('turn.stopped'), failed: t('turn.failed'), interrupted: t('turn.interrupted') })[status];
   const failureCount = ownTools.filter(tool => tool.status === 'error').length;
   const header = <>
     <Icon name={running ? 'clock' : status === 'completed' ? 'check' : status === 'failed' ? 'close' : 'square'} width="14" height="14" />
     <ActivityLabel active={running}>{label}</ActivityLabel>
     {run && entry.lastForRun && <RunDuration run={run} />}
-    {ownTools.length > 0 && <span className="pd-turn-count" title={zh ? `${ownTools.length} 次工具调用` : `${ownTools.length} tool ${ownTools.length === 1 ? 'call' : 'calls'}`}>{toolSummary || (zh ? `${ownTools.length} 次工具调用` : `${ownTools.length} tool ${ownTools.length === 1 ? 'call' : 'calls'}`)}</span>}
-    {failureCount > 0 && <span className="pd-turn-failures">{zh ? `${failureCount} 次失败` : `${failureCount} failed`}</span>}
+    {ownTools.length > 0 && <span className="pd-turn-count" title={t(ownTools.length === 1 ? 'turn.toolCall' : 'turn.toolCalls', { count: ownTools.length })}>{toolSummary || (t(ownTools.length === 1 ? 'turn.toolCall' : 'turn.toolCalls', { count: ownTools.length }))}</span>}
+    {failureCount > 0 && <span className="pd-turn-failures">{t('turn.failureCount', { count: failureCount })}</span>}
     {hasProcess && <Icon name="chevronDown" className={`pd-chevron${expanded ? ' is-open' : ''}`} width="14" height="14" />}
   </>;
   // Legacy direct replies have no timing information: do not invent a duration or extra status row.
@@ -98,9 +92,8 @@ export const ConversationTurn = memo(function ConversationTurn({ entry, messages
         {(running || mountedProcess.current) && <div className="pd-turn-steps">{entry.entries.map(item => {
           if (item.kind === 'tools') return <ToolActivityPanel key={`tools:${item.id}`} sourceActivities={activities} indices={item.indices} inline />;
           const message = messages[item.index]!;
-          if (message.systemKind === 'extension-notice') return noticesVisible
-            ? <MessageItem key={message.id} message={message} process showHeading={false} highlighted={highlightedId === message.id} findMatch={findIds.has(message.id)} />
-            : null;
+          // Plugin notices are transient popups: they are never transcript rows.
+          if (message.systemKind === 'extension-notice') return null;
           if (message.id === answer?.id && !message.thinking && !message.thinkingStatus) return null;
           // Thinking and live prose share a stable position throughout the run.
           // Only the final answer moves out when the whole run has settled.

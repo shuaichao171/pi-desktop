@@ -43,6 +43,7 @@ function mountShell(storage, chatState = { appInfo: { platform: 'win32' } }) {
       if (specifier === '../taskNotificationSound') return taskNotificationSound;
       if (specifier === './ExtensionDialogHost') return { ExtensionDialogHost: 'ExtensionDialogHost', useExtensionRequestPending: () => false, useAnyExtensionRequestPending: () => false };
       if (specifier === '../resultFilePressRescue') return { installResultFilePressRescue: () => {} };
+      if (specifier === '../inputModality') return { installInputModality: () => {} };
       // The real module runs outside this VM realm. Inject its supported storage
       // dependency so it observes this mount's browser storage, including errors.
       if (specifier === '../themeColors') return {

@@ -32,11 +32,13 @@ export default async function workbenchFeatures(review) {
   await review.waitFor('Boolean(document.querySelector(".pd-commit-files"))');
   await review.evaluate(`(() => {const select=document.querySelector('.pd-commit-label select');select.value='stagedOnly';select.dispatchEvent(new Event('change',{bubbles:true}));})()`);
   await review.waitFor('document.querySelector(".pd-commit-files")?.textContent.includes("partial-index.ts")');
-  await review.click('.pd-commit-actions .pd-commit-secondary:nth-child(2)');
+  // A stable hook: the footer's button order changes as actions are added (push-only came second).
+  await review.click('.pd-commit-actions [data-action="generate-commit-message"]');
   await review.waitFor('document.querySelector("#pd-commit-message")?.value==="Commit approved index"');
   await review.assert('window.__workbenchFeatures.generated[0]==="INDEX_CONTENT_ONLY"','Generated message uses staged-only content');
   await review.screenshot('commit-staged-only-preview');
-  await review.click('.pd-commit-primary');
+  // Commit only: the dialog now also offers commit-and-push, which this fixture does not exercise.
+  await review.click('.pd-commit-actions [data-action="commit"]');
   await review.waitFor('window.__workbenchFeatures.commits.length===1');
   await review.assert('window.__workbenchFeatures.commits[0].id==="preview-stagedOnly"','Commit consumes the exact preview identity');
   await review.waitFor('!document.querySelector(".pd-commit-dialog")');

@@ -64,14 +64,14 @@ const LEGACY_DEFAULT_GENERATIONS: Array<Record<ColorMode, ThemeColors>> = [
 const DEFAULT_TOKENS: Record<ColorMode, Record<string, string>> = {
 	dark: {
 		'--pd-bg': '#161616', '--pd-sidebar': '#2b2b2b', '--pd-sidebar-hover': '#404040', '--pd-sidebar-selected': '#4a4a4a', '--pd-sidebar-surface': '#363636', '--pd-sidebar-tab': '#161616', '--pd-header': '#161616', '--pd-surface': '#222222',
-		'--pd-surface-hover': '#2d2d2d', '--pd-selected': '#2d2d2d', '--pd-border': '#2d2d2d', '--pd-border-soft': '#262626',
+		'--pd-surface-hover': '#2d2d2d', '--pd-selected': '#2d2d2d', '--pd-border': '#363636', '--pd-border-soft': '#2c2c2c',
 		'--pd-text': '#e5e5e5', '--pd-text-subtle': '#b8b8b8', '--pd-text-weak': '#999999',
 		'--pd-brand': '#8aa4f8', '--pd-brand-hover': '#a6bafa', '--pd-brand-ink': '#000000',
 		'--pd-danger': '#f87171', '--pd-warning': '#fbbf24', '--pd-success': '#4ade80',
 		'--pd-chrome-border': '#2b2b2b', '--pd-surface-raised': '#2b2b2b', '--pd-surface-muted': '#0e0e0e', '--pd-menu': '#363636', '--pd-menu-hover': '#404040',
 		'--pd-border-strong': '#404040', '--pd-user-surface': '#222222', '--pd-code-surface': '#0e0e0e',
 		'--pd-code-text': '#e5e5e5', '--pd-overlay': '#00000080',
-		'--pd-dialog': '#222222', '--pd-dialog-inset': '#222222', '--pd-dialog-border': '#2d2d2d', '--pd-field': '#161616', '--pd-field-border': '#2d2d2d',
+		'--pd-dialog': '#222222', '--pd-dialog-inset': '#222222', '--pd-dialog-border': '#333333', '--pd-field': '#161616', '--pd-field-border': '#383838',
 		'--pd-selection-bg': '#ffffff2e', '--pd-selection-ink': '#ffffff', '--pd-mark-border': '#ffffff40',
 		'--pd-assistant-mark-bg': '#ffffff14', '--pd-brand-mark-bg': '#ffffff12',
 	},

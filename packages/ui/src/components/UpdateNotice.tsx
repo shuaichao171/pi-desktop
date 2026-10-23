@@ -8,14 +8,20 @@ import { useChatStore } from '../store';
  * settings dialog. Shows download progress while fetching, then a one-click
  * "update now" action that installs and restarts without further prompts.
  */
+// Dismissal outlives remounts: the toast moves between the composer stack and
+// the page notice center as views change, and "later" must stay later.
+let sharedDismissed = false;
+let sharedSeenVersion: string | null = null;
+
 export function UpdateNotice() {
 	const { t } = useT();
 	const bridge = useChatStore((s) => s.bridge);
 	const [state, setState] = useState<UiUpdateState | null>(null);
-	const [dismissed, setDismissed] = useState(false);
+	const [dismissed, setDismissedState] = useState(() => sharedDismissed);
+	const setDismissed = (value: boolean) => { sharedDismissed = value; setDismissedState(value); };
 	const [pending, setPending] = useState(false);
 	const [error, setError] = useState<string | null>(null);
-	const seenVersion = useRef<string | null>(null);
+	const seenVersion = useRef<string | null>(sharedSeenVersion);
 
 	useEffect(() => {
 		if (!bridge) return;
@@ -35,7 +41,7 @@ export function UpdateNotice() {
 		if (!state) return;
 		if (state.phase === 'checking') { setDismissed(false); setError(null); return; }
 		const version = state.availableVersion ?? null;
-		if (version && version !== seenVersion.current) { seenVersion.current = version; setDismissed(false); }
+		if (version && version !== seenVersion.current) { seenVersion.current = sharedSeenVersion = version; setDismissed(false); }
 	}, [state]);
 
 	if (!bridge || !state || dismissed || pending) return null;

@@ -275,12 +275,13 @@ export function readCurrentDesktopSettings(): DesktopSettings {
 	return readDesktopSettings(desktopSettingsPath(), join(app.getPath('home'), 'PiDesktopWorkspace'));
 }
 
-/** Persists a close-policy choice made from the close dialog (4.2). */
-export function saveCloseBehavior(behavior: DesktopSettings['closeBehavior']): Promise<void> {
+/** Persists the choice made in the busy-close dialog (4.2): the same close behavior the Settings
+ * page shows, plus "no more asking" while tasks run. Picking a behavior in Settings asks again. */
+export function saveCloseChoice(behavior: DesktopSettings['closeBehavior']): Promise<void> {
 	// Share the settings queue so a concurrent Settings save cannot drop this choice.
 	const result = desktopSettingsQueue.then(() => {
 		const current = readCurrentDesktopSettings();
-		writeDesktopSettings(desktopSettingsPath(), { ...current, closeBehavior: behavior });
+		writeDesktopSettings(desktopSettingsPath(), { ...current, closeBehavior: behavior, confirmBusyClose: false });
 		keepAwake?.settingsChanged();
 	});
 	desktopSettingsQueue = result.then(() => undefined, () => undefined);
@@ -814,9 +815,12 @@ export function registerIpc(options: {
 				});
 			}
 			const current = readCurrentDesktopSettings();
+			const chosenCloseBehavior = patch.closeBehavior === 'tray' || patch.closeBehavior === 'quit' ? patch.closeBehavior : null;
 			const next: DesktopSettings = {
 				notificationsEnabled: typeof patch.notificationsEnabled === 'boolean' ? patch.notificationsEnabled : current.notificationsEnabled,
-				closeBehavior: patch.closeBehavior === 'tray' || patch.closeBehavior === 'quit' ? patch.closeBehavior : current.closeBehavior,
+				closeBehavior: chosenCloseBehavior ?? current.closeBehavior,
+				// Choosing a close behavior in Settings is a fresh decision: ask again on the next busy close.
+				confirmBusyClose: chosenCloseBehavior !== null ? true : current.confirmBusyClose,
 				keepAwakeWhileRunning: typeof patch.keepAwakeWhileRunning === 'boolean' ? patch.keepAwakeWhileRunning : current.keepAwakeWhileRunning,
 				autoInstallUpdates: typeof patch.autoInstallUpdates === 'boolean' ? patch.autoInstallUpdates : current.autoInstallUpdates,
 				conversationStorageDirectory: directory ?? current.conversationStorageDirectory,

@@ -23,8 +23,7 @@ function fileSize(size: number, locale: string): string {
 }
 
 export function ResultFilePreviewDialog({ target, onClose }: { target: ResultFileTarget; onClose(): void }) {
-	const { locale } = useT();
-	const label = (zh: string, en: string) => locale === 'zh-CN' ? zh : en;
+	const { t, locale } = useT();
 	const bridge = useChatStore(state => state.bridge);
 	const titleId = useId();
 	const dialog = useRef<HTMLDialogElement>(null);
@@ -92,7 +91,7 @@ export function ResultFilePreviewDialog({ target, onClose }: { target: ResultFil
 		const currentRequest = ++request.current;
 		setResult(null); setLoadError(null); setActionError(null); setZoom(null); setMediaError(false);
 		if (!bridge) {
-			setLoadError(label('文件服务尚未就绪，请稍后重试。', 'The file service is not ready. Please try again.'));
+			setLoadError(t('filePreview.serviceNotReady'));
 			return;
 		}
 		const current = () => isCurrentContext() && request.current === currentRequest;
@@ -117,11 +116,11 @@ export function ResultFilePreviewDialog({ target, onClose }: { target: ResultFil
 	}
 	const changeZoom = (delta: number) => setZoom(value => Math.min(4, Math.max(.25, (value ?? 1) + delta)));
 	const retryPreview = () => setRetry(value => value + 1);
-	const openLabel = preview?.kind === 'directory' ? label('打开文件夹', 'Open folder') : label('打开文件', 'Open file');
+	const openLabel = preview?.kind === 'directory' ? t('filePreview.openFolder') : t('filePreview.openFile');
 	function unavailableReason(): string {
-		if (preview?.kind === 'directory') return label('这是一个文件夹，可以打开查看其中的文件。', 'This is a folder. Open it to view its files.');
-		if (preview?.reason === 'too-large') return label('文件较大，暂不支持在这里预览。', 'This file is too large to preview here.');
-		return label('暂不支持预览此类文件，可以使用默认应用打开。', 'A preview is unavailable for this file type. Open it in its default app.');
+		if (preview?.kind === 'directory') return t('filePreview.folderHint');
+		if (preview?.reason === 'too-large') return t('filePreview.tooLarge');
+		return t('filePreview.unsupported');
 	}
 
 	return createPortal(<dialog ref={dialog} className="pd-result-file-preview" role="dialog" aria-modal="true" aria-labelledby={titleId}
@@ -142,28 +141,28 @@ export function ResultFilePreviewDialog({ target, onClose }: { target: ResultFil
 		<header className="pd-result-file-preview-header">
 			<Icon name={preview?.kind === 'directory' ? 'folder' : 'file'} width="20" height="20" />
 			<div className="pd-result-file-preview-heading"><h2 id={titleId}>{name}</h2><p>{preview?.path ?? target.path}{target.line ? `:${target.line}${target.column ? `:${target.column}` : ''}` : ''}</p></div>
-			<button ref={closeButton} type="button" className="pd-result-file-preview-close" aria-label={label('关闭预览', 'Close preview')} onClick={close}><Icon name="close" width="18" height="18" /></button>
+			<button ref={closeButton} type="button" className="pd-result-file-preview-close" aria-label={t('filePreview.close')} onClick={close}><Icon name="close" width="18" height="18" /></button>
 		</header>
 		<div className="pd-result-file-preview-actions">
-			<span>{label('文件预览', 'File preview')}{preview && preview.kind !== 'directory' ? ` · ${fileSize(preview.size, locale)}` : ''}</span>
-			<button type="button" disabled={!bridge || busy !== null} onClick={() => void act('open')}><Icon name="arrowUp" width="14" height="14" />{busy === 'open' ? label('正在打开…', 'Opening…') : openLabel}</button>
-			<button type="button" disabled={!bridge || busy !== null} onClick={() => void act('reveal')}><Icon name="folder" width="14" height="14" />{busy === 'reveal' ? label('正在打开…', 'Opening…') : label('打开所在位置', 'Show in folder')}</button>
+			<span>{t('filePreview.title')}{preview && preview.kind !== 'directory' ? ` · ${fileSize(preview.size, locale)}` : ''}</span>
+			<button type="button" disabled={!bridge || busy !== null} onClick={() => void act('open')}><Icon name="arrowUp" width="14" height="14" />{busy === 'open' ? t('filePreview.opening') : openLabel}</button>
+			<button type="button" disabled={!bridge || busy !== null} onClick={() => void act('reveal')}><Icon name="folder" width="14" height="14" />{busy === 'reveal' ? t('filePreview.opening') : t('filePreview.reveal')}</button>
 		</div>
 		{actionError && <p className="pd-result-file-preview-error" role="alert">{actionError}</p>}
 		<ScopedErrorBoundary scope="preview" resetKeys={[targetKey, retry]}><div className={`pd-result-file-preview-body${preview ? ` is-${preview.kind}` : ''}`} aria-busy={loading}>
-			{loadError ? <div className="pd-result-file-preview-state" role="alert"><Icon name="file" width="32" height="32" /><strong>{label('无法预览文件', 'Unable to preview this file')}</strong><p>{loadError}</p><button type="button" onClick={retryPreview}>{label('重试', 'Retry')}</button></div> : loading ?
-				<div className="pd-result-file-preview-state" role="status"><p>{label('正在加载预览…', 'Loading preview…')}</p></div> : preview?.kind === 'text' ?
+			{loadError ? <div className="pd-result-file-preview-state" role="alert"><Icon name="file" width="32" height="32" /><strong>{t('filePreview.failed')}</strong><p>{loadError}</p><button type="button" onClick={retryPreview}>{t('filePreview.retry')}</button></div> : loading ?
+				<div className="pd-result-file-preview-state" role="status"><p>{t('filePreview.loading')}</p></div> : preview?.kind === 'text' ?
 				<WorkbenchTextView key={`${targetKey}:${retry}`} path={preview.path} text={preview.text ?? ''} omitted={preview.truncated} onQuote={(quote) => requestCodeQuote({ cwd: target.cwd, path: target.path, ...quote })} /> : preview?.kind === 'image' ? <>
-					<div className="pd-result-file-preview-zoom"><button type="button" aria-pressed={zoom === null} onClick={() => setZoom(null)}>{label('适应窗口', 'Fit to window')}</button><button type="button" aria-pressed={zoom === 1} onClick={() => setZoom(1)}>100%</button><button type="button" aria-label={label('缩小', 'Zoom out')} disabled={zoom === .25} onClick={() => changeZoom(-.25)}>−</button><output>{zoom === null ? label('适应', 'Fit') : `${Math.round(zoom * 100)}%`}</output><button type="button" aria-label={label('放大', 'Zoom in')} disabled={zoom === 4} onClick={() => changeZoom(.25)}>+</button></div>
-					{mediaError || !imageSource ? <div className="pd-result-file-preview-state" role="alert"><p>{label('无法显示此图片。', 'This image could not be displayed.')}</p><button type="button" onClick={retryPreview}>{label('重试', 'Retry')}</button></div> : <div className={`pd-result-file-preview-image${zoom === null ? ' is-fit' : ''}`}><img key={`${targetKey}:${retry}`} src={imageSource} alt={name} style={zoom === null ? undefined : { zoom }} onError={() => setMediaError(true)} /></div>}
+					<div className="pd-result-file-preview-zoom"><button type="button" aria-pressed={zoom === null} onClick={() => setZoom(null)}>{t('filePreview.fitToWindow')}</button><button type="button" aria-pressed={zoom === 1} onClick={() => setZoom(1)}>100%</button><button type="button" aria-label={t('filePreview.zoomOut')} disabled={zoom === .25} onClick={() => changeZoom(-.25)}>−</button><output>{zoom === null ? t('filePreview.fit') : `${Math.round(zoom * 100)}%`}</output><button type="button" aria-label={t('filePreview.zoomIn')} disabled={zoom === 4} onClick={() => changeZoom(.25)}>+</button></div>
+					{mediaError || !imageSource ? <div className="pd-result-file-preview-state" role="alert"><p>{t('filePreview.imageFailed')}</p><button type="button" onClick={retryPreview}>{t('filePreview.retry')}</button></div> : <div className={`pd-result-file-preview-image${zoom === null ? ' is-fit' : ''}`}><img key={`${targetKey}:${retry}`} src={imageSource} alt={name} style={zoom === null ? undefined : { zoom }} onError={() => setMediaError(true)} /></div>}
 				</> : preview?.kind === 'office' && preview.bytesBase64 && preview.officeFormat ?
-				<Suspense fallback={<div className="pd-result-file-preview-state" role="status">{label('正在加载预览…', 'Loading preview…')}</div>}><OfficeFilePreview key={`${targetKey}:${retry}`} bytesBase64={preview.bytesBase64} format={preview.officeFormat} /></Suspense> : preview?.kind === 'pdf' && pdfSource && !mediaError ?
-				<iframe className="pd-result-file-preview-pdf" title={`${label('PDF 预览', 'PDF preview')}: ${name}`} src={pdfSource} onError={() => setMediaError(true)} /> : preview?.kind === 'html' && htmlSource ?
+				<Suspense fallback={<div className="pd-result-file-preview-state" role="status">{t('filePreview.loading')}</div>}><OfficeFilePreview key={`${targetKey}:${retry}`} bytesBase64={preview.bytesBase64} format={preview.officeFormat} /></Suspense> : preview?.kind === 'pdf' && pdfSource && !mediaError ?
+				<iframe className="pd-result-file-preview-pdf" title={`${t('filePreview.pdf')}: ${name}`} src={pdfSource} onError={() => setMediaError(true)} /> : preview?.kind === 'html' && htmlSource ?
 				<div className="pd-result-file-preview-html">
-					<p className="pd-result-file-preview-note">{label('静态预览：脚本与表单已禁用，交互内容请用默认应用打开。', 'Static preview: scripts and forms are disabled. Open it in the default app for interactive content.')}{preview.truncated ? label('文件较大，仅预览前 1 MB 内容。', ' Only the first 1 MB of this file is previewed.') : null}</p>
-					<iframe title={`${label('HTML 预览', 'HTML preview')}: ${name}`} src={htmlSource} sandbox="" referrerPolicy="no-referrer" />
+					<p className="pd-result-file-preview-note">{t('filePreview.htmlStatic')}{preview.truncated ? t('filePreview.htmlTruncated') : null}</p>
+					<iframe title={`${t('filePreview.html')}: ${name}`} src={htmlSource} sandbox="" referrerPolicy="no-referrer" />
 				</div> :
-				<div className="pd-result-file-preview-state"><Icon name={preview?.kind === 'directory' ? 'folder' : 'file'} width="36" height="36" /><strong>{preview?.kind === 'directory' ? label('文件夹', 'Folder') : label('暂无预览', 'Preview unavailable')}</strong><p>{preview?.kind === 'pdf' ? label('无法显示此 PDF，请使用默认应用打开。', 'This PDF could not be displayed. Open it in its default app.') : unavailableReason()}</p><button type="button" disabled={!bridge || busy !== null} onClick={() => void act('open')}>{openLabel}</button></div>}
+				<div className="pd-result-file-preview-state"><Icon name={preview?.kind === 'directory' ? 'folder' : 'file'} width="36" height="36" /><strong>{preview?.kind === 'directory' ? t('filePreview.folder') : t('filePreview.none')}</strong><p>{preview?.kind === 'pdf' ? t('filePreview.pdfFailed') : unavailableReason()}</p><button type="button" disabled={!bridge || busy !== null} onClick={() => void act('open')}>{openLabel}</button></div>}
 		</div></ScopedErrorBoundary>
 	</dialog>, document.body);
 }

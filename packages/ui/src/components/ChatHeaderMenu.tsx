@@ -14,7 +14,7 @@ import { isConversationWorkspace } from '../sidebarOrganization';
  * session toggles the sidebar offers, copy actions, and folder access.
  */
 export function ChatHeaderMenu({ title, sessionPath, cwd, onRename, onOpenCommit }: { title: string; sessionPath: string | null; cwd: string; onRename(): void; onOpenCommit(): void }) {
-	const { t, locale } = useT();
+	const { t } = useT();
 	const session = useChatStore((s) => (sessionPath ? s.sessions.find((item) => item.path === sessionPath) : undefined));
 	const updateSessionMeta = useChatStore((s) => s.updateSessionMeta);
 	const conversationWorkspaces = useChatStore((s) => s.conversationWorkspaces);
@@ -71,7 +71,7 @@ export function ChatHeaderMenu({ title, sessionPath, cwd, onRename, onOpenCommit
 		const origin = { cwd, sessionPath, sessionId: useChatStore.getState().sessionId };
 		await runWithFeedback({ id: `export:${origin.cwd}:${origin.sessionPath ?? origin.sessionId}:${format}`, title: t(format === 'html' ? 'chat.menuExportHtml' : 'chat.menuExportJsonl'), run: async () => {
 			const current = useChatStore.getState();
-			if (current.cwd !== origin.cwd || current.sessionPath !== origin.sessionPath || current.sessionId !== origin.sessionId) throw new Error(locale === 'zh-CN' ? '请返回原会话后重试导出。' : 'Return to the original session before retrying the export.');
+			if (current.cwd !== origin.cwd || current.sessionPath !== origin.sessionPath || current.sessionId !== origin.sessionId) throw new Error(t('chat.exportReturnToSession'));
 			return bridge.exportSession(format);
 		}, success: result => typeof result === 'string' && result ? t('chat.export.done', { path: result }) : null });
 	}

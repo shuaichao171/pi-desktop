@@ -10,6 +10,7 @@ import { SidebarSessionPanel } from './SidebarSessionPanel';
 import { HistoryNavigation, type HistoryNavigationProps } from './HistoryNavigation';
 import { SearchButton } from './SearchButton';
 import { operationFeedback, runWithFeedback } from '../operationFeedback';
+import { formatDate } from '../dateFormat';
 
 interface SidebarProps {
 	open: boolean;
@@ -58,9 +59,7 @@ export function Sidebar({ open, projectRevealRequest = 0, narrow, onToggle, onNa
 	const notesState = updateState?.releaseNotes ? updateState : null;
 	const updateNotesVisible = notesState !== null && notesState.phase !== 'downloading' && notesState.phase !== 'installing';
 	const rawNotesDate = notesState?.releaseDate;
-	const updateNotesDate = rawNotesDate && !Number.isNaN(Date.parse(rawNotesDate))
-		? new Intl.DateTimeFormat(locale === 'en-US' ? 'en-US' : 'zh-CN', { year: 'numeric', month: 'long', day: 'numeric', timeZone: 'UTC' }).format(new Date(rawNotesDate))
-		: null;
+	const updateNotesDate = formatDate(rawNotesDate, locale, { year: 'always', timeZone: 'UTC' }) || null;
 	const updateButtonText = updateState?.phase === 'installing' ? t('sidebar.updateRestarting')
 		: updateState?.phase === 'downloading' ? `${updatePercent}%`
 		: updateBusy ? t('sidebar.updatePending')

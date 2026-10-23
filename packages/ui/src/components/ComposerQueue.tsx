@@ -10,12 +10,12 @@ import './composerQueue.css';
 import './composerQueuePending.css';
 
 function QueueDetails({ item, onClose, onRestoreFocus }: { item: UiQueuedMessage; onClose(): void; onRestoreFocus(): void }) {
-  const { locale } = useT(), zh = locale === 'zh-CN';
+  const { t } = useT();
   const dialog = useRef<HTMLDialogElement>(null);
   const restore = useRef(onRestoreFocus); restore.current = onRestoreFocus;
   useLayoutEffect(() => { const node = dialog.current; node?.showModal(); return () => { node?.close(); restore.current(); }; }, []);
-  return createPortal(<dialog ref={dialog} className="pd-queue-details-dialog" aria-label={zh ? '排队消息内容' : 'Queued message'} onCancel={event => { event.preventDefault(); onClose(); }} onKeyDown={event => event.stopPropagation()}>
-    <header><strong>{zh ? '排队消息' : 'Queued message'}</strong><button type="button" className="pd-icon-button" onClick={onClose} aria-label={zh ? '关闭' : 'Close'} autoFocus><Icon name="close" width="16" height="16" /></button></header>
+  return createPortal(<dialog ref={dialog} className="pd-queue-details-dialog" aria-label={t('queue.itemContent')} onCancel={event => { event.preventDefault(); onClose(); }} onKeyDown={event => event.stopPropagation()}>
+    <header><strong>{t('queue.itemTitle')}</strong><button type="button" className="pd-icon-button" onClick={onClose} aria-label={t('queue.close')} autoFocus><Icon name="close" width="16" height="16" /></button></header>
     <p>{item.text}</p>
     {item.attachments?.map((file, i) => <div className="pd-queue-detail-attachment" key={`${file.name}:${i}`}><Icon name={file.kind === 'image' ? 'image' : 'file'} width="16" height="16" /><span>{file.name}</span></div>)}
   </dialog>, document.body);
@@ -25,7 +25,7 @@ export const ComposerQueue = memo(function ComposerQueue({ items, scopeKey, edit
   items: UiQueuedMessage[]; scopeKey: string; editorTarget: HTMLElement | null;
   onEditingChange(editing: boolean): void; defaultBehavior: 'followUp' | 'steer'; onToggleDefault(): void;
 }) {
-  const { t, locale } = useT(), zh = locale === 'zh-CN';
+  const { t } = useT();
   const { queue, error, pending, pendingRows, pendingGlobal, activeRow, ready, refresh, mutate } = useInputQueue(items);
   const [editing, setEditing] = useState<UiInputQueueItem | null>(null);
   const [details, setDetails] = useState<string | null>(null);
@@ -103,8 +103,8 @@ export const ComposerQueue = memo(function ComposerQueue({ items, scopeKey, edit
   return <>
     <section ref={section} className="pd-composer-queue" aria-label={t('composer.queuedInstructions')} onFocusCapture={() => { ownedFocus.current = true; }} onBlurCapture={event => { ownedFocus.current = event.relatedTarget instanceof Node && event.currentTarget.contains(event.relatedTarget); }}>
       <span className="pd-queue-sr-only" role="status">{t('composer.queueCount', { count: items.length })}</span>
-      {queue?.paused && <div className="pd-queue-paused" role="status"><Icon name="clock" width="14" height="14" /><span>{zh ? '后续消息已暂停' : 'Follow-ups paused'}</span><button type="button" disabled={disabled || pendingGlobal} onClick={() => void mutate('resume')}>{pendingGlobal ? zh ? '处理中…' : 'Updating…' : zh ? '继续发送' : 'Resume queue'}</button></div>}
-      {error && <div className="pd-queue-error" role="alert"><span>{error}</span><button type="button" disabled={pending} onClick={() => void refresh()}>{zh ? '刷新队列' : 'Refresh queue'}</button></div>}
+      {queue?.paused && <div className="pd-queue-paused" role="status"><Icon name="clock" width="14" height="14" /><span>{t('queue.paused')}</span><button type="button" disabled={disabled || pendingGlobal} onClick={() => void mutate('resume')}>{pendingGlobal ? t('queue.updating') : t('queue.resumeSend')}</button></div>}
+      {error && <div className="pd-queue-error" role="alert"><span>{error}</span><button type="button" disabled={pending} onClick={() => void refresh()}>{t('queue.refresh')}</button></div>}
       <div className="pd-composer-queue-list">
         {items.map(item => {
           const state = itemState(item.id), recovered = state === 'recovered', held = state === 'editing', peers = siblings(item), sortable = state === 'accepted' && peers.length > 1;
@@ -122,18 +122,18 @@ export const ComposerQueue = memo(function ComposerQueue({ items, scopeKey, edit
             }
             setDragId(null); setDrop(null);
           }}>
-            {items.length > 1 && <button type="button" className="pd-queue-drag" draggable={sortable && !itemDisabled} disabled={!sortable} aria-disabled={itemDisabled || !sortable} aria-label={zh ? '拖动排序，或使用上下方向键' : 'Drag to reorder, or use Up and Down arrows'} title={zh ? '拖动排序 · 上下方向键' : 'Drag to reorder · Up/Down'} onDragStart={event => { if (itemDisabled) { event.preventDefault(); return; } setDragId(item.id); event.dataTransfer.effectAllowed = 'move'; event.dataTransfer.setData('text/plain', item.id); }} onDragEnd={() => { setDragId(null); setDrop(null); }} onKeyDown={event => { if (event.key === 'ArrowUp' || event.key === 'ArrowDown') { event.preventDefault(); event.stopPropagation(); move(item, event.key === 'ArrowUp' ? -1 : 1); } }}><span aria-hidden="true">⠿</span></button>}
-            <button type="button" className="pd-composer-queue-text" onClick={() => setDetails(item.id)} title={item.text} aria-label={zh ? `查看排队消息：${item.text || t('composer.queueAttachments', { count: item.attachments?.length ?? 0 })}` : `Read queued message: ${item.text || 'attachments'}`}>{item.text || t('composer.queueAttachments', { count: item.attachments?.length ?? 0 })}</button>
+            {items.length > 1 && <button type="button" className="pd-queue-drag" draggable={sortable && !itemDisabled} disabled={!sortable} aria-disabled={itemDisabled || !sortable} aria-label={t('queue.dragHint')} title={t('queue.dragHintShort')} onDragStart={event => { if (itemDisabled) { event.preventDefault(); return; } setDragId(item.id); event.dataTransfer.effectAllowed = 'move'; event.dataTransfer.setData('text/plain', item.id); }} onDragEnd={() => { setDragId(null); setDrop(null); }} onKeyDown={event => { if (event.key === 'ArrowUp' || event.key === 'ArrowDown') { event.preventDefault(); event.stopPropagation(); move(item, event.key === 'ArrowUp' ? -1 : 1); } }}><span aria-hidden="true">⠿</span></button>}
+            <button type="button" className="pd-composer-queue-text" onClick={() => setDetails(item.id)} title={item.text} aria-label={t('queue.readItem', { text: item.text || t('queue.readItemAttachments', { count: item.attachments?.length ?? 0 }) })}>{item.text || t('composer.queueAttachments', { count: item.attachments?.length ?? 0 })}</button>
             {Boolean(item.attachments?.length) && <span className="pd-queue-attachment-count" title={item.attachments!.map(file => file.name).join('\n')}><Icon name={item.attachments!.every(file => file.kind === 'image') ? 'image' : 'file'} width="14" height="14" />{item.attachments!.length}</span>}
-            {held && <span className="pd-queue-state">{zh ? '编辑中' : 'Editing'}</span>}
-            {recovered && <span className="pd-queue-state is-recovered">{zh ? '待确认' : 'Confirm'}</span>}
-            {rowPending && <span className="pd-queue-pending" role="status">{activeRow === item.id ? zh ? '处理中…' : 'Updating…' : zh ? '等待处理…' : 'Waiting…'}</span>}
+            {held && <span className="pd-queue-state">{t('queue.editing')}</span>}
+            {recovered && <span className="pd-queue-state is-recovered">{t('queue.pendingConfirm')}</span>}
+            {rowPending && <span className="pd-queue-pending" role="status">{activeRow === item.id ? t('queue.updating') : t('queue.waiting')}</span>}
             {item.behavior === 'steer' && !held && !recovered && <span className="pd-queue-state" title={t('composer.queuedSteerDescription')}>{t('composer.queuedSteer')}</span>}
             <div className="pd-composer-queue-actions">
-              {recovered ? <button type="button" className="pd-composer-queue-action is-steer" disabled={itemDisabled} onClick={() => void mutate('confirm', item.id)}>{zh ? '确认恢复' : 'Confirm'}</button>
-                : item.behavior === 'followUp' && !held && <button type="button" className="pd-composer-queue-action is-steer" disabled={itemDisabled} title={t('composer.queueSteerHint')} aria-label={t('composer.queueSteer')} onClick={() => void mutate('steer', item.id)}><Icon name="steer" width="14" height="14" /><span>{zh ? '引导' : 'Steer'}</span></button>}
+              {recovered ? <button type="button" className="pd-composer-queue-action is-steer" disabled={itemDisabled} onClick={() => void mutate('confirm', item.id)}>{t('queue.confirmRestore')}</button>
+                : item.behavior === 'followUp' && !held && <button type="button" className="pd-composer-queue-action is-steer" disabled={itemDisabled} title={t('composer.queueSteerHint')} aria-label={t('composer.queueSteer')} onClick={() => void mutate('steer', item.id)}><Icon name="steer" width="14" height="14" /><span>{t('queue.steer')}</span></button>}
               <button type="button" className="pd-composer-queue-action" disabled={itemDisabled || editing?.id === item.id} title={t('composer.queueDelete')} aria-label={t('composer.queueDelete')} onClick={() => void mutate('remove', item.id)}><Icon name="close" width="14" height="14" /></button>
-              <button type="button" className="pd-composer-queue-action" aria-label={zh ? '更多操作' : 'More actions'} aria-haspopup="menu" aria-expanded={menu?.id === item.id} onClick={event => {
+              <button type="button" className="pd-composer-queue-action" aria-label={t('queue.moreActions')} aria-haspopup="menu" aria-expanded={menu?.id === item.id} onClick={event => {
                 if (menu?.id === item.id) { closeMenu(); return; }
                 const box = event.currentTarget.getBoundingClientRect();
                 setMenu({ id: item.id, left: Math.max(8, Math.min(innerWidth - 232, box.right - 224)), bottom: Math.max(8, Math.min(innerHeight - 160, innerHeight - box.top + 5)), trigger: event.currentTarget });
@@ -143,14 +143,14 @@ export const ComposerQueue = memo(function ComposerQueue({ items, scopeKey, edit
         })}
       </div>
     </section>
-    {menu && menuItem && createPortal(<div ref={menuRef} className="pd-queue-menu" role="menu" aria-label={zh ? '排队消息操作' : 'Queued message actions'} style={{ left: menu.left, bottom: menu.bottom, maxHeight: Math.min(340, innerHeight - menu.bottom - 8) }} onKeyDown={menuKeys}>
-      <button type="button" role="menuitem" disabled={rowDisabled(menuItem.id) || editingPending || Boolean(editing) || itemState(menuItem.id) === 'recovered' || queue?.items.some(row => row.state === 'editing' && row.id !== menuItem.id)} onClick={() => { closeMenu(false); void beginEdit(menuItem); }}><Icon name="pencil" width="15" height="15" />{zh ? '编辑' : 'Edit'}</button>
-      <button type="button" role="menuitem" onClick={() => { closeMenu(false); setDetails(menuItem.id); }}><Icon name="message" width="15" height="15" />{zh ? '查看完整内容' : 'View full message'}</button>
-      {([-1, 1] as const).map(delta => { const peers = siblings(menuItem), index = peers.findIndex(row => row.id === menuItem.id); return <button key={delta} type="button" role="menuitem" disabled={rowDisabled(menuItem.id) || index < 0 || index + delta < 0 || index + delta >= peers.length} onClick={() => { closeMenu(); move(menuItem, delta); }}><Icon name={delta < 0 ? 'arrowUp' : 'arrowDown'} width="15" height="15" />{zh ? delta < 0 ? '上移' : '下移' : delta < 0 ? 'Move up' : 'Move down'}</button>; })}
-      {itemState(menuItem.id) === 'editing' && !editing && <button type="button" role="menuitem" disabled={rowDisabled(menuItem.id)} onClick={() => { closeMenu(); void mutate('cancelEdit', menuItem.id); }}>{zh ? '取消编辑，恢复排队' : 'Cancel edit and requeue'}</button>}
+    {menu && menuItem && createPortal(<div ref={menuRef} className="pd-queue-menu" role="menu" aria-label={t('queue.itemActions')} style={{ left: menu.left, bottom: menu.bottom, maxHeight: Math.min(340, innerHeight - menu.bottom - 8) }} onKeyDown={menuKeys}>
+      <button type="button" role="menuitem" disabled={rowDisabled(menuItem.id) || editingPending || Boolean(editing) || itemState(menuItem.id) === 'recovered' || queue?.items.some(row => row.state === 'editing' && row.id !== menuItem.id)} onClick={() => { closeMenu(false); void beginEdit(menuItem); }}><Icon name="pencil" width="15" height="15" />{t('queue.edit')}</button>
+      <button type="button" role="menuitem" onClick={() => { closeMenu(false); setDetails(menuItem.id); }}><Icon name="message" width="15" height="15" />{t('queue.viewFull')}</button>
+      {([-1, 1] as const).map(delta => { const peers = siblings(menuItem), index = peers.findIndex(row => row.id === menuItem.id); return <button key={delta} type="button" role="menuitem" disabled={rowDisabled(menuItem.id) || index < 0 || index + delta < 0 || index + delta >= peers.length} onClick={() => { closeMenu(); move(menuItem, delta); }}><Icon name={delta < 0 ? 'arrowUp' : 'arrowDown'} width="15" height="15" />{t(delta < 0 ? 'queue.moveUp' : 'queue.moveDown')}</button>; })}
+      {itemState(menuItem.id) === 'editing' && !editing && <button type="button" role="menuitem" disabled={rowDisabled(menuItem.id)} onClick={() => { closeMenu(); void mutate('cancelEdit', menuItem.id); }}>{t('queue.cancelEdit')}</button>}
       <hr />
-      <button type="button" role="menuitem" disabled={disabled || pendingGlobal} onClick={() => { closeMenu(); void mutate(queue?.paused ? 'resume' : 'pause'); }}><Icon name="clock" width="15" height="15" />{zh ? queue?.paused ? '继续队列' : '暂停后续消息' : queue?.paused ? 'Resume queue' : 'Pause follow-ups'}</button>
-      <button type="button" role="menuitemcheckbox" aria-checked={defaultBehavior === 'followUp'} onClick={() => { closeMenu(); onToggleDefault(); }}><Icon name="queue" width="15" height="15" />{zh ? defaultBehavior === 'followUp' ? '关闭默认排队' : '启用默认排队' : defaultBehavior === 'followUp' ? 'Turn off default queueing' : 'Turn on default queueing'}</button>
+      <button type="button" role="menuitem" disabled={disabled || pendingGlobal} onClick={() => { closeMenu(); void mutate(queue?.paused ? 'resume' : 'pause'); }}><Icon name="clock" width="15" height="15" />{t(queue?.paused ? 'queue.resume' : 'queue.pause')}</button>
+      <button type="button" role="menuitemcheckbox" aria-checked={defaultBehavior === 'followUp'} onClick={() => { closeMenu(); onToggleDefault(); }}><Icon name="queue" width="15" height="15" />{t(defaultBehavior === 'followUp' ? 'queue.defaultOff' : 'queue.defaultOn')}</button>
     </div>, document.body)}
     {selectedDetail && <QueueDetails key={selectedDetail.id} item={selectedDetail} onClose={() => setDetails(null)} onRestoreFocus={() => restoreQueueFocus(selectedDetail.id)} />}
     {editing && editorTarget && <QueueComposerEditor key={editing.id} item={editing} scopeKey={scopeKey} target={editorTarget} pending={pendingRows.has(editing.id)} present={Boolean(queue?.items.some(item => item.id === editing.id && item.state === 'editing'))} onSave={text => finishEdit(true, text)} onCancel={() => finishEdit(false)} onEditingChange={onEditingChange} />}

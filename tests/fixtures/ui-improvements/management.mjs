@@ -13,6 +13,9 @@ export default async function managementScenarios(review) {
     const firstPath = fixture.snapshot.sessionPath, secondPath = 'C:/renderer-review/second.jsonl';
     const item = (path, name) => ({path,id:path,name,firstMessage:name,modified:'2026-09-26T08:00:00Z',messageCount:3});
     const state = {cwd,second,firstPath,secondPath,failWorkspace:true,rows:{[cwd]:[item(firstPath,'后台审查会话'),item(secondPath,'当前编辑会话')],[second]:[]},deletes:[],saves:[],copied:[],pendingDelete:null};
+    // The reviewed directory must be a real project: the default workspace now lists its
+    // conversations under Unassigned, so the fixture uses a separate default folder.
+    bridge.getDefaultWorkspace = async () => 'C:/renderer-review/home';
     bridge.listWorkspaces = async () => [cwd,second];
     bridge.listSessions = async path => { if (path === second && state.failWorkspace) throw new Error('模拟项目列表读取失败'); return clone(state.rows[path] || []); };
     bridge.switchSession = async path => {
@@ -45,9 +48,9 @@ export default async function managementScenarios(review) {
   await review.waitFor("!document.querySelector('.pd-workspace-list-error')");
   await review.evaluate("window.__managementReview.runtime(window.__managementReview.firstPath,'running')");
   await review.click('.pd-session-item:nth-child(2) .pd-session-row');
-  await review.assert("document.querySelector('.pd-session-runtime.is-running')?.textContent==='运行中' && document.querySelector('.pd-session-item.is-active strong')?.textContent==='当前编辑会话'", 'A continues running after navigation to B');
+  await review.assert("document.querySelector('.pd-session-leading[aria-label=运行中] .pd-session-spinner') !== null && document.querySelector('.pd-session-item.is-active strong')?.textContent==='当前编辑会话'", 'A continues running after navigation to B');
   await review.evaluate("window.__managementReview.runtime(window.__managementReview.firstPath,'waiting-input','请选择要继续的分支')");
-  await review.waitFor("Boolean(document.querySelector('.pd-session-runtime.is-waiting-input'))");
+  await review.waitFor("Boolean(document.querySelector('.pd-session-leading .pd-session-indicator.is-waiting'))");
   await review.click('.pd-sidebar-group:first-child .pd-sidebar-group-toggle');
   await review.assert("document.querySelector('.pd-sidebar-group:first-child .pd-session-state-counts')?.getAttribute('aria-label').includes('待处理 1')", 'Collapsed project retains the runtime attention count');
   await review.screenshot('management-01-sidebar-runtime-dark');

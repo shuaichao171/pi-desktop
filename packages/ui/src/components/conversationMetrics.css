@@ -4,9 +4,9 @@
 .pd-metric-speed { color: light-dark(#366da5, #9dc7f5); }
 .pd-metric-input { color: light-dark(#16768f, #7ccee7); }
 .pd-metric-output { color: light-dark(#8c50a6, #c799e8); }
-.pd-metric-cache { color: light-dark(#697347, #b5c296); }
 .pd-metric-duration { color: light-dark(#68639c, #b5b0df); }
-.pd-metrics-settings-options { display: grid; flex: 1; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; min-width: 0; }
+/* One row for the three metrics: a two-column grid left a hole under the third switch. */
+.pd-metrics-settings-options { display: grid; flex: 1; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; min-width: 0; }
 .pd-metrics-setting { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 9px 12px; border: 1px solid var(--pd-border-soft); border-radius: var(--pd-radius-sm); background: color-mix(in srgb, var(--pd-text) 3%, var(--pd-surface)); color: var(--pd-text); text-align: start; font-size: var(--pd-font-sm); }
 .pd-metrics-setting:hover { background: var(--pd-surface-hover); }
 .pd-metrics-switch { flex: 0 0 auto; width: var(--pd-switch-width); height: var(--pd-switch-height); border-radius: 999px; background: var(--pd-switch-off); padding: 2px; transition: background 150ms; }
@@ -14,5 +14,6 @@
 .pd-metrics-setting[aria-checked=true] .pd-metrics-switch { background: var(--pd-switch-on); }
 .pd-metrics-setting[aria-checked=true] .pd-metrics-switch::after { background: var(--pd-switch-thumb-on); }
 .pd-metrics-setting[aria-checked=true] .pd-metrics-switch::after { transform: translateX(var(--pd-switch-travel)); }
-@media (max-width: 520px) { .pd-metrics-settings-options { grid-template-columns: 1fr; } .pd-conversation-metrics .pd-metric-group { padding: 0 7px; } }
+@media (max-width: 760px) { .pd-metrics-settings-options { grid-template-columns: 1fr; } }
+@media (max-width: 520px) { .pd-conversation-metrics .pd-metric-group { padding: 0 7px; } }
 @media (prefers-reduced-motion: reduce) { .pd-metrics-switch, .pd-metrics-switch::after { transition: none; } }

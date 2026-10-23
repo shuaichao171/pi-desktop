@@ -28,6 +28,10 @@
 .pd-settings-switch:focus-visible { outline: 2px solid var(--pd-focus-border, var(--pd-brand)); outline-offset: 2px; }
 .pd-settings-switch:disabled { opacity: .45; cursor: not-allowed; }
 
+/* Single-choice select inside a settings row (question timeout, similar pickers). */
+.pd-settings-select { flex: 0 0 auto; min-width: 0; max-width: 220px; height: 34px; padding: 0 9px; border: 1px solid var(--pd-border); border-radius: var(--pd-radius-sm); background: var(--pd-surface); color: var(--pd-text); font: inherit; font-size: var(--pd-font-caption); }
+.pd-settings-select:focus-visible { outline: 2px solid var(--pd-brand); outline-offset: 2px; }
+
 /* Segmented two/three-way choice (kept on the historical class name). */
 .pd-settings-content .pd-language-options { display: inline-flex; gap: 2px; padding: 3px; border: 1px solid var(--pd-border); border-radius: var(--pd-radius-sm); background: var(--pd-surface-muted, var(--pd-bg)); }
 .pd-settings-content .pd-language-options button { min-width: 0; min-height: 28px; padding: 0 14px; border: 0; border-radius: calc(var(--pd-radius-sm) - 2px); background: transparent; color: var(--pd-text-subtle); font-size: var(--pd-font-sm); white-space: nowrap; transition: background var(--pd-motion-fast, 120ms) ease, color var(--pd-motion-fast, 120ms) ease; }

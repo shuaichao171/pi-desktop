@@ -14,7 +14,11 @@
 .pd-queue-drag { display: grid; place-items: center; flex: 0 0 16px; width: 16px; height: 24px; padding: 0; border: 0; border-radius: var(--pd-radius-xs); background: transparent; color: var(--pd-text-weak); cursor: grab; font-size: 19px; line-height: 1; touch-action: none; }
 .pd-queue-drag:active { cursor: grabbing; }
 .pd-queue-drag:disabled { opacity: .25; cursor: default; }
-.pd-composer-queue-actions { display: flex; flex: 0 0 auto; align-items: center; gap: 2px; }
+.pd-composer-queue-actions { display: flex; flex: 0 0 auto; align-items: center; gap: 2px; transition: opacity var(--pd-motion-fast, 150ms); }
+/* Only the next message keeps its actions on screen; later rows reveal theirs on hover
+   or keyboard focus, and rows that need attention (recovered, editing, busy, open menu) stay visible. */
+.pd-composer-queue-list > .pd-composer-queue-item:not(:first-child, :hover, :focus-within, :has([aria-expanded='true']), [data-state='recovered'], .is-editing, .is-pending) .pd-composer-queue-actions { opacity: 0; }
+@media (hover: none) { .pd-composer-queue-list > .pd-composer-queue-item .pd-composer-queue-actions { opacity: 1 !important; } }
 .pd-composer-queue-action { display: inline-flex; align-items: center; justify-content: center; gap: 4px; min-width: 26px; height: 26px; padding: 3px 5px; border: 0; border-radius: var(--pd-radius-xs); background: transparent; color: var(--pd-text-weak); font-size: var(--pd-font-sm); white-space: nowrap; }
 .pd-composer-queue-action.is-steer { color: var(--pd-text-subtle); }
 .pd-composer-queue-action:hover:not(:disabled), .pd-composer-queue-action[aria-expanded='true'] { background: var(--pd-selected); color: var(--pd-text); }

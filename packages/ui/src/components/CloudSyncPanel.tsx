@@ -3,6 +3,7 @@ import type { UiCloudSyncBackupInfo, UiCloudSyncConfig, UiCloudSyncKind, UiCloud
 import { useChatStore } from '../store';
 import { useT, type Locale } from '../i18n';
 import './modelSettingsPanel.css';
+import { formatDate } from '../dateFormat';
 
 const KINDS: { value: UiCloudSyncKind; labelKey: string }[] = [
 	{ value: 'webdav', labelKey: 'settings.cloudSyncWebdav' },
@@ -12,11 +13,9 @@ const KINDS: { value: UiCloudSyncKind; labelKey: string }[] = [
 const DEFAULT_REMOTE_PATH = 'providers-backup.json';
 
 function formatTime(iso: string, locale: Locale): string {
-	const date = new Date(iso);
-	if (Number.isNaN(date.getTime())) return iso;
-	// toLocaleString renders in the local time zone, matching cc-switch's
-	// "uploaded at" behavior for remote backups.
-	return date.toLocaleString(locale === 'zh-CN' ? 'zh-CN' : 'en-US', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' });
+	// Local time zone, matching cc-switch's "uploaded at" behavior for remote backups;
+	// seconds tell apart backups made within the same minute.
+	return formatDate(iso, locale, { time: true, seconds: true }) || iso;
 }
 
 function formatSize(bytes: number | null): string {

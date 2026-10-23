@@ -56,7 +56,12 @@ export type IconName =
 	| 'eyeOff'
 	| 'globe'
 	| 'alert'
-	| 'play';
+	| 'play'
+	| 'keyboard'
+	| 'palette'
+	| 'cloud'
+	| 'cpu'
+	| 'user';
 
 const paths: Record<IconName, ReactNode> = {
 	image: <><rect x="3" y="3" width="18" height="18" rx="2" /><circle cx="8" cy="8" r="1.5" /><path d="m21 15-5-5L5 21" /></>,
@@ -97,6 +102,11 @@ const paths: Record<IconName, ReactNode> = {
 	lightbulb: <><path d="M9 18h6M10 21h4" /><path d="M12 3a6 6 0 0 0-3.6 10.8c.6.5 1.1 1.3 1.1 2.2h5c0-.9.5-1.7 1.1-2.2A6 6 0 0 0 12 3Z" /></>,
 	brain: <><path d="M12 18V5a3 3 0 0 0-5.8-1A4 4 0 0 0 3 10a4 4 0 0 0 .5 7A4 4 0 0 0 12 18ZM12 5a3 3 0 0 1 5.8-1A4 4 0 0 1 21 10a4 4 0 0 1-.5 7A4 4 0 0 1 12 18" /><path d="M8 8a3 3 0 0 1-2 3M16 8a3 3 0 0 0 2 3M8 16a3 3 0 0 0-2-2M16 16a3 3 0 0 1 2-2" /></>,
 	clock: <><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></>,
+	keyboard: <><rect x="2.5" y="5.5" width="19" height="13" rx="2" /><path d="M6.5 9.5h.01M10 9.5h.01M14 9.5h.01M17.5 9.5h.01M6.5 13h.01M17.5 13h.01M10 13h4M8 15.5h8" /></>,
+	palette: <><path d="M12 3a9 9 0 1 0 0 18c1.1 0 2-.9 2-2 0-.5-.2-1-.5-1.3-.3-.4-.5-.8-.5-1.3 0-1.1.9-2 2-2h2.4A4.6 4.6 0 0 0 21 9.8C21 6 17 3 12 3Z" /><circle cx="7.5" cy="11.5" r=".8" /><circle cx="9.5" cy="7.5" r=".8" /><circle cx="14.5" cy="7.5" r=".8" /></>,
+	cloud: <path d="M17.5 19H9a7 7 0 1 1 6.7-9h1.8a4.5 4.5 0 1 1 0 9Z" />,
+	cpu: <><rect x="5" y="5" width="14" height="14" rx="2" /><rect x="9" y="9" width="6" height="6" rx="1" /><path d="M9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3" /></>,
+	user: <><circle cx="12" cy="8" r="4" /><path d="M4 21a8 8 0 0 1 16 0" /></>,
 	automation: <path d="m13 2-10 12h8l-1 8 11-12h-8l1-8Z" />,
 	plugins: <path d="M9 5V3a2 2 0 0 1 4 0v2h6a1 1 0 0 1 1 1v4h-2a2 2 0 0 0 0 4h2v5a1 1 0 0 1-1 1h-5v-2a2 2 0 0 0-4 0v2H5a1 1 0 0 1-1-1v-5H3a2 2 0 0 1 0-4h1V6a1 1 0 0 1 1-1Z" />,
 	search: <><circle cx="11" cy="11" r="6.5" /><path d="m16 16 4 4" /></>,

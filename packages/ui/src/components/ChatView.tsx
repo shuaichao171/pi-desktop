@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { useT } from '../i18n';
-import { useExtensionNoticeDisplayEnabled } from '../extensionNoticeDisplay';
 import { useChatStore } from '../store';
 import { sessionOpenMetrics } from '../sessionOpenMetrics';
 import { bindingKeysFor, matchesShortcut } from '../shortcuts/bindings';
@@ -210,7 +209,10 @@ export function ChatView({ onToggleSidebar, onOpenModelManagement, searchTarget,
 	const [findOpen, setFindOpen] = useState(false);
 	const [findQuery, setFindQuery] = useState('');
 	const [findKey, setFindKey] = useState<string | null>(null);
-	const findMatches = useMemo(() => findOccurrences(messages, findQuery), [messages, findQuery]);
+	// Plugin notices are transient popups, never transcript rows: keep them out of
+	// find so a hit can never point at a row that is not rendered.
+	const findSource = useMemo(() => messages.filter((message) => message.systemKind !== 'extension-notice'), [messages]);
+	const findMatches = useMemo(() => findOccurrences(findSource, findQuery), [findSource, findQuery]);
 	// Changes find scope (12): matches inside recorded diffs, stepping opens the review dialog.
 	const [findScope, setFindScope] = useState<'conversation' | 'changes'>('conversation');
 	// -1: no file opened yet, so the first step lands on the first (or last) match.
@@ -657,10 +659,9 @@ export function ChatView({ onToggleSidebar, onOpenModelManagement, searchTarget,
 		if (message.role === 'assistant' && (message.text.trim() || message.status === 'error')) { lastReplyId = message.id; break; }
 	}
 	const canRegenerateLatest = agentStatus === 'idle' && lastReplyId !== null;
-	// Idle plugin notices render as standalone cards; the display setting removes them.
-	const [noticesVisible] = useExtensionNoticeDisplayEnabled();
+	// Plugin notices pop above the composer instead of joining the transcript.
 	const renderEntry = (entry: ConversationTimelineEntry) => entry.kind === 'message'
-		? (messages[entry.index]!.systemKind === 'extension-notice' && !noticesVisible ? null : <MessageItem
+		? (messages[entry.index]!.systemKind === 'extension-notice' ? null : <MessageItem
 			key={`message-${entry.id}`}
 			message={messages[entry.index]!}
 			highlighted={(highlightedMessage?.sessionPath === sessionPath && highlightedMessage.messageId === entry.id) || activeFindId === entry.id}

@@ -144,7 +144,7 @@ export default async function conversationProcessScenarios(review) {
   await review.assert('window.__processReview.visible(document.querySelector("[data-message-id=manual-final] [data-message-body]"))', 'Completing a manually collapsed running turn never forces it open or hides its answer');
 
 
-  // Plugin notices recorded inside a run join its folded process instead of splitting it.
+  // Plugin notices stay recorded inside their run, but never become transcript rows:
   await review.evaluate(`(() => {
     const s = window.__processReview, now = Date.now();
     const run = { id: 'noticed', startedAt: now - 45000, finishedAt: now - 2000, status: 'completed' };
@@ -162,12 +162,12 @@ export default async function conversationProcessScenarios(review) {
   await review.waitFor('document.querySelectorAll(".pd-conversation-turn[data-run-id=noticed]").length === 1');
   await review.assert('document.querySelectorAll(".pd-conversation-turn").length === 1', 'A notice inside a run does not split its turn into separately folded blocks');
   await review.assert(expanded('noticed', 'false'), 'The noticed run folds its process by default');
-  await review.assert('(() => { const s = window.__processReview; const turn = document.querySelector("[data-run-id=noticed]"); return ["noticed-n1","noticed-n2","noticed-n3"].every(id => { const card = turn.querySelector("[data-message-id=" + id + "]"); return !card || (!s.visible(card) && card.closest(".pd-turn-steps") !== null); }); })()', 'Settled notices fold away with the process');
+  await review.assert('(() => { const turn = document.querySelector("[data-run-id=noticed]"); return ["noticed-n1","noticed-n2","noticed-n3"].every(id => !document.querySelector("[data-message-id=" + id + "]")) && !turn.querySelector(".pd-extension-notice-card") && !document.querySelector(".pd-extension-notice-card"); })()', 'Recorded plugin notices stay out of the transcript instead of folding with the process');
   await review.assert('(() => { const s = window.__processReview; return !s.visible(document.querySelector("[data-message-id=noticed-plan] [data-message-body]")) && s.visible(document.querySelector("[data-message-id=noticed-answer] [data-message-body]")); })()', 'Folding hides only the process; the final answer stays visible');
   await review.click(summary('noticed'));
-  await review.assert('(() => { const s = window.__processReview; const turn = document.querySelector("[data-run-id=noticed]"); const steps = turn.querySelector(".pd-turn-steps"); const cards = ["noticed-n1","noticed-n2","noticed-n3"].map(id => turn.querySelectorAll("[data-message-id=" + id + "]")); const build = steps.querySelector(".pd-activity-item"); const follows = (a, b) => Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING); return s.visible(document.querySelector("[data-message-id=noticed-plan] [data-message-body]")) && cards.every(list => list.length === 1 && s.visible(list[0]) && steps.contains(list[0])) && turn.querySelectorAll(".pd-activity-item").length === 1 && follows(cards[0][0], build) && follows(build, cards[1][0]); })()', 'Expanding shows each notice once, in order among the steps');
+  await review.assert('(() => { const s = window.__processReview; const turn = document.querySelector("[data-run-id=noticed]"); const build = turn.querySelector(".pd-turn-steps .pd-activity-item"); return s.visible(document.querySelector("[data-message-id=noticed-plan] [data-message-body]")) && turn.querySelectorAll("[data-message-id^=noticed-n]").length === 0 && Boolean(build) && turn.querySelectorAll(".pd-activity-item").length === 1; })()', 'Expanding still shows the recorded run steps while notices stay absent');
   await review.click(summary('noticed'));
-  await review.screenshot('process-plugin-notices-folded');
+  await review.screenshot('process-recorded-notices');
   // Protocol terminal states remain distinguishable even without a final message.
   await review.evaluate(`(() => {
     const s=window.__processReview, now=Date.now();

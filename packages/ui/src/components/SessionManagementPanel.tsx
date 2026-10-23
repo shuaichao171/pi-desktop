@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactElement } from 'react';
 import { createPortal } from 'react-dom';
 import type { DataFeaturesBridge, UiMachineSessionSummary } from '../../../shared/src/dataFeatures';
-import { useT } from '../i18n';
+import { useT, type Translate } from '../i18n';
 import { useChatStore } from '../store';
 import { HoverTooltip } from './HoverTooltip';
 import { Icon, type IconName } from './Icons';
 import { SessionBulkDeleteDialog, type SessionDeleteTarget } from './SessionBulkDeleteDialog';
 import { SessionDeleteDialog } from './SessionDeleteDialog';
 import './sessionManagement.css';
+import { formatDate } from '../dateFormat';
 
 type Filter = 'all' | 'active' | 'archived';
 
@@ -33,15 +34,15 @@ function startOfDay(date: Date): number {
   return new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
 }
 
-function formatWhen(modified: string, locale: string, zh: boolean): string {
+function formatWhen(modified: string, locale: string, t: Translate): string {
   const date = new Date(modified);
   if (Number.isNaN(date.getTime())) return modified;
   const days = Math.floor((startOfDay(new Date()) - startOfDay(date)) / 86400000);
   const clock = date.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' });
-  if (days <= 0) return zh ? `今天 ${clock}` : `Today ${clock}`;
-  if (days === 1) return zh ? `昨天 ${clock}` : `Yesterday ${clock}`;
-  if (days < 7) return zh ? `${days} 天前` : `${days} days ago`;
-  return date.toLocaleDateString(locale, { year: 'numeric', month: '2-digit', day: '2-digit' });
+  if (days <= 0) return t('sessions.today', { clock });
+  if (days === 1) return t('sessions.yesterday', { clock });
+  if (days < 7) return t('sessions.daysAgo', { days });
+  return formatDate(date, locale);
 }
 
 /** Group “select all” checkbox that renders the partial state natively. */
@@ -61,18 +62,19 @@ function RowAction({ icon, label, danger, disabled, hint, onClick }: { icon: Ico
   </HoverTooltip>;
 }
 
-function RenameDialog({ zh, initial, onSave, onClose }: { zh: boolean; initial: string; onSave(name: string): void; onClose(): void }) {
+function RenameDialog({ initial, onSave, onClose }: { initial: string; onSave(name: string): void; onClose(): void }) {
+  const { t } = useT();
   const id = useId();
   const dialog = useRef<HTMLDialogElement>(null);
   const [draft, setDraft] = useState(initial);
   useEffect(() => { const node = dialog.current; node?.showModal(); return () => node?.close(); }, []);
   const submit = () => { if (draft.trim()) onSave(draft.trim()); };
   return createPortal(<dialog ref={dialog} className="pd-session-management-rename" aria-labelledby={id} onCancel={(event) => { event.preventDefault(); onClose(); }}>
-    <h3 id={id}>{zh ? '重命名会话' : 'Rename conversation'}</h3>
-    <input autoFocus value={draft} maxLength={200} onChange={event => setDraft(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') submit(); }} placeholder={zh ? '输入会话名称' : 'Conversation name'} aria-label={zh ? '会话名称' : 'Conversation name'} />
+    <h3 id={id}>{t('sessions.renameTitle')}</h3>
+    <input autoFocus value={draft} maxLength={200} onChange={event => setDraft(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') submit(); }} placeholder={t('sessions.namePlaceholder')} aria-label={t('sessions.nameLabel')} />
     <footer>
-      <button type="button" onClick={onClose}>{zh ? '取消' : 'Cancel'}</button>
-      <button type="button" className="is-primary" disabled={!draft.trim()} onClick={submit}>{zh ? '保存' : 'Save'}</button>
+      <button type="button" onClick={onClose}>{t('sessions.cancel')}</button>
+      <button type="button" className="is-primary" disabled={!draft.trim()} onClick={submit}>{t('sessions.save')}</button>
     </footer>
   </dialog>, document.body);
 }
@@ -92,8 +94,7 @@ type WorkspaceGroup = {
  * the native pi CLI — the transcript file is unlinked directly with no trash.
  */
 export function SessionManagementPanel() {
-  const { locale } = useT();
-  const zh = locale === 'zh-CN';
+  const { t, locale } = useT();
   const bridge = useChatStore(state => state.bridge);
   const currentSessionPath = useChatStore(state => state.sessionPath);
   const dataBridge = bridge as (typeof bridge & Partial<DataFeaturesBridge>);
@@ -113,12 +114,12 @@ export function SessionManagementPanel() {
   const [notice, setNotice] = useState<string | null>(null);
 
   const reload = useCallback(async () => {
-    if (typeof dataBridge?.listMachineSessions !== 'function') { setError(zh ? '当前环境不支持会话管理。' : 'Session management is unavailable here.'); return; }
+    if (typeof dataBridge?.listMachineSessions !== 'function') { setError(t('sessions.unsupported')); return; }
     setLoading(true); setError(null);
     try { const next = await dataBridge.listMachineSessions(); if (alive.current) setRows(next); }
     catch (cause) { if (alive.current) setError(cause instanceof Error ? cause.message : String(cause)); }
     finally { if (alive.current) setLoading(false); }
-  }, [dataBridge, zh]);
+  }, [dataBridge, locale]);
 
   useEffect(() => { alive.current = true; void reload(); return () => { alive.current = false; }; }, [reload]);
 
@@ -190,13 +191,13 @@ export function SessionManagementPanel() {
 
   async function applyRename(target: UiMachineSessionSummary, name: string) {
     setRenameTarget(null);
-    await run(() => useChatStore.getState().updateSessionMeta(target.path, { name }), zh ? '会话已重命名。' : 'Conversation renamed.');
+    await run(() => useChatStore.getState().updateSessionMeta(target.path, { name }), t('sessions.renamed'));
     await reload();
   }
 
   async function applyArchive(row: UiMachineSessionSummary) {
     await run(() => useChatStore.getState().updateSessionMeta(row.path, { archived: !row.archived }),
-      row.archived ? (zh ? '已取消归档。' : 'Unarchived.') : (zh ? '已归档。' : 'Archived.'));
+      row.archived ? (t('sessions.unarchived')) : (t('sessions.archived')));
     await reload();
   }
 
@@ -210,9 +211,9 @@ export function SessionManagementPanel() {
   const label = (row: UiMachineSessionSummary) => row.name?.trim() || row.firstMessage || row.id;
 
   const filters: Array<{ key: Filter; text: string }> = [
-    { key: 'all', text: zh ? '全部' : 'All' },
-    { key: 'active', text: zh ? '未归档' : 'Unarchived' },
-    { key: 'archived', text: zh ? '已归档' : 'Archived' },
+    { key: 'all', text: t('sessions.filterAll') },
+    { key: 'active', text: t('sessions.filterActive') },
+    { key: 'archived', text: t('sessions.filterArchived') },
   ];
 
   const totalBytes = (rows ?? []).reduce((total, row) => total + row.bytes, 0);
@@ -222,13 +223,11 @@ export function SessionManagementPanel() {
   return <section className="pd-session-management" data-setting="sessions">
     <header className="pd-session-management-head">
       <div>
-        <h2>{zh ? '会话管理' : 'Conversations'}</h2>
-        <p>{zh
-          ? '按工作区查看本机 pi 的全部会话，包括尚未在应用中打开的工作区。'
-          : 'Every pi conversation on this machine, grouped by workspace — including workspaces the app has not opened.'}</p>
+        <h2>{t('sessions.title')}</h2>
+        <p>{t('sessions.description')}</p>
       </div>
-      <HoverTooltip title={zh ? '刷新列表' : 'Refresh'} align="end">
-        <button type="button" className="pd-session-management-refresh" disabled={loading} aria-label={zh ? '刷新' : 'Refresh'} onClick={() => void reload()}>
+      <HoverTooltip title={t('sessions.refreshTitle')} align="end">
+        <button type="button" className="pd-session-management-refresh" disabled={loading} aria-label={t('sessions.refresh')} onClick={() => void reload()}>
           <Icon name="refresh" width="15" height="15" className={loading ? 'is-spinning' : undefined} />
         </button>
       </HoverTooltip>
@@ -236,41 +235,37 @@ export function SessionManagementPanel() {
 
     <p className="pd-session-management-warning">
       <Icon name="trash" width="14" height="14" />
-      <span>{zh
-        ? '删除与原生 pi CLI 一致：直接删除会话文件，无法撤销，也不会进入回收站。'
-        : 'Deleting matches the native pi CLI: the transcript file is removed directly and cannot be undone.'}</span>
+      <span>{t('sessions.deleteNotice')}</span>
     </p>
 
     <div className="pd-session-management-toolbar">
       <label className="pd-session-management-search">
         <Icon name="search" width="15" height="15" />
-        <input type="search" value={query} onChange={event => setQuery(event.target.value)} placeholder={zh ? '搜索会话标题、内容或工作区路径' : 'Search titles, messages or workspaces'} aria-label={zh ? '搜索会话' : 'Search conversations'} />
+        <input type="search" value={query} onChange={event => setQuery(event.target.value)} placeholder={t('sessions.searchPlaceholder')} aria-label={t('sessions.searchLabel')} />
       </label>
-      <div className="pd-session-management-segmented" role="group" aria-label={zh ? '筛选' : 'Filter'}>
+      <div className="pd-session-management-segmented" role="group" aria-label={t('sessions.filter')}>
         {filters.map(item => <button key={item.key} type="button" className={filter === item.key ? 'is-active' : ''} aria-pressed={filter === item.key} onClick={() => setFilter(item.key)}>{item.text}</button>)}
       </div>
     </div>
 
     {selectedRows.length > 0
-      ? <div className="pd-session-management-selection" role="region" aria-label={zh ? '批量操作' : 'Bulk actions'}>
-        <span>{zh ? `已选择 ${selectedRows.length} 个会话` : `${selectedRows.length} selected`}</span>
-        <button type="button" onClick={() => setSelection(new Set())}>{zh ? '取消选择' : 'Clear'}</button>
+      ? <div className="pd-session-management-selection" role="region" aria-label={t('sessions.bulkActions')}>
+        <span>{t('sessions.selectedCount', { count: selectedRows.length })}</span>
+        <button type="button" onClick={() => setSelection(new Set())}>{t('sessions.clearSelection')}</button>
         <button type="button" className="is-danger" onClick={() => setBulkTarget(selectedRows.map(row => ({ path: row.path, title: label(row) })))}>
-          <Icon name="trash" width="14" height="14" />{zh ? `永久删除所选 (${selectedRows.length})` : `Delete selected (${selectedRows.length})`}
+          <Icon name="trash" width="14" height="14" />{t('sessions.deleteSelected', { count: selectedRows.length })}
         </button>
       </div>
       : rows !== null && <div className="pd-session-management-summary">
-        <p className="pd-session-management-count">{zh
-          ? `共 ${rows.length} 个会话 · ${workspaceCount} 个工作区 · 占用 ${formatBytes(totalBytes)}${narrowed ? `，显示 ${visible.length} 个` : ''}`
-          : `${narrowed ? `${visible.length} of ` : ''}${rows.length} conversations · ${workspaceCount} workspaces · ${formatBytes(totalBytes)}`}</p>
+        <p className="pd-session-management-count">{t(narrowed ? 'sessions.summaryNarrowed' : 'sessions.summary', { count: rows.length, workspaces: workspaceCount, size: formatBytes(totalBytes), visible: visible.length })}</p>
         {notice && <span role="status">{notice}</span>}
       </div>}
 
     {error && <p role="alert" className="pd-session-management-error">{error}</p>}
-    {rows === null && !error && <p className="pd-session-management-loading">{zh ? '正在读取本机会话…' : 'Reading conversations…'}</p>}
+    {rows === null && !error && <p className="pd-session-management-loading">{t('sessions.loading')}</p>}
     {visible.length === 0 && rows !== null && <div className="pd-session-management-empty">
       <Icon name="message" width="22" height="22" />
-      <p>{narrowed ? (zh ? '没有符合条件的会话。' : 'No conversations match.') : (zh ? '本机还没有 pi 会话。' : 'No pi conversations on this machine yet.')}</p>
+      <p>{narrowed ? (t('sessions.noMatches')) : (t('sessions.empty'))}</p>
     </div>}
 
     <div className="pd-session-management-groups">
@@ -284,21 +279,21 @@ export function SessionManagementPanel() {
         return <div className="pd-session-management-group" key={group.cwd} data-cwd={group.cwd}>
           <div className="pd-session-management-group-head">
             <GroupCheckbox checked={eligible.length > 0 && selectedCount === eligible.length} indeterminate={selectedCount > 0 && selectedCount < eligible.length} disabled={eligible.length === 0}
-              label={zh ? `选择 ${name} 的全部会话` : `Select all in ${name}`} onChange={() => toggleGroupSelection(group)} />
+              label={t('sessions.selectWorkspace', { name })} onChange={() => toggleGroupSelection(group)} />
             <button type="button" className="pd-session-management-group-toggle" aria-expanded={expanded} onClick={() => toggleGroup(group.cwd)}>
               <Icon name="chevronRight" width="14" height="14" className="pd-session-management-chevron" />
               <Icon name="folder" width="16" height="16" className="pd-session-management-folder" />
               <span className="pd-session-management-group-title">
                 <span className="pd-session-management-group-name">
                   <span>{name}</span>
-                  {group.cwd === currentWorkspace && <span className="pd-session-management-flag is-current">{zh ? '当前工作区' : 'Current'}</span>}
-                  {group.running && <span className="pd-session-management-flag is-running">{zh ? '运行中' : 'Running'}</span>}
-                  {!group.registered && <span className="pd-session-management-flag">{zh ? '未打开的工作区' : 'Unopened workspace'}</span>}
+                  {group.cwd === currentWorkspace && <span className="pd-session-management-flag is-current">{t('sessions.currentWorkspace')}</span>}
+                  {group.running && <span className="pd-session-management-flag is-running">{t('sessions.running')}</span>}
+                  {!group.registered && <span className="pd-session-management-flag">{t('sessions.unopenedWorkspace')}</span>}
                 </span>
                 <span className="pd-session-management-cwd" title={group.cwd}>{group.cwd}</span>
               </span>
               <span className="pd-session-management-group-stats">
-                <span>{zh ? `${group.sessions.length} 个会话` : `${group.sessions.length} conversations`}</span>
+                <span>{t('sessions.workspaceCount', { count: group.sessions.length })}</span>
                 <span>{formatBytes(group.bytes)}</span>
               </span>
             </button>
@@ -308,42 +303,42 @@ export function SessionManagementPanel() {
               const current = row.path === currentSessionPath;
               const locked = current || row.running;
               return <div className={`pd-session-management-row${current ? ' is-current' : ''}${selection.has(row.path) ? ' is-selected' : ''}`} key={row.path} data-session-path={row.path}>
-                <input type="checkbox" disabled={locked} checked={selection.has(row.path)} onChange={() => toggleRow(row.path)} aria-label={zh ? `选择 ${label(row)}` : `Select ${label(row)}`} />
+                <input type="checkbox" disabled={locked} checked={selection.has(row.path)} onChange={() => toggleRow(row.path)} aria-label={t('sessions.selectRow', { name: label(row) })} />
                 <div className="pd-session-management-main">
                   <div className="pd-session-management-title">
                     <span className={`pd-session-management-name${row.archived ? ' is-archived' : ''}`} title={label(row)}>{label(row)}</span>
-                    {current && <span className="pd-session-management-flag is-current">{zh ? '当前会话' : 'Current'}</span>}
-                    {row.running && <span className="pd-session-management-flag is-running">{zh ? '运行中' : 'Running'}</span>}
-                    {row.pinned && <span className="pd-session-management-flag">{zh ? '已置顶' : 'Pinned'}</span>}
-                    {row.archived && <span className="pd-session-management-flag">{zh ? '已归档' : 'Archived'}</span>}
+                    {current && <span className="pd-session-management-flag is-current">{t('sessions.currentSession')}</span>}
+                    {row.running && <span className="pd-session-management-flag is-running">{t('sessions.running')}</span>}
+                    {row.pinned && <span className="pd-session-management-flag">{t('sessions.pinned')}</span>}
+                    {row.archived && <span className="pd-session-management-flag">{t('sessions.filterArchived')}</span>}
                   </div>
                   <span className="pd-session-management-meta">
-                    <span title={new Date(row.modified).toLocaleString(locale)}>{formatWhen(row.modified, locale, zh)}</span>
-                    <span>{zh ? `${row.messageCount} 条消息` : `${row.messageCount} messages`}</span>
+                    <span title={formatDate(row.modified, locale, { time: true, year: 'always' })}>{formatWhen(row.modified, locale, t)}</span>
+                    <span>{t('sessions.messageCount', { count: row.messageCount })}</span>
                     <span>{formatBytes(row.bytes)}</span>
                   </span>
                 </div>
                 <span className="pd-session-management-actions">
-                  <RowAction icon="pencil" label={zh ? '重命名' : 'Rename'} onClick={() => setRenameTarget(row)} />
-                  <RowAction icon="archive" label={row.archived ? (zh ? '取消归档' : 'Unarchive') : (zh ? '归档' : 'Archive')} onClick={() => void applyArchive(row)} />
-                  <RowAction icon="trash" danger label={zh ? '删除' : 'Delete'} disabled={locked}
-                    hint={current ? (zh ? '不能删除当前打开的会话' : 'The open conversation cannot be deleted') : row.running ? (zh ? '会话运行中' : 'Conversation is running') : undefined}
+                  <RowAction icon="pencil" label={t('sessions.rename')} onClick={() => setRenameTarget(row)} />
+                  <RowAction icon="archive" label={row.archived ? (t('sessions.unarchive')) : (t('sessions.archive'))} onClick={() => void applyArchive(row)} />
+                  <RowAction icon="trash" danger label={t('sessions.delete')} disabled={locked}
+                    hint={current ? (t('sessions.cannotDeleteCurrent')) : row.running ? (t('sessions.cannotDeleteRunning')) : undefined}
                     onClick={() => setDeleteTarget(row)} />
                 </span>
               </div>;
             })}
             {group.sessions.length > shown.length && <button type="button" className="pd-session-management-more" onClick={() => setGroupPages(current => ({ ...current, [group.cwd]: page + 1 }))}>
-              {zh ? `显示更多（还有 ${group.sessions.length - shown.length} 个）` : `Show more (${group.sessions.length - shown.length} remaining)`}
+              {t('sessions.showMore', { count: group.sessions.length - shown.length })}
             </button>}
           </div>}
         </div>;
       })}
     </div>
 
-    {renameTarget && <RenameDialog zh={zh} initial={renameTarget.name ?? ''} onClose={() => setRenameTarget(null)} onSave={name => void applyRename(renameTarget, name)} />}
+    {renameTarget && <RenameDialog initial={renameTarget.name ?? ''} onClose={() => setRenameTarget(null)} onSave={name => void applyRename(renameTarget, name)} />}
     {deleteTarget && <SessionDeleteDialog title={label(deleteTarget)} workspace={deleteTarget.cwd}
       onDelete={() => applyDelete([deleteTarget.path])}
-      onClose={deleted => { const row = deleteTarget; setDeleteTarget(null); if (deleted) setNotice(zh ? `已删除 ${label(row)}` : `Deleted ${label(row)}`); }} />}
+      onClose={deleted => { const row = deleteTarget; setDeleteTarget(null); if (deleted) setNotice(t('sessions.deleted', { name: label(row) })); }} />}
     {bulkTarget && <SessionBulkDeleteDialog sessions={bulkTarget}
       onDelete={async paths => {
         const result = paths.length === 1
@@ -355,7 +350,7 @@ export function SessionManagementPanel() {
         await reload();
         return result;
       }}
-      onClose={() => { setBulkTarget(null); setNotice(zh ? '批量删除完成。' : 'Batch deletion finished.'); }} />}
+      onClose={() => { setBulkTarget(null); setNotice(t('sessions.bulkDeleted')); }} />}
   </section>;
 }
 

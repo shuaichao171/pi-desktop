@@ -490,6 +490,41 @@ test('providers registered by a cached workspace extension cannot be overwritten
   } finally { await f.cleanup(); }
 });
 
+test('a models.json provider stays editable when an extension mirrors that same file', async () => {
+  const provider = 'desktop-mirrored';
+  const mirroredModels = [{ id: 'mirrored-one', name: 'Mirrored One', reasoning: false, input: ['text'], contextWindow: 32768, maxTokens: 4096 }];
+  const f = await fixture({
+    models: { providers: { [provider]: { name: 'Mirrored Provider', baseUrl: 'https://mirrored.example.invalid/v1', api: 'openai-completions', models: mirroredModels } } },
+    // pi-model-manager 这类插件在工厂阶段会把 models.json 里的每个供应商 registerProvider 一遍，
+    // 并在每次插件重载时重新读取该文件。
+    extraExtension: `
+      import { readFileSync } from 'node:fs';
+      import { join } from 'node:path';
+      export default function (pi) {
+        const document = JSON.parse(readFileSync(join(process.env.PI_CODING_AGENT_DIR, 'models.json'), 'utf8'));
+        const entry = document.providers['${provider}'];
+        pi.registerProvider('${provider}', {
+          name: entry.name, baseUrl: entry.baseUrl, api: entry.api,
+          models: entry.models.map((model) => ({ ...model, cost: model.cost ?? { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } })),
+        });
+      }
+    `,
+  });
+  try {
+    const summary = (await f.service.listModelProviders()).find((item) => item.provider === provider);
+    assert.equal(summary.readOnlyReason, undefined, 'models.json stays the owner when an extension mirrors it');
+    assert.equal(summary.editable, true);
+    assert.equal(summary.modelsEditable, true);
+    assert.deepEqual(summary.configModelIds, ['mirrored-one']);
+    await f.service.saveProviderModels({ provider, upsert: [{ id: 'mirrored-two', name: 'Mirrored Two', contextWindow: 32768, maxTokens: 4096 }] });
+    const saved = JSON.parse(contents(f.modelsPath)).providers[provider];
+    assert.deepEqual(saved.models.map((item) => item.id), ['mirrored-one', 'mirrored-two']);
+    const refreshed = (await f.service.listModelProviders()).find((item) => item.provider === provider);
+    assert.deepEqual(refreshed.models.map((item) => item.id).sort(), ['mirrored-one', 'mirrored-two'], 'the refreshed catalog must expose the newly saved model');
+    f.assertOffline();
+  } finally { await f.cleanup(); }
+});
+
 test('custom headers stay literal, remain private, and support preserve, replace, delete, and restart', async () => {
   const f = await fixture();
   const provider = 'desktop-header-persistence';

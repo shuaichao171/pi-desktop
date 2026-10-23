@@ -38,7 +38,7 @@ export interface ChangesDialogProps {
 
 /** The diff is the recorded conversation snapshot, never a fresh workspace/Git read. */
 export function ChangesDialog({ items, diffs, initialPath, returnFocus, getReturnFocus, onClose }: ChangesDialogProps) {
-  const { t, locale } = useT(), zh = locale === 'zh-CN';
+  const { t } = useT();
   const dialogRef = useRef<HTMLDialogElement>(null), closeRef = useRef<HTMLButtonElement>(null);
   const fileButtons = useRef(new Map<string, HTMLButtonElement>());
   const focusedFile = useRef<HTMLButtonElement | null>(null);
@@ -101,9 +101,9 @@ export function ChangesDialog({ items, diffs, initialPath, returnFocus, getRetur
     const request = ++copyRequest.current;
     try {
       await navigator.clipboard.writeText(value);
-      if (request === copyRequest.current) setNotice({ error: false, text: zh ? kind === 'path' ? '路径已复制' : '原始差异已复制' : kind === 'path' ? 'Path copied' : 'Raw diff copied' });
+      if (request === copyRequest.current) setNotice({ error: false, text: t(kind === 'path' ? 'changes.pathCopied' : 'changes.rawDiffCopied') });
     } catch {
-      if (request === copyRequest.current) setNotice({ error: true, text: zh ? '复制失败，请选择文本复制。' : 'Copy failed. Select the text to copy it.' });
+      if (request === copyRequest.current) setNotice({ error: true, text: t('changes.copyFailed') });
     }
   }
 
@@ -125,15 +125,15 @@ export function ChangesDialog({ items, diffs, initialPath, returnFocus, getRetur
       {selected ? <section id={diffId} className="pd-changes-diff" aria-label={t('changes.diffFor', { path: selected.path })}>
         <div className="pd-changes-diff-header"><span title={selected.path}>{selected.path}</span><ChangeStats items={[selected]} /></div>
         <div className="pd-changes-diff-tools">
-          <button type="button" onClick={() => void copy(selected.path, 'path')}><Icon name="copy" width="13" height="13" />{zh ? '复制路径' : 'Copy path'}</button>
-          <button type="button" disabled={!diffs?.get(selected.path)?.diff} onClick={() => void copy(diffs?.get(selected.path)?.diff ?? '', 'diff')}><Icon name="copy" width="13" height="13" />{zh ? '复制差异' : 'Copy diff'}</button>
-          <button type="button" aria-pressed={wrap} onClick={() => setWrap(value => !value)}>{zh ? '自动换行' : 'Wrap lines'}</button>
+          <button type="button" onClick={() => void copy(selected.path, 'path')}><Icon name="copy" width="13" height="13" />{t('changes.copyPath')}</button>
+          <button type="button" disabled={!diffs?.get(selected.path)?.diff} onClick={() => void copy(diffs?.get(selected.path)?.diff ?? '', 'diff')}><Icon name="copy" width="13" height="13" />{t('changes.copyDiff')}</button>
+          <button type="button" aria-pressed={wrap} onClick={() => setWrap(value => !value)}>{t('changes.wrapLines')}</button>
         </div>
         {notice && <p className={`pd-changes-feedback${notice.error ? ' is-error' : ''}`} role={notice.error ? 'alert' : 'status'}>{notice.text}</p>}
         {diffs === null
           ? <p className="pd-changes-notice" role="status">{t('changes.loadingDiff')}</p>
           : <DiffPreview key={selected.path} item={selected} diff={diffs.get(selected.path)} wrap={wrap} />}
-      </section> : <p className="pd-changes-notice" role="status">{zh ? '当前没有记录到文件更改。' : 'No file changes are currently recorded.'}</p>}
+      </section> : <p className="pd-changes-notice" role="status">{t('changes.empty')}</p>}
     </div>
   </dialog>, document.body);
 }

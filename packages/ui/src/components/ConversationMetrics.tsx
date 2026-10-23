@@ -49,10 +49,15 @@ export function ConversationMetrics() {
 	const speed = latestRun && stats?.timing?.latestRun?.id !== latestRun.id ? null : metrics.tokensPerSecond;
 	const tokens = (value: number | undefined) => formatMetricTokens(value, locale);
 	const exact = (value: number | undefined) => value?.toLocaleString(locale) ?? '—';
+	// Only measured values earn a slot: placeholder dashes and zero counts read as noise.
+	const showSpeed = preferences.speed && speed !== null;
+	const showTokens = preferences.tokens && (stats?.tokens.total ?? 0) > 0;
+	const showDuration = preferences.duration && (metrics.durationMs ?? 0) > 0;
+	// With nothing measured yet the row stays mounted but blank, so the composer dock never jumps.
+	if (!showSpeed && !showTokens && !showDuration) return <div className="pd-conversation-metrics is-empty" aria-hidden="true" />;
 	return <div className="pd-conversation-metrics" role="group" aria-label={t('settings.conversationMetrics')}>
-		{preferences.speed && <span className="pd-metric-group pd-metric-speed" aria-label={`${t('settings.metrics.speed')}: ${speed === null ? '—' : speed.toFixed(1)} t/s`}>{speed === null ? '—' : speed.toLocaleString(locale, { maximumFractionDigits: 1 })} t/s</span>}
-		{preferences.tokens && <span className="pd-metric-group" aria-label={t('metrics.tokensDescription', { input: exact(stats?.tokens.input), output: exact(stats?.tokens.output), total: exact(stats?.tokens.total) })}><span className="pd-metric-input">↑{tokens(stats?.tokens.input)}</span><span className="pd-metric-output">↓{tokens(stats?.tokens.output)}</span><span>Σ {tokens(stats?.tokens.total)}</span></span>}
-		{preferences.cache && <span className="pd-metric-group pd-metric-cache" aria-label={t('metrics.cacheDescription', { read: exact(stats?.tokens.cacheRead), write: exact(stats?.tokens.cacheWrite) })}><span>{t('metrics.cacheRead')} {tokens(stats?.tokens.cacheRead)}</span><span>{t('metrics.cacheWrite')} {tokens(stats?.tokens.cacheWrite)}</span></span>}
-		{preferences.duration && <span className="pd-metric-group pd-metric-duration" aria-label={`${t('settings.metrics.duration')}: ${formatMetricDuration(metrics.durationMs)}`}><Icon name="clock" width="12" height="12" />{formatMetricDuration(metrics.durationMs)}</span>}
+		{showSpeed && <span className="pd-metric-group pd-metric-speed" aria-label={`${t('settings.metrics.speed')}: ${speed?.toFixed(1)} t/s`}>{speed?.toLocaleString(locale, { maximumFractionDigits: 1 })} t/s</span>}
+		{showTokens && <span className="pd-metric-group" aria-label={t('metrics.tokensDescription', { input: exact(stats?.tokens.input), output: exact(stats?.tokens.output), total: exact(stats?.tokens.total) })}><span className="pd-metric-input">↑{tokens(stats?.tokens.input)}</span><span className="pd-metric-output">↓{tokens(stats?.tokens.output)}</span><span>Σ {tokens(stats?.tokens.total)}</span></span>}
+		{showDuration && <span className="pd-metric-group pd-metric-duration" aria-label={`${t('settings.metrics.duration')}: ${formatMetricDuration(metrics.durationMs)}`}><Icon name="clock" width="12" height="12" />{formatMetricDuration(metrics.durationMs)}</span>}
 	</div>;
 }

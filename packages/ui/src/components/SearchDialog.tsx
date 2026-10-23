@@ -11,6 +11,7 @@ import { preferredEditorId } from '../editorPreference';
 import { SegmentedIndicator } from './SegmentedIndicator';
 import { clearSearchHistory, readSearchHistory, removeSearchTerm, saveSearchTerm } from '../searchHistory';
 import './searchDialog.css';
+import { formatDate } from '../dateFormat';
 
 export interface SearchCommand {
 	id: string;
@@ -100,7 +101,6 @@ export function SearchDialog({ commands, onClose, onSelectSession, onSelectFile 
 	const workspaceLabel = (path: string) => isConversationWorkspace(path, conversationWorkspaces) ? '' : pathLeaf(path);
 	const dataBridge = bridge as (typeof bridge & Partial<DataFeaturesBridge>);
 	const advanced = typeof dataBridge?.searchSessionsPage === 'function';
-	const label = (zh: string, en: string) => locale === 'en-US' ? en : zh;
 	const [rawQuery, setRawQuery] = useState('');
 	const [searchHistory, setSearchHistory] = useState(() => readSearchHistory());
 	const [selectedScope, setSelectedScope] = useState<Scope>('all');
@@ -320,11 +320,7 @@ export function SearchDialog({ commands, onClose, onSelectSession, onSelectFile 
 		}
 	};
 	const resultLabel = (groupScope: ResultScope) => !query && groupScope !== 'files' ? t(`search.recent.${groupScope}`) : t(`search.scope.${groupScope}`);
-	const formatDate = (value: string) => {
-		const date = new Date(value);
-		if (Number.isNaN(date.getTime())) return '';
-		return new Intl.DateTimeFormat(locale, { month: 'short', day: 'numeric' }).format(date);
-	};
+	const formatRowDate = (value: string) => formatDate(value, locale);
 	const renderRow = (row: SearchRow) => {
 		const selected = activeId === row.id;
 		let body: ReactNode;
@@ -335,7 +331,7 @@ export function SearchDialog({ commands, onClose, onSelectSession, onSelectFile 
 		else {
 			const session = row.session;
 			const title = session.name?.trim() || session.firstMessage.trim().split(/\r?\n/)[0] || t('sidebar.unnamed');
-			body = <><Icon name="message" /><span className="pd-search-result-copy"><span className="pd-search-result-title"><Highlight text={title} query={query} /></span>{session.snippet && <span className="pd-search-result-snippet"><Highlight text={session.snippet} query={query} /></span>}<span className="pd-search-result-meta"><span>{workspaceLabel(session.cwd)}</span>{session.otherBranch && <span>{label('其他分支', 'Other branch')} · {session.branchLeafId?.slice(0, 8)}</span>}{session.archived && <span className="pd-search-archive-label">{t('sidebar.archived')}</span>}<time dateTime={session.modified}>{formatDate(session.modified)}</time></span></span></>;
+			body = <><Icon name="message" /><span className="pd-search-result-copy"><span className="pd-search-result-title"><Highlight text={title} query={query} /></span>{session.snippet && <span className="pd-search-result-snippet"><Highlight text={session.snippet} query={query} /></span>}<span className="pd-search-result-meta"><span>{workspaceLabel(session.cwd)}</span>{session.otherBranch && <span>{t('search.otherBranch')} · {session.branchLeafId?.slice(0, 8)}</span>}{session.archived && <span className="pd-search-archive-label">{t('sidebar.archived')}</span>}<time dateTime={session.modified}>{formatRowDate(session.modified)}</time></span></span></>;
 		}
 		return <div key={row.id} id={rowDomId(row.id)} role="option" aria-selected={selected} aria-disabled={pending || row.kind === 'retry' && row.loading || undefined} className={`pd-search-result${selected ? ' is-selected' : ''}${row.kind === 'more' ? ' is-more' : ''}`} onPointerMove={() => { if (!pending) setSelection({ key: requestKey, id: row.id }); }} onPointerDown={(event) => event.preventDefault()} onClick={() => { void activate(row); }}>{body}</div>;
 	};
@@ -353,7 +349,7 @@ export function SearchDialog({ commands, onClose, onSelectSession, onSelectFile 
 					{SCOPES.map((value) => <button key={value} data-segment-key={value} type="button" className={`pd-search-scope${scope === value ? ' is-active' : ''}`} aria-pressed={scope === value} disabled={pending} onClick={() => chooseScope(value)}>{t(`search.scope.${value}`)}{value !== 'all' && <kbd aria-hidden="true">{PREFIXES[value]}</kbd>}</button>)}
 				</SegmentedIndicator>
 				{advanced && (scope === 'sessions' || scope === 'files') && <div className="pd-search-filters">
-					{scope === 'sessions' ? <><select aria-label={label('搜索项目', 'Search project')} value={workspaceFilter} onChange={(event) => setWorkspaceFilter(event.target.value)}><option value="">{label('全部对话', 'All conversations')}</option>{projects.map((path) => <option key={path} value={path}>{pathLeaf(path)}</option>)}</select><select aria-label={label('归档范围', 'Archive scope')} value={archived} onChange={(event) => setArchived(event.target.value as typeof archived)}><option value="all">{label('包括归档', 'Include archived')}</option><option value="exclude">{label('未归档', 'Not archived')}</option><option value="only">{label('仅归档', 'Archived only')}</option></select><label>{label('起始', 'From')}<input type="date" aria-label={label('起始日期', 'From date')} value={after} onChange={(event) => setAfter(event.target.value)} /></label><label>{label('截止', 'Until')}<input type="date" aria-label={label('截止日期', 'Until date')} value={before} onChange={(event) => setBefore(event.target.value)} /></label><label><input type="checkbox" checked={otherBranches} onChange={(event) => setOtherBranches(event.target.checked)} />{label('包括其他分支', 'Include other branches')}</label></> : <><select aria-label={label('文件搜索模式', 'File search mode')} value={fileMode} onChange={(event) => setFileMode(event.target.value as typeof fileMode)}><option value="path">{label('文件路径', 'File paths')}</option><option value="content">{label('文件内容', 'File content')}</option></select><label><input type="checkbox" checked={caseSensitive} onChange={(event) => setCaseSensitive(event.target.checked)} />{label('区分大小写', 'Case sensitive')}</label><button type="button" onClick={() => setFileRefresh((value) => value + 1)}>{label('刷新文件索引', 'Refresh file index')}</button><span>{label('忽略和包含规则可在设置 → 数据与恢复中调整。', 'Configure include and ignore rules in Settings → Data & recovery.')}</span></>}
+					{scope === 'sessions' ? <><select aria-label={t('search.projectFilter')} value={workspaceFilter} onChange={(event) => setWorkspaceFilter(event.target.value)}><option value="">{t('search.allConversations')}</option>{projects.map((path) => <option key={path} value={path}>{pathLeaf(path)}</option>)}</select><select aria-label={t('search.archiveScope')} value={archived} onChange={(event) => setArchived(event.target.value as typeof archived)}><option value="all">{t('search.includeArchived')}</option><option value="exclude">{t('search.notArchived')}</option><option value="only">{t('search.archivedOnly')}</option></select><label>{t('search.from')}<input type="date" aria-label={t('search.fromDate')} value={after} onChange={(event) => setAfter(event.target.value)} /></label><label>{t('search.until')}<input type="date" aria-label={t('search.untilDate')} value={before} onChange={(event) => setBefore(event.target.value)} /></label><label><input type="checkbox" checked={otherBranches} onChange={(event) => setOtherBranches(event.target.checked)} />{t('search.includeOtherBranches')}</label></> : <><select aria-label={t('search.fileMode')} value={fileMode} onChange={(event) => setFileMode(event.target.value as typeof fileMode)}><option value="path">{t('search.filePaths')}</option><option value="content">{t('search.fileContent')}</option></select><label><input type="checkbox" checked={caseSensitive} onChange={(event) => setCaseSensitive(event.target.checked)} />{t('search.caseSensitive')}</label><button type="button" onClick={() => setFileRefresh((value) => value + 1)}>{t('search.refreshIndex')}</button><span>{t('search.rulesHint')}</span></>}
 				</div>}
 				<div className="pd-search-body">
 					<div ref={listRef} id={`${id}-list`} className="pd-search-results" role="listbox" aria-label={t('search.results')} aria-busy={loading || pending}>
@@ -368,11 +364,11 @@ export function SearchDialog({ commands, onClose, onSelectSession, onSelectFile 
 					<div className="pd-search-sr-only" role="status">{loading ? t('search.loading') : `${t('search.results')}: ${currentSessions.length + currentFiles.length}. ${sessionError || fileError ? t('search.retry') : ''}`}</div>
 					{actionError && <div className="pd-search-error" role="alert">{t('search.actionError')} {actionError}</div>}
 					{!loading && skipped > 0 && <p className="pd-search-truncated" role="status">{t('search.skipped', { count: skipped })}</p>}
-					{!loading && wantFiles && files.key === requestKey && files.skipReasons && (files.skipReasons.binary + files.skipReasons.large + files.skipReasons.unreadable > 0) && <p className="pd-search-truncated">{label(`跳过原因：二进制 ${files.skipReasons.binary} · 超过大小限制 ${files.skipReasons.large} · 无法读取 ${files.skipReasons.unreadable}`, `Skipped: binary ${files.skipReasons.binary} · too large ${files.skipReasons.large} · unreadable ${files.skipReasons.unreadable}`)}</p>}
+					{!loading && wantFiles && files.key === requestKey && files.skipReasons && (files.skipReasons.binary + files.skipReasons.large + files.skipReasons.unreadable > 0) && <p className="pd-search-truncated">{t('search.skipReasons', { binary: files.skipReasons.binary, large: files.skipReasons.large, unreadable: files.skipReasons.unreadable })}</p>}
 					{!loading && ignoredDirectories?.length && <p className="pd-search-truncated">{t('search.ignoredDirectories', { directories: ignoredDirectories.join(', ') })}</p>}
 					{!loading && ((scope === 'sessions' && sessionTruncated) || (scope === 'files' && fileTruncated)) && <p className="pd-search-truncated">{t('search.truncated')}</p>}
-					{scope === 'sessions' && sessions.key === requestKey && sessions.cursor && <button type="button" className="pd-search-load-more" disabled={sessionLoading} onClick={() => void loadMore('sessions')}>{label('加载更多会话', 'Load more sessions')} ({currentSessions.length}/{sessions.total})</button>}
-					{scope === 'files' && files.key === requestKey && files.cursor && <button type="button" className="pd-search-load-more" disabled={fileLoading} onClick={() => void loadMore('files')}>{label('加载更多文件', 'Load more files')} ({currentFiles.length}/{files.total})</button>}
+					{scope === 'sessions' && sessions.key === requestKey && sessions.cursor && <button type="button" className="pd-search-load-more" disabled={sessionLoading} onClick={() => void loadMore('sessions')}>{t('search.loadMoreSessions')} ({currentSessions.length}/{sessions.total})</button>}
+					{scope === 'files' && files.key === requestKey && files.cursor && <button type="button" className="pd-search-load-more" disabled={fileLoading} onClick={() => void loadMore('files')}>{t('search.loadMoreFiles')} ({currentFiles.length}/{files.total})</button>}
 				</div>
 				<div className="pd-search-footer"><span>{pending ? t('search.opening') : <><kbd>↑</kbd><kbd>↓</kbd> {t('search.navigate')} <kbd>↵</kbd> {t('search.open')}</>}</span><span><kbd>Esc</kbd> {t('search.dismiss')}</span></div>
 			</div>

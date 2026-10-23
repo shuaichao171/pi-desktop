@@ -41,7 +41,7 @@
 .pd-model-provider-option > strong { overflow: hidden; font-size: var(--pd-font-sm); font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
 .pd-model-provider-option-meta { display: flex; align-items: center; gap: 5px; color: var(--pd-text-weak); font-size: var(--pd-font-xs); }
 .pd-model-provider-option.is-selected { border-color: var(--pd-border); }
-.pd-model-provider-monogram { display: grid; flex: 0 0 28px; width: 28px; height: 28px; place-items: center; border: 1px solid var(--pd-border-soft); border-radius: var(--pd-radius-sm); background: var(--pd-bg); color: var(--pd-text-subtle); font-size: var(--pd-font-xs); font-weight: 600; }
+.pd-model-provider-monogram { display: grid; flex: 0 0 28px; width: 28px; height: 28px; place-items: center; border: 1px solid color-mix(in srgb, var(--pd-provider-hue, var(--pd-text)) 30%, transparent); border-radius: var(--pd-radius-sm); background: color-mix(in srgb, var(--pd-provider-hue, var(--pd-text)) 18%, transparent); color: color-mix(in srgb, var(--pd-provider-hue, var(--pd-text)) 72%, var(--pd-text)); font-size: var(--pd-font-caption); font-weight: 700; }
 .pd-model-provider-option-copy { display: flex; flex: 1; flex-direction: column; gap: 4px; min-width: 0; }
 .pd-model-provider-option-copy > strong { overflow: hidden; color: inherit; font-size: var(--pd-font-sm); font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
 .pd-model-provider-option-copy > small, .pd-model-provider-heading > span { color: var(--pd-text-weak); font-size: var(--pd-font-xs); }
@@ -182,7 +182,9 @@
 }
 @media (max-width: 760px) {
   .pd-settings-dialog:has(.pd-model-settings) .pd-settings-layout { flex-direction: column; }
-  .pd-settings-dialog:has(.pd-model-settings) .pd-settings-nav { flex: 0 0 auto; flex-direction: row; overflow-x: auto; padding: 8px; border-right: 0; border-bottom: 1px solid var(--pd-border); }
+  .pd-settings-dialog:has(.pd-model-settings) .pd-settings-nav { flex: 0 0 auto; flex-direction: row; gap: 3px; overflow-x: auto; padding: 8px; border-right: 0; border-bottom: 1px solid var(--pd-border); }
+  .pd-settings-dialog:has(.pd-model-settings) .pd-settings-nav-group { flex-direction: row; gap: 3px; }
+  .pd-settings-dialog:has(.pd-model-settings) .pd-settings-nav-heading { display: none; }
   .pd-settings-dialog:has(.pd-model-settings) .pd-settings-nav button { flex: 0 0 auto; }
   .pd-model-provider-layout { grid-template-columns: 145px minmax(0, 1fr); }
 }

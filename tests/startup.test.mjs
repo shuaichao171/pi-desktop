@@ -15,7 +15,7 @@ const stubs = {
   `,
   './ipc': `
     const env = globalThis.__startupTest;
-    export const { agentService, updateService, registerIpc, defaultWorkspace, disposeServices, readCurrentDesktopSettings, isAgentWorkActive, saveCloseBehavior, sendAppCommand } = env;
+    export const { agentService, updateService, registerIpc, defaultWorkspace, disposeServices, readCurrentDesktopSettings, isAgentWorkActive, saveCloseChoice, sendAppCommand } = env;
   `,
   './appLocale': `export const getAppLocale = () => 'en-US';`,
   './tray': `export const createAppTray = (options) => { globalThis.__startupTest.calls.trays += 1; globalThis.__startupTest.calls.trayOptions = options; }; export const destroyAppTray = () => {};`,
@@ -47,10 +47,11 @@ async function settle() {
   await new Promise((resolve) => setImmediate(resolve));
 }
 
-async function createStartupHarness(t, { workspaceError, initialization = deferred(), shutdown = async () => {}, closeBehavior = 'quit', busy = false, closeChoice = 1, launchArgs, userData = 'test-user-data' } = {}) {
+async function createStartupHarness(t, { workspaceError, initialization = deferred(), shutdown = async () => {}, closeBehavior = 'quit', confirmBusyClose = true, busy = false, closeChoice = 1, checkboxChecked = false, launchArgs, userData = 'test-user-data' } = {}) {
   t.mock.timers.enable({ apis: ['setTimeout'] });
   const windows = [];
-  const calls = { init: [], startUpdates: 0, dispose: 0, quit: 0, errors: [], logs: [], registered: 0, trays: 0, trayOptions: null, appCommands: [], singleInstanceLocks: 0, paths: {}, windowMode: null };
+  const calls = { init: [], startUpdates: 0, dispose: 0, quit: 0, errors: [], logs: [], registered: 0, trays: 0, trayOptions: null, appCommands: [], singleInstanceLocks: 0, paths: {}, windowMode: null, messageBoxes: [], closeChoices: [] };
+  const desktopSettingsState = { notificationsEnabled: true, closeBehavior, confirmBusyClose };
   t.mock.method(console, 'error', (...args) => calls.logs.push(args));
   let rendererReady;
   let getDialogWindow;
@@ -114,7 +115,7 @@ async function createStartupHarness(t, { workspaceError, initialization = deferr
     ipcMain,
     dialog: {
       showErrorBox: (...args) => calls.errors.push(args),
-      showMessageBox: (...args) => { calls.errors.push(args); return Promise.resolve({ response: closeChoice }); },
+      showMessageBox: (...args) => { calls.errors.push(args); calls.messageBoxes.push(args); return Promise.resolve({ response: closeChoice, checkboxChecked }); },
     },
     Menu: { setApplicationMenu: () => {} },
     session: { defaultSession: { setPermissionRequestHandler: () => {} } },
@@ -127,9 +128,10 @@ async function createStartupHarness(t, { workspaceError, initialization = deferr
     },
     defaultWorkspace: (initial) => { if (workspaceError) throw workspaceError; return initial ?? process.cwd(); },
     disposeServices: async () => { calls.dispose += 1; await shutdown(); },
-    readCurrentDesktopSettings: () => ({ notificationsEnabled: true, closeBehavior }),
+    readCurrentDesktopSettings: () => ({ ...desktopSettingsState }),
     isAgentWorkActive: async () => busy,
-    saveCloseBehavior: async () => {},
+    // Mirrors ipc.saveCloseChoice: the behavior remembered in the dialog is what Settings then shows.
+    saveCloseChoice: async (behavior) => { calls.closeChoices.push(behavior); Object.assign(desktopSettingsState, { closeBehavior: behavior, confirmBusyClose: false }); },
     sendAppCommand: (command) => calls.appCommands.push(command),
     agentService: { init: (...args) => { calls.init.push(args); return initialization.promise; } },
     updateService: {
@@ -422,3 +424,69 @@ for (const { closeBehavior, busy } of [{ closeBehavior: 'quit', busy: false }, {
     assert.equal(harness.calls.quit, 2);
   });
 }
+
+test('Windows close remembers the busy-close choice and stops asking', { skip: process.platform !== 'win32' }, async (t) => {
+  const harness = await createStartupHarness(t, { closeBehavior: 'tray', busy: true, closeChoice: 0, checkboxChecked: true });
+  const main = await harness.start();
+  main.load.resolve();
+  main.emit('ready-to-show');
+  harness.initialization.resolve();
+  await harness.rendererReady(main);
+  main.emit('close', { preventDefault() {} });
+  await settle();
+  assert.equal(harness.calls.messageBoxes.length, 1, 'the first busy close asks');
+  assert.equal(harness.calls.messageBoxes[0][1].checkboxLabel, 'Remember my choice', 'the full window offers to remember the choice');
+  assert.deepEqual(harness.calls.closeChoices, ['tray'], 'the remembered behavior matches what the dialog offered');
+  assert.equal(main.isVisible(), false, 'minimize to tray hides the window');
+  // Second close: the remembered choice applies without a dialog.
+  main.show();
+  main.emit('close', { preventDefault() {} });
+  await settle();
+  assert.equal(harness.calls.messageBoxes.length, 1, 'a remembered choice is not asked again');
+  assert.equal(main.isVisible(), false);
+  assert.equal(harness.calls.quit, 0);
+});
+
+test('Windows close remembers quitting so later busy closes stop asking', { skip: process.platform !== 'win32' }, async (t) => {
+  const harness = await createStartupHarness(t, { closeBehavior: 'tray', busy: true, closeChoice: 1, checkboxChecked: true });
+  const main = await harness.start();
+  main.load.resolve();
+  main.emit('ready-to-show');
+  harness.initialization.resolve();
+  await harness.rendererReady(main);
+  main.emit('close', { preventDefault() {} });
+  await settle();
+  assert.deepEqual(harness.calls.closeChoices, ['quit'], 'quitting from the dialog is remembered as the Settings behavior');
+  assert.equal(harness.calls.quit, 1);
+});
+
+test('Windows close stops asking once the busy-close prompt was dismissed', { skip: process.platform !== 'win32' }, async (t) => {
+  const harness = await createStartupHarness(t, { closeBehavior: 'quit', confirmBusyClose: false, busy: true });
+  const main = await harness.start();
+  main.load.resolve();
+  main.emit('ready-to-show');
+  harness.initialization.resolve();
+  await harness.rendererReady(main);
+  main.emit('close', { preventDefault() {} });
+  await settle();
+  assert.equal(harness.calls.messageBoxes.length, 0, 'a dismissed prompt quits straight away');
+  assert.equal(harness.calls.quit, 1);
+});
+
+test('pai keeps its quit confirmation instead of offering a memory it could not undo', { skip: process.platform !== 'win32' }, async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'pi-pai-close-'));
+  const cwd = join(root, 'project');
+  await mkdir(cwd);
+  const harness = await createStartupHarness(t, { launchArgs: ['--pai', '--cwd', cwd], userData: root, closeBehavior: 'tray', busy: true });
+  t.after(async () => { await rm(root, { recursive: true, force: true, maxRetries: 4 }); });
+  const main = await harness.start();
+  main.load.resolve();
+  main.emit('ready-to-show');
+  harness.initialization.resolve();
+  await harness.rendererReady(main);
+  main.emit('close', { preventDefault() {} });
+  await settle();
+  assert.equal(harness.calls.messageBoxes.length, 1, 'pai still asks before interrupting a running task');
+  assert.equal(harness.calls.messageBoxes[0][1].checkboxLabel, undefined, 'pai has no Settings entry to restore a remembered choice');
+  assert.equal(harness.calls.quit, 1);
+});

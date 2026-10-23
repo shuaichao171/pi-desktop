@@ -3,6 +3,7 @@ import type { WorkspaceGitGraphCommit } from '@pidesktop/shared';
 import { layoutGitGraph } from '../gitGraphLayout';
 import { useT } from '../i18n';
 import './gitGraph.css';
+import { formatDate } from '../dateFormat';
 
 const ROW_HEIGHT = 30;
 const LANE_WIDTH = 14;
@@ -46,7 +47,7 @@ export function GitHistoryGraph({ commits }: { commits: WorkspaceGitGraphCommit[
 				<code>{commit.shortHash}</code>
 				<span className="pd-git-graph-subject">{commit.subject}</span>
 				{commit.refs.length > 0 && <span className="pd-git-graph-refs">{commit.refs.map(ref => <span key={ref} className={`pd-git-ref${ref === 'HEAD' ? ' is-head' : ''}`}>{ref === 'HEAD' ? 'HEAD' : ref}</span>)}</span>}
-				<small>{commit.author} · {new Date(commit.date).toLocaleDateString(locale)}</small>
+				<small>{commit.author} · {formatDate(commit.date, locale)}</small>
 			</li>)}
 			{commits.length === 0 && <li className="pd-workbench-empty">{t('workbench.historyEmpty')}</li>}
 		</ul>

@@ -30,7 +30,7 @@ function installArchiveSelectionFixture() {
     runs: [{ id: 'archive-review-run', status: 'completed', startedAt: runAt - 12000, finishedAt: runAt }],
     messages: [{ id: 'archive-review-u', runId: 'archive-review-run', order: 0, role: 'user', text: '整理归档会话', status: 'done' }, { id: 'archive-review-a', runId: 'archive-review-run', order: 1, role: 'assistant', text: '归档会话已整理。', status: 'done' }] });
   localStorage.setItem('pi-desktop.sidebar-organization.v1', JSON.stringify({ mode: 'grouped', projectView: 'project', filter: 'all', sort: 'newest', collapsed: [], projectOrder: [] }));
-  localStorage.setItem('pi-desktop:conversation-metrics', JSON.stringify({ speed: true, tokens: true, cache: true, duration: true }));
+  localStorage.setItem('pi-desktop:conversation-metrics', JSON.stringify({ speed: true, tokens: true, duration: true }));
   window.__archiveSelectionReview = state;
 }
 
@@ -45,7 +45,7 @@ export default async function archiveSelectionScenarios(review) {
   await review.waitFor('window.__modelReview?.ready === true && Boolean(document.querySelector(".pd-sidebar-mode"))');
   await review.viewport(1440, 1000);
   await review.reloadWithFixture(`(${installArchiveSelectionFixture.toString()})();`);
-  await review.waitFor('document.querySelectorAll(".pd-metric-group").length === 4');
+  await review.waitFor('document.querySelectorAll(".pd-metric-group").length === 3');
   const data = await review.evaluate(`({ entries: ${state}.entries, active: ${state}.active, late: ${state}.late, workspaces: ${state}.workspaces })`);
   const row = path => `.pd-session-item[data-session-path=${q(path)}]`;
   const checkbox = path => `${row(path)} input.pd-archive-session-checkbox`;
@@ -69,7 +69,7 @@ export default async function archiveSelectionScenarios(review) {
   }
 
   // Visible metrics remain readable and accessible without hover descriptions.
-  for (const selector of ['.pd-metric-speed', '.pd-metric-input', '.pd-metric-cache', '.pd-metric-duration']) {
+  for (const selector of ['.pd-metric-speed', '.pd-metric-input', '.pd-metric-duration']) {
     await hover(selector);
     await review.assert('!document.querySelector("[role=tooltip]") && !document.querySelector(".pd-conversation-metrics [title], .pd-conversation-metrics [aria-describedby]")', 'Conversation statistics do not create a pointer tooltip or native title');
   }

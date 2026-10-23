@@ -25,6 +25,7 @@ test('desktop settings default, persist and survive corruption (4.1/4.2)', async
     assert.deepEqual(readDesktopSettings(path), DEFAULT_DESKTOP_SETTINGS);
     assert.equal(DEFAULT_DESKTOP_SETTINGS.notificationsEnabled, true);
     assert.equal(DEFAULT_DESKTOP_SETTINGS.closeBehavior, 'tray');
+    assert.equal(DEFAULT_DESKTOP_SETTINGS.confirmBusyClose, true);
   });
 
   await t.test('writes round-trip through reads', async () => {
@@ -32,6 +33,13 @@ test('desktop settings default, persist and survive corruption (4.1/4.2)', async
     assert.deepEqual(readDesktopSettings(path), { ...DEFAULT_DESKTOP_SETTINGS, notificationsEnabled: false, closeBehavior: 'quit' });
     await writeDesktopSettingsAsync(path, { notificationsEnabled: true, closeBehavior: 'tray' });
     assert.deepEqual(readDesktopSettings(path), DEFAULT_DESKTOP_SETTINGS);
+  });
+
+  await t.test('the busy-close prompt stays dismissed until Settings picks a behavior', async () => {
+    writeDesktopSettings(path, { ...DEFAULT_DESKTOP_SETTINGS, closeBehavior: 'tray', confirmBusyClose: false });
+    assert.equal(readDesktopSettings(path).confirmBusyClose, false, 'the dialog’s remembered choice persists');
+    writeDesktopSettings(path, { ...DEFAULT_DESKTOP_SETTINGS, closeBehavior: 'tray', confirmBusyClose: true });
+    assert.equal(readDesktopSettings(path).confirmBusyClose, true);
   });
 
   await t.test('pi engine selection persists and legacy files gain the default', () => {
@@ -51,12 +59,15 @@ test('desktop settings default, persist and survive corruption (4.1/4.2)', async
     assert.equal(isValidDesktopSettings({ ...base, piEngine: { mode: 'custom' } }), false);
     assert.equal(isValidDesktopSettings({ ...base, piEngine: { mode: 'custom', path: '   ' } }), false);
     assert.equal(isValidDesktopSettings({ ...base, piEngine: { mode: 'other', path: 'D:\\engine' } }), false);
+    assert.equal(isValidDesktopSettings({ ...base, confirmBusyClose: false }), true);
+    assert.equal(isValidDesktopSettings({ ...base, confirmBusyClose: undefined }), true);
+    assert.equal(isValidDesktopSettings({ ...base, confirmBusyClose: 'no' }), false);
   });
   await t.test('legacy preferences gain the default directory without losing existing choices', () => {
     const configuredDefault = join(temp, 'legacy-default');
     writeFileSync(path, JSON.stringify({ notificationsEnabled: false, closeBehavior: 'quit' }));
     assert.deepEqual(readDesktopSettings(path, configuredDefault), {
-      notificationsEnabled: false, closeBehavior: 'quit', conversationStorageDirectory: configuredDefault,
+      notificationsEnabled: false, closeBehavior: 'quit', confirmBusyClose: true, conversationStorageDirectory: configuredDefault,
       keepAwakeWhileRunning: false, autoInstallUpdates: false,
       piEngine: { mode: 'builtin' }, debugApi: DEFAULT_DESKTOP_SETTINGS.debugApi,
     });

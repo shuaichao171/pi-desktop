@@ -10,10 +10,12 @@ export function ChangeStats({ items }: { items: UiFileChange[] }) {
   if (additions === null && deletions === null) return null;
   const partial = items.some(item => item.additions == null || item.deletions == null);
   const description = t(partial ? 'changes.partialStats' : 'changes.stats', { additions: additions ?? '—', deletions: deletions ?? '—' });
-  return <span className="pd-change-stats" aria-label={description} title={partial ? description : undefined}>
+  // A partial total marks itself with a help cursor and a dotted underline so the
+  // asterisk's meaning (some files have no line counts) is one hover away.
+  return <span className={`pd-change-stats${partial ? ' is-partial' : ''}`} aria-label={description} title={partial ? description : undefined}>
     <span className="pd-change-added" aria-hidden="true">+{additions ?? '—'}</span>
     <span className="pd-change-deleted" aria-hidden="true">−{deletions ?? '—'}</span>
-    {partial && <span aria-hidden="true">*</span>}
+    {partial && <span className="pd-change-partial" aria-hidden="true">*</span>}
   </span>;
 }
 

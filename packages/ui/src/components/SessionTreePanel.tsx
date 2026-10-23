@@ -6,6 +6,7 @@ import { selectBusy, useChatStore } from '../store';
 import { Icon } from './Icons';
 import { useConversationCopy } from '../conversationCopy';
 import { currentTreeLeaf, flattenTree } from '../sessionTree';
+import { formatDate } from '../dateFormat';
 
 const KIND_ICON: Record<UiSessionTreeNode['kind'], Parameters<typeof Icon>[0]['name']> = { user: 'message', assistant: 'file', tool: 'terminal', compaction: 'archive', 'branch-summary': 'gitBranch', custom: 'hash', other: 'more' };
 const KIND_LABEL = { user: 'treeUser', assistant: 'treeAssistant', tool: 'treeTool', compaction: 'treeCompaction', 'branch-summary': 'treeBranchSummary', custom: 'treeCustom', other: 'treeOther' } as const;
@@ -58,6 +59,6 @@ export function SessionTreePanel({ returnFocus, onClose }: { returnFocus: HTMLEl
 			if (event.key === 'ArrowRight') { event.preventDefault(); if (!expanded.has(node.id)) toggle(node.id, true); else focus(node.children[0]?.id); }
 			if (event.key === 'ArrowLeft') { event.preventDefault(); if (node.children.length && expanded.has(node.id)) toggle(node.id, false); else focus(parentId ?? undefined); }
 		}}><span className="pd-tree-disclosure" onClick={(event) => { if (node.children.length) { event.stopPropagation(); select(node.id); toggle(node.id, !expanded.has(node.id)); } }}>{node.children.length ? <Icon name={expanded.has(node.id) ? 'chevronDown' : 'chevronRight'} width="13" height="13" /> : null}</span><Icon name={KIND_ICON[node.kind]} width="13" height="13" /><span className="pd-session-tree-label">{node.label || '…'}</span>{node.active && <span className="pd-session-tree-current">{c(node.id === leaf?.id ? 'currentNode' : 'currentPath')}</span>}</button></li>)}</ul>}</div>
-		<section className="pd-tree-inspector" aria-live="polite">{selected ? <><strong>{c(KIND_LABEL[selected.kind])}</strong>{selected.timestamp && <time>{new Date(selected.timestamp).toLocaleString(locale)}</time>}<p>{selected.label}</p><small>{c('summaryOnly')}</small><button type="button" disabled={busy || Boolean(switchingId) || selected.id === leaf?.id} onClick={() => void switchTo()}>{switchingId ? t('chat.tree.switching') : c('switchNode')}</button></> : <p>{c('noSelection')}</p>}</section>
+		<section className="pd-tree-inspector" aria-live="polite">{selected ? <><strong>{c(KIND_LABEL[selected.kind])}</strong>{selected.timestamp && <time>{formatDate(selected.timestamp, locale, { time: true })}</time>}<p>{selected.label}</p><small>{c('summaryOnly')}</small><button type="button" disabled={busy || Boolean(switchingId) || selected.id === leaf?.id} onClick={() => void switchTo()}>{switchingId ? t('chat.tree.switching') : c('switchNode')}</button></> : <p>{c('noSelection')}</p>}</section>
 	</dialog>, document.body);
 }

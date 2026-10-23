@@ -199,31 +199,43 @@ function createWindow(onReady?: () => void, onLoadError?: (error: unknown) => vo
 	});
 	// Windows mirrors ZCode: closing hides to the tray while the agent keeps
 	// running. 4.2: the behavior follows the desktop setting — hide to tray by
-	// default (with a notice while tasks run), or quit after a confirm dialog.
+	// default (with a notice while tasks run), or quit after a confirm dialog. The
+	// dialog's "remember my choice" checkbox persists the chosen behavior and stops
+	// asking; picking a behavior in Settings brings the confirmation back.
 	let closeDialogOpen = false;
 	const requestClose = (): void => {
 		if (closeDialogOpen || win.isDestroyed()) return;
 		closeDialogOpen = true;
 		void (async () => {
 			try {
-				const settings = launch.windowMode !== 'full' ? { closeBehavior: 'quit' as const }
-					: ipc ? ipc.readCurrentDesktopSettings() : { notificationsEnabled: true, closeBehavior: 'tray' as const };
+				const settings = ipc ? ipc.readCurrentDesktopSettings() : null;
+				const closeBehavior = launch.windowMode !== 'full' ? 'quit' as const : settings?.closeBehavior ?? 'tray';
+				const confirmBusyClose = settings?.confirmBusyClose !== false;
 				const busy = ipc ? await ipc.isAgentWorkActive() : false;
 				const english = getAppLocale() === 'en-US';
-				if (!busy) {
-					if (settings.closeBehavior === 'quit') app.quit(); else win.hide();
+				// Only the full window can change the close behavior again, so pai keeps asking instead of
+				// offering a memory it could never undo.
+				const rememberChoice = launch.windowMode === 'full' ? { checkboxLabel: english ? 'Remember my choice' : '记住我的选择' } : {};
+				// A remembered choice is applied straight away; only a busy close that has not
+				// been decided yet asks.
+				if (!busy || !confirmBusyClose) {
+					if (closeBehavior === 'quit') app.quit(); else win.hide();
 					return;
 				}
-				if (settings.closeBehavior === 'quit') {
+				if (closeBehavior === 'quit') {
 					const choice = await dialog.showMessageBox(win, {
 						type: 'warning',
 						message: english ? 'Tasks are still running' : '仍有任务在运行',
 						detail: english ? 'Quitting interrupts the running conversation or automation.' : '退出会中断正在运行的会话或自动化任务。',
 						buttons: [english ? 'Cancel' : '取消', english ? 'Quit' : '退出'],
+						...rememberChoice,
 						defaultId: 0,
 						cancelId: 0,
 					});
-					if (choice.response === 1) app.quit();
+					if (choice.response === 1) {
+						if (choice.checkboxChecked) await ipc?.saveCloseChoice('quit');
+						app.quit();
+					}
 					return;
 				}
 				const choice = await dialog.showMessageBox(win, {
@@ -231,15 +243,15 @@ function createWindow(onReady?: () => void, onLoadError?: (error: unknown) => vo
 					message: english ? 'Pi Desktop is still running tasks' : 'Pi Desktop 仍有任务在运行',
 					detail: english ? 'It keeps running from the tray.' : '窗口将最小化到托盘，任务继续在后台运行。',
 					buttons: [english ? 'Minimize to tray' : '最小化到托盘', english ? 'Quit anyway' : '仍要退出'],
-					checkboxLabel: english ? 'Remember my choice' : '记住我的选择',
+					...rememberChoice,
 					defaultId: 0,
 					cancelId: 0,
 				});
 				if (choice.response === 1) {
-					if (choice.checkboxChecked) await ipc?.saveCloseBehavior('quit');
+					if (choice.checkboxChecked) await ipc?.saveCloseChoice('quit');
 					app.quit();
 				} else {
-					if (choice.checkboxChecked) await ipc?.saveCloseBehavior('tray');
+					if (choice.checkboxChecked) await ipc?.saveCloseChoice('tray');
 					win.hide();
 				}
 			} catch (error) {

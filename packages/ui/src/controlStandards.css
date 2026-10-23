@@ -7,6 +7,16 @@
 :is(.pd-sidebar-popover, .pd-composer-config-popover) button[role^='menuitem'] { min-height: var(--pd-menu-row-height); display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-radius: var(--pd-control-radius); line-height: 1.4; white-space: normal; overflow-wrap: anywhere; }
 :is(.pd-settings-dialog, .pd-automation-dialog, .pd-sidebar-popover) :is(input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='color']), select) { min-height: var(--pd-control-height); border-radius: var(--pd-control-radius); }
 :is(button, input, select, textarea, summary, [role='separator'], [role='treeitem']):focus-visible { outline: 2px solid var(--pd-focus-border); outline-offset: 2px; }
+/* Focus rings are a keyboard affordance. After pointer input (inputModality.ts), focus
+   that script moves (dialog close, picker return) keeps no ring, including rings that
+   switches and filter chips draw on a neighbour of their hidden checkbox. Text fields
+   keep theirs: they show where typing goes. !important is deliberate: this single
+   global switch must win over every component's own ring rule. */
+:root[data-input-modality='pointer'] :is(
+  :focus-visible:not(input:not([type='checkbox']):not([type='radio']):not([type='range']), textarea, select, [contenteditable]),
+  :has(> input:is([type='checkbox'], [type='radio']):focus-visible),
+  input:is([type='checkbox'], [type='radio']):focus-visible + *
+) { outline: none !important; }
 :is(.pd-sidebar-popover, .pd-composer-config-popover) button:disabled { cursor: not-allowed; opacity: .55; }
 .pd-sidebar-popover [role='menuitemcheckbox'][aria-checked='true'] { background: var(--pd-selected); color: var(--pd-text); }
 .pd-settings-dialog :is(.pd-settings-error, .pd-settings-feedback) { font-size: var(--pd-font-caption); line-height: 1.5; overflow-wrap: anywhere; }
@@ -36,7 +46,7 @@ select option { background: var(--pd-surface); color: var(--pd-text); }
 /* Large settings panel: header and navigation on the dialog tone, content on an inset with white cards. */
 :root[data-theme='light'] .pd-settings-content { --pd-surface: var(--pd-dialog); background: var(--pd-dialog-inset); }
 /* Disabled primary actions turn neutral instead of a washed-out accent. */
-:root :is(.pd-settings-primary, .pd-automation-button.is-primary, .pd-plugin-button.is-primary, .pd-mcp-button.is-primary, .pd-engine-button.is-primary, .pd-extension-request-actions > .is-primary, .pd-session-management-rename footer button.is-primary, .pd-branch-switch-dialog footer button.is-primary, .pd-commit-primary, .pd-project-create-submit, .pd-workbench-sync-primary, .pd-update-notice-primary):disabled { border-color: transparent; background: color-mix(in srgb, var(--pd-text) 9%, transparent); color: var(--pd-text-weak); opacity: 1; }
+:root :is(.pd-settings-primary, .pd-automation-button.is-primary, .pd-plugin-button.is-primary, .pd-mcp-button.is-primary, .pd-engine-button.is-primary, .pd-extension-request-actions > .is-primary, .pd-session-management-rename footer button.is-primary, .pd-branch-switch-dialog footer button.is-primary, .pd-commit-primary, .pd-project-create-submit, .pd-workbench-sync-primary, .pd-update-notice-primary, .pd-send-button, .pd-sidebar-update):disabled { border-color: transparent; background: color-mix(in srgb, var(--pd-text) 9%, transparent); color: var(--pd-text-weak); opacity: 1; }
 /* Selected choice cards use the accent tint, not a grey block. */
 :root .pd-model-template-card.is-custom { background: color-mix(in srgb, var(--pd-brand) 8%, var(--pd-dialog)); }
 /* Light composer reads as an input: white field with a soft lift. */

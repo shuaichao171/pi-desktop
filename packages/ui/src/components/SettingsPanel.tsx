@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState, type FormEvent, type Keyboard
 import type { UiDebugApiConfig, UiDebugApiState, UiDesktopSettings, UiProviderAuthStatus, UiUpdateState } from '@pidesktop/shared';
 import { useChatStore } from '../store';
 import { useT, type Translate } from '../i18n';
-import { Icon } from './Icons';
+import { Icon, type IconName } from './Icons';
 import { ScopedErrorBoundary } from './ScopedErrorBoundary';
 import { ModelSettingsPanel } from './ModelSettingsPanel';
 import { CloudSyncPanel } from './CloudSyncPanel';
@@ -21,7 +21,7 @@ import { ConversationMetricsSettings } from './ConversationMetricsSettings';
 import { useTaskNotificationSoundEnabled } from '../taskNotificationSound';
 import { useExtensionNoticeDisplayEnabled } from '../extensionNoticeDisplay';
 import { useMessageStreamShowReasoning } from '../messageStreamShowReasoning';
-import { useQuestionAutoResolutionEnabled } from '../extensionQuestionTimeout';
+import { QUESTION_AUTO_RESOLUTION_MINUTE_OPTIONS, useQuestionAutoResolutionMinutes } from '../extensionQuestionTimeout';
 import { ConversationStorageSettings } from './ConversationStorageSettings';
 import { EngineSettingsPanel } from './EngineSettingsPanel';
 import { SettingsGroup, SettingsRow, SettingsSwitch } from './SettingsRows';
@@ -32,6 +32,20 @@ const PROJECT_REPOSITORY_URL = 'https://github.com/shuaichao171/pi-desktop';
 
 export type ThemePreference = 'system' | 'dark' | 'light';
 type SettingsPage = 'general' | 'appearance' | 'personalization' | 'model' | 'backup' | 'debug' | 'engine' | 'shortcuts' | 'updates' | 'sessions' | 'mcp';
+
+// Eleven pages read as one long list; three labelled groups with icons make the
+// navigation scannable. Desktop-only pages are hidden in the standalone pai window.
+const SETTINGS_NAV: Array<{ id: 'app' | 'models' | 'data'; pages: Array<{ page: SettingsPage; icon: IconName; desktopOnly?: boolean }> }> = [
+	{ id: 'app', pages: [
+		{ page: 'general', icon: 'settings' }, { page: 'appearance', icon: 'palette' }, { page: 'personalization', icon: 'user' }, { page: 'shortcuts', icon: 'keyboard' },
+	] },
+	{ id: 'models', pages: [
+		{ page: 'model', icon: 'spark' }, { page: 'engine', icon: 'cpu' }, { page: 'mcp', icon: 'plugins' }, { page: 'debug', icon: 'code' },
+	] },
+	{ id: 'data', pages: [
+		{ page: 'backup', icon: 'cloud' }, { page: 'sessions', icon: 'message', desktopOnly: true }, { page: 'updates', icon: 'update', desktopOnly: true },
+	] },
+];
 type DraftFocus = { element: HTMLElement; selection?: { start: number; end: number; direction: 'forward' | 'backward' | 'none' } };
 type PendingLeave = SettingsLeaveRequest<SettingsPage, DraftFocus | null>;
 
@@ -150,7 +164,7 @@ export function SettingsPanel({ initialPage = 'general', modelManagementTarget, 
 	const [extensionNoticesSaveFailed, setExtensionNoticesSaveFailed] = useState(false);
 	const [showReasoning, setShowReasoning] = useMessageStreamShowReasoning();
 	const [showReasoningSaveFailed, setShowReasoningSaveFailed] = useState(false);
-	const [questionAutoResolution, setQuestionAutoResolution] = useQuestionAutoResolutionEnabled();
+	const [questionAutoResolutionMinutes, setQuestionAutoResolutionMinutes] = useQuestionAutoResolutionMinutes();
 	const [questionAutoResolutionSaveFailed, setQuestionAutoResolutionSaveFailed] = useState(false);
 	const [contentFonts, setContentFonts] = useState(() => ({ code: readContentFontSize('code'), command: readContentFontSize('command') }));
 	const [savingLeave, setSavingLeave] = useState(false);
@@ -254,7 +268,7 @@ export function SettingsPanel({ initialPage = 'general', modelManagementTarget, 
 		if (!bridge?.setDebugApiConfig || !debugApiState || debugApiPending.current) return;
 		const port = Number(debugApiPortDraft);
 		if (!Number.isInteger(port) || port < 1 || port > 65535) {
-			setDebugApiError(locale === 'zh-CN' ? '端口必须是 1-65535 的整数' : 'Port must be an integer between 1 and 65535');
+			setDebugApiError(t('settings.debugApiPortInvalid'));
 			return;
 		}
 		debugApiPending.current = true;
@@ -367,24 +381,33 @@ export function SettingsPanel({ initialPage = 'general', modelManagementTarget, 
 		: updateState?.phase === 'error' ? t('settings.updateFailed')
 		: t('settings.updateIdle');
 
+	const navLabel = (target: SettingsPage): string => {
+		switch (target) {
+			case 'general': return t('settings.general');
+			case 'appearance': return t('settings.appearance');
+			case 'personalization': return t('settings.personalization');
+			case 'model': return t('settings.modelManagement');
+			case 'backup': return t('settings.cloudBackup');
+			case 'debug': return t('settings.debugApi');
+			case 'engine': return t('settings.engine');
+			case 'shortcuts': return t('settings.shortcuts');
+			case 'updates': return t('settings.updates');
+			case 'mcp': return 'MCP';
+			case 'sessions': return t('settings.sessions');
+		}
+	};
+
 	return (
 		<div className="pd-settings-overlay" onMouseDown={(event) => { if (event.target === event.currentTarget && !pendingLeave) requestLeave(); }}>
 			<div ref={dialogRef} className="pd-settings-dialog" role="dialog" aria-modal="true" aria-labelledby="pd-settings-title" onKeyDown={onDialogKeyDown}>
 				<header className="pd-settings-header" inert={Boolean(pendingLeave)}><div><h1 id="pd-settings-title">{t('settings.title')}</h1></div><button ref={closeRef} type="button" className="pd-icon-button" disabled={draftState.saving} onClick={() => requestLeave()} aria-label={t('settings.close')}><Icon name="close" /></button></header>
-				{pendingLeave && <div className="pd-settings-discard" role="alertdialog" aria-modal="true" aria-labelledby="pd-discard-title" aria-describedby="pd-discard-description"><h2 id="pd-discard-title">{t('settings.discardTitle')}</h2><p id="pd-discard-description">{t('settings.discardDescription')}</p><div className="pd-instruction-actions"><button ref={keepEditingRef} className="pd-instruction-button" type="button" disabled={savingLeave} onClick={keepEditing}>{t('personalization.keepEditing')}</button><button className="pd-instruction-button" type="button" disabled={savingLeave} onClick={discardChanges}>{t('personalization.discard')}</button>{draftState.save && <button className="pd-settings-primary" data-action="save-settings-and-leave" type="button" disabled={savingLeave} onClick={() => void saveAndLeave()}>{savingLeave ? t('personalization.saving') : locale === 'zh-CN' ? '保存并继续' : 'Save and continue'}</button>}</div>{leaveError && <p role="alert">{locale === 'zh-CN' ? '保存失败，请继续编辑并查看错误。草稿已保留。' : 'Saving failed. Continue editing to review the error; your draft is preserved.'}</p>}</div>}
+				{pendingLeave && <div className="pd-settings-discard" role="alertdialog" aria-modal="true" aria-labelledby="pd-discard-title" aria-describedby="pd-discard-description"><h2 id="pd-discard-title">{t('settings.discardTitle')}</h2><p id="pd-discard-description">{t('settings.discardDescription')}</p><div className="pd-instruction-actions"><button ref={keepEditingRef} className="pd-instruction-button" type="button" disabled={savingLeave} onClick={keepEditing}>{t('personalization.keepEditing')}</button><button className="pd-instruction-button" type="button" disabled={savingLeave} onClick={discardChanges}>{t('personalization.discard')}</button>{draftState.save && <button className="pd-settings-primary" data-action="save-settings-and-leave" type="button" disabled={savingLeave} onClick={() => void saveAndLeave()}>{savingLeave ? t('personalization.saving') : t('settings.saveAndContinue')}</button>}</div>{leaveError && <p role="alert">{t('settings.leaveSaveFailed')}</p>}</div>}
 				<div className="pd-settings-layout" inert={Boolean(pendingLeave)}>
 					<nav className="pd-settings-nav" aria-label={t('settings.category')}>
-						<button type="button" className={page === 'general' ? 'is-active' : ''} aria-current={page === 'general' ? 'page' : undefined} onClick={() => selectPage('general')}>{t('settings.general')}</button>
-						<button type="button" className={page === 'appearance' ? 'is-active' : ''} aria-current={page === 'appearance' ? 'page' : undefined} onClick={() => selectPage('appearance')}>{t('settings.appearance')}</button>
-						<button type="button" className={page === 'personalization' ? 'is-active' : ''} aria-current={page === 'personalization' ? 'page' : undefined} onClick={() => selectPage('personalization')}>{t('settings.personalization')}</button>
-						<button type="button" className={page === 'model' ? 'is-active' : ''} aria-current={page === 'model' ? 'page' : undefined} onClick={() => selectPage('model')}>{t('settings.modelManagement')}</button>
-				<button type="button" className={page === 'backup' ? 'is-active' : ''} aria-current={page === 'backup' ? 'page' : undefined} onClick={() => selectPage('backup')}>{t('settings.cloudBackup')}</button>
-				<button type="button" className={page === 'debug' ? 'is-active' : ''} aria-current={page === 'debug' ? 'page' : undefined} onClick={() => selectPage('debug')}>{t('settings.debugApi')}</button>
-						<button type="button" className={page === 'engine' ? 'is-active' : ''} aria-current={page === 'engine' ? 'page' : undefined} onClick={() => selectPage('engine')}>{t('settings.engine')}</button>
-						<button type="button" className={page === 'shortcuts' ? 'is-active' : ''} aria-current={page === 'shortcuts' ? 'page' : undefined} onClick={() => selectPage('shortcuts')}>{t('settings.shortcuts')}</button>
-						{!paiMode && <button type="button" className={page === 'updates' ? 'is-active' : ''} aria-current={page === 'updates' ? 'page' : undefined} onClick={() => selectPage('updates')}>{t('settings.updates')}</button>}
-						<button type="button" className={page === 'mcp' ? 'is-active' : ''} aria-current={page === 'mcp' ? 'page' : undefined} onClick={() => selectPage('mcp')}>MCP</button>
-						{!paiMode && <button type="button" className={page === 'sessions' ? 'is-active' : ''} aria-current={page === 'sessions' ? 'page' : undefined} onClick={() => selectPage('sessions')}>{locale === 'zh-CN' ? '会话管理' : 'Conversations'}</button>}
+						{SETTINGS_NAV.map((group) => <div key={group.id} className="pd-settings-nav-group" role="group" aria-label={t(`settings.navGroup.${group.id}`)}>
+							<span className="pd-settings-nav-heading" aria-hidden="true">{t(`settings.navGroup.${group.id}`)}</span>
+							{group.pages.filter((item) => !paiMode || !item.desktopOnly).map((item) => <button key={item.page} type="button" className={page === item.page ? 'is-active' : ''} aria-current={page === item.page ? 'page' : undefined} onClick={() => selectPage(item.page)}><Icon name={item.icon} width="16" height="16" /><span>{navLabel(item.page)}</span></button>)}
+						</div>)}
 					</nav>
 					<div className="pd-settings-content" onFocusCapture={(event) => { if (event.target instanceof HTMLElement) draftFocusRef.current = event.target; }}>
 						{settingsError && <div className="pd-settings-error" role="alert">{settingsError}</div>}
@@ -417,7 +440,9 @@ export function SettingsPanel({ initialPage = 'general', modelManagementTarget, 
 								</SettingsRow>
 								<SettingsRow title={t('settings.questionAutoResolution')} description={t('settings.questionAutoResolutionDescription')}
 									footer={questionAutoResolutionSaveFailed && <p className="pd-settings-feedback" role="status">{t('settings.questionAutoResolutionSaveFailed')}</p>}>
-									<SettingsSwitch setting="question-auto-resolution" label={t('settings.questionAutoResolution')} checked={questionAutoResolution} onChange={next => setQuestionAutoResolutionSaveFailed(!setQuestionAutoResolution(next))} />
+									<select className="pd-settings-select" data-setting="question-auto-resolution" aria-label={t('settings.questionAutoResolution')} value={String(questionAutoResolutionMinutes)} onChange={event => setQuestionAutoResolutionSaveFailed(!setQuestionAutoResolutionMinutes(Number(event.target.value)))}>
+										{QUESTION_AUTO_RESOLUTION_MINUTE_OPTIONS.map(minutes => <option key={minutes} value={minutes}>{minutes === 0 ? t('settings.questionAutoResolutionUnlimited') : t('settings.questionAutoResolutionMinutes', { count: minutes })}</option>)}
+									</select>
 								</SettingsRow>
 								<SettingsRow title={t('settings.extensionNotices')} description={t('settings.extensionNoticesDescription')}
 									footer={extensionNoticesSaveFailed && <p className="pd-settings-feedback" role="status">{t('settings.extensionNoticesSaveFailed')}</p>}>
@@ -471,7 +496,7 @@ export function SettingsPanel({ initialPage = 'general', modelManagementTarget, 
 										<button type="button" className="pd-font-size-reset" disabled={uiFontSize === DEFAULT_UI_FONT_SIZE} onClick={() => { setUiFontSize(DEFAULT_UI_FONT_SIZE); applyUiFontSize(DEFAULT_UI_FONT_SIZE); saveUiFontSize(DEFAULT_UI_FONT_SIZE); }}>{t('settings.uiFontSizeReset')}</button>
 									</div>
 								</SettingsRow>
-								{(['code', 'command'] as ContentFontKind[]).map(kind => <SettingsRow stacked key={kind} setting={kind + '-font'} labelFor={'pd-' + kind + '-font'} title={locale === 'zh-CN' ? kind === 'code' ? '代码与差异字号' : '命令输出字号' : kind === 'code' ? 'Code and diff font size' : 'Command output font size'}>
+								{(['code', 'command'] as ContentFontKind[]).map(kind => <SettingsRow stacked key={kind} setting={kind + '-font'} labelFor={'pd-' + kind + '-font'} title={t(kind === 'code' ? 'settings.codeFontSize' : 'settings.commandFontSize')}>
 									<div className="pd-font-size-row"><input id={'pd-' + kind + '-font'} type="range" min={CONTENT_FONT_MIN} max={CONTENT_FONT_MAX} step={1} value={contentFonts[kind]} onChange={event => { const value = Number(event.target.value); saveContentFontSize(kind, value); setContentFonts(old => ({ ...old, [kind]: value })); }} /><output className="pd-font-size-value">{contentFonts[kind]}px</output><button type="button" className="pd-font-size-reset" disabled={contentFonts[kind] === DEFAULT_CONTENT_FONT_SIZE} onClick={() => { saveContentFontSize(kind, DEFAULT_CONTENT_FONT_SIZE); setContentFonts(old => ({ ...old, [kind]: DEFAULT_CONTENT_FONT_SIZE })); }}>{t('settings.uiFontSizeReset')}</button></div>
 								</SettingsRow>)}
 							</SettingsGroup>

@@ -7,6 +7,7 @@ import { isConversationWorkspace } from '../sidebarOrganization';
 import { HoverTooltip } from './HoverTooltip';
 import { Icon } from './Icons';
 import './composerContextPicker.css';
+import { formatDate } from '../dateFormat';
 
 interface ComposerContextPickerProps {
 	anchor: HTMLElement;
@@ -245,7 +246,7 @@ export const ComposerContextPicker = forwardRef<ComposerContextPickerHandle, Com
 		const active = row.id === activeId;
 		const entry = row.kind === 'entry' ? row.entry : null;
 		const label = row.kind === 'upload' ? t('composer.contextUpload') : row.kind === 'more' ? t('composer.contextMore') : entry ? entry.name : row.kind === 'session' ? title(row.session, t('sidebar.unnamed')) : '';
-		const detail = entry && search ? entry.path : row.kind === 'session' && Number.isFinite(Date.parse(row.session.modified)) ? new Intl.DateTimeFormat(locale, { month: 'short', day: 'numeric' }).format(new Date(row.session.modified)) : '';
+		const detail = entry && search ? entry.path : row.kind === 'session' ? formatDate(row.session.modified, locale) : '';
 		const separator = workspace.includes('\\') ? '\\' : '/';
 		const fullPath = entry ? `${workspace.replace(/[\\/]+$/, '')}${separator}${entry.path.replace(/[\\/]/g, separator)}` : undefined;
 		// Pointer movement selects a row; layout-driven pointerenter events after a

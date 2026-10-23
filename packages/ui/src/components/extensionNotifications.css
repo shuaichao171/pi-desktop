@@ -36,6 +36,32 @@
 	overflow: hidden;
 }
 
+/* Floating above the composer (chat view): the same stack language, mirrored so
+   it grows upward and the newest card stays closest to the input box. */
+.pd-composer-notice-stack {
+	position: absolute;
+	right: 0;
+	bottom: calc(100% + 6px);
+	left: 0;
+	/* Above the transcript and the composer dock, but under popovers and modal dialogs
+	   (settings, previews): a notice must never cover a dialog the user is working in. */
+	z-index: calc(var(--pd-z-popover) - 1);
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	max-height: calc(100dvh - 160px);
+	pointer-events: none;
+}
+.pd-composer-notice-stack:empty { display: none; }
+.pd-composer-notice-stack .pd-extension-notifications { padding-top: var(--stack-peek); padding-bottom: 0; }
+.pd-composer-notice-stack .pd-extension-notifications:not(.is-expanded) .pd-extension-notice:not(:first-child) {
+	inset: var(--stack-peek) 0 0;
+	transform: translateY(calc(var(--notice-depth) * -12px)) scaleX(calc(1 - var(--notice-depth) * .045));
+}
+.pd-composer-notice-stack .pd-extension-notifications:not(.is-expanded) .pd-extension-notice:nth-child(n + 4) { visibility: hidden; pointer-events: none; }
+/* Hovering must not shift the newest card: it stays on the composer edge, with
+   older ones listed upward in the same order as the collapsed stack. */
+.pd-composer-notice-stack .pd-extension-notifications.is-expanded { flex-direction: column-reverse; padding: 2px 6px 0; }
 .pd-extension-notifications:not(.is-expanded) .pd-extension-notice:not(:first-child) > * { opacity: 0; }
 .pd-extension-notifications:not(.is-expanded) .pd-extension-notice:nth-child(n + 4) { visibility: hidden; pointer-events: none; }
 .pd-extension-notice.is-warning { border-left-color: var(--pd-warning); }

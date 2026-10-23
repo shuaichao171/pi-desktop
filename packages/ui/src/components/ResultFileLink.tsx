@@ -12,8 +12,7 @@ import { Icon } from './Icons';
 import './resultFileLink.css';
 
 export function ResultFileLink({ href, children, title }: { href?: string; children?: ReactNode; title?: string }) {
-  const { locale } = useT();
-  const label = (zh: string, en: string) => locale === 'zh-CN' ? zh : en;
+  const { t } = useT();
   const reference = href ? parseResultFileReference(href) : null;
   const bridge = useChatStore(state => state.bridge);
   const cwd = useChatStore(state => state.cwd);
@@ -48,7 +47,7 @@ export function ResultFileLink({ href, children, title }: { href?: string; child
     if (!bridge || !available) return;
     void runWithFeedback({
       id: `result-file:${action}:${cwd}:${reference.path}`,
-      title: action === 'open' ? label('打开文件', 'Open file') : label('打开所在位置', 'Show in folder'),
+      title: action === 'open' ? t('resultFile.open') : t('resultFile.reveal'),
       run: () => action === 'open' ? bridge.openResultFile(target) : bridge.revealResultFile(target),
       canRetry: () => !useChatStore.getState().navigationPending && sameResultFileSession(context.current, resultFileSessionSnapshot(useChatStore.getState())),
     });
@@ -61,10 +60,12 @@ export function ResultFileLink({ href, children, title }: { href?: string; child
       onKeyDown={event => {
         if (event.key === 'ContextMenu' || event.shiftKey && event.key === 'F10') { event.preventDefault(); if (available) { setMenuPoint(undefined); setMenu(true); } }
       }}>{children}</a>
-    {menu && anchor.current && <SidebarPopover anchor={anchor.current} point={menuPoint} label={label('文件操作', 'File actions')} onClose={() => setMenu(false)}>
-      <button type="button" role="menuitem" onClick={() => { setMenu(false); openPreview(target); }}><span>{label('打开预览', 'Preview')}</span><Icon name="panelRight" width="14" height="14" /></button>
-      <button type="button" role="menuitem" onClick={() => act('open')}><span>{label('用默认应用打开', 'Open in default app')}</span><Icon name="file" width="14" height="14" /></button>
-      <button type="button" role="menuitem" onClick={() => act('reveal')}><span>{label('打开所在位置', 'Show in folder')}</span><Icon name="folder" width="14" height="14" /></button>
+    {menu && anchor.current && <SidebarPopover anchor={anchor.current} point={menuPoint} label={t('resultFile.actions')} onClose={() => setMenu(false)}>
+      {/* The preview returns focus to whatever held it on open; hand it back to the
+          link first so closing the preview does not strand focus on the removed menu. */}
+      <button type="button" role="menuitem" onClick={() => { setMenu(false); anchor.current?.focus({ preventScroll: true }); openPreview(target); }}><span>{t('resultFile.preview')}</span><Icon name="panelRight" width="14" height="14" /></button>
+      <button type="button" role="menuitem" onClick={() => act('open')}><span>{t('resultFile.openDefault')}</span><Icon name="file" width="14" height="14" /></button>
+      <button type="button" role="menuitem" onClick={() => act('reveal')}><span>{t('resultFile.reveal')}</span><Icon name="folder" width="14" height="14" /></button>
     </SidebarPopover>}
   </>;
 }

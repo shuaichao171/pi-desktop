@@ -45,6 +45,9 @@ export default async function sidebarRuntimeScenarios(review) {
   await review.viewport(1440, 1000);
   await review.reducedMotion(true);
   await review.reloadWithFixture(`(${installSidebarRuntimeFixture.toString()})()`);
+  // A group previews its first five rows; the rest sit behind "show more".
+  await review.waitFor(`document.querySelectorAll('.pd-session-item[data-session-path]').length === 6 && Boolean(document.querySelector('.pd-session-more'))`);
+  await review.click('.pd-session-more');
   await review.waitFor(`document.querySelectorAll('.pd-session-item[data-session-path]').length === 8`);
   const rowOf = title => `[...document.querySelectorAll('.pd-session-item')].find(item => item.querySelector('.pd-session-title-text')?.textContent === ${q(title)})`;
   const rowProp = async (title, expression) => review.evaluate(`(() => { const item = ${rowOf(title)}; return item ? ${expression} : 'MISSING'; })()`);

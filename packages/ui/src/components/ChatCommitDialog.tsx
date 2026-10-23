@@ -194,13 +194,13 @@ export function ChatCommitDialog({ onClose }: { onClose(): void }) {
 					<button type="button" className="pd-commit-secondary" disabled={busy || typeof api?.syncWorkspaceGit !== 'function'} onClick={() => { void pushOnly(); }}>
 						{working === 'push' ? t('chat.pushing') : t('chat.pushOnly')}
 					</button>
-					<button type="button" className="pd-commit-secondary" disabled={busy} onClick={() => { void generate(); }}>
+					<button type="button" className="pd-commit-secondary" data-action="generate-commit-message" disabled={busy} onClick={() => { void generate(); }}>
 						{working === 'generate' ? t('chat.commitGenerating') : t('chat.commitGenerate')}
 					</button>
-					<button type="button" className="pd-commit-primary" disabled={!canCommit || typeof api?.syncWorkspaceGit !== 'function'} onClick={() => { void submit(true); }}>
+					<button type="button" className="pd-commit-primary" data-action="commit-and-push" disabled={!canCommit || typeof api?.syncWorkspaceGit !== 'function'} onClick={() => { void submit(true); }}>
 						{working === 'commit' ? t('chat.commitSubmitting') : t('chat.commitAndPush')}
 					</button>
-					<button type="button" className="pd-commit-primary" disabled={!canCommit} onClick={() => { void submit(); }}>
+					<button type="button" className="pd-commit-primary" data-action="commit" disabled={!canCommit} onClick={() => { void submit(); }}>
 						{working === 'commit' ? t('chat.commitSubmitting') : t('chat.commitSubmit')}
 					</button>
 				</>}

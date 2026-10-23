@@ -41,26 +41,27 @@ function installPaiReview() {
 
 export default async function paiScenarios(review) {
   const metrics = '.pd-conversation-metrics';
-  const keys = ['speed', 'tokens', 'cache', 'duration'];
+  const keys = ['speed', 'tokens', 'duration'];
   await review.reloadWithFixture(`(${installPaiReview.toString()})()`);
   await review.viewport(920, 720);
   await review.reducedMotion(true);
   await review.waitFor(`Boolean(document.querySelector('.pd-app-shell.is-pai')) && document.querySelector('${metrics}')?.textContent.includes('55s')`);
   await review.assert("!document.querySelector('.pd-sidebar') && !document.querySelector('.pd-sidebar-resize') && !document.querySelector('.pd-workbench-toggle') && !document.querySelector('.pd-header-sidebar-toggle') && !!document.querySelector('.pd-window-controls')", 'pai renders a standalone conversation without sidebar or workbench controls');
-  await review.assert(`document.querySelector('${metrics}').textContent.includes('18.2 t/s') && document.querySelector('${metrics}').textContent.includes('↑500') && document.querySelector('${metrics}').textContent.includes('↓1K') && document.querySelector('.pd-metric-cache').textContent.includes('200') && document.querySelector('.pd-metric-cache').textContent.includes('50')`, 'The footer shows measured output rate, input/output tokens, both cache counts, and elapsed task time');
+  await review.assert(`document.querySelector('${metrics}').textContent.includes('18.2 t/s') && document.querySelector('${metrics}').textContent.includes('↑500') && document.querySelector('${metrics}').textContent.includes('↓1K') && document.querySelector('${metrics}').textContent.includes('55s')`, 'The footer shows measured output rate, input/output tokens, and elapsed task time');
+  await review.assert(`!document.querySelector('.pd-metric-cache')`, 'The retired cache read/write group is gone from the footer');
   await review.screenshot('pai-chat-with-metrics');
   await review.key('b', { ctrl: true });
   await review.key('k', { ctrl: true });
   await review.assert("!document.querySelector('.pd-sidebar') && !document.querySelector('.pd-search-dialog')", 'Main-window sidebar and command-palette shortcuts do not expose hidden panels in pai');
   await review.click('.pd-pai-settings');
-  await review.waitFor("document.querySelectorAll('.pd-metrics-setting[role=\"switch\"]').length === 4");
+  await review.waitFor("document.querySelectorAll('.pd-metrics-setting[role=\"switch\"]').length === 3");
   await review.key('f', { ctrl: true });
   await review.assert("!document.querySelector('.pd-transcript-find') && document.querySelector('.pd-settings-dialog').contains(document.activeElement)", 'Conversation shortcuts cannot open a background finder or take focus from settings');
   await review.evaluate("document.querySelector('.pd-metrics-settings').scrollIntoView({block: 'center'})");
   await review.screenshot('pai-metrics-settings');
   await review.click('[data-setting="metrics-speed"]');
   await review.key('Escape');
-  await review.assert(`!document.querySelector('.pd-metric-speed') && document.querySelectorAll('${metrics} .pd-metric-group').length === 3`, 'The speed preference independently hides only speed');
+  await review.assert(`!document.querySelector('.pd-metric-speed') && document.querySelectorAll('${metrics} .pd-metric-group').length === 2`, 'The speed preference independently hides only speed');
   await review.reloadWithFixture(`(${installPaiReview.toString()})()`);
   await review.waitFor(`Boolean(document.querySelector('${metrics}'))`);
   await review.assert("!document.querySelector('.pd-metric-speed')", 'Metric preferences survive reloading the window');

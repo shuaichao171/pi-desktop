@@ -18,6 +18,7 @@ import { Icon, type IconName } from './Icons';
 import { SidebarPopover } from './SidebarPopover';
 import { SidebarSubmenu } from './SidebarSubmenu';
 import { ScopedErrorBoundary } from './ScopedErrorBoundary';
+import { SessionTime } from './SessionTime';
 import { SidebarSessionTitle } from './SidebarSessionTitle';
 import './sidebarOrganization.css';
 
@@ -81,6 +82,8 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 	const sessionId = useChatStore((s) => s.sessionId);
 	const sessionPath = useChatStore((s) => s.sessionPath);
 	const hasUserMessage = useChatStore((s) => s.messages.some((message) => message.role === 'user'));
+	// The draft row is titled like saved rows: its first message's first line.
+	const unsavedTitle = useChatStore((s) => s.messages.find((message) => message.role === 'user')?.text.trim().split(/\r?\n/)[0] ?? '');
 	const workspaces = useChatStore((s) => s.workspaces);
 	const conversationWorkspaces = useChatStore((s) => s.conversationWorkspaces);
 	const defaultWorkspace = useChatStore((s) => s.defaultWorkspace);
@@ -785,6 +788,7 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 						{indicator && indicator.kind !== 'running' && <span className={`pd-session-indicator is-${indicator.kind}`} />}
 					</span>}
 					<span className="pd-session-copy"><SidebarSessionTitle title={title} /></span>
+					{!archived && <SessionTime modified={session.modified} locale={locale} />}
 				</button>
 				{!archived && pinButton('pd-session-pin')}
 				<div className="pd-session-actions">
@@ -799,7 +803,7 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 		return <>{ordered.slice(0, limitOf(key)).map((session) => renderSession(session, key))}{moreButton(key, ordered.length)}</>;
 	}
 	function unsaved() {
-		return <div className={`pd-session-item${alternateViewOpen ? '' : ' is-active'} is-unsaved`}><button type="button" className="pd-session-row" onClick={onNavigate} aria-current={alternateViewOpen ? undefined : 'page'}><span className="pd-session-leading" aria-hidden="true" /><span className="pd-session-copy"><strong>{t('sidebar.newSession')}</strong></span></button></div>;
+		return <div className={`pd-session-item${alternateViewOpen ? '' : ' is-active'} is-unsaved`}><button type="button" className="pd-session-row" onClick={onNavigate} aria-current={alternateViewOpen ? undefined : 'page'}><span className="pd-session-leading" aria-hidden="true" /><span className="pd-session-copy">{unsavedTitle ? <SidebarSessionTitle title={unsavedTitle} /> : <strong className="pd-session-unsaved-title">{t('sidebar.unnamed')}</strong>}</span></button></div>;
 	}
 	function renderProject(workspace: string) {
 		const items = projectByWorkspace.get(workspace)?.sessions ?? [];

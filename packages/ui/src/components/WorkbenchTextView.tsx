@@ -12,8 +12,7 @@ export interface TextViewQuote { text: string; startLine?: number; endLine?: num
 
 /** The copy action always uses the original text; line numbers and marks are presentation only. */
 export function WorkbenchTextView({ text, path = '', diff = false, command = false, omitted = false, errorRanges = [], onClear, onQuote, onTopLineChange }: { text: string; path?: string; diff?: boolean; command?: boolean; omitted?: boolean; errorRanges?: Array<{ start: number; end: number }>; onClear?(): void; onQuote?(quote: TextViewQuote): void; onTopLineChange?(line: number): void }) {
-  const { locale } = useT();
-  const label = (zh: string, en: string) => locale === 'zh-CN' ? zh : en;
+  const { t } = useT();
   const [query, setQuery] = useState('');
   const [match, setMatch] = useState(0);
   const [limit, setLimit] = useState(400);
@@ -111,7 +110,7 @@ export function WorkbenchTextView({ text, path = '', diff = false, command = fal
     setSelectedRows(null);
   };
   const move = (delta: number) => { setFollowing(false); setMatch((index + delta + matches.length) % Math.max(1, matches.length)); };
-  const copy = async () => { try { await navigator.clipboard.writeText(text); setNotice(label('已复制', 'Copied')); } catch { setNotice(label('复制失败，请选择文本复制', 'Copy failed; select the text to copy')); } };
+  const copy = async () => { try { await navigator.clipboard.writeText(text); setNotice(t('textView.copied')); } catch { setNotice(t('textView.copyFailed')); } };
   function content(row: typeof rows[number], index: number): ReactNode {
     if (query) {
       const ranges = matchesByRow.get(row.offset) ?? [];
@@ -131,23 +130,23 @@ export function WorkbenchTextView({ text, path = '', diff = false, command = fal
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'f') { event.preventDefault(); event.stopPropagation(); find.current?.focus(); }
   }}>
     <div className="pd-workbench-reader-tools">
-      <label className="pd-workbench-reader-find"><Icon name="search" width="12" height="12" /><input ref={find} type="search" aria-label={label('查找内容', 'Find in content')} placeholder={label('查找  Ctrl+F', 'Find  Ctrl+F')} value={query} onChange={event => { setQuery(event.target.value); setFollowing(false); }} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); move(event.shiftKey ? -1 : 1); } }} /></label>
+      <label className="pd-workbench-reader-find"><Icon name="search" width="12" height="12" /><input ref={find} type="search" aria-label={t('textView.find')} placeholder={t('textView.findPlaceholder')} value={query} onChange={event => { setQuery(event.target.value); setFollowing(false); }} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); move(event.shiftKey ? -1 : 1); } }} /></label>
       {/* Match navigation only appears while searching; copy stays as a quiet icon. */}
       {query && <><span role="status">{matches.length ? `${index + 1}/${matches.length}` : '0/0'}</span>
-      <button type="button" className="pd-workbench-reader-icon" disabled={!matches.length} aria-label={label('上一处', 'Previous match')} title={label('上一处', 'Previous match')} onClick={() => move(-1)}><Icon name="arrowUp" width="13" height="13" /></button><button type="button" className="pd-workbench-reader-icon" disabled={!matches.length} aria-label={label('下一处', 'Next match')} title={label('下一处', 'Next match')} onClick={() => move(1)}><Icon name="arrowDown" width="13" height="13" /></button></>}
+      <button type="button" className="pd-workbench-reader-icon" disabled={!matches.length} aria-label={t('textView.previousMatch')} title={t('textView.previousMatch')} onClick={() => move(-1)}><Icon name="arrowUp" width="13" height="13" /></button><button type="button" className="pd-workbench-reader-icon" disabled={!matches.length} aria-label={t('textView.nextMatch')} title={t('textView.nextMatch')} onClick={() => move(1)}><Icon name="arrowDown" width="13" height="13" /></button></>}
       <span className="pd-workbench-reader-spacer" />
-      <button type="button" className="pd-workbench-reader-icon" aria-label={label('复制原文', 'Copy raw')} title={label('复制原文', 'Copy raw')} onClick={() => void copy()}><Icon name="copy" width="13" height="13" /></button>
-      {onClear && <button type="button" onClick={onClear}>{label('清空显示', 'Clear display')}</button>}
-      {command && <button type="button" aria-pressed={following} onClick={() => { setQuery(''); setLimit(rows.length); setFollowing(true); }}>{label('回到底部', 'Follow output')}</button>}
+      <button type="button" className="pd-workbench-reader-icon" aria-label={t('textView.copyRaw')} title={t('textView.copyRaw')} onClick={() => void copy()}><Icon name="copy" width="13" height="13" /></button>
+      {onClear && <button type="button" onClick={onClear}>{t('textView.clear')}</button>}
+      {command && <button type="button" aria-pressed={following} onClick={() => { setQuery(''); setLimit(rows.length); setFollowing(true); }}>{t('textView.follow')}</button>}
     </div>
-    {(omitted || diff && /… (?:仅显示|输出已截断)|Diff preview limited|Output truncated/.test(text)) && <p className="pd-workbench-reader-notice" role="status">{label('较早输出或超限内容已省略；当前预览并非完整内容。', 'Earlier output or content beyond the limit was omitted; this preview is incomplete.')}</p>}
+    {(omitted || diff && /… (?:仅显示|输出已截断)|Diff preview limited|Output truncated/.test(text)) && <p className="pd-workbench-reader-notice" role="status">{t('textView.truncated')}</p>}
     {notice && <p className="pd-workbench-reader-notice" role="status">{notice}</p>}
-    <div ref={body} className="pd-workbench-reader-body" tabIndex={0} aria-label={label('文本内容', 'Text content')} onScroll={() => { const element = body.current; if (command && element) setFollowing(element.scrollHeight - element.scrollTop - element.clientHeight < 24); scheduleTopLine(); }}>
+    <div ref={body} className="pd-workbench-reader-body" tabIndex={0} aria-label={t('textView.content')} onScroll={() => { const element = body.current; if (command && element) setFollowing(element.scrollHeight - element.scrollTop - element.clientHeight < 24); scheduleTopLine(); }}>
       <div className="pd-workbench-reader-lines">{rows.slice(0, command ? rows.length : shown).map((row, i) => <div key={i} data-row={i} className={`pd-workbench-code-line is-${row.kind}${errorRanges.some(range => range.start < row.offset + row.text.length && range.end > row.offset) ? ' is-stderr' : ''}`}>
         {diff && <span className="pd-workbench-line-number" aria-hidden="true">{row.oldLine}</span>}<span className="pd-workbench-line-number" aria-hidden="true">{row.newLine}</span><code>{content(row, i)}</code>
       </div>)}</div>
-      {selectedRows && onQuote && createPortal(<button type="button" className="pd-quote-selection" style={{ position: 'fixed', zIndex: 'var(--pd-z-selection-action)', left: selectedRows.left, top: selectedRows.top }} onMouseDown={event => event.preventDefault()} onClick={quoteSelection}>{label('添加到对话', 'Add to chat')}</button>, document.body)}
-      {!command && shown < rows.length && <button type="button" className="pd-workbench-show-lines" onClick={() => setLimit(value => value + 400)}>{label('继续显示后续行', 'Show more lines')} ({Math.min(shown, rows.length)}/{rows.length})</button>}
+      {selectedRows && onQuote && createPortal(<button type="button" className="pd-quote-selection" style={{ position: 'fixed', zIndex: 'var(--pd-z-selection-action)', left: selectedRows.left, top: selectedRows.top }} onMouseDown={event => event.preventDefault()} onClick={quoteSelection}>{t('textView.addToChat')}</button>, document.body)}
+      {!command && shown < rows.length && <button type="button" className="pd-workbench-show-lines" onClick={() => setLimit(value => value + 400)}>{t('textView.moreLines')} ({Math.min(shown, rows.length)}/{rows.length})</button>}
     </div>
   </div>;
 }

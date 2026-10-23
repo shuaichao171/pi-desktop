@@ -309,16 +309,6 @@ const AssistantMessageItem = memo(function AssistantMessageItem({ message, highl
 const SystemMessageItem = memo(function SystemMessageItem({ message, highlighted, findMatch }: { message: UiMessage; highlighted?: boolean; findMatch?: boolean }) {
 	const { t } = useT();
 	const query = useContext(TranscriptSearchContext).trim().toLocaleLowerCase();
-	if (message.systemKind === 'extension-notice') return (
-		<div className={`pd-message-row is-system${highlighted ? ' is-search-match' : ''}${findMatch ? ' is-find-match' : ''}`} data-message-id={message.id}>
-			{/* Plugin notices stay visible inline: no auto-dismiss, no floating toast. */}
-			<div className="pd-extension-notice-card" data-notification-type={message.notificationType ?? 'info'} data-message-body role="note" aria-label={t('message.system.extension-notice')}>
-				<Icon name="plugins" width="13" height="13" />
-				<span className="pd-extension-notice-card-label">{t('message.system.extension-notice')}</span>
-				<span className="pd-extension-notice-card-text">{message.text}</span>
-			</div>
-		</div>
-	);
 	return (
 		<div className={`pd-message-row is-system${highlighted ? ' is-search-match' : ''}${findMatch ? ' is-find-match' : ''}`} data-message-id={message.id}>
 			<details className="pd-system-notice" data-system-kind={message.systemKind} open={query && message.text.toLocaleLowerCase().includes(query) ? true : undefined}>

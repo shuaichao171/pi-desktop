@@ -69,11 +69,17 @@ export default async function resultFilesScenarios(review) {
   await review.screenshot('result-files-answer');
   await review.assert(`(() => { const node = document.querySelector(${q(link(reportPath))}); const color = getComputedStyle(node).color; const channels = color.match(/[0-9.]+/g)?.map(Number); return channels?.length >= 3 && channels[2] > channels[0] && channels[2] > channels[1] && color !== getComputedStyle(node.parentElement).color; })()`, 'File references use a distinct blue link color');
 
+  // A plain click previews the file inside the app; opening externally lives in the context menu.
   await review.click(link(reportPath));
-  await review.waitFor('window.__resultFilesReview.calls.some(call => call.name === "open")');
-  await review.assert(`(() => { const s = window.__resultFilesReview, call = s.calls.find(call => call.name === 'open'); return call.target.cwd === s.cwd && call.target.path === ${q(reportPath)} && call.target.line === undefined; })()`, 'Clicking a generated file sends its complete local path and conversation directory to the file service');
+  await review.waitFor(`document.querySelector(${q(dialog + ' .pd-workbench-reader')})?.textContent.includes('preview-file-content-ready')`);
+  await review.assert(`(() => { const s = window.__resultFilesReview, call = s.calls.find(call => call.name === 'preview'); return call.target.cwd === s.cwd && call.target.path === ${q(reportPath)} && call.target.line === undefined && !s.calls.some(call => call.name === 'open'); })()`, 'Clicking a generated file previews its complete local path in the conversation directory without launching external software');
+  await review.key('Escape');
+  await review.waitFor(`!document.querySelector(${q(dialog)})`);
   await review.click(link('src/main.ts'));
-  await review.assert('(() => { const s = window.__resultFilesReview, call = s.calls.filter(call => call.name === "open").at(-1); return call.target.cwd === s.cwd && call.target.path === "src/main.ts" && call.target.line === 12; })()', 'A source reference keeps its line separate from the path sent to the file service');
+  await review.waitFor(`Boolean(document.querySelector(${q(dialog)}))`);
+  await review.assert('(() => { const s = window.__resultFilesReview, call = s.calls.filter(call => call.name === "preview").at(-1); return call.target.cwd === s.cwd && call.target.path === "src/main.ts" && call.target.line === 12; })()', 'A source reference keeps its line separate from the path sent to the file service');
+  await review.key('Escape');
+  await review.waitFor(`!document.querySelector(${q(dialog)})`);
 
   async function contextMenu(path) {
     const point = await review.evaluate(`(() => { const node = document.querySelector(${q(link(path))}); if (!node) throw new Error('File link is missing'); node.scrollIntoView({ block: 'center', inline: 'nearest' }); const box = node.getBoundingClientRect(), x = box.left + box.width / 2, y = box.top + box.height / 2; const hit = document.elementFromPoint(x, y); if (!(hit === node || node.contains(hit))) throw new Error('File link is obscured'); return { x, y }; })()`);
@@ -83,9 +89,13 @@ export default async function resultFilesScenarios(review) {
   }
   const menuPoint = await contextMenu(reportPath);
   await review.assert(`(() => { const box = document.querySelector(${q(menu)}).getBoundingClientRect(); return Math.abs(box.left - ${menuPoint.x}) <= 1 && Math.abs(box.top - ${menuPoint.y}) <= 1; })()`, 'A file context menu starts at the pointer location when there is enough room');
-  await review.assert(`JSON.stringify([...document.querySelectorAll(${q(menu + ' [role="menuitem"]')})].map(node => node.textContent.trim())) === JSON.stringify(['打开文件', '预览', '打开所在位置'])`, 'Right clicking a file exposes open, preview, and containing-folder actions');
+  await review.assert(`JSON.stringify([...document.querySelectorAll(${q(menu + ' [role="menuitem"]')})].map(node => node.textContent.trim())) === JSON.stringify(['打开预览', '用默认应用打开', '打开所在位置'])`, 'Right clicking a file exposes preview, default-app, and containing-folder actions');
   await review.screenshot('result-files-context-menu');
-  await review.clickText(menu + ' button', '预览');
+  await review.clickText(menu + ' button', '用默认应用打开');
+  await review.waitFor('window.__resultFilesReview.calls.some(call => call.name === "open")');
+  await review.assert(`(() => { const s = window.__resultFilesReview, call = s.calls.find(call => call.name === 'open'); return call.target.cwd === s.cwd && call.target.path === ${q(reportPath)} && call.target.line === undefined && !document.querySelector(${q(menu)}); })()`, 'Open in default app sends the complete local path and closes the menu');
+  await contextMenu(reportPath);
+  await review.clickText(menu + ' button', '打开预览');
   await review.waitFor(`document.querySelector(${q(dialog + ' .pd-workbench-reader')})?.textContent.includes('preview-file-content-ready')`);
   await review.assert(`document.querySelector(${q(dialog + ' h2')})?.textContent === '报告 final.md' && !document.querySelector(${q(menu)})`, 'Preview opens a readable in-app file dialog and closes the context menu');
   await review.screenshot('result-files-text-preview');
@@ -100,19 +110,20 @@ export default async function resultFilesScenarios(review) {
   await review.clickText(menu + ' button', '打开所在位置');
   await review.assert(`(() => { const s = window.__resultFilesReview, call = s.calls.find(call => call.name === 'reveal'); return call?.target.cwd === s.cwd && call.target.path === ${q(reportPath)}; })()`, 'The keyboard context menu can reveal the referenced file in its containing folder');
 
-  await review.click(link(missingPath));
+  await contextMenu(missingPath);
+  await review.clickText(menu + ' button', '用默认应用打开');
   await review.waitFor('document.querySelector(".pd-operation-notice.is-error")?.textContent.includes("文件不存在：missing.txt")');
   await review.assert(`!document.querySelector(${q(dialog)})`, 'A missing file surfaces its open error without navigating away from the conversation');
   await review.click('.pd-operation-notice.is-error button[aria-label="关闭提示"]');
   await contextMenu(missingPath);
-  await review.clickText(menu + ' button', '预览');
+  await review.clickText(menu + ' button', '打开预览');
   await review.waitFor(`document.querySelector(${q(dialog + ' [role="alert"]')})?.textContent.includes('文件不存在：missing.txt')`);
   await review.assert(`document.querySelector(${q(dialog)})?.textContent.includes('无法预览文件') && [...document.querySelectorAll(${q(dialog + ' button')})].some(node => node.textContent.trim() === '重试')`, 'A missing preview shows its error and a retry action inside the dialog');
   await review.key('Escape');
   await review.waitFor(`!document.querySelector(${q(dialog)})`);
 
   await contextMenu(imagePath);
-  await review.clickText(menu + ' button', '预览');
+  await review.clickText(menu + ' button', '打开预览');
   await review.waitFor(`(() => { const image = document.querySelector(${q(dialog + ' .pd-result-file-preview-image img')}); return image?.complete && image.naturalWidth > 0; })()`);
   await review.assert(`document.querySelector(${q(dialog + ' .pd-result-file-preview-image img')})?.alt === 'chart.png' && !document.querySelector(${q(dialog + ' [role="alert"]')})`, 'Image preview renders the returned image data without loading an external resource');
   await review.key('+');
@@ -125,7 +136,7 @@ export default async function resultFilesScenarios(review) {
   await review.assert(`document.documentElement.scrollWidth <= innerWidth && [...document.querySelectorAll(${q(body + ' a.pd-result-file-link')})].every(node => { const box = node.getBoundingClientRect(); return box.right <= innerWidth + 1 && box.left >= -1; })`, 'Long result file paths wrap without page overflow at 680 pixels');
   await review.screenshot('result-files-narrow-answer');
   await contextMenu(reportPath);
-  await review.clickText(menu + ' button', '预览');
+  await review.clickText(menu + ' button', '打开预览');
   await review.waitFor(`document.querySelector(${q(dialog + ' .pd-workbench-reader')})?.textContent.includes('preview-file-content-ready')`);
   await review.assert(`(() => { const box = document.querySelector(${q(dialog)}).getBoundingClientRect(); return document.documentElement.scrollWidth <= innerWidth && box.left >= -1 && box.right <= innerWidth + 1 && box.top >= -1 && box.bottom <= innerHeight + 1; })()`, 'The file preview fits inside a narrow application window');
   await review.screenshot('result-files-narrow-preview');

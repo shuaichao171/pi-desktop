@@ -25,7 +25,7 @@ const cliCommandLine = (server: UiMcpCliServer) => server.transport === 'stdio' 
 export function McpSettingsPanel() {
 	const bridge = useChatStore((state) => state.bridge) as McpFeaturesBridge | null;
 	const activeSession = useChatStore((state) => state.sessionId), cwd = useChatStore((state) => state.cwd);
-	const { locale } = useT(), label = (zh: string, en: string) => locale === 'en-US' ? en : zh;
+	const { t } = useT();
 	const [snapshot, setSnapshot] = useState(emptySnapshot), [error, setError] = useState<string | null>(null), [notice, setNotice] = useState<string | null>(null);
 	const [busy, setBusy] = useState(false), [loading, setLoading] = useState(true), [editing, setEditing] = useState<UiMcpServerConfig | null>(null), [scope, setScope] = useState<McpScope>('user');
 	const [args, setArgs] = useState(''), [references, setReferences] = useState(''), [removing, setRemoving] = useState<UiMcpServer | null>(null);
@@ -72,20 +72,20 @@ export function McpSettingsPanel() {
 			return bridge.connectMcpServer(target(server));
 		});
 	}
-	const status = (server: UiMcpServer) => ({ disconnected: label('未连接', 'Disconnected'), connecting: label('连接中', 'Connecting'), connected: label('已连接', 'Connected'), error: label('连接错误', 'Connection error') })[server.status];
+	const status = (server: UiMcpServer) => ({ disconnected: t('mcp.statusDisconnected'), connecting: t('mcp.statusConnecting'), connected: t('mcp.statusConnected'), error: t('mcp.statusError') })[server.status];
 	const isNew = editing !== null && !snapshot.servers.some((server) => server.id === editing.id);
 	const canAdd = supported && !busy && !loading && Boolean(snapshot.sessionId);
-	const addButton = <button type="button" className="pd-mcp-button is-primary" disabled={!canAdd} onClick={() => edit()}><Icon name="plus" width="15" height="15" />{label('添加服务器', 'Add server')}</button>;
+	const addButton = <button type="button" className="pd-mcp-button is-primary" disabled={!canAdd} onClick={() => edit()}><Icon name="plus" width="15" height="15" />{t('mcp.addServer')}</button>;
 
 	return <div className="pd-mcp-panel" data-settings-page="mcp">
 		<header className="pd-mcp-head">
 			<div>
 				<h2>MCP</h2>
-				<p>{label('把外部工具连接到当前会话。每个会话都需要手动连接；保存配置不会启动程序。', 'Connect external tools to this conversation. Each conversation requires a manual connection; saving does not start a program.')}</p>
+				<p>{t('mcp.description')}</p>
 			</div>
 			<div className="pd-mcp-toolbar">
-				<HoverTooltip title={label('刷新状态', 'Refresh status')} align="end">
-					<button type="button" className="pd-mcp-icon-button" disabled={!supported || busy || loading} aria-label={label('刷新状态', 'Refresh status')} onClick={() => void run(() => bridge!.getMcpSnapshot())}><Icon name="refresh" width="15" height="15" /></button>
+				<HoverTooltip title={t('mcp.refresh')} align="end">
+					<button type="button" className="pd-mcp-icon-button" disabled={!supported || busy || loading} aria-label={t('mcp.refresh')} onClick={() => void run(() => bridge!.getMcpSnapshot())}><Icon name="refresh" width="15" height="15" /></button>
 				</HoverTooltip>
 				{addButton}
 			</div>
@@ -94,20 +94,20 @@ export function McpSettingsPanel() {
 		{snapshot.cwd && <div className="pd-mcp-context">
 			<Icon name="folder" width="15" height="15" />
 			<span className="pd-mcp-owner" title={snapshot.cwd}>{snapshot.cwd}</span>
-			{snapshot.sessionId && <span className="pd-mcp-chip" title={snapshot.sessionId}>{label('会话', 'Conversation')}<code className="pd-mcp-chip-id">{snapshot.sessionId.slice(0, 8)}</code></span>}
-			<span className={`pd-mcp-chip ${snapshot.projectTrusted ? 'is-success' : 'is-warning'}`}>{snapshot.projectTrusted ? label('项目已受信任', 'Trusted project') : label('项目未受信任', 'Untrusted project')}</span>
+			{snapshot.sessionId && <span className="pd-mcp-chip" title={snapshot.sessionId}>{t('mcp.conversation')}<code className="pd-mcp-chip-id">{snapshot.sessionId.slice(0, 8)}</code></span>}
+			<span className={`pd-mcp-chip ${snapshot.projectTrusted ? 'is-success' : 'is-warning'}`}>{snapshot.projectTrusted ? t('mcp.projectTrusted') : t('mcp.projectUntrusted')}</span>
 		</div>}
-		{!loading && supported && !snapshot.projectTrusted && <p className="pd-mcp-callout is-warning">{label('项目尚未受信任，项目级 MCP 配置与连接不可用。用户级服务器仍需手动连接。', 'Project MCP configuration is unavailable until the project is trusted. User servers still require manual connection.')}</p>}
+		{!loading && supported && !snapshot.projectTrusted && <p className="pd-mcp-callout is-warning">{t('mcp.untrustedNotice')}</p>}
 
 		{error && !editorOpen && <p className="pd-mcp-callout pd-mcp-error" role="alert">{error}</p>}
 		{notice && <p className="pd-mcp-callout pd-mcp-notice" role="status"><Icon name="check" width="14" height="14" />{notice}</p>}
-		{loading && <p className="pd-mcp-loading" role="status">{label('正在读取服务器…', 'Loading servers…')}</p>}
-		{!supported && <p className="pd-mcp-callout">{label('当前连接不支持 MCP。', 'MCP is unavailable on this connection.')}</p>}
+		{loading && <p className="pd-mcp-loading" role="status">{t('mcp.loading')}</p>}
+		{!supported && <p className="pd-mcp-callout">{t('mcp.unsupported')}</p>}
 
 		{supported && !loading && !snapshot.servers.length && <div className="pd-mcp-empty">
 			<Icon name="plugins" width="24" height="24" />
-			<strong>{label('尚未配置服务器', 'No servers configured')}</strong>
-			<p>{label('支持 stdio 与 Streamable HTTP；OAuth 尚未支持。', 'stdio and Streamable HTTP are supported; OAuth is not yet supported.')}</p>
+			<strong>{t('mcp.emptyTitle')}</strong>
+			<p>{t('mcp.emptyDescription')}</p>
 			{addButton}
 		</div>}
 
@@ -119,33 +119,33 @@ export function McpSettingsPanel() {
 					<div className="pd-mcp-server-title">
 						<h3>{server.name}</h3>
 						<p>
-							<span className="pd-mcp-chip">{server.scope === 'user' ? label('用户', 'User') : label('项目', 'Project')}</span>
+							<span className="pd-mcp-chip">{server.scope === 'user' ? t('mcp.scopeUser') : t('mcp.scopeProject')}</span>
 							<span className="pd-mcp-chip">{server.transport === 'stdio' ? 'stdio' : 'HTTP'}</span>
-							{!server.enabled && <span className="pd-mcp-chip">{label('已禁用', 'Disabled')}</span>}
+							{!server.enabled && <span className="pd-mcp-chip">{t('mcp.disabled')}</span>}
 						</p>
 					</div>
 					<span className={`pd-mcp-status is-${server.status}`}>{status(server)}</span>
-					<HoverTooltip title={server.enabled ? label('禁用', 'Disable') : label('启用', 'Enable')} align="end">
+					<HoverTooltip title={server.enabled ? t('mcp.disable') : t('mcp.enable')} align="end">
 						<button type="button" role="switch" aria-checked={server.enabled} className="pd-mcp-switch" disabled={busy} onClick={() => void run(() => bridge!.saveMcpServer({ cwd: snapshot.cwd, sessionId: snapshot.sessionId, scope: server.scope, config: { ...server, enabled: !server.enabled } }))}>
-							<span className="pd-mcp-sr-only">{server.enabled ? label('禁用', 'Disable') : label('启用', 'Enable')}</span>
+							<span className="pd-mcp-sr-only">{server.enabled ? t('mcp.disable') : t('mcp.enable')}</span>
 						</button>
 					</HoverTooltip>
 				</header>
 				<code className="pd-mcp-command" title={commandLine(server)}>{commandLine(server)}</code>
 				{server.error && <p className="pd-mcp-callout pd-mcp-error" role="alert">{server.error}</p>}
 				<footer>
-					<button type="button" className={`pd-mcp-button${live ? '' : ' is-primary'}`} disabled={busy && server.status !== 'connecting' || !server.enabled} onClick={() => void toggleConnection(server)}>{live ? label('断开', 'Disconnect') : label('连接到当前会话', 'Connect to this conversation')}</button>
-					<button type="button" className="pd-mcp-button" disabled={busy || !server.enabled} onClick={() => void run(async () => { const result = await bridge!.testMcpServer(target(server)); return label(`连接测试成功：发现 ${result.tools.length} 个工具，耗时 ${result.elapsedMs} ms。测试连接已关闭。`, `Connection test passed: ${result.tools.length} tools in ${result.elapsedMs} ms. The test connection is closed.`); })}>{label('测试连接', 'Test connection')}</button>
+					<button type="button" className={`pd-mcp-button${live ? '' : ' is-primary'}`} disabled={busy && server.status !== 'connecting' || !server.enabled} onClick={() => void toggleConnection(server)}>{live ? t('mcp.disconnect') : t('mcp.connect')}</button>
+					<button type="button" className="pd-mcp-button" disabled={busy || !server.enabled} onClick={() => void run(async () => { const result = await bridge!.testMcpServer(target(server)); return t('mcp.testPassed', { count: result.tools.length, elapsed: result.elapsedMs }); })}>{t('mcp.test')}</button>
 					<span className="pd-mcp-footer-spacer" />
-					<HoverTooltip title={label('编辑', 'Edit')} align="end">
-						<button type="button" className="pd-mcp-icon-button is-ghost" disabled={busy} onClick={() => edit(server)}><Icon name="pencil" width="15" height="15" /><span className="pd-mcp-sr-only">{label('编辑', 'Edit')}</span></button>
+					<HoverTooltip title={t('mcp.edit')} align="end">
+						<button type="button" className="pd-mcp-icon-button is-ghost" disabled={busy} onClick={() => edit(server)}><Icon name="pencil" width="15" height="15" /><span className="pd-mcp-sr-only">{t('mcp.edit')}</span></button>
 					</HoverTooltip>
-					<HoverTooltip title={label('移除', 'Remove')} align="end">
-						<button type="button" className="pd-mcp-icon-button is-ghost is-danger" disabled={busy} onClick={() => setRemoving(server)}><Icon name="trash" width="15" height="15" /><span className="pd-mcp-sr-only">{label('移除', 'Remove')}</span></button>
+					<HoverTooltip title={t('mcp.remove')} align="end">
+						<button type="button" className="pd-mcp-icon-button is-ghost is-danger" disabled={busy} onClick={() => setRemoving(server)}><Icon name="trash" width="15" height="15" /><span className="pd-mcp-sr-only">{t('mcp.remove')}</span></button>
 					</HoverTooltip>
 				</footer>
 				{server.tools.length > 0 && <details className="pd-mcp-tools">
-					<summary><Icon name="chevronRight" width="14" height="14" />{label(`已注册 ${server.tools.length} 个工具`, `${server.tools.length} registered tools`)}</summary>
+					<summary><Icon name="chevronRight" width="14" height="14" />{t('mcp.toolCount', { count: server.tools.length })}</summary>
 					<ul>{server.tools.map((tool) => <li key={tool.registeredName}><div><strong>{tool.name}</strong><code>{tool.registeredName}</code></div>{tool.description && <p>{tool.description}</p>}</li>)}</ul>
 				</details>}
 			</article>;
@@ -154,10 +154,10 @@ export function McpSettingsPanel() {
 		{(snapshot.cliServers ?? []).length > 0 && !loading && <section className="pd-mcp-cli" aria-labelledby="pd-mcp-cli-title">
 			<header className="pd-mcp-cli-head">
 				<div>
-					<h3 id="pd-mcp-cli-title">{label('CLI 配置的服务器（mcp.json）', 'CLI-configured servers (mcp.json)')}</h3>
-					<p>{label('以下服务器由 pi 命令行的 mcp.json 声明，会话启动时由引擎自动加载；此列表只读，请在终端使用 pi mcp 命令管理。', 'These servers are declared in the CLI mcp.json and loaded automatically by the engine. This list is read-only; manage them with pi mcp commands in a terminal.')}</p>
+					<h3 id="pd-mcp-cli-title">{t('mcp.cliTitle')}</h3>
+					<p>{t('mcp.cliDescription')}</p>
 				</div>
-				<span className="pd-mcp-chip">{label('只读', 'Read-only')}</span>
+				<span className="pd-mcp-chip">{t('mcp.readOnly')}</span>
 			</header>
 			<div className="pd-mcp-servers">{(snapshot.cliServers ?? []).map((server) =>
 				<article key={`${server.scope}:${server.name}`} className={`pd-mcp-server pd-mcp-cli-server${server.enabled ? '' : ' is-disabled'}`} title={server.sourcePath}>
@@ -166,10 +166,10 @@ export function McpSettingsPanel() {
 						<div className="pd-mcp-server-title">
 							<h3>{server.name}</h3>
 							<p>
-								<span className="pd-mcp-chip">{server.scope === 'user' ? label('用户', 'User') : label('项目', 'Project')}</span>
+								<span className="pd-mcp-chip">{server.scope === 'user' ? t('mcp.scopeUser') : t('mcp.scopeProject')}</span>
 								<span className="pd-mcp-chip">{server.transport === 'stdio' ? 'stdio' : 'HTTP'}</span>
-								{!server.enabled && <span className="pd-mcp-chip">{label('已禁用', 'Disabled')}</span>}
-								{server.timeoutSeconds !== undefined && <span className="pd-mcp-chip">{label(`超时 ${server.timeoutSeconds}s`, `Timeout ${server.timeoutSeconds}s`)}</span>}
+								{!server.enabled && <span className="pd-mcp-chip">{t('mcp.disabled')}</span>}
+								{server.timeoutSeconds !== undefined && <span className="pd-mcp-chip">{t('mcp.timeoutChip', { seconds: server.timeoutSeconds })}</span>}
 							</p>
 						</div>
 					</header>
@@ -184,48 +184,48 @@ export function McpSettingsPanel() {
 				const result = await bridge!.saveMcpServer({ cwd: snapshot.cwd, sessionId: snapshot.sessionId, scope, config }); setEditing(null); return result;
 			}); }}>
 				<header>
-					<h3 id="pd-mcp-editor-title">{isNew ? label('添加服务器', 'Add server') : label('编辑服务器', 'Edit server')}</h3>
-					<button type="button" className="pd-mcp-icon-button is-ghost" disabled={busy} aria-label={label('关闭', 'Close')} onClick={() => setEditing(null)}><Icon name="close" width="15" height="15" /></button>
+					<h3 id="pd-mcp-editor-title">{isNew ? t('mcp.addServer') : t('mcp.editServer')}</h3>
+					<button type="button" className="pd-mcp-icon-button is-ghost" disabled={busy} aria-label={t('mcp.close')} onClick={() => setEditing(null)}><Icon name="close" width="15" height="15" /></button>
 				</header>
 				<fieldset disabled={busy}>
-					<label>{label('名称', 'Name')}<input required maxLength={80} value={editing.name} onChange={(event) => setEditing({ ...editing, name: event.target.value })} placeholder={label('例如：文件系统工具', 'e.g. Filesystem tools')} /></label>
+					<label>{t('mcp.name')}<input required maxLength={80} value={editing.name} onChange={(event) => setEditing({ ...editing, name: event.target.value })} placeholder={t('mcp.namePlaceholder')} /></label>
 					<div className="pd-mcp-field">
-						<span>{label('传输协议', 'Transport')}</span>
-						<div className="pd-mcp-segmented" role="radiogroup" aria-label={label('传输协议', 'Transport')}>
+						<span>{t('mcp.transport')}</span>
+						<div className="pd-mcp-segmented" role="radiogroup" aria-label={t('mcp.transport')}>
 							{(['stdio', 'http'] as const).map((value) => <button key={value} type="button" role="radio" aria-checked={editing.transport === value} className={editing.transport === value ? 'is-active' : ''} onClick={() => { if (editing.transport !== value) { setEditing({ ...editing, transport: value }); setReferences(''); } }}>
-								<Icon name={value === 'stdio' ? 'terminal' : 'globe'} width="14" height="14" />{value === 'stdio' ? label('本地程序 (stdio)', 'Local program (stdio)') : 'Streamable HTTP'}
+								<Icon name={value === 'stdio' ? 'terminal' : 'globe'} width="14" height="14" />{value === 'stdio' ? t('mcp.transportStdio') : 'Streamable HTTP'}
 							</button>)}
 						</div>
 					</div>
 					<div className="pd-mcp-form-row">
-						<label>{label('作用域', 'Scope')}<select value={scope} disabled={!isNew} onChange={(event) => setScope(event.target.value as McpScope)}><option value="user">{label('用户', 'User')}</option><option value="project" disabled={!snapshot.projectTrusted}>{label('当前可信项目', 'Current trusted project')}</option></select></label>
-						<label>{label('超时（秒）', 'Timeout (seconds)')}<input type="number" min="1" max="120" value={editing.requestTimeoutMs / 1000} onChange={(event) => setEditing({ ...editing, requestTimeoutMs: Number(event.target.value) * 1000 })} /></label>
+						<label>{t('mcp.scope')}<select value={scope} disabled={!isNew} onChange={(event) => setScope(event.target.value as McpScope)}><option value="user">{t('mcp.scopeUser')}</option><option value="project" disabled={!snapshot.projectTrusted}>{t('mcp.scopeTrustedProject')}</option></select></label>
+						<label>{t('mcp.timeout')}<input type="number" min="1" max="120" value={editing.requestTimeoutMs / 1000} onChange={(event) => setEditing({ ...editing, requestTimeoutMs: Number(event.target.value) * 1000 })} /></label>
 					</div>
 					{editing.transport === 'stdio' ? <>
-						<label>{label('可执行程序', 'Executable')}<input required value={editing.command ?? ''} onChange={(event) => setEditing({ ...editing, command: event.target.value })} placeholder="C:\Tools\node.exe" {...technicalInputAttributes} /></label>
-						<label>{label('启动参数', 'Arguments')}<small>{label('每行一个，不经过 shell', 'One per line, no shell')}</small><textarea rows={3} value={args} onChange={(event) => setArgs(event.target.value)} placeholder="server.mjs" {...technicalInputAttributes} /></label>
-					</> : <label>{label('HTTP 地址', 'HTTP URL')}<input required type="url" value={editing.url ?? ''} onChange={(event) => setEditing({ ...editing, url: event.target.value })} placeholder="http://127.0.0.1:3000/mcp" {...technicalInputAttributes} /></label>}
-					<label>{editing.transport === 'stdio' ? label('环境变量凭据引用', 'Environment credential references') : label('请求头凭据引用', 'Header credential references')}
-						<small>{label('每行使用 目标名称=已存在的环境变量名称。此处填写变量名，不填写密钥；变量值只在连接时解析，HTTP Authorization 的源变量应包含完整 Bearer 前缀。', 'Use DESTINATION=EXISTING_ENV_VARIABLE on each line. Enter variable names, not keys. Values are resolved only on connection; an Authorization reference should contain the complete Bearer header value.')}</small>
+						<label>{t('mcp.command')}<input required value={editing.command ?? ''} onChange={(event) => setEditing({ ...editing, command: event.target.value })} placeholder="C:\Tools\node.exe" {...technicalInputAttributes} /></label>
+						<label>{t('mcp.args')}<small>{t('mcp.argsHint')}</small><textarea rows={3} value={args} onChange={(event) => setArgs(event.target.value)} placeholder="server.mjs" {...technicalInputAttributes} /></label>
+					</> : <label>{t('mcp.url')}<input required type="url" value={editing.url ?? ''} onChange={(event) => setEditing({ ...editing, url: event.target.value })} placeholder="http://127.0.0.1:3000/mcp" {...technicalInputAttributes} /></label>}
+					<label>{editing.transport === 'stdio' ? t('mcp.envRefs') : t('mcp.headerRefs')}
+						<small>{t('mcp.refsHint')}</small>
 						<textarea rows={3} value={references} onChange={(event) => setReferences(event.target.value)} placeholder={editing.transport === 'stdio' ? 'API_KEY=MY_MCP_API_KEY' : 'Authorization=MY_MCP_AUTH_HEADER'} {...technicalInputAttributes} />
 					</label>
 					{error && <p className="pd-mcp-callout pd-mcp-error" role="alert">{error}</p>}
 				</fieldset>
 				<footer>
-					<label className="pd-mcp-checkbox"><input type="checkbox" checked={editing.enabled} disabled={busy} onChange={(event) => setEditing({ ...editing, enabled: event.target.checked })} />{label('启用配置', 'Enable configuration')}</label>
-					<button type="button" className="pd-mcp-button" disabled={busy} onClick={() => setEditing(null)}>{label('取消', 'Cancel')}</button>
-					<button type="submit" className="pd-mcp-button is-primary" disabled={busy}>{label('保存配置', 'Save configuration')}</button>
+					<label className="pd-mcp-checkbox"><input type="checkbox" checked={editing.enabled} disabled={busy} onChange={(event) => setEditing({ ...editing, enabled: event.target.checked })} />{t('mcp.enableConfig')}</label>
+					<button type="button" className="pd-mcp-button" disabled={busy} onClick={() => setEditing(null)}>{t('mcp.cancel')}</button>
+					<button type="submit" className="pd-mcp-button is-primary" disabled={busy}>{t('mcp.save')}</button>
 				</footer>
 			</form>}
 		</dialog>
 
 		<dialog ref={removeDialog} className="pd-mcp-remove" aria-labelledby="pd-mcp-remove-title" onCancel={(event) => { event.preventDefault(); if (!busy) setRemoving(null); }}>
-			<h3 id="pd-mcp-remove-title">{label('移除服务器配置', 'Remove server configuration')}</h3>
+			<h3 id="pd-mcp-remove-title">{t('mcp.removeTitle')}</h3>
 			<strong>{removing?.name}</strong>
-			<p>{label('将断开受影响会话中的此服务器连接并移除配置。', 'This disconnects this server in affected conversations and removes its configuration.')}</p>
+			<p>{t('mcp.removeDescription')}</p>
 			<footer>
-				<button type="button" className="pd-mcp-button" disabled={busy} onClick={() => setRemoving(null)}>{label('取消', 'Cancel')}</button>
-				<button type="button" className="pd-mcp-button is-danger" disabled={busy || !removing} onClick={() => void run(async () => { const result = await bridge!.removeMcpServer(target(removing!)); setRemoving(null); return result; })}>{label('确认移除', 'Confirm removal')}</button>
+				<button type="button" className="pd-mcp-button" disabled={busy} onClick={() => setRemoving(null)}>{t('mcp.cancel')}</button>
+				<button type="button" className="pd-mcp-button is-danger" disabled={busy || !removing} onClick={() => void run(async () => { const result = await bridge!.removeMcpServer(target(removing!)); setRemoving(null); return result; })}>{t('mcp.confirmRemove')}</button>
 			</footer>
 		</dialog>
 	</div>;

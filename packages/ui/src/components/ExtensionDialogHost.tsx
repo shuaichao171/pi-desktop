@@ -1,10 +1,10 @@
-import { createContext, useContext, useEffect, useId, useLayoutEffect, useRef, useState, useSyncExternalStore, type FormEvent, type KeyboardEvent, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type FormEvent, type KeyboardEvent, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import type { UiExtensionDialogRequest, UiExtensionDialogResponse } from '@pidesktop/shared';
 import { useChatStore } from '../store';
 import { useT } from '../i18n';
 import { useExtensionNoticeDisplayEnabled } from '../extensionNoticeDisplay';
-import { useQuestionAutoResolutionEnabled, isQuestionAutoResolutionKind, planQuestionAutoResolution, formatQuestionCountdown } from '../extensionQuestionTimeout';
+import { QUESTION_AUTO_RESOLUTION_FINAL_NOTICE_MS, useQuestionAutoResolutionMinutes, isQuestionAutoResolutionKind, planQuestionAutoResolution, formatQuestionCountdown } from '../extensionQuestionTimeout';
 import { Icon } from './Icons';
 import { ExtensionNotifications } from './ExtensionNotifications';
 import { ApprovalCard } from './ApprovalCard';
@@ -12,6 +12,7 @@ import { ErrorDetails } from './ErrorDetails';
 import './extensionRequests.css';
 
 const ExtensionDialogContext = createContext<ReactNode>(null);
+const ExtensionNoticeContext = createContext<ReactNode>(null);
 
 // Pending signal as a module-level store: AppShell sits ABOVE the context
 // provider, so a context-only signal could never reach its own hook call.
@@ -61,13 +62,20 @@ function mergeRequests(current: UiExtensionDialogRequest[], incoming: UiExtensio
 	return [...byId.values()];
 }
 
-/** Mount inside the composer so requests take up normal layout space above it. */
+/** Mount inside the composer: requests take layout space above it, notices float over it. */
 export function ExtensionDialogSlot() {
 	const card = useContext(ExtensionDialogContext);
-	return card ? <div className="pd-extension-slot">{card}</div> : null;
+	const notices = useContext(ExtensionNoticeContext);
+	if (!card && !notices) return null;
+	// Notices are transient: they float above the composer instead of taking
+	// layout space, so arriving and leaving never moves the input box.
+	return <>
+		{notices ? <div className="pd-composer-notice-stack">{notices}</div> : null}
+		{card ? <div className="pd-extension-slot">{card}</div> : null}
+	</>;
 }
 
-export function ExtensionDialogHost({ children, chatVisible, notificationTarget }: { children: ReactNode; chatVisible: boolean; notificationTarget: HTMLElement | null }) {
+export function ExtensionDialogHost({ children, chatVisible, notificationTarget, globalNotices }: { children: ReactNode; chatVisible: boolean; notificationTarget: HTMLElement | null; globalNotices?: ReactNode }) {
 	const { t } = useT();
 	const bridge = useChatStore((s) => s.bridge);
 	const [queue, setQueue] = useState({ bridge, requests: [] as UiExtensionDialogRequest[] });
@@ -95,18 +103,29 @@ export function ExtensionDialogHost({ children, chatVisible, notificationTarget 
 	const belongsHere = (request: UiExtensionDialogRequest) => requestBelongsToConversation(request, { cwd: conversationCwd, sessionId: conversationSessionId, sessionPath: conversationSessionPath });
 	const active = requests.find((request) => request.kind !== 'notify' && belongsHere(request));
 	activeId.current = active?.id ?? null;
-	const notices = requests.filter((request) => request.kind === 'notify');
+	// Memoized so the notice stack (and the composer slot showing it) only re-renders
+	// when notices change, not on every countdown tick or keystroke in a question card.
+	const notices = useMemo(() => requests.filter((request) => request.kind === 'notify'), [requests]);
 	// The plugin-notice display setting governs toasts as well: turned off,
 	// transient notifications never surface; dismissal state is untouched.
 	const [noticesVisible] = useExtensionNoticeDisplayEnabled();
-	const shownNotices = noticesVisible ? notices : [];
+	const shownNotices = useMemo(() => noticesVisible ? notices : [], [noticesVisible, notices]);
 	const queuedCount = requests.filter((request) => request.kind !== 'notify' && belongsHere(request)).length - 1;
 	// Question auto-resolution (zcode): only requests armed on arrival count;
-	// turning the preference off disarms everything currently waiting.
-	const [questionAutoResolution] = useQuestionAutoResolutionEnabled();
-	const questionAutoResolutionRef = useRef(questionAutoResolution);
-	questionAutoResolutionRef.current = questionAutoResolution;
-	const autoEligibleIds = useRef(new Set<string>());
+	// picking 不限 disarms everything currently waiting.
+	const [questionAutoResolutionMinutes] = useQuestionAutoResolutionMinutes();
+	const questionAutoResolutionRef = useRef(questionAutoResolutionMinutes);
+	questionAutoResolutionRef.current = questionAutoResolutionMinutes;
+	// Armed question id → when it was armed. Interaction removes the entry, so a pause
+	// survives the effect re-running (limit changes, another question taking the card).
+	const autoEligibleIds = useRef(new Map<string, number>());
+	// Questions the user already touched never re-arm, even when the request is re-delivered.
+	const pausedQuestionIds = useRef(new Set<string>());
+	const armQuestion = (request: UiExtensionDialogRequest) => {
+		if (questionAutoResolutionRef.current <= 0 || !isQuestionAutoResolutionKind(request.kind)) return;
+		if (autoEligibleIds.current.has(request.id) || pausedQuestionIds.current.has(request.id)) return;
+		autoEligibleIds.current.set(request.id, Date.now());
+	};
 	const [autoCancelRemaining, setAutoCancelRemaining] = useState<number | null>(null);
 	const respondRef = useRef((_id: string, _response: UiExtensionDialogResponse) => {});
 
@@ -156,7 +175,7 @@ export function ExtensionDialogHost({ children, chatVisible, notificationTarget 
 		let mounted = true;
 		const isCurrent = () => mounted && scope === generation.current && currentBridge.current === bridge;
 		const unsubscribe = bridge.onExtensionDialog((request) => {
-			if (questionAutoResolutionRef.current && isQuestionAutoResolutionKind(request.kind)) autoEligibleIds.current.add(request.id);
+			armQuestion(request);
 			if (isCurrent() && !closedIds.current.has(request.id)) setQueue((current) => ({ bridge, requests: mergeRequests(current.bridge === bridge ? current.requests : [], [request]) }));
 		});
 		const unsubscribeClosed = bridge.onExtensionDialogClosed((id) => {
@@ -165,7 +184,7 @@ export function ExtensionDialogHost({ children, chatVisible, notificationTarget 
 		void bridge.getPendingExtensionDialogs().then((pendingRequests) => {
 			if (isCurrent()) {
 				for (const request of pendingRequests) {
-					if (questionAutoResolutionRef.current && isQuestionAutoResolutionKind(request.kind)) autoEligibleIds.current.add(request.id);
+					armQuestion(request);
 				}
 				setQueue((current) => ({ bridge, requests: mergeRequests(current.bridge === bridge ? current.requests : [], pendingRequests.filter((request) => !closedIds.current.has(request.id))) }));
 			}
@@ -219,18 +238,25 @@ export function ExtensionDialogHost({ children, chatVisible, notificationTarget 
 	}, [active?.id, active?.timeout, bridge]);
 
 	useEffect(() => {
-		// zcode semantics: the preference off cancels every pending countdown;
-		// re-enabling only arms questions that arrive afterwards.
-		if (!questionAutoResolution) {
+		// zcode semantics: 不限 cancels every pending countdown; setting a limit
+		// again only arms questions that arrive afterwards.
+		if (questionAutoResolutionMinutes <= 0) {
 			autoEligibleIds.current.clear();
 			setAutoCancelRemaining(null);
 		}
-	}, [questionAutoResolution]);
+	}, [questionAutoResolutionMinutes]);
 
 	useEffect(() => {
 		const request = active;
-		if (!request || !bridge || !questionAutoResolution || !autoEligibleIds.current.has(request.id)) { setAutoCancelRemaining(null); return; }
-		const startedAt = Date.now();
+		if (!request || !bridge || questionAutoResolutionMinutes <= 0 || !autoEligibleIds.current.has(request.id)) { setAutoCancelRemaining(null); return; }
+		// The deadline is a total budget measured from when the question was armed, so
+		// it includes the hidden grace and survives this effect re-running.
+		const timeoutMs = questionAutoResolutionMinutes * 60_000;
+		const armed = autoEligibleIds.current;
+		let startedAt = armed.get(request.id) ?? Date.now();
+		// A lowered limit that this question already overran still ends with a visible countdown.
+		const latestStart = Date.now() - Math.max(0, timeoutMs - QUESTION_AUTO_RESOLUTION_FINAL_NOTICE_MS);
+		if (startedAt < latestStart) { startedAt = latestStart; armed.set(request.id, startedAt); }
 		let snoozed = false;
 		let ticker: number | undefined;
 		const stop = () => {
@@ -240,7 +266,7 @@ export function ExtensionDialogHost({ children, chatVisible, notificationTarget 
 		};
 		const tick = () => {
 			if (snoozed) return;
-			const plan = planQuestionAutoResolution(Date.now() - startedAt);
+			const plan = planQuestionAutoResolution(Date.now() - startedAt, timeoutMs);
 			if (plan.state === 'expired') {
 				stop();
 				void Promise.resolve(respondRef.current(request.id, null)).catch(() => {});
@@ -254,7 +280,7 @@ export function ExtensionDialogHost({ children, chatVisible, notificationTarget 
 		const onInteract = (event: Event) => {
 			if (snoozed) return;
 			const node = event.target;
-			if (node instanceof Node && cardRef.current?.contains(node)) { snoozed = true; stop(); }
+			if (node instanceof Node && cardRef.current?.contains(node)) { snoozed = true; armed.delete(request.id); pausedQuestionIds.current.add(request.id); stop(); }
 		};
 		document.addEventListener('pointerdown', onInteract, true);
 		document.addEventListener('focusin', onInteract, true);
@@ -263,7 +289,7 @@ export function ExtensionDialogHost({ children, chatVisible, notificationTarget 
 			document.removeEventListener('pointerdown', onInteract, true);
 			document.removeEventListener('focusin', onInteract, true);
 		};
-	}, [active?.id, bridge, questionAutoResolution]);
+	}, [active?.id, bridge, questionAutoResolutionMinutes]);
 
 	async function respond(id: string, response: UiExtensionDialogResponse) {
 		if (!bridge || pendingId.current !== null || activeId.current !== id || closedIds.current.has(id)) return;
@@ -342,9 +368,19 @@ export function ExtensionDialogHost({ children, chatVisible, notificationTarget 
 	const hasActiveRequest = Boolean(active);
 	const hasAnyRequest = requests.some((request) => request.kind !== 'notify');
 	useEffect(() => { publishPendingRequests(hasActiveRequest, hasAnyRequest); return () => publishPendingRequests(false, false); }, [hasActiveRequest, hasAnyRequest]);
+	// Plugin notices pop above the input box. Other main views have no composer,
+	// so they keep the top-of-view notice center instead of disappearing.
+	const dismissNoticeRef = useRef(dismissNotice);
+	dismissNoticeRef.current = dismissNotice;
+	const onDismissNotice = useCallback((id: string) => dismissNoticeRef.current(id), []);
+	const noticeStack = useMemo(() => shownNotices.length > 0 ? <ExtensionNotifications requests={shownNotices} onDismiss={onDismissNotice} /> : null, [shownNotices, onDismissNotice]);
+	const composerNotices = useMemo(() => chatVisible ? <>{globalNotices}{noticeStack}</> : null, [chatVisible, globalNotices, noticeStack]);
 	return <ExtensionDialogContext.Provider value={hasActiveRequest && chatVisible && !modalTarget ? card : null}>
-		{children}
-		{shownNotices.length > 0 && notificationTarget && createPortal(<ExtensionNotifications requests={shownNotices} onDismiss={dismissNotice} />, notificationTarget)}
-		{card && modalTarget && createPortal(<div className="pd-extension-modal-slot">{card}</div>, modalTarget)}
+		{/* App-wide notices (operation results, updates) share the composer stack so every toast appears in one place. */}
+		<ExtensionNoticeContext.Provider value={composerNotices}>
+			{children}
+			{!chatVisible && noticeStack && notificationTarget && createPortal(noticeStack, notificationTarget)}
+			{card && modalTarget && createPortal(<div className="pd-extension-modal-slot">{card}</div>, modalTarget)}
+		</ExtensionNoticeContext.Provider>
 	</ExtensionDialogContext.Provider>;
 }

@@ -57,7 +57,7 @@
 /* Custom directory ---------------------------------------------------------------- */
 .pd-engine-custom { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
 .pd-engine-path { display: flex; gap: 8px; min-width: 0; }
-.pd-engine-path input { flex: 1; min-width: 0; height: 34px; padding: 0 11px; border: 1px solid var(--pd-border); border-radius: var(--pd-radius-sm); background: var(--pd-surface); color: var(--pd-text); font: var(--pd-font-sm) var(--pd-font-mono, ui-monospace, Consolas, monospace); }
+.pd-engine-path input { flex: 1; min-width: 0; height: 34px; padding: 0 11px; border: 1px solid var(--pd-border); border-radius: var(--pd-radius-sm); background: var(--pd-surface); color: var(--pd-text); font: var(--pd-font-caption) var(--pd-font-sans); }
 .pd-engine-path input::placeholder { color: var(--pd-text-weak); }
 .pd-engine-path input:focus { outline: none; border-color: var(--pd-focus-border, var(--pd-brand)); }
 .pd-engine-path input:disabled { opacity: .6; }

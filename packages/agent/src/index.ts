@@ -682,10 +682,14 @@ class SingleAgentService {
 			// The connection editor writes name/URL/protocol/headers back verbatim, so it
 			// needs a config it can round-trip; model entries are rewritten in isolation.
 			const configReason = config ? connectionReadOnlyReason(config) : null;
-			const readOnlyReason: UiProviderReadOnlyReason | undefined = registered.has(id) ? 'extension' : invalid.has(id) ? 'invalid-config'
+			// An extension only owns a provider that models.json does not define: extensions
+			// such as pi-model-manager register every entry of that same file, so those
+			// providers must stay editable here.
+			const extensionOwned = registered.has(id) && !custom;
+			const readOnlyReason: UiProviderReadOnlyReason | undefined = extensionOwned ? 'extension' : invalid.has(id) ? 'invalid-config'
 				: builtin && (!config || (configReason && config.api === undefined)) ? 'builtin'
 				: credential && credential.type !== 'api_key' ? 'oauth' : configReason ?? undefined;
-			const modelsEditable = !registered.has(id) && !invalid.has(id) && (custom || builtin);
+			const modelsEditable = !extensionOwned && !invalid.has(id) && (custom || builtin);
 			// Missing config fields inherit the catalog (builtin or overlay); a present
 			// but unsafe URL is hidden rather than replaced by the catalog value.
 			return {
@@ -2710,9 +2714,11 @@ export class AgentService {
 			const path = join(directory, 'models.json');
 			const [document, builtinIds] = await Promise.all([readProviderDocument(path), getBuiltinProviderIds()]);
 			assertWritableDocument(document);
-			if (contexts.some((context) => context.usesExtensionProvider(provider))) throw new Error('此供应商 ID 已由已打开工作区的扩展管理，请使用其他 ID');
 			const listed = service.listModelProviders(document, builtinIds);
 			const existing = listed.find((entry) => entry.provider === provider);
+			// models.json stays the owner of the providers it defines, even when an extension
+			// registers that same file; only a provider no entry defines is extension-owned.
+			if (contexts.some((context) => context.usesExtensionProvider(provider)) && !existing?.custom) throw new Error('此供应商 ID 已由已打开工作区的扩展管理，请使用其他 ID');
 			if (models) {
 				if (!existing) throw new Error('供应商不存在，请刷新后重试');
 				if (!existing.modelsEditable) throw new Error('此供应商的模型由扩展管理或配置格式无效，不能在此修改');
@@ -2771,8 +2777,16 @@ export class AgentService {
 		finally { for (const release of releases) release(); if (this.providerOperation === operation) this.providerOperation = null; }
 	}
 
+	/**
+	 * Extensions may register a config copy of the providers models.json defines
+	 * (pi-model-manager registers every entry of that file). Only that extension can rebuild
+	 * its own copy, so a context mirroring this provider reloads its extensions instead of
+	 * just refreshing the configuration; the reload is what makes a freshly saved provider
+	 * or model list visible. Reload problems stay in the service's plugin error state.
+	 */
 	private async refreshCustomProviderContexts(contexts: SingleAgentService[], provider: string, rebind = true): Promise<void> {
-		const results = await Promise.allSettled(contexts.map((context) => context.refreshModelProvider(provider, rebind)));
+		const results = await Promise.allSettled(contexts.map((context) => context.usesExtensionProvider(provider) && rebind
+			? context.reloadPlugins() : context.refreshModelProvider(provider, rebind)));
 		if (results.some((result) => result.status === 'rejected')) throw new Error('Pi 无法同步供应商配置');
 	}
 

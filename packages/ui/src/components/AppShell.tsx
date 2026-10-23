@@ -16,6 +16,7 @@ import { OperationFeedback } from './OperationFeedback';
 import { FolderProjectDropZone } from './FolderProjectDropZone';
 import { ResultFilePreviewDialogRoot } from './ResultFilePreviewDialog';
 import { installResultFilePressRescue } from '../resultFilePressRescue';
+import { installInputModality } from '../inputModality';
 import { clampWorkbenchWidth } from '../workbenchReading';
 import { WorkbenchSidePane, type WorkbenchOpenRequest } from './WorkbenchSidePane';
 import { useChatStore } from '../store';
@@ -32,6 +33,9 @@ import './paiWindow.css';
 import './notificationCenter.css';
 
 const NARROW_WINDOW_QUERY = '(max-width: 880px)';
+// Stable elements: a fresh JSX value each render would re-render the composer's notice slot.
+const PAI_GLOBAL_NOTICES = <OperationFeedback />;
+const MAIN_GLOBAL_NOTICES = <><OperationFeedback /><UpdateNotice /></>;
 const MIN_SIDEBAR_WIDTH = 232;
 const MAX_SIDEBAR_WIDTH = 420;
 
@@ -94,7 +98,7 @@ export function AppShell() {
 	const [workbenchResizing, setWorkbenchResizing] = useState(false);
 	const workbenchOverlay = viewportWidth <= 1100;
 	useEffect(() => { const resize = () => setViewportWidth(window.innerWidth); window.addEventListener('resize', resize); return () => window.removeEventListener('resize', resize); }, []);
-	useEffect(() => { installResultFilePressRescue(); }, []);
+	useEffect(() => { installResultFilePressRescue(); installInputModality(); }, []);
 	const agentStatus = useChatStore((state) => state.status);
 	const previousStatusRef = useRef(agentStatus);
 	useEffect(() => {
@@ -389,14 +393,14 @@ export function AppShell() {
 	const conversationPath = useChatStore((state) => state.sessionPath);
 	const [notificationTarget, setNotificationTarget] = useState<HTMLDivElement | null>(null);
 	if (paiMode) return (
-		<ExtensionDialogHost chatVisible notificationTarget={notificationTarget}>
+		<ExtensionDialogHost chatVisible notificationTarget={notificationTarget} globalNotices={PAI_GLOBAL_NOTICES}>
 			<div className={`pd-app-shell is-pai${isWindows ? ' is-frameless' : ''}${settingsOpen ? ' is-settings-open' : ''}`}>
 				<div className="pd-main-view">
 				<div className="pd-chat-view-host"><ChatView compact navigationError={navigation.error} onToggleSidebar={() => {}} onOpenModelManagement={openModelManagement} historyControls={<div className="pd-pai-controls">
 					<HoverTooltip title={t('sidebar.newSession')}><button className="pd-icon-button" type="button" disabled={navigationPending} aria-label={t('sidebar.newSession')} onClick={() => { void useChatStore.getState().newSession().catch(() => {}); }}><Icon name="plus" width="17" height="17" /></button></HoverTooltip>
 					<HoverTooltip title={t('sidebar.settings')}><button className="pd-icon-button pd-pai-settings" type="button" aria-label={t('sidebar.settings')} onClick={() => { setSettingsInitialPage('general'); setSettingsOpen(true); }}><Icon name="settings" width="17" height="17" /></button></HoverTooltip>
 				</div>} /></div>
-				<div className="pd-notification-center"><OperationFeedback /><div ref={setNotificationTarget} className="pd-extension-notification-slot" /></div>
+				<div className="pd-notification-center"><div ref={setNotificationTarget} className="pd-extension-notification-slot" /></div>
 				</div>
 				{settingsOpen && <SettingsPanel initialPage={settingsInitialPage} modelManagementTarget={settingsInitialPage === 'model' ? modelManagementTarget : undefined} onClose={() => setSettingsOpen(false)} themePreference={themePreference} onThemePreferenceChange={setThemePreference} colorPreferences={colorPreferences} onColorPreferencesChange={setColorPreferences} colorSaveFailed={colorSaveFailed} />}
 				{isWindows && <WindowControls />}
@@ -405,7 +409,7 @@ export function AppShell() {
 	);
 
 	return (
-		<ExtensionDialogHost chatVisible={mainView === 'chat'} notificationTarget={notificationTarget}>
+		<ExtensionDialogHost chatVisible={mainView === 'chat'} notificationTarget={notificationTarget} globalNotices={MAIN_GLOBAL_NOTICES}>
 		<div className={`pd-app-shell flex${isWindows ? ' is-frameless' : ''}${settingsOpen || searchOpen ? ' is-settings-open' : ''}${sidebarResizing ? ' is-sidebar-resizing' : ''}${workbenchResizing ? ' is-workbench-resizing' : ''}`} style={{ '--pd-sidebar-width': `${sidebarWidth}px`, '--pd-workbench-width': `${clampWorkbenchWidth(workbenchWidth, viewportWidth)}px` } as CSSProperties}>
 			<button type="button" className={`pd-sidebar-scrim${narrow && sidebarOpen ? ' is-open' : ''}`} aria-label={t('app.closeSidebar')} aria-hidden={!narrow || !sidebarOpen} inert={!narrow || !sidebarOpen} tabIndex={-1} onClick={() => setSidebarOpen(false)} />
 			<Sidebar
@@ -432,7 +436,8 @@ export function AppShell() {
 			<div className="pd-chat-view-host" hidden={mainView !== 'chat'} inert={mainView !== 'chat'}><ScopedErrorBoundary scope="conversation" resetKeys={[conversationCwd, conversationId, conversationPath]}><ChatView active={mainView === 'chat'} onToggleSidebar={() => setSidebarOpen((open) => !open)} onOpenModelManagement={openModelManagement} searchTarget={searchMessageTarget} navigationError={navigation.error} historyControls={mainView === 'chat' ? headerControls : undefined} /></ScopedErrorBoundary></div>
 			{mainView === 'automations' && <ScopedErrorBoundary scope="automation"><AutomationPage headerControls={headerControls} onToggleSidebar={() => setSidebarOpen((open) => !open)} onOpenSession={async (cwd, path) => { const selected = await useChatStore.getState().selectSession(cwd, path); if (selected) { setSearchMessageTarget(null); setMainView('chat'); if (narrow) setSidebarOpen(false); } return selected; }} /></ScopedErrorBoundary>}
 			{mainView === 'plugins' && <ScopedErrorBoundary scope="plugins"><PluginsPage headerControls={headerControls} onToggleSidebar={() => setSidebarOpen((open) => !open)} /></ScopedErrorBoundary>}
-			<div className="pd-notification-center"><OperationFeedback /><UpdateNotice /><div ref={setNotificationTarget} className="pd-extension-notification-slot" /></div>
+			{/* Pages without a composer keep notices at the top of the view. */}
+			<div className="pd-notification-center">{mainView !== 'chat' && <><OperationFeedback /><UpdateNotice /></>}<div ref={setNotificationTarget} className="pd-extension-notification-slot" /></div>
 			</div>
 			<button type="button" className={`pd-workbench-scrim${workbenchOpen && mainView === 'chat' ? ' is-open' : ''}`} aria-label={t('app.closeWorkbench')} aria-hidden={!workbenchOpen || mainView !== 'chat'} inert={!workbenchOpen || mainView !== 'chat'} tabIndex={-1} onClick={closeWorkbench} />
 			<ScopedErrorBoundary scope="workbench" resetKeys={[workbenchRequest?.cwd, workbenchRequest?.requestId]}><WorkbenchSidePane open={workbenchOpen && mainView === 'chat'} modal={workbenchOverlay && !settingsOpen && !searchOpen} suspended={settingsOpen || searchOpen} width={clampWorkbenchWidth(workbenchWidth, viewportWidth)} onWidthChange={value => setWorkbenchWidth(clampWorkbenchWidth(value, viewportWidth))} onResizing={setWorkbenchResizing} onClose={closeWorkbench} openRequest={workbenchRequest} terminalRequest={terminalRequest} onTabChange={setWorkbenchTab} /></ScopedErrorBoundary>
