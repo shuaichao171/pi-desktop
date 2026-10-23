@@ -13,6 +13,7 @@ pnpm-debug*.jsonl
 .env
 .env.*
 !.env.example
+*.code-workspace
 
 # Logs & OS artifacts
 *.log
