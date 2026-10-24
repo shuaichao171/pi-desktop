@@ -12,7 +12,7 @@ export function ConversationMetricsSettings() {
 		<SettingsRow stacked title={t('settings.conversationMetrics')} description={t('settings.conversationMetricsDescription')}
 			footer={saveFailed && <p className="pd-settings-feedback" role="status">{t('settings.metrics.saveFailed')}</p>}>
 		<div className="pd-metrics-settings-options">
-			{(['speed', 'tokens', 'duration'] as const).map(key => <button key={key} type="button" role="switch" aria-checked={preferences[key]} className="pd-metrics-setting" data-setting={`metrics-${key}`} onClick={() => setSaveFailed(!setPreferences({ [key]: !preferences[key] }))}>
+			{(['speed', 'tokens', 'duration', 'balance'] as const).map(key => <button key={key} type="button" role="switch" aria-checked={preferences[key]} className="pd-metrics-setting" data-setting={`metrics-${key}`} onClick={() => setSaveFailed(!setPreferences({ [key]: !preferences[key] }))}>
 				<span>{t(`settings.metrics.${key}`)}</span><span className="pd-metrics-switch" aria-hidden="true" />
 			</button>)}
 		</div>

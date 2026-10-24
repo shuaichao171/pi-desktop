@@ -17,3 +17,7 @@
 @media (max-width: 760px) { .pd-metrics-settings-options { grid-template-columns: 1fr; } }
 @media (max-width: 520px) { .pd-conversation-metrics .pd-metric-group { padding: 0 7px; } }
 @media (prefers-reduced-motion: reduce) { .pd-metrics-switch, .pd-metrics-switch::after { transition: none; } }
+.pd-metric-balance { padding: 0; border: 0; background: none; font: inherit; font-variant-numeric: tabular-nums; color: light-dark(#3f7a52, #93d4a9); cursor: pointer; }
+.pd-metric-balance:hover { text-decoration: underline dotted; }
+.pd-metric-balance.is-error { color: var(--pd-text-subtle); }
+.pd-metric-balance.is-invalid { color: light-dark(#a3573f, #e3a186); }
