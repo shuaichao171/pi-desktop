@@ -1146,7 +1146,7 @@ export const translations: Record<string, { 'zh-CN': string; 'en-US': string }> 
   'settings.providerReadOnly.model-endpoint': { 'zh-CN': '此供应商的部分模型单独指定了协议或地址，连接需在配置文件中修改；模型仍可在此添加和编辑。', 'en-US': 'Some models set their own protocol or URL, so edit the connection in the configuration file. Models can still be added and edited here.' },
   'settings.modelShowInPicker': { 'zh-CN': '在模型选择器中显示', 'en-US': 'Show in model picker' },
   'settings.modelDisableCurrent': { 'zh-CN': '当前使用的模型不能停用', 'en-US': 'The model in use cannot be disabled' },
-  'settings.providerTemplatesHint': { 'zh-CN': '选择供应商配置凭据，或使用预设的地址与协议快速添加；同一预设可添加多次，自动加序号后缀区分。', 'en-US': 'Choose a provider to configure credentials or add one with a preset endpoint and protocol; the same preset can be added multiple times with an automatic numeric suffix.' },
+  'settings.providerTemplatesHint': { 'zh-CN': '选择供应商配置凭据，或用预设的地址与协议创建独立实例；同一预设可添加多次，自动加序号后缀区分。', 'en-US': 'Configure credentials for a provider, or create an independent instance from a preset; add the same preset multiple times with an automatic numeric suffix.' },
   'settings.providerOtherProviders': { 'zh-CN': '其他供应商', 'en-US': 'Other providers' },
   'settings.providerBackToList': { 'zh-CN': '返回供应商列表', 'en-US': 'Back to providers' },
   'settings.providersConfiguredEmpty': { 'zh-CN': '暂无已配置的供应商，点击“添加供应商”开始配置。', 'en-US': 'No configured providers yet. Choose Add provider to get started.' },

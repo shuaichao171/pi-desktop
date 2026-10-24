@@ -444,6 +444,13 @@ export function ModelSettingsPanel({ initialTarget, renderCredential, onDraftSta
 			if (!providers.some((provider) => provider.provider === id)) return { ...item, id, name: `${item.name} ${n}` };
 		}
 	};
+	// Configured builtins (xiaomi, deepseek, …) stay available as templates so a
+	// second instance can be created; the copy uses the catalog endpoint with a
+	// suffixed id and never shadows the builtin itself. Ids already covered by the
+	// explicit presets below are skipped to avoid duplicate cards.
+	const builtinCopies = configuredProviders.filter((item) => item.builtin && !PROVIDER_TEMPLATES.some((template) => template.id === item.provider)).map((item): ProviderTemplate => ({
+		id: item.provider, name: item.name || item.provider, baseUrl: item.baseUrl ?? '', api: (item.api as UiProviderApi) ?? 'openai-completions',
+	})).filter((item) => item.baseUrl !== '').map(templateInstance);
 	const defaultProvider = configuredProviders.find((item) => item.provider === modelProvider) ?? configuredProviders[0];
 	const selected = [...configuredProviders, ...unconfiguredCustom].find((item) => item.provider === selectedId) ?? defaultProvider;
 	const selectedConfigured = selected ? configured(selected) : false;
@@ -652,6 +659,7 @@ export function ModelSettingsPanel({ initialTarget, renderCredential, onDraftSta
 				{(unconfiguredProviders.length > 0 || PROVIDER_TEMPLATES.length > 0) && <section className="pd-model-template-options" aria-label={t('settings.providerOtherProviders')}><h4>{t('settings.providerOtherProviders')}</h4><p className="pd-model-settings-notice">{t('settings.providerTemplatesHint')}</p><div className="pd-model-template-grid">
 					{unconfiguredProviders.map((item) => <button key={item.provider} type="button" data-add-provider={item.provider} className="pd-model-template-card" onClick={() => setEditor({ kind: 'credentials', provider: item.provider })}><strong>{item.name || item.provider}</strong><span>{t('settings.providerCount', { count: item.models.length })}</span></button>)}
 					{PROVIDER_TEMPLATES.map((template) => <button key={template.id} type="button" data-template={template.id} className="pd-model-template-card" onClick={() => setEditor({ kind: 'create', template: templateInstance(template) })}><strong>{template.name}</strong><code>{template.baseUrl}</code></button>)}
+					{builtinCopies.map((template) => <button key={template.id} type="button" data-template-copy={template.id} className="pd-model-template-card" onClick={() => setEditor({ kind: 'create', template })}><strong>{template.name}</strong><code>{template.baseUrl}</code></button>)}
 				</div></section>}
 			</section>
 			: editor.kind === 'credentials' ? <section className="pd-model-provider-setup">
