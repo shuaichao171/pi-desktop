@@ -23,7 +23,7 @@
     "test:model-settings-ui": "pnpm build && node tests/fixtures/model-settings/preflight.mjs && node tests/fixtures/model-settings/run.mjs --run"
   },
   "devDependencies": {
-    "@earendil-works/pi-coding-agent": "1.0.0",
+    "@earendil-works/pi-coding-agent": "1.4.0",
     "yaml": "2.9.0"
   }
 }

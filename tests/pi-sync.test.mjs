@@ -26,7 +26,7 @@ function fixture(version = '0.87.1', esbuildVersion = '0.28.2') {
     }),
   };
   const workspace = `packages:\n  - 'packages/*'\nminimumReleaseAgeExclude:\n${PI_PACKAGES.map((name) => `  - '${name}@${version}'`).join('\n')}\n  - electron@44.4.5\n`;
-  const lockfile = `lockfileVersion: '9.0'\nimporters:\n  .:\n    devDependencies:\n      '${PI_PACKAGE}':\n        specifier: ${version}\n        version: ${version}(ws@8.21.3)\n  packages/agent:\n    dependencies:\n      '${PI_PACKAGE}':\n        specifier: ${version}\n        version: ${version}(ws@8.21.3)\n      '${PI_AI_PACKAGE}':\n        specifier: ${version}\n        version: ${version}(ws@8.21.3)\n  packages/desktop:\n    dependencies:\n      '${PI_PACKAGE}':\n        specifier: ${version}\n        version: ${version}(ws@8.21.3)\npackages:\n  '${PI_PACKAGE}@${version}':\n    resolution: {integrity: sha512-placeholder}\n  '${PI_AI_PACKAGE}@${version}':\n    resolution: {integrity: sha512-placeholder}\nsnapshots:\n  '${PI_PACKAGE}@${version}(ws@8.21.3)':\n    dependencies:\n      '@earendil-works/chord': ${version}\n  '${PI_AI_PACKAGE}@${version}(ws@8.21.3)':\n    dependencies: {}\n  '@earendil-works/chord@${version}':\n    dependencies:\n      esbuild: ${esbuildVersion}\n`;
+  const lockfile = `lockfileVersion: '9.0'\nimporters:\n  .:\n    devDependencies:\n      '${PI_PACKAGE}':\n        specifier: ${version}\n        version: ${version}(ws@8.21.3)\n  packages/agent:\n    dependencies:\n      '${PI_PACKAGE}':\n        specifier: ${version}\n        version: ${version}(ws@8.21.3)\n      '${PI_AI_PACKAGE}':\n        specifier: ${version}\n        version: ${version}(ws@8.21.3)\n  packages/desktop:\n    dependencies:\n      '${PI_PACKAGE}':\n        specifier: ${version}\n        version: ${version}(ws@8.21.3)\npackages:\n  '${PI_PACKAGE}@${version}':\n    resolution: {integrity: sha512-placeholder}\n  '${PI_AI_PACKAGE}@${version}':\n    resolution: {integrity: sha512-placeholder}\n${ESBUILD_PACKAGES.map((name) => `  '${name}@${esbuildVersion}':\n    resolution: {integrity: sha512-placeholder}`).join('\n')}\nsnapshots:\n  '${PI_PACKAGE}@${version}(ws@8.21.3)':\n    dependencies: {}\n  '${PI_AI_PACKAGE}@${version}(ws@8.21.3)':\n    dependencies: {}\n`;
   return { manifests, workspace, lockfile };
 }
 
@@ -40,7 +40,7 @@ test('exact stable versions use SemVer numeric ordering', () => {
   assert.equal(compareStableVersions('0.86.9', '0.87.0'), -1);
 });
 
-test('verify catches aligned SDK, exclusions, lockfile, and Pi Chord esbuild', () => {
+test('verify catches aligned SDK, exclusions, lockfile, and packaged esbuild pins', () => {
   assert.deepEqual(verifySources(fixture()), { version: '0.87.1', esbuildVersion: '0.28.2' });
 });
 
@@ -77,13 +77,23 @@ test('verify rejects stale importer resolutions and missing package snapshots', 
   assert.throws(() => verifySources(missing), /missing a snapshot/);
 });
 
-test('verify derives esbuild from Pi Chord and rejects missing or stale desktop binaries', () => {
+test('verify requires the packaged esbuild binaries to be pinned, uniform, and resolved', () => {
   const stale = fixture();
   stale.manifests.desktop = stale.manifests.desktop.replace('"@esbuild/win32-x64": "0.28.2"', '"@esbuild/win32-x64": "0.28.1"');
-  assert.throws(() => verifySources(stale), /must pin @esbuild\/win32-x64/);
-  const missing = fixture();
-  missing.lockfile = missing.lockfile.replace('esbuild: 0.28.2', 'not-esbuild: 0.28.2');
-  assert.throws(() => verifySources(missing), /missing .* esbuild dependency/);
+  assert.throws(() => verifySources(stale), /must pin every esbuild platform package/);
+  const partial = fixture();
+  const partialDesktop = JSON.parse(partial.manifests.desktop);
+  delete partialDesktop.optionalDependencies['@esbuild/win32-x64'];
+  partial.manifests.desktop = JSON.stringify(partialDesktop, null, 2) + '\n';
+  assert.throws(() => verifySources(partial), /must pin all 4 esbuild platform packages/);
+  const unresolved = fixture();
+  unresolved.lockfile = unresolved.lockfile.replace(`  '@esbuild/win32-x64@0.28.2':`, `  '@esbuild/win32-x64@0.28.1':`);
+  assert.throws(() => verifySources(unresolved), /missing the packaged @esbuild\/win32-x64@0.28.2/);
+  const unpackaged = fixture();
+  const unpackagedDesktop = JSON.parse(unpackaged.manifests.desktop);
+  delete unpackagedDesktop.optionalDependencies;
+  unpackaged.manifests.desktop = JSON.stringify(unpackagedDesktop, null, 2) + '\n';
+  assert.deepEqual(verifySources(unpackaged), { version: '0.87.1', esbuildVersion: null });
 });
 
 test('update changes only Pi declarations and exclusions, leaving lockfile for pnpm', () => {

@@ -20,7 +20,7 @@
     "clean": "rimraf out dist"
   },
   "dependencies": {
-    "@earendil-works/pi-coding-agent": "1.0.0",
+    "@earendil-works/pi-coding-agent": "1.4.0",
     "@pidesktop/agent": "workspace:*",
     "@pidesktop/shared": "workspace:*",
     "electron-updater": "6.8.9",

@@ -7,7 +7,6 @@ import YAML from 'yaml';
 export const PI_PACKAGE = '@earendil-works/pi-coding-agent';
 export const PI_AI_PACKAGE = '@earendil-works/pi-ai';
 export const PI_PACKAGES = [
-  '@earendil-works/chord',
   '@earendil-works/pi-agent-core',
   '@earendil-works/pi-ai',
   PI_PACKAGE,
@@ -105,16 +104,21 @@ function verifyLockfile(text, version, desktopManifest) {
     throw new Error(`pnpm-lock.yaml is missing a snapshot for ${packageKey}`);
   }
 
-  const chordKey = `@earendil-works/chord@${version}`;
-  const chord = lock?.snapshots?.[chordKey];
-  const esbuildVersion = chord?.dependencies?.esbuild;
-  if (!chord || typeof esbuildVersion !== 'string') {
-    throw new Error(`pnpm-lock.yaml is missing ${chordKey} snapshot or its esbuild dependency`);
+  // Pi ≥1.4.0 no longer bundles Chord, so nothing resolves esbuild through Pi. The desktop
+  // manifest keeps pinning the packaged esbuild platform binaries; verify the pins are complete,
+  // uniform, and materialized in the lockfile so packaging and the packaged-binary checks hold.
+  const pinned = ESBUILD_PACKAGES.map((name) => desktopManifest?.optionalDependencies?.[name]);
+  if (pinned.every((value) => value === undefined)) return { esbuildVersion: null };
+  if (pinned.some((value) => value === undefined)) {
+    throw new Error(`packages/desktop/package.json must pin all ${ESBUILD_PACKAGES.length} esbuild platform packages or none`);
   }
-  assertStableVersion(esbuildVersion);
+  const esbuildVersion = assertStableVersion(pinned[0]);
+  if (pinned.some((value) => value !== esbuildVersion)) {
+    throw new Error(`packages/desktop/package.json must pin every esbuild platform package to ${esbuildVersion}`);
+  }
   for (const name of ESBUILD_PACKAGES) {
-    if (desktopManifest?.optionalDependencies?.[name] !== esbuildVersion) {
-      throw new Error(`packages/desktop/package.json must pin ${name} to Pi Chord's esbuild ${esbuildVersion}`);
+    if (!lock?.packages?.[`${name}@${esbuildVersion}`]) {
+      throw new Error(`pnpm-lock.yaml is missing the packaged ${name}@${esbuildVersion}`);
     }
   }
   return { esbuildVersion };
@@ -236,7 +240,8 @@ async function main(args = process.argv.slice(2)) {
   const sources = readSources(ROOT);
   const { version: current, esbuildVersion } = verifySources(sources);
   if (command === '--verify') {
-    console.log(`Pi SDK ${current} is aligned across manifests, lockfile and exclusions; Pi Chord esbuild ${esbuildVersion} is packaged.`);
+    const packaged = esbuildVersion ? `; packaged esbuild ${esbuildVersion} matches the desktop pins.` : '; no esbuild binaries are pinned for packaging.';
+    console.log(`Pi SDK ${current} is aligned across manifests, lockfile and exclusions${packaged}`);
     return;
   }
   if (command === '--check-latest') {

@@ -41,7 +41,7 @@ GitHub 的定时及手动同步工作流检查 npm 正式版。发现新版本�
 1. 阅读目标版本的 [Pi Release Notes](https://github.com/earendil-works/pi/releases)，必要时比较上游两个发布标签的差异。尤其检查会话存储格式、模型与凭据、扩展 UI、项目资源信任、工具执行及审批行为。
 2. 审核 `packages/agent/src/index.ts` 对 Pi SDK 的调用是否仍符合[对应版本的 SDK 契约](https://github.com/earendil-works/pi/tree/main/packages/coding-agent/docs)。保留 Pi 自身的工具与审批逻辑；如上游接口改变，在适配层解决。
 3. 等待 CI 的 TypeScript 检查、会话与扩展集成测试、Windows 构建及解包、macOS 双架构和 Linux 打包验证全部通过。测试通过后仍需检查实际界面及关键会话流程；CI 不能完全覆盖交互行为。
-4. 如果 Pi 改变 Chord 所需的 esbuild 版本或 npm 包内的二进制、WASM 布局，同步调整 `packages/desktop/package.json` 的各平台可选依赖、`electron-builder.yml` 的解包规则，以及 CI 与发布工作流中的产物检查。不要为消除失败而直接删除运行时检查。
+4. Pi ≥1.4.0 不再依赖 `@earendil-works/chord`，打包里保留的 esbuild 平台二进制只由 `packages/desktop/package.json` 的可选依赖声明；`--verify` 要求它们版本一致且已在锁文件中解析。如果将来某个 Pi 版本重新内置 esbuild（或改变 npm 包内的二进制、WASM 布局），再按上一段的方式同步 `packages/desktop/package.json` 的可选依赖、`electron-builder.yml` 的解包规则，以及 CI 与发布工作流中的产物检查。不要为消除失败而直接删除运行时检查。
 
 只有审查和验证完成后才合并 PR。上游处于 `0.x` 版本阶段，版本升级仍可能改变 SDK 行为；锁文件和测试门禁用于阻止未经检查的漂移。
 
@@ -52,6 +52,7 @@ GitHub 的定时及手动同步工作流检查 npm 正式版。发现新版本�
 - 用户自装引擎的版本漂移、行为差异与会话格式兼容性由用户自行承担；设置页在保存前做结构探测（包名、`dist/index.js`、依赖目录）并提示主版本差异或缺依赖等风险，但不做版本硬限制。
 - 引导入口在加载自定义引擎后会检查 `piEngine.ts` 中列出的适配层必需导出；缺失时报错并退出 agent 进程，主进程以 fatal 错误提示，用户可切回内置引擎。
 - 升级 Pi SDK 时若适配层新增或改名了从 SDK 导入的运行时符号，必须同步更新 `REQUIRED_SDK_EXPORTS`，否则自定义引擎的可用性判断会失真。
+- 队列恢复走的是 SDK 私有协议：`packages/agent/src/inputQueue.ts` 在 Pi ≤1.3 用 `_runAgentPrompt(messages)`，在 Pi ≥1.4 改用 `_startRun(trigger)`；两代都缺失时报「Pi SDK 队列显示协议不兼容」。上游再次改名该协议时，先在这里补新分支并加测试，再同步本文件与设置页文案。
 - 主进程对 SDK 的直接使用仅限 `getAgentDir`（路径计算，与引擎版本无关），不做重定向。
 
 ## 让用户获得新版 Pi

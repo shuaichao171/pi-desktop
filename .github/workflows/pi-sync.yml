@@ -94,7 +94,7 @@ jobs:
 
           The published npm package is the integration source. The local reference/pi checkout is not part of the build.
 
-          Review project trust, session files, extensions, model authentication, background runs, and Pi tool behavior. If Pi Chord changes esbuild or the package layout, update desktop optional dependencies and packaging checks. Merge only after the full Windows, macOS, and Linux CI matrix passes.
+          Review project trust, session files, extensions, model authentication, background runs, and Pi tool behavior. Pi no longer bundles Chord, so keep the desktop esbuild platform pins uniform and resolved (pnpm scripts/sync-pi.mjs --verify); re-tie them to Pi only if a release ships esbuild again, or update desktop optional dependencies and packaging checks when the package layout changes. Merge only after the full Windows, macOS, and Linux CI matrix passes.
           EOF
           title="chore: sync Pi SDK to ${NEW_VERSION}"
           existing="$(gh pr list --base main --head automation/pi-sdk-update --state open --json number --jq '.[0].number')"
