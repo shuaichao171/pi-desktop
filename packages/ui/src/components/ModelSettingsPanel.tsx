@@ -359,6 +359,7 @@ export function ModelSettingsPanel({ initialTarget, renderCredential, onDraftSta
 	const saveProvider = useChatStore((state) => state.saveCustomProvider);
 	const saveProviderModels = useChatStore((state) => state.saveProviderModels);
 	const removeProvider = useChatStore((state) => state.removeCustomProvider);
+	const resetProviderStore = useChatStore((state) => state.resetProvider);
 	const setModel = useChatStore((state) => state.setModel);
 	const setModelEnabled = useChatStore((state) => state.setModelEnabled);
 	const setThinking = useChatStore((state) => state.setThinkingLevel);
@@ -586,8 +587,10 @@ export function ModelSettingsPanel({ initialTarget, renderCredential, onDraftSta
 		if (confirmRemove.kind === 'provider') {
 			if (await run(() => removeProvider(removalProvider.provider), 'settings.providerRemoved')) { resetDrafts(); setSelectedId(''); }
 		} else if (confirmRemove.kind === 'reset') {
-			if (!bridge?.resetProvider) { setError(t('usage.bridgeUnavailable')); return; }
-			if (await run(() => bridge.resetProvider!(removalProvider.provider), 'settings.providerResetDone')) { resetDrafts(); await refreshProviders(); }
+			// The store action refreshes models, provider auth and the provider list
+			// together — refreshing the list alone leaves a stale auth cache that
+			// keeps the reset provider in the configured group until the next change.
+			if (await run(() => resetProviderStore(removalProvider.provider), 'settings.providerResetDone')) { resetDrafts(); setSelectedId(''); }
 		} else {
 			const current = latestProvider(removalProvider.provider);
 			if (!current || current.models.length < 2) { setError(t('settings.customModelLast')); return; }

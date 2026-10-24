@@ -897,3 +897,20 @@ test('preset templates can be added repeatedly with suffixed ids next to builtin
     await f.cleanup();
   }
 });
+
+test('listModelProviders reflects a deletion immediately (no one-refresh lag)', async () => {
+  const f = await fixture();
+  try {
+    await f.service.switchWorkspace(f.otherCwd);
+    await f.service.switchWorkspace(f.cwd);
+    await f.service.saveCustomProvider(request('lag-one'));
+    await f.service.saveCustomProvider(request('lag-two'));
+    let listed = await f.service.listModelProviders();
+    assert.ok(listed.some((item) => item.provider === 'lag-one'), 'both instances exist before removal');
+    await f.service.removeCustomProvider('lag-one');
+    listed = await f.service.listModelProviders();
+    assert.equal(listed.some((item) => item.provider === 'lag-one'), false, 'the removed provider must vanish from the very next listing');
+  } finally {
+    await f.cleanup();
+  }
+});

@@ -122,6 +122,7 @@ interface ChatState {
 	refreshModelProviders(): Promise<void>;
 	saveCustomProvider(request: UiSaveCustomProviderRequest): Promise<void>;
 	removeCustomProvider(provider: string): Promise<void>;
+	resetProvider(provider: string): Promise<void>;
 	saveProviderModels(request: UiSaveProviderModelsRequest): Promise<void>;
 	setModelEnabled(provider: string, modelId: string, enabled: boolean): Promise<void>;
 	setModel(provider: string, id: string): Promise<void>;
@@ -959,6 +960,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
 		await updateCustomProvider((bridge) => bridge.removeCustomProvider(provider));
 	},
 
+	async resetProvider(provider: string) {
+		await updateCustomProvider((bridge) => bridge.resetProvider(provider));
+	},
 	async saveProviderModels(request) {
 		await updateCustomProvider((bridge) => bridge.saveProviderModels(request));
 	},
