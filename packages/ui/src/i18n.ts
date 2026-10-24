@@ -1094,7 +1094,7 @@ export const translations: Record<string, { 'zh-CN': string; 'en-US': string }> 
   'settings.modelTestRunning': { 'zh-CN': '测试中…', 'en-US': 'Testing…' },
   'settings.modelTestOk': { 'zh-CN': '推理成功 · {ms} ms', 'en-US': 'Inference succeeded · {ms} ms' },
   'settings.modelTestFailed': { 'zh-CN': '推理失败', 'en-US': 'Inference failed' },
-  'usage.dialogTitle': { 'zh-CN': '配置用量查询 · {provider}', 'en-US': 'Usage query · {provider}' },
+  'usage.dialogTitle': { 'zh-CN': '配置用量查询', 'en-US': 'Usage query' },
   'usage.dialogTitleShort': { 'zh-CN': '用量查询', 'en-US': 'Usage query' },
   'usage.enable': { 'zh-CN': '启用用量查询', 'en-US': 'Enable usage query' },
   'usage.enableHint': { 'zh-CN': '启用后，当前会话使用此供应商时会在输入框下方显示余额；仅查询“使用中”的供应商。', 'en-US': 'When enabled, the balance shows below the composer while this provider is in use; only the provider in use is queried.' },

@@ -693,7 +693,7 @@ test('model preferences persist per-provider disabled ids and survive reloads', 
     await setModelDisabled(root, 'kimi', 'moonshot-v1', true);
     await setModelDisabled(root, 'deepseek', 'deepseek-chat', false);
     assert.deepEqual(getCachedDisabledModels(), { deepseek: ['deepseek-reasoner'], kimi: ['moonshot-v1'] }, 'cache reflects the last write');
-    assert.deepEqual(JSON.parse(readFileSync(join(root, 'model-prefs.json'), 'utf8')), { disabled: { deepseek: ['deepseek-reasoner'], kimi: ['moonshot-v1'] } }, 'prefs persist to disk');
+    assert.deepEqual(JSON.parse(readFileSync(join(root, 'model-prefs.json'), 'utf8')), { disabled: { deepseek: ['deepseek-reasoner'], kimi: ['moonshot-v1'] }, usageQueries: {} }, 'prefs persist to disk');
     await loadModelPrefs(join(root, 'uncached'));
     assert.deepEqual(await loadModelPrefs(root), { deepseek: ['deepseek-reasoner'], kimi: ['moonshot-v1'] }, 'a fresh cache reloads the same prefs from disk');
     writeFileSync(join(root, 'model-prefs.json'), '{ not json');

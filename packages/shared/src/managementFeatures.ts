@@ -26,6 +26,35 @@ export interface UiProviderUsageQueryInfo {
   userId?: string;
   hasAccessToken?: boolean;
 }
+
+const USAGE_QUERY_TEMPLATE_LIST: readonly UiUsageQueryTemplate[] = ['general', 'newapi', 'sub2api', 'balance', 'custom'];
+const USAGE_SCRIPT_SOURCE_LIMIT = 65_536;
+
+/** Strict-enough parse of a stored usage-query config; null when it is not one. */
+export function normalizeUsageQueryConfig(value: unknown): UiUsageQueryConfig | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const source = value as Record<string, unknown>;
+  const template = USAGE_QUERY_TEMPLATE_LIST.includes(source.template as UiUsageQueryTemplate) ? source.template as UiUsageQueryTemplate : undefined;
+  if (!template) return null;
+  const config: UiUsageQueryConfig = { enabled: source.enabled === true, template };
+  const minutes = source.intervalMinutes;
+  if (Number.isSafeInteger(minutes) && (minutes as number) >= 0 && (minutes as number) <= 100_800) config.intervalMinutes = minutes as number;
+  if (typeof source.script === 'string' && source.script.length <= USAGE_SCRIPT_SOURCE_LIMIT) config.script = source.script;
+  if (typeof source.accessToken === 'string' && source.accessToken.length <= 16_384 && !/[\u0000-\u001f\u007f]/u.test(source.accessToken)) config.accessToken = source.accessToken;
+  if (typeof source.userId === 'string' && source.userId.length <= 200 && !/[\u0000-\u001f\u007f]/u.test(source.userId)) config.userId = source.userId;
+  return config;
+}
+
+/** Read-side projection; the access token value never leaves the host. */
+export function usageQueryInfo(config: UiUsageQueryConfig | null): UiProviderUsageQueryInfo | undefined {
+  if (!config) return undefined;
+  const info: UiProviderUsageQueryInfo = { enabled: config.enabled, template: config.template };
+  if (config.intervalMinutes !== undefined) info.intervalMinutes = config.intervalMinutes;
+  if (config.script !== undefined) info.script = config.script;
+  if (config.userId !== undefined) info.userId = config.userId;
+  if (config.accessToken !== undefined && config.accessToken.length > 0) info.hasAccessToken = true;
+  return info;
+}
 /** One balance line; every field is optional exactly like cc-switch's usage data. */
 export interface UiUsageData { planName?: string; remaining?: number; used?: number; total?: number; unit?: string; isValid?: boolean; invalidMessage?: string; }
 export interface UiUsageQueryResult {

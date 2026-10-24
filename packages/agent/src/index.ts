@@ -88,7 +88,7 @@ import type {
 } from '@pidesktop/shared';
 import { createAgentError, normalizeAgentError } from '../../shared/src/agentErrors.ts';
 import { BUILTIN_SLASH_COMMANDS, expandSlashPrompt, validateSlashCommandRequest, validSlashCommandName } from './slashCommands.ts';
-import { CUSTOM_PROVIDER_APIS, assertWritableDocument, commitProviderDocument, connectionReadOnlyReason, getBuiltinProviderIds, getCachedDisabledModels, literalApiKey, loadModelPrefs, mergeProvider, mergeProviderModels, mergeProviderUsageQuery, parseProviderDocumentText, readProviderDocument, restoreProviderBackupFiles, safeProviderUrl, setModelDisabled, validateDiscoveryRequest, validateProviderId, validateProviderModelsRequest, validateProviderRequest, validateProviderWithSdk, type ProviderBackupFiles, type ProviderDocument, type ProviderModelsChange } from './customProviders.ts';
+import { CUSTOM_PROVIDER_APIS, assertWritableDocument, commitProviderDocument, connectionReadOnlyReason, getBuiltinProviderIds, getCachedDisabledModels, literalApiKey, loadModelPrefs, loadModelPrefsFile, loadUsageQueryPrefs, mergeProvider, mergeProviderModels, mergeProviderUsageQuery, parseProviderDocumentText, readProviderDocument, restoreProviderBackupFiles, safeProviderUrl, setModelDisabled, setUsageQueryPref, validateDiscoveryRequest, validateProviderId, validateProviderModelsRequest, validateProviderRequest, validateProviderWithSdk, type ProviderBackupFiles, type ProviderDocument, type ProviderModelsChange } from './customProviders.ts';
 import { discoverProviderModels, ProviderDiscoveryError } from './providerDiscovery.ts';
 import { bindProviderNetwork, runWithProviderNetwork } from './providerNetwork.ts';
 export { configureProviderNetwork } from './providerNetwork.ts';
@@ -665,7 +665,15 @@ class SingleAgentService {
 		return this.runtime?.session.modelRuntime.getRegisteredProviderIds().includes(provider) ?? false;
 	}
 
-	listModelProviders(document: ProviderDocument, builtinIds: ReadonlySet<string>): UiModelProvider[] {
+	/** Catalog baseUrl for providers without a models.json entry (official/builtin providers). */
+	catalogBaseUrl(provider: string): string | null {
+		const runtime = this.runtime?.session.modelRuntime;
+		const catalogProvider = runtime?.getProviders().find((item) => item.id === provider);
+		const url = catalogProvider?.baseUrl ?? runtime?.getModels(provider)[0]?.baseUrl ?? null;
+		return url !== null && safeProviderUrl(url) !== null ? url : null;
+	}
+
+	listModelProviders(document: ProviderDocument, builtinIds: ReadonlySet<string>, usageQueryPrefs: Record<string, UiUsageQueryConfig> = {}): UiModelProvider[] {
 		const runtime = this.runtime?.session.modelRuntime;
 		if (!runtime) return [];
 		const providers = new Map(runtime.getProviders().map((provider) => [provider.id, provider]));
@@ -703,7 +711,7 @@ class SingleAgentService {
 				api: typeof config?.api === 'string' ? config.api : typeof catalog[0]?.api === 'string' ? catalog[0].api : null,
 				headerNames: config?.headers && typeof config.headers === 'object' && !Array.isArray(config.headers) ? Object.keys(config.headers) : [],
 				...(typeof config?.desktopUseSystemProxy === 'boolean' ? { useSystemProxy: config.desktopUseSystemProxy } : {}),
-			...(usageQueryInfo(normalizeUsageQueryConfig(config?.desktopUsageQuery)) ? { usageQuery: usageQueryInfo(normalizeUsageQueryConfig(config?.desktopUsageQuery))! } : {}),
+			...(usageQueryInfo(normalizeUsageQueryConfig(config?.desktopUsageQuery) ?? usageQueryPrefs[id] ?? null) ? { usageQuery: usageQueryInfo(normalizeUsageQueryConfig(config?.desktopUsageQuery) ?? usageQueryPrefs[id] ?? null)! } : {}),
 				models: catalog.map((model) => ({ provider: model.provider, id: model.id, name: model.name, reasoning: model.reasoning,
 					input: [...model.input], contextWindow: model.contextWindow, maxTokens: model.maxTokens, thinkingLevels: getSupportedThinkingLevels(model),
 					...(model.thinkingLevelMap ? { thinkingLevelMap: { ...model.thinkingLevelMap } } : {}) })),
@@ -2425,8 +2433,8 @@ export class AgentService {
 	async listModelProviders(): Promise<UiModelProvider[]> {
 		if (this.providerOperation) { try { await this.providerOperation; } catch { /* Read restored state after an unsuccessful edit. */ } }
 		const service = this.requireActive();
-		const [document, builtinIds] = await Promise.all([readProviderDocument(join(service.agentDirectory, 'models.json')), getBuiltinProviderIds(), loadModelPrefs(service.agentDirectory)]);
-		return service.listModelProviders(document, builtinIds);
+		const [document, builtinIds, prefs] = await Promise.all([readProviderDocument(join(service.agentDirectory, 'models.json')), getBuiltinProviderIds(), loadModelPrefsFile(service.agentDirectory)]);
+		return service.listModelProviders(document, builtinIds, prefs.usageQueries);
 	}
 	async setModelEnabled(provider: string, modelId: string, enabled: boolean): Promise<void> {
 		const providerId = validateProviderId(provider);
@@ -2534,6 +2542,12 @@ export class AgentService {
 			const path = join(directory, 'models.json');
 			const document = await readProviderDocument(path);
 			assertWritableDocument(document);
+			// Providers with a models.json entry keep their config there (cloud-synced
+			// with the connection); official providers without one use model-prefs.json.
+			if (!Object.hasOwn(document.data.providers, provider)) {
+				await setUsageQueryPref(directory, provider, config);
+				return;
+			}
 			const next = mergeProviderUsageQuery(document, provider, config);
 			await validateProviderWithSdk(directory, provider, next.providers[provider]!);
 			const rollback = await commitProviderDocument(path, document, next);
@@ -2547,9 +2561,11 @@ export class AgentService {
 	async queryProviderUsage(provider: string): Promise<UiUsageQueryResult> {
 		const providerId = validateProviderId(provider);
 		const service = this.requireActive();
-		const document = await readProviderDocument(join(service.agentDirectory, 'models.json'));
+		const directory = service.agentDirectory;
+		const document = await readProviderDocument(join(directory, 'models.json'));
 		const entry = Object.hasOwn(document.data.providers, providerId) ? document.data.providers[providerId] : undefined;
-		return runProviderUsageQuery({ provider: providerId, entry, authPath: join(service.agentDirectory, 'auth.json') });
+		const prefsConfig = normalizeUsageQueryConfig(entry?.desktopUsageQuery) ? null : (await loadUsageQueryPrefs(directory))[providerId] ?? null;
+		return runProviderUsageQuery({ provider: providerId, entry, prefsConfig, catalogBaseUrl: service.catalogBaseUrl(providerId), authPath: join(directory, 'auth.json') });
 	}
 	listSlashCommands(): UiSlashCommand[] { return this.active?.listSlashCommands() ?? []; }
 	async executeSlashCommand(request: UiSlashCommandRequest): Promise<void> {

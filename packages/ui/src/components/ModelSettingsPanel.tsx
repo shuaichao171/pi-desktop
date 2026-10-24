@@ -601,7 +601,7 @@ export function ModelSettingsPanel({ initialTarget, renderCredential, onDraftSta
 						<div className="pd-model-page-actions">
 							<HoverTooltip title={t('settings.providerEdit')}><button type="button" data-action="edit-provider" className="pd-model-settings-button" disabled={!canChange} aria-label={t('settings.providerEdit')} onClick={() => openEditor({ kind: 'edit', provider: selected.provider })}><Icon name="pencil" width="13" height="13" />{t('settings.providerEdit')}</button></HoverTooltip>
 							{selected.custom && selected.editable && <HoverTooltip title={t('settings.providerRemove')}><button type="button" data-action="remove-provider" className="pd-icon-button is-danger" disabled={!canChange} aria-label={t('settings.providerRemove')} onClick={() => navigate(() => setConfirmRemove({ kind: 'provider', provider: selected }))}><Icon name="trash" width="16" height="16" /></button></HoverTooltip>}
-							{selected.custom && <HoverTooltip title={t('usage.dialogTitleShort')}><button type="button" data-action="configure-usage-query" className="pd-model-settings-button" disabled={!canChange} aria-label={t('usage.dialogTitleShort')} aria-pressed={Boolean(selected.usageQuery?.enabled)} onClick={() => setUsageQueryTarget(selected)}><Icon name="globe" width="13" height="13" />{t('usage.dialogTitleShort')}{selected.usageQuery?.enabled ? ' ·' : ''}</button></HoverTooltip>}
+							{Boolean(selected.baseUrl) && <HoverTooltip title={t('usage.dialogTitleShort')}><button type="button" data-action="configure-usage-query" className="pd-model-settings-button" disabled={!canChange} aria-label={t('usage.dialogTitleShort')} aria-pressed={Boolean(selected.usageQuery?.enabled)} onClick={() => setUsageQueryTarget(selected)}><Icon name="globe" width="13" height="13" />{t('usage.dialogTitleShort')}{selected.usageQuery?.enabled ? ' ·' : ''}</button></HoverTooltip>}
 						</div>
 					</div>
 					<div className="pd-model-provider-connection-row"><span className="pd-model-provider-url"><span className="pd-model-provider-url-label">{t('settings.providerBaseUrl')}</span><code title={selected.baseUrl || undefined}>{selected.baseUrl || '—'}</code></span>{protocolLabel && <span className="pd-model-provider-badge pd-model-provider-protocol">{protocolLabel}</span>}</div>
@@ -717,7 +717,7 @@ function UsageQueryDialog({ provider, onClose, onSaved }: { provider: UiModelPro
 		try { setTest({ busy: false, result: await bridge.queryProviderUsage(provider.provider) }); }
 		catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); setTest({ busy: false, result: null }); }
 	}
-	return <ModelSettingsDialog title={t('usage.dialogTitle', { provider: provider.name || provider.provider })} busy={saving} onClose={onClose}>
+	return <ModelSettingsDialog title={t('usage.dialogTitle')} busy={saving} onClose={onClose}>
 		<div className="pd-usage-query">
 			<label className="pd-model-settings-check"><input type="checkbox" role="switch" data-field="usage.enabled" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} />{t('usage.enable')}</label>
 			<p className="pd-usage-hint">{t('usage.enableHint')}</p>

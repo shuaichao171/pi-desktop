@@ -1,7 +1,8 @@
 import { createContext, runInContext } from 'node:vm';
-import type { UiUsageData, UiUsageQueryConfig, UiUsageQueryResult, UiUsageQueryTemplate } from '../../shared/src/managementFeatures.ts';
+import type { UiUsageData, UiUsageQueryConfig, UiUsageQueryResult } from '../../shared/src/managementFeatures.ts';
 import { readStoredCredential } from '@earendil-works/pi-coding-agent';
 import { runWithProviderNetwork } from './providerNetwork.ts';
+import { normalizeUsageQueryConfig, usageQueryInfo } from '@pidesktop/shared';
 import { detectBalanceProvider, queryNativeBalance } from './providerBalance.ts';
 import { usageScriptPreset } from '@pidesktop/shared';
 
@@ -32,7 +33,6 @@ const RESPONSE_BYTE_LIMIT = 2_000_000;
 const REQUEST_TIMEOUT_MS = 15_000;
 const HEADER_NAME_BLOCKLIST = /^(?:host|connection|content-length|transfer-encoding|proxy-authorization|proxy-connection|upgrade|trailer|te)$/iu;
 const METHODS = new Set(['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']);
-const TEMPLATES: readonly UiUsageQueryTemplate[] = ['general', 'newapi', 'sub2api', 'balance', 'custom'];
 
 export class UsageQueryError extends Error {
   readonly transient: boolean;
@@ -40,30 +40,7 @@ export class UsageQueryError extends Error {
   constructor(message: string, transient = false, status?: number) { super(message); this.name = 'UsageQueryError'; this.transient = transient; this.status = status; }
 }
 
-export function normalizeUsageQueryConfig(value: unknown): UiUsageQueryConfig | null {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-  const source = value as Record<string, unknown>;
-  const template = TEMPLATES.includes(source.template as UiUsageQueryTemplate) ? source.template as UiUsageQueryTemplate : undefined;
-  if (!template) return null;
-  const config: UiUsageQueryConfig = { enabled: source.enabled === true, template };
-  const minutes = source.intervalMinutes;
-  if (Number.isSafeInteger(minutes) && (minutes as number) >= 0 && (minutes as number) <= 100_800) config.intervalMinutes = minutes as number;
-  if (typeof source.script === 'string' && source.script.length <= USAGE_SCRIPT_SOURCE_LIMIT) config.script = source.script;
-  if (typeof source.accessToken === 'string' && source.accessToken.length <= 16_384 && !/[\u0000-\u001f\u007f]/u.test(source.accessToken)) config.accessToken = source.accessToken;
-  if (typeof source.userId === 'string' && source.userId.length <= 200 && !/[\u0000-\u001f\u007f]/u.test(source.userId)) config.userId = source.userId;
-  return config;
-}
-
-/** Read-side projection for listModelProviders; the access token value never leaves the host. */
-export function usageQueryInfo(config: UiUsageQueryConfig | null): { enabled: boolean; template: UiUsageQueryTemplate; intervalMinutes?: number; script?: string; userId?: string; hasAccessToken?: boolean } | undefined {
-  if (!config) return undefined;
-  const info: { enabled: boolean; template: UiUsageQueryTemplate; intervalMinutes?: number; script?: string; userId?: string; hasAccessToken?: boolean } = { enabled: config.enabled, template: config.template };
-  if (config.intervalMinutes !== undefined) info.intervalMinutes = config.intervalMinutes;
-  if (config.script !== undefined) info.script = config.script;
-  if (config.userId !== undefined) info.userId = config.userId;
-  if (config.accessToken !== undefined && config.accessToken.length > 0) info.hasAccessToken = true;
-  return info;
-}
+export { normalizeUsageQueryConfig, usageQueryInfo };
 
 // ── URL safety (port of cc-switch usage_script.rs validation) ────────────────
 
@@ -319,6 +296,10 @@ export interface ProviderUsageQueryContext {
   provider: string;
   /** The provider's models.json entry, if one exists. */
   entry: Record<string, unknown> | undefined;
+  /** Usage-query config stored in model-prefs.json for providers without a models.json entry. */
+  prefsConfig?: UiUsageQueryConfig | null;
+  /** Catalog baseUrl for builtin providers (used when the entry has none). */
+  catalogBaseUrl?: string | null;
   authPath: string;
 }
 
@@ -335,9 +316,10 @@ function resolveApiKey(provider: string, entry: Record<string, unknown> | undefi
 export async function runProviderUsageQuery(context: ProviderUsageQueryContext): Promise<UiUsageQueryResult> {
   const { provider, entry, authPath } = context;
   const base: UiUsageQueryResult = { provider, ok: false, queriedAt: Date.now() };
-  const config = normalizeUsageQueryConfig(entry?.desktopUsageQuery);
+  const config = normalizeUsageQueryConfig(entry?.desktopUsageQuery) ?? (context.prefsConfig ? normalizeUsageQueryConfig(context.prefsConfig) : null);
   if (!config || !config.enabled) return { ...base, error: '用量查询未启用' };
-  const baseUrl = typeof entry?.baseUrl === 'string' ? entry.baseUrl : null;
+  const baseUrl = typeof entry?.baseUrl === 'string' && entry.baseUrl ? entry.baseUrl
+    : typeof context.catalogBaseUrl === 'string' && context.catalogBaseUrl ? context.catalogBaseUrl : null;
   if (!baseUrl) return { ...base, error: '供应商缺少 baseUrl，请先保存连接' };
   const { key, reason } = resolveApiKey(provider, entry, authPath);
   if (!key || reason) return { ...base, error: reason ?? '未配置 API Key' };

@@ -12,7 +12,7 @@ const {
 const {
 	detectBalanceProvider, parseDeepSeekBalance, parseStepFunBalance, parseSiliconFlowBalance, parseOpenRouterBalance, parseNovitaBalance,
 } = await import('../packages/agent/src/providerBalance.ts');
-const { mergeProviderUsageQuery, parseProviderDocumentText } = await import('../packages/agent/src/customProviders.ts');
+const { mergeProviderUsageQuery, parseProviderDocumentText, loadModelPrefsFile, loadUsageQueryPrefs, setModelDisabled, setUsageQueryPref } = await import('../packages/agent/src/customProviders.ts');
 const { usageScriptPreset } = await import('../packages/shared/src/usageTemplates.ts');
 
 const loopbackServer = async (routes) => {
@@ -238,4 +238,40 @@ test('script presets expose the cc-switch template contract', () => {
 		assert.match(preset, /extractor:\s*function/u);
 	}
 	assert.equal(usageScriptPreset('balance'), '');
+});
+
+test('usage-query prefs share model-prefs.json with disabled models without clobbering', async t => {
+	const directory = mkdtempSync(join(tmpdir(), 'pi-desktop-prefs-'));
+	t.after(() => rmSync(directory, { recursive: true, force: true }));
+	await setUsageQueryPref(directory, 'deepseek', { enabled: true, template: 'balance', intervalMinutes: 5 });
+	// A later model toggle must keep the usage-query config.
+	await setModelDisabled(directory, 'deepseek', 'deepseek-chat', true);
+	const prefs = await loadModelPrefsFile(directory);
+	assert.deepEqual(prefs.disabled, { deepseek: ['deepseek-chat'] });
+	assert.equal(prefs.usageQueries.deepseek?.template, 'balance');
+	// A usage-query save must keep the disabled map; null removes the config.
+	await setUsageQueryPref(directory, 'deepseek', null);
+	assert.deepEqual(await loadUsageQueryPrefs(directory), {});
+	assert.deepEqual((await loadModelPrefsFile(directory)).disabled, { deepseek: ['deepseek-chat'] });
+});
+
+test('official providers resolve config from prefs and baseUrl from the catalog', async t => {
+	const directory = mkdtempSync(join(tmpdir(), 'pi-desktop-usage-'));
+	t.after(() => rmSync(directory, { recursive: true, force: true }));
+	const authPath = join(directory, 'auth.json');
+	writeFileSync(authPath, JSON.stringify({ deepseek: { type: 'api_key', key: 'sk-official' } }));
+	// The cross-origin rejection proves both the prefs config and the catalog
+	// baseUrl were consumed for a provider with no models.json entry.
+	const result = await runProviderUsageQuery({
+		provider: 'deepseek', entry: undefined,
+		prefsConfig: { enabled: true, template: 'general', script: '({ request: { url: "https://evil.example.com/balance", method: "GET", headers: {} }, extractor: (r) => r })' },
+		catalogBaseUrl: 'https://api.deepseek.com', authPath,
+	});
+	assert.match(result.error ?? '', /同源/u);
+	const balance = await runProviderUsageQuery({
+		provider: 'deepseek', entry: undefined,
+		prefsConfig: { enabled: true, template: 'balance' },
+		catalogBaseUrl: 'https://relay.example.com', authPath,
+	});
+	assert.match(balance.error ?? '', /未识别/u);
 });
