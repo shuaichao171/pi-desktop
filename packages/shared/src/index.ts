@@ -358,6 +358,8 @@ export interface UiModelProvider {
   models: UiModelSummary[];
   /** Model ids hidden from pickers via desktop model preferences. */
   disabledModels?: string[];
+  /** A builtin provider with saved state (entry overlay, credential, usage query or hidden models) can be reset to default. */
+  resettable?: boolean;
 }
 
 export interface UiProviderAuthStatus {

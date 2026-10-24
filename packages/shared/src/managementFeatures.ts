@@ -83,10 +83,13 @@ export interface ManagementFeaturesBridge {
   exportDiagnostics(days: number): Promise<DiagnosticExportResult>;
   queryProviderUsage(provider: string): Promise<UiUsageQueryResult>;
   saveProviderUsageQuery(request: UiSaveProviderUsageQueryRequest): Promise<void>;
+  /** Clears a builtin provider's saved state (entry overlay, credential, usage query, hidden models). */
+  resetProvider(provider: string): Promise<void>;
 }
 export const MANAGEMENT_FEATURE_CHANNELS = {
   testProviderModel: 'management:model-test', cancelProviderModelTest: 'management:model-test-cancel',
   getProjectDefaults: 'management:project-defaults', saveProjectDefaults: 'management:project-defaults-save', exportDiagnostics: 'management:diagnostics-export',
   queryProviderUsage: 'management:usage-query',
   saveProviderUsageQuery: 'management:usage-query-save',
+  resetProvider: 'management:provider-reset',
 } as const;

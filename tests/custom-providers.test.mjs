@@ -838,3 +838,42 @@ test('removing an overlay of a builtin provider keeps its stored credential', as
     f.assertOffline();
   } finally { await f.cleanup(); }
 });
+
+test('builtin provider reset clears overlay, credential, usage query and hidden models', async () => {
+  const { loadModelPrefsFile, setModelDisabled } = await import('../packages/agent/src/customProviders.ts');
+  const f = await fixture({ models: { providers: { deepseek: { name: 'DeepSeek Relay', baseUrl: 'https://relay.example.invalid/v1', api: 'openai-completions', desktopUsageQuery: { enabled: true, template: 'general' } } } } });
+  try {
+    writeFileSync(f.authPath, JSON.stringify({ deepseek: { type: 'api_key', key: 'sk-reset-me' } }));
+    const agentDir = join(f.modelsPath, '..');
+    await setModelDisabled(agentDir, 'deepseek', 'deepseek-reasoner', true);
+    const listed = await f.service.listModelProviders();
+    const deepseek = listed.find((item) => item.provider === 'deepseek');
+    assert.equal(deepseek?.resettable, true, 'a builtin with saved state is resettable');
+    assert.equal(listed.find((item) => item.provider === 'groq')?.resettable ?? false, false, 'a pristine builtin is not resettable');
+    await f.service.resetProvider('deepseek');
+    const models = JSON.parse(contents(f.modelsPath) ?? '{}');
+    assert.equal(Object.hasOwn(models.providers ?? {}, 'deepseek'), false, 'the overlay entry is removed');
+    const auth = JSON.parse(contents(f.authPath) ?? '{}');
+    assert.equal(Object.hasOwn(auth, 'deepseek'), false, 'the stored credential is removed');
+    const prefs = await loadModelPrefsFile(agentDir);
+    assert.equal(prefs.usageQueries.deepseek, undefined, 'the usage-query pref is removed');
+    assert.equal(prefs.disabled.deepseek, undefined, 'the hidden-model list is removed');
+  } finally {
+    await f.cleanup();
+  }
+});
+
+test('reset refuses while a session still uses the provider', async () => {
+  const f = await fixture({ models: { providers: { deepseek: { name: 'DeepSeek Relay', baseUrl: 'https://relay.example.invalid/v1', api: 'openai-completions' } } } });
+  try {
+    writeFileSync(f.authPath, JSON.stringify({ deepseek: { type: 'api_key', key: 'sk-in-use' } }));
+    await f.service.setProviderApiKey('deepseek', 'sk-in-use');
+    const listed = await f.service.listModelProviders();
+    const deepseek = listed.find((item) => item.provider === 'deepseek');
+    assert.ok(deepseek?.models.length, 'the deepseek catalog must be available offline');
+    await f.service.setModel('deepseek', deepseek.models[0].id);
+    await assert.rejects(() => f.service.resetProvider('deepseek'), /正在使用/);
+  } finally {
+    await f.cleanup();
+  }
+});
