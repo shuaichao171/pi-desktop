@@ -1,13 +1,13 @@
 import { useSyncExternalStore } from 'react';
 
-export interface ConversationMetricsPreferences { speed: boolean; tokens: boolean; duration: boolean }
+export interface ConversationMetricsPreferences { speed: boolean; tokens: boolean; duration: boolean; balance: boolean }
 export const CONVERSATION_METRICS_STORAGE_KEY = 'pi-desktop:conversation-metrics';
-export const DEFAULT_CONVERSATION_METRICS: Readonly<ConversationMetricsPreferences> = Object.freeze({ speed: true, tokens: true, duration: true });
+export const DEFAULT_CONVERSATION_METRICS: Readonly<ConversationMetricsPreferences> = Object.freeze({ speed: true, tokens: true, duration: true, balance: true });
 const listeners = new Set<() => void>();
 
 export function normalizeConversationMetrics(value: unknown): ConversationMetricsPreferences {
 	const saved = value && typeof value === 'object' ? value as Partial<ConversationMetricsPreferences> : {};
-	return { speed: typeof saved.speed === 'boolean' ? saved.speed : true, tokens: typeof saved.tokens === 'boolean' ? saved.tokens : true, duration: typeof saved.duration === 'boolean' ? saved.duration : true };
+	return { speed: typeof saved.speed === 'boolean' ? saved.speed : true, tokens: typeof saved.tokens === 'boolean' ? saved.tokens : true, duration: typeof saved.duration === 'boolean' ? saved.duration : true, balance: typeof saved.balance === 'boolean' ? saved.balance : true };
 }
 function parsePreferences(value: string | null): ConversationMetricsPreferences {
 	try { return normalizeConversationMetrics(value ? JSON.parse(value) : null); }

@@ -88,7 +88,7 @@ import type {
 } from '@pidesktop/shared';
 import { createAgentError, normalizeAgentError } from '../../shared/src/agentErrors.ts';
 import { BUILTIN_SLASH_COMMANDS, expandSlashPrompt, validateSlashCommandRequest, validSlashCommandName } from './slashCommands.ts';
-import { CUSTOM_PROVIDER_APIS, assertWritableDocument, commitProviderDocument, connectionReadOnlyReason, getBuiltinProviderIds, getCachedDisabledModels, literalApiKey, loadModelPrefs, mergeProvider, mergeProviderModels, parseProviderDocumentText, readProviderDocument, restoreProviderBackupFiles, safeProviderUrl, setModelDisabled, validateDiscoveryRequest, validateProviderId, validateProviderModelsRequest, validateProviderRequest, validateProviderWithSdk, type ProviderBackupFiles, type ProviderDocument, type ProviderModelsChange } from './customProviders.ts';
+import { CUSTOM_PROVIDER_APIS, assertWritableDocument, commitProviderDocument, connectionReadOnlyReason, getBuiltinProviderIds, getCachedDisabledModels, literalApiKey, loadModelPrefs, mergeProvider, mergeProviderModels, mergeProviderUsageQuery, parseProviderDocumentText, readProviderDocument, restoreProviderBackupFiles, safeProviderUrl, setModelDisabled, validateDiscoveryRequest, validateProviderId, validateProviderModelsRequest, validateProviderRequest, validateProviderWithSdk, type ProviderBackupFiles, type ProviderDocument, type ProviderModelsChange } from './customProviders.ts';
 import { discoverProviderModels, ProviderDiscoveryError } from './providerDiscovery.ts';
 import { bindProviderNetwork, runWithProviderNetwork } from './providerNetwork.ts';
 export { configureProviderNetwork } from './providerNetwork.ts';
@@ -103,7 +103,8 @@ import { sessionTiming } from './sessionMetrics.ts';
 import { requestDesktopConfirmation } from './extensionApproval.ts';
 export type { DesktopApprovalOptions } from './extensionApproval.ts';
 import { requireInputQueueScope, type UiInputQueue, type UiInputQueueScope, type UiInputQueueMutation, type UiInputReceipt, type UiSubmitInput } from '../../shared/src/inputFeatures.ts';
-import type { ModelTestRequest, ProjectDefaultsWrite } from '../../shared/src/managementFeatures.ts';
+import type { ModelTestRequest, ProjectDefaultsWrite, UiSaveProviderUsageQueryRequest, UiUsageQueryConfig, UiUsageQueryResult } from '../../shared/src/managementFeatures.ts';
+import { runProviderUsageQuery, usageQueryInfo, normalizeUsageQueryConfig, validateUsageQueryRequest } from './providerUsageQuery.ts';
 import { ModelTestService } from './modelTest.ts';
 import { ProjectDefaultsService } from './projectDefaults.ts';
 import { McpManager } from './mcpManager.ts';
@@ -702,6 +703,7 @@ class SingleAgentService {
 				api: typeof config?.api === 'string' ? config.api : typeof catalog[0]?.api === 'string' ? catalog[0].api : null,
 				headerNames: config?.headers && typeof config.headers === 'object' && !Array.isArray(config.headers) ? Object.keys(config.headers) : [],
 				...(typeof config?.desktopUseSystemProxy === 'boolean' ? { useSystemProxy: config.desktopUseSystemProxy } : {}),
+			...(usageQueryInfo(normalizeUsageQueryConfig(config?.desktopUsageQuery)) ? { usageQuery: usageQueryInfo(normalizeUsageQueryConfig(config?.desktopUsageQuery))! } : {}),
 				models: catalog.map((model) => ({ provider: model.provider, id: model.id, name: model.name, reasoning: model.reasoning,
 					input: [...model.input], contextWindow: model.contextWindow, maxTokens: model.maxTokens, thinkingLevels: getSupportedThinkingLevels(model),
 					...(model.thinkingLevelMap ? { thinkingLevelMap: { ...model.thinkingLevelMap } } : {}) })),
@@ -2513,6 +2515,41 @@ export class AgentService {
 	async saveProviderModels(input: UiSaveProviderModelsRequest): Promise<void> {
 		const request = validateProviderModelsRequest(input);
 		await this.updateCustomProvider(request.provider, undefined, request);
+	}
+	async saveProviderUsageQuery(input: UiSaveProviderUsageQueryRequest): Promise<void> {
+		if (input === null || typeof input !== 'object' || Array.isArray(input)) throw new Error('用量查询保存参数无效');
+		const provider = validateProviderId(input.provider);
+		const config = input.usageQuery === null ? null : validateUsageQueryRequest(input.usageQuery);
+		await this.updateProviderUsageQuery(provider, config);
+	}
+	private async updateProviderUsageQuery(provider: string, config: UiUsageQueryConfig | null): Promise<void> {
+		const service = this.requireActive();
+		if (this.transition || this.credentialOperation || this.trimOperation) throw new Error('会话或设置正在更新，请稍后再试');
+		const contexts = [...this.contexts.values()];
+		const releases: (() => void)[] = [];
+		try { for (const context of contexts) releases.push(context.lockProviderConfiguration(false)); }
+		catch (error) { for (const release of releases) release(); throw error; }
+		const operation = Promise.resolve().then(async () => {
+			const directory = service.agentDirectory;
+			const path = join(directory, 'models.json');
+			const document = await readProviderDocument(path);
+			assertWritableDocument(document);
+			const next = mergeProviderUsageQuery(document, provider, config);
+			await validateProviderWithSdk(directory, provider, next.providers[provider]!);
+			const rollback = await commitProviderDocument(path, document, next);
+			try { await this.refreshCustomProviderContexts(contexts, provider); }
+			catch { try { await rollback(); } catch { /* The pi-desktop-backup file remains for manual recovery. */ } throw new Error('Pi 无法同步供应商配置，用量查询设置已回滚'); }
+		});
+		this.providerOperation = operation;
+		try { await operation; }
+		finally { for (const release of releases) release(); if (this.providerOperation === operation) this.providerOperation = null; }
+	}
+	async queryProviderUsage(provider: string): Promise<UiUsageQueryResult> {
+		const providerId = validateProviderId(provider);
+		const service = this.requireActive();
+		const document = await readProviderDocument(join(service.agentDirectory, 'models.json'));
+		const entry = Object.hasOwn(document.data.providers, providerId) ? document.data.providers[providerId] : undefined;
+		return runProviderUsageQuery({ provider: providerId, entry, authPath: join(service.agentDirectory, 'auth.json') });
 	}
 	listSlashCommands(): UiSlashCommand[] { return this.active?.listSlashCommands() ?? []; }
 	async executeSlashCommand(request: UiSlashCommandRequest): Promise<void> {

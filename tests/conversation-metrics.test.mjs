@@ -78,25 +78,25 @@ const memoryStorage = initial => { const values = new Map(initial ? [[key, initi
 test('metric preferences default on, independently persist, and sync between windows', async () => {
   const storage = memoryStorage();
   await withPreferences(storage, (preferences, target) => {
-    assert.deepEqual(preferences.getConversationMetricsPreferences(), { speed: true, tokens: true, duration: true });
+    assert.deepEqual(preferences.getConversationMetricsPreferences(), { speed: true, tokens: true, duration: true, balance: true });
     const updates = []; const unsubscribe = preferences.subscribeConversationMetricsPreferences(() => updates.push(preferences.getConversationMetricsPreferences()));
     assert.equal(preferences.setConversationMetricsPreferences({ tokens: false }), true);
-    assert.deepEqual(preferences.getConversationMetricsPreferences(), { speed: true, tokens: false, duration: true });
+    assert.deepEqual(preferences.getConversationMetricsPreferences(), { speed: true, tokens: false, duration: true, balance: true });
     target.dispatchEvent(Object.assign(new Event('storage'), { key, newValue: JSON.stringify({ duration: false }), storageArea: storage }));
-    assert.deepEqual(preferences.getConversationMetricsPreferences(), { speed: true, tokens: true, duration: false });
+    assert.deepEqual(preferences.getConversationMetricsPreferences(), { speed: true, tokens: true, duration: false, balance: true });
     target.dispatchEvent(Object.assign(new Event('storage'), { key: 'unrelated', newValue: '{}', storageArea: storage }));
     assert.equal(updates.length, 2);
     unsubscribe();
   });
   await withPreferences(storage, preferences => assert.equal(preferences.getConversationMetricsPreferences().tokens, false));
   // Blobs saved before the cache metric was removed keep working; the retired key is ignored.
-  await withPreferences(memoryStorage('{"speed":true,"tokens":true,"cache":false,"duration":true}'), preferences => assert.deepEqual(preferences.getConversationMetricsPreferences(), { speed: true, tokens: true, duration: true }));
+  await withPreferences(memoryStorage('{"speed":true,"tokens":true,"cache":false,"duration":true}'), preferences => assert.deepEqual(preferences.getConversationMetricsPreferences(), { speed: true, tokens: true, duration: true, balance: true }));
 });
 
 test('invalid saved metric preferences recover and blocked persistence keeps the local choice', async () => {
   for (const value of ['not json', 'null', '{"speed":"no"}', '[]']) await withPreferences(memoryStorage(value), preferences => assert.equal(preferences.getConversationMetricsPreferences().speed, true));
   await withPreferences({ getItem() { throw Error('blocked'); }, setItem() { throw Error('blocked'); } }, preferences => {
     assert.equal(preferences.setConversationMetricsPreferences({ speed: false, tokens: false, duration: false }), false);
-    assert.deepEqual(preferences.getConversationMetricsPreferences(), { speed: false, tokens: false, duration: false });
+    assert.deepEqual(preferences.getConversationMetricsPreferences(), { speed: false, tokens: false, duration: false, balance: true });
   });
 });

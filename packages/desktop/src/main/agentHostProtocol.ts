@@ -19,7 +19,7 @@ export const AGENT_HOST_METHODS = [
  'checkPluginUpdate', 'getMcpSnapshot', 'saveMcpServer', 'removeMcpServer', 'connectMcpServer', 'disconnectMcpServer', 'testMcpServer',
 'submitInput', 'getInputQueue', 'mutateInputQueue', 'getFileCheckpoint', 'rewindFileCheckpoint', 'getEditRewindPreview', 'getFileChangeDiffs',
  'searchSessionsPage', 'searchProjectFiles', 'rebuildSearchIndex', 'cancelDataSearch', 'getProjectSearchRules', 'setProjectSearchRules',
- 'testProviderModel', 'cancelProviderModelTest', 'getProjectDefaults', 'saveProjectDefaults',
+ 'testProviderModel', 'cancelProviderModelTest', 'getProjectDefaults', 'saveProjectDefaults', 'queryProviderUsage', 'saveProviderUsageQuery',
 	'getPersonalization',
 	'saveInstruction',
 	'init',

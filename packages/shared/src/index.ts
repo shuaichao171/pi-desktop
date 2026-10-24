@@ -1,4 +1,4 @@
-import type { ManagementFeaturesBridge } from './managementFeatures';
+import type { ManagementFeaturesBridge, UiProviderUsageQueryInfo } from './managementFeatures';
 import type { UiDiagnosticEvent } from './uiDiagnostics';
 export * from './uiDiagnostics.ts';
 import type { UiAgentError } from './agentErrors';
@@ -12,6 +12,7 @@ export * from './resultFiles.ts';
 export * from './pluginUpdates.ts';
 export * from './mcpFeatures.ts';
 export * from './managementFeatures.ts';
+export * from './usageTemplates.ts';
 import type { InputFeatureBridge, UiInputScope } from './inputFeatures';
 import type { DataFeaturesBridge } from './dataFeatures';
 import type { WorkbenchFeaturesBridge } from './workbenchFeatures';
@@ -352,6 +353,8 @@ export interface UiModelProvider {
   headerNames?: string[];
   /** Undefined preserves the existing Pi network behavior until explicitly configured. */
   useSystemProxy?: boolean;
+  /** Usage-query settings mirrored from the models.json provider entry; secrets are not included. */
+  usageQuery?: UiProviderUsageQueryInfo;
   models: UiModelSummary[];
   /** Model ids hidden from pickers via desktop model preferences. */
   disabledModels?: string[];

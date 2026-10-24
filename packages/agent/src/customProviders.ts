@@ -3,6 +3,7 @@ import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { ModelRuntime } from '@earendil-works/pi-coding-agent';
 import type { UiCustomProviderModel, UiDiscoverProviderModelsRequest, UiProviderApi, UiProviderHeaders, UiProviderReadOnlyReason, UiSaveCustomProviderRequest, UiSaveProviderModelsRequest, UiThinkingLevel } from '@pidesktop/shared';
+import type { UiUsageQueryConfig } from '../../shared/src/managementFeatures.ts';
 
 type JsonObject = Record<string, unknown>;
 /** `invalid` lists entries Pi's schema would reject; they stay readable but block every write. */
@@ -271,6 +272,25 @@ export function mergeProvider(document: ProviderDocument, request: UiSaveCustomP
 		...(request.useSystemProxy === undefined ? {} : { desktopUseSystemProxy: request.useSystemProxy }),
 		models: request.models.map((model) => ({ ...previousModels.get(model.id), ...model })),
 	} } };
+}
+
+/** Targeted write of the usage-query settings; every other entry field stays untouched. */
+export function mergeProviderUsageQuery(document: ProviderDocument, provider: string, config: UiUsageQueryConfig | null): ProviderDocument['data'] {
+	if (!own(document.data.providers, provider)) throw new Error('供应商没有本地配置，无法保存用量查询');
+	const previous = document.data.providers[provider]!;
+	const entry: JsonObject = { ...previous };
+	if (config === null) delete entry.desktopUsageQuery;
+	else {
+		// An omitted accessToken/userId means "keep the stored value" (apiKey-style
+		// round-trip: the dialog never reads secrets back); an empty string clears it.
+		const previousQuery = record(previous.desktopUsageQuery) ? previous.desktopUsageQuery : undefined;
+		const previousToken = typeof previousQuery?.accessToken === 'string' ? previousQuery.accessToken : undefined;
+		const previousUserId = typeof previousQuery?.userId === 'string' ? previousQuery.userId : undefined;
+		entry.desktopUsageQuery = { ...config,
+			...(config.accessToken === undefined && previousToken !== undefined ? { accessToken: previousToken } : {}),
+			...(config.userId === undefined && previousUserId !== undefined ? { userId: previousUserId } : {}) };
+	}
+	return { ...document.data, providers: { ...document.data.providers, [provider]: entry } };
 }
 
 export async function validateProviderWithSdk(directory: string, provider: string, config: JsonObject): Promise<void> {
