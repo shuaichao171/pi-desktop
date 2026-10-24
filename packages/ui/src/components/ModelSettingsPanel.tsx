@@ -435,7 +435,15 @@ export function ModelSettingsPanel({ initialTarget, renderCredential, onDraftSta
 	// 供应商要能被找到、配置凭据并删除；未配置的内置供应商仍只在
 	// “添加供应商”弹窗中提供，避免数十个内置条目淹没侧栏。
 	const unconfiguredCustom = unconfiguredProviders.filter((item) => item.custom);
-	const availableTemplates = PROVIDER_TEMPLATES.filter((item) => !providers.some((provider) => provider.provider === item.id));
+	// Presets stay available forever; adding the same preset again gets a suffixed id
+	// (deepseek-2) and display name (DeepSeek 2), so multiple accounts coexist.
+	const templateInstance = (item: ProviderTemplate): ProviderTemplate => {
+		if (!providers.some((provider) => provider.provider === item.id)) return item;
+		for (let n = 2; ; n++) {
+			const id = `${item.id}-${n}`;
+			if (!providers.some((provider) => provider.provider === id)) return { ...item, id, name: `${item.name} ${n}` };
+		}
+	};
 	const defaultProvider = configuredProviders.find((item) => item.provider === modelProvider) ?? configuredProviders[0];
 	const selected = [...configuredProviders, ...unconfiguredCustom].find((item) => item.provider === selectedId) ?? defaultProvider;
 	const selectedConfigured = selected ? configured(selected) : false;
@@ -641,9 +649,9 @@ export function ModelSettingsPanel({ initialTarget, renderCredential, onDraftSta
 			{error && <div className="pd-settings-error" role="alert">{error}</div>}
 			{editor.kind === 'templates' ? <section className="pd-model-template-picker" data-template-picker>
 				<button type="button" data-template="custom" data-autofocus className="pd-model-template-card is-custom" onClick={() => setEditor({ kind: 'create' })}><span className="pd-model-template-custom-icon" aria-hidden="true"><Icon name="plus" width="24" height="24" /></span><span className="pd-model-template-custom-copy"><strong>{t('settings.providerTemplateCustom')}</strong><span>{t('settings.providerTemplateCustomHint')}</span></span></button>
-				{(unconfiguredProviders.length > 0 || availableTemplates.length > 0) && <section className="pd-model-template-options" aria-label={t('settings.providerOtherProviders')}><h4>{t('settings.providerOtherProviders')}</h4><p className="pd-model-settings-notice">{t('settings.providerTemplatesHint')}</p><div className="pd-model-template-grid">
+				{(unconfiguredProviders.length > 0 || PROVIDER_TEMPLATES.length > 0) && <section className="pd-model-template-options" aria-label={t('settings.providerOtherProviders')}><h4>{t('settings.providerOtherProviders')}</h4><p className="pd-model-settings-notice">{t('settings.providerTemplatesHint')}</p><div className="pd-model-template-grid">
 					{unconfiguredProviders.map((item) => <button key={item.provider} type="button" data-add-provider={item.provider} className="pd-model-template-card" onClick={() => setEditor({ kind: 'credentials', provider: item.provider })}><strong>{item.name || item.provider}</strong><span>{t('settings.providerCount', { count: item.models.length })}</span></button>)}
-					{availableTemplates.map((template) => <button key={template.id} type="button" data-template={template.id} className="pd-model-template-card" onClick={() => setEditor({ kind: 'create', template })}><strong>{template.name}</strong><code>{template.baseUrl}</code></button>)}
+					{PROVIDER_TEMPLATES.map((template) => <button key={template.id} type="button" data-template={template.id} className="pd-model-template-card" onClick={() => setEditor({ kind: 'create', template: templateInstance(template) })}><strong>{template.name}</strong><code>{template.baseUrl}</code></button>)}
 				</div></section>}
 			</section>
 			: editor.kind === 'credentials' ? <section className="pd-model-provider-setup">

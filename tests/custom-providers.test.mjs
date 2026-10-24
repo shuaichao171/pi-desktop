@@ -877,3 +877,23 @@ test('reset refuses while a session still uses the provider', async () => {
     await f.cleanup();
   }
 });
+
+test('preset templates can be added repeatedly with suffixed ids next to builtins', async () => {
+  const f = await fixture();
+  try {
+    await f.service.switchWorkspace(f.otherCwd);
+    await f.service.switchWorkspace(f.cwd);
+    // A preset whose id collides with a Pi builtin (deepseek) cannot take the base
+    // id; the suffixed instance the UI generates must save and stay independent.
+    await assert.rejects(() => f.service.saveCustomProvider(request('deepseek')), /已存在/);
+    await f.service.saveCustomProvider(request('deepseek-2', { name: 'DeepSeek 2' }));
+    const listed = await f.service.listModelProviders();
+    const instance = listed.find((item) => item.provider === 'deepseek-2');
+    assert.equal(instance?.custom, true, 'the suffixed preset instance is a normal custom provider');
+    assert.equal(instance?.name, 'DeepSeek 2');
+    const pristine = listed.find((item) => item.provider === 'deepseek');
+    assert.equal(pristine?.custom ?? false, false, 'the builtin deepseek stays untouched');
+  } finally {
+    await f.cleanup();
+  }
+});
