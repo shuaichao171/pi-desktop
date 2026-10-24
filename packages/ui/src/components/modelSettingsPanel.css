@@ -284,3 +284,7 @@
 .pd-usage-script-field textarea { width: 100%; min-height: 180px; resize: vertical; font-family: var(--pd-font-mono, ui-monospace, SFMono-Regular, Consolas, monospace); font-size: var(--pd-font-xs); }
 .pd-usage-test { display: flex; flex-wrap: wrap; gap: 10px; padding: 8px 10px; border: 1px solid var(--pd-border-soft); border-radius: var(--pd-radius-sm); background: color-mix(in srgb, var(--pd-text) 3%, var(--pd-surface)); font-family: var(--pd-font-mono, ui-monospace, SFMono-Regular, Consolas, monospace); font-size: var(--pd-font-sm); }
 .pd-usage-test-error { color: light-dark(#a3573f, #e3a186); }
+
+/* Usage-query toggle state mirrors the provider readiness dot (green + halo). */
+.pd-model-settings-button.is-usage-on { color: var(--pd-success); border-color: color-mix(in srgb, var(--pd-success) 35%, var(--pd-border)); }
+.pd-usage-state { flex: 0 0 7px; width: 7px; height: 7px; border-radius: 50%; background: var(--pd-success); box-shadow: 0 0 0 3px color-mix(in srgb, var(--pd-success) 18%, transparent); }
