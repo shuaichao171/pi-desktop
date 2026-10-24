@@ -1101,12 +1101,14 @@ class SingleAgentService {
 				expandPromptTemplates,
 				streamingBehavior: behavior,
 				images,
-				preflightResult: (accepted) => {
+				preflightResult: (stage) => {
 					// SDK abort only cancels an already-started agent loop. A request
 					// cancelled during auth/hooks must not start a fresh loop afterward.
-					if (accepted && this.closing) throw new Error('会话已关闭，输入未发送');
-					if (accepted && startedRun && tracker?.wasCancelled(startedRun.id)) throw new Error('请求已取消');
-					if (accepted && !acknowledged) {
+					// Pi 1.4 runs this hook outside its run try/finally, so throwing here also has to
+					// release the run flags it already set, or the session stays busy forever.
+					if (stage === 'started' && this.closing) { abandonStartedRun(session); throw new Error('会话已关闭，输入未发送'); }
+					if (stage === 'started' && startedRun && tracker?.wasCancelled(startedRun.id)) { abandonStartedRun(session); throw new Error('请求已取消'); }
+					if (stage && !acknowledged) {
 						acknowledged = true;
 						resolve();
 					}
@@ -2992,6 +2994,16 @@ function contextUsage(session: PiRuntime['session']): UiContextUsage | null {
 
 function errorMessage(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
+}
+
+/** Pi ≥1.4 invokes `preflightResult('started')` from `_startRun` outside its run try/finally, so
+ * throwing there leaves `_isAgentRunActive` set and `waitForIdle()`/`dispose()` waiting forever.
+ * Release the run flags the SDK set before the hook, as its own pre-run failure path does. */
+function abandonStartedRun(session: PiRuntime['session']): void {
+	const state = session as unknown as { _isAgentRunActive?: boolean; _resolveIdleWaitIfIdle?: () => void };
+	if (state._isAgentRunActive !== true) return;
+	state._isAgentRunActive = false;
+	state._resolveIdleWaitIfIdle?.();
 }
 
 /** Match the SDK's queue keys, which concatenate text blocks without a separator. */

@@ -293,3 +293,56 @@ test('confirming recovered inputs in reverse order keeps accepted display order 
     assert.deepEqual(restarted.queue.snapshot().items, []);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
+
+/** Queue whose `peek` returns every message, like a Pi "all" steering/follow-up mode. */
+class AllQueue extends Queue { peek() { return this.messages.slice(); } }
+
+/** Minimal session port for the resume protocol; `session.kind` selects what the SDK exposes. */
+function setupResume(root, kind) {
+  const runs = [];
+  const session = { isIdle: true, agent: { steeringQueue: new AllQueue(), followUpQueue: new AllQueue() }, _steeringMessages: [], _followUpMessages: [], _emitQueueUpdate() {} };
+  if (kind === 'legacy') session._runAgentPrompt = async messages => { runs.push({ kind: 'legacy', messages }); };
+  if (kind === 'trigger') session._startRun = async trigger => { runs.push({ kind: 'trigger', trigger }); };
+  const queue = new DurableInputQueue(session, { cwd: root, sessionPath: null }, join(root, 'queue'), new AttachmentStore(join(root, 'attachments')), { currentInput: () => undefined, preview: message => ({ text: rawOf(message), attachments: [] }), changed() {}, resume() {}, error() {} });
+  const enqueue = (text, behavior = 'followUp', image) => session.agent[behavior === 'steer' ? 'steeringQueue' : 'followUpQueue'].enqueue({ role: 'user', content: [{ type: 'text', text }, ...(image ? [{ type: 'image', mimeType: 'image/png', data: image }] : [])], timestamp: 1 });
+  return { queue, session, runs, enqueue };
+}
+const rawOf = message => message.content.filter(part => part.type === 'text').map(part => part.text).join('');
+
+test('resumeIdle supports the Pi 1.4 trigger protocol and keeps later messages queued', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'pi-input-resume-trigger-'));
+  try {
+    const state = setupResume(root, 'trigger');
+    state.enqueue('run this', 'steer', 'YQ==');
+    state.enqueue('after that', 'steer');
+    await state.queue.resumeIdle();
+    assert.equal(state.runs.length, 1);
+    assert.deepEqual(state.runs[0].trigger, { messageType: 'user', prompt: 'run this', images: [{ type: 'image', mimeType: 'image/png', data: 'YQ==' }] });
+    assert.deepEqual(state.session.agent.steeringQueue.messages.map(rawOf), ['after that'], 'held messages stay queued for the run to drain');
+    assert.deepEqual(state.session._steeringMessages, ['after that'], 'session display mirrors the queue');
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('resumeIdle keeps the legacy message-list protocol when the SDK exposes it', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'pi-input-resume-legacy-'));
+  try {
+    const state = setupResume(root, 'legacy');
+    state.enqueue('legacy run');
+    await state.queue.resumeIdle();
+    assert.equal(state.runs.length, 1);
+    assert.equal(state.runs[0].kind, 'legacy');
+    assert.deepEqual(state.runs[0].messages.map(rawOf), ['legacy run']);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('resumeIdle starts a custom run and refuses engines with no resume protocol', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'pi-input-resume-custom-'));
+  try {
+    const state = setupResume(root, 'trigger');
+    const custom = { role: 'custom', customType: 'note', content: [{ type: 'text', text: 'note' }], timestamp: 1 };
+    state.session.agent.followUpQueue.enqueue(custom);
+    await state.queue.resumeIdle();
+    assert.deepEqual(state.runs[0].trigger, { messageType: 'custom', message: custom });
+  } finally { rmSync(root, { recursive: true, force: true }); }
+  assert.throws(() => setupResume(root, 'none'), /Pi SDK 队列显示协议不兼容/);
+});

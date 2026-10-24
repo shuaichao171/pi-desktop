@@ -22,21 +22,23 @@ export function validSlashCommandName(name: string): boolean {
 	return Boolean(name) && name.length <= 200 && !/[\s/\u0000-\u001f\u007f]/u.test(name);
 }
 
-/** Mirrors Pi 0.87 prompt argument syntax. Expand before framing attachments so
- * a template without $ARGUMENTS cannot discard the selected context. */
+/** Mirrors the installed Pi prompt argument syntax (quoted empty arguments are kept).
+ * Expand before framing attachments so a template without $ARGUMENTS cannot discard the selected context. */
 export function expandSlashPrompt(content: string, input: string): string {
 	const args: string[] = [];
 	let current = '';
+	// Tracks whether the current token started, so quoted empty strings survive as arguments.
+	let hasToken = false;
 	let quote: string | null = null;
 	for (const char of input) {
 		if (quote) {
 			if (char === quote) quote = null;
 			else current += char;
-		} else if (char === '"' || char === "'") quote = char;
-		else if (/\s/u.test(char)) { if (current) { args.push(current); current = ''; } }
-		else current += char;
+		} else if (char === '"' || char === "'") { quote = char; hasToken = true; }
+		else if (/\s/u.test(char)) { if (hasToken) { args.push(current); current = ''; hasToken = false; } }
+		else { current += char; hasToken = true; }
 	}
-	if (current) args.push(current);
+	if (hasToken) args.push(current);
 	const all = args.join(' ');
 	return content.replace(/\$\{(\d+|ARGUMENTS|@):-([^}]*)\}|\$\{@:(\d+)(?::(\d+))?\}|\$(ARGUMENTS|@|\d+)/g,
 		(_match, fallbackTarget: string | undefined, fallback: string, sliceStart: string | undefined, sliceLength: string | undefined, simple: string) => {

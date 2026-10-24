@@ -7,19 +7,25 @@ import { AttachmentStore, atomicInputJson, inputScopeKey } from './attachmentSto
 
 type Message = { role: string; content: string | Record<string, unknown>[]; [key: string]: unknown };
 type Queue = { messages: Message[]; enqueue(message: Message): void; drain(): Message[]; clear(): void; hasItems(): boolean; peek(): Message[] };
-type SessionPort = { isIdle: boolean; agent: { steeringQueue: Queue; followUpQueue: Queue }; _steeringMessages: string[]; _followUpMessages: string[]; _emitQueueUpdate(): void; _runAgentPrompt(messages: Message[]): Promise<void> };
+type ImagePart = { type: 'image'; data: string; mimeType: string };
+/** Pi ≤1.3 starts a run from a prepared message list; Pi 1.4+ builds it from a trigger. */
+type RunTrigger = { messageType: 'user'; prompt: string; images?: ImagePart[] } | { messageType: 'custom'; message: Message };
+type SessionPort = { isIdle: boolean; agent: { steeringQueue: Queue; followUpQueue: Queue }; _steeringMessages: string[]; _followUpMessages: string[]; _emitQueueUpdate(): void; _runAgentPrompt?(messages: Message[]): Promise<void>; _startRun?(trigger: RunTrigger, onStarted?: () => void): Promise<void> };
 type Row = { id: string; fingerprint?: string; behavior: 'steer' | 'followUp'; state: UiInputQueueItem['state']; version: number; text: string; attachments: UiQueuedAttachment[]; message?: Message; enqueued?: boolean; reason?: string; retryable?: boolean };
 type DiskState = { version: number; paused: boolean; rows: Row[]; mutations: Record<string, { fingerprint: string }> };
 const rawText = (message: Message) => typeof message.content === 'string' ? message.content : message.content.filter((part) => part.type === 'text').map((part) => part.text ?? '').join('');
+const imageParts = (message: Message): ImagePart[] => Array.isArray(message.content) ? message.content.filter((part): part is ImagePart => part?.type === 'image' && typeof part.data === 'string' && typeof part.mimeType === 'string') : [];
 const hash = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const pending = (row: Row) => row.state === 'accepted' || row.state === 'recovered' || row.state === 'editing';
 const validId = (id: string) => typeof id === 'string' && /^[a-zA-Z0-9_-]{8,128}$/.test(id);
 
-/** Version-checked adapter for the pinned Pi 0.87 PendingMessageQueue implementation. */
+/** Version-checked adapter for the Pi PendingMessageQueue protocol (Pi ≤1.3 and 1.4+). */
 export class DurableInputQueue {
 	private state: DiskState = { version: 0, paused: false, rows: [], mutations: {} };
 	private readonly messages = new Map<string, Message>();
 	private readonly identities = new WeakMap<object, string>();
+	/** Raw SDK queue inserts captured before the ledger wrapper replaced `enqueue`. */
+	private readonly rawEnqueue: Record<'steer' | 'followUp', ((message: Message) => void) | undefined> = { steer: undefined, followUp: undefined };
 	private readonly file: string;
 	private readonly port: SessionPort;
 	private readonly restore: (() => void)[] = [];
@@ -33,7 +39,7 @@ export class DurableInputQueue {
 		this.scope = scope; this.storage = storage; this.options = options;
 		this.port = session as SessionPort;
 		for (const queue of [this.port.agent?.steeringQueue, this.port.agent?.followUpQueue]) if (!queue || !Array.isArray(queue.messages) || typeof queue.enqueue !== 'function' || typeof queue.drain !== 'function' || typeof queue.clear !== 'function' || typeof queue.peek !== 'function' || typeof queue.hasItems !== 'function') throw new Error('当前 Pi SDK 不支持安全队列适配，请更新桌面应用');
-		if (!Array.isArray(this.port._steeringMessages) || !Array.isArray(this.port._followUpMessages) || typeof this.port._emitQueueUpdate !== 'function' || typeof this.port._runAgentPrompt !== 'function') throw new Error('Pi SDK 队列显示协议不兼容');
+		if (!Array.isArray(this.port._steeringMessages) || !Array.isArray(this.port._followUpMessages) || typeof this.port._emitQueueUpdate !== 'function' || (typeof this.port._runAgentPrompt !== 'function' && typeof this.port._startRun !== 'function')) throw new Error('Pi SDK 队列显示协议不兼容');
 		mkdirSync(root, { recursive: true }); this.file = join(root, `${inputScopeKey(scope)}.json`);
 		if (existsSync(this.file)) {
 			const saved = JSON.parse(readFileSync(this.file, 'utf8')) as DiskState;
@@ -76,6 +82,7 @@ export class DurableInputQueue {
 	}
 	private wrap(behavior: 'steer' | 'followUp', queue: Queue): void {
 		const enqueue = queue.enqueue, drain = queue.drain, clear = queue.clear, hasItems = queue.hasItems;
+		this.rawEnqueue[behavior] = (message) => enqueue.call(queue, message);
 		queue.hasItems = () => !(behavior === 'followUp' && this.state.paused) && hasItems.call(queue);
 		queue.enqueue = (message) => {
 			if (message.role !== 'user') { enqueue.call(queue, message); return; }
@@ -212,9 +219,30 @@ export class DurableInputQueue {
 	}
 	async resumeIdle(): Promise<void> {
 		if (!this.port.isIdle) return;
-		const messages = this.port.agent.steeringQueue.drain();
-		if (!messages.length) messages.push(...this.port.agent.followUpQueue.drain());
-		if (messages.length) await this.port._runAgentPrompt(messages);
+		let queue = this.port.agent.steeringQueue;
+		let messages = queue.drain();
+		const behavior: 'steer' | 'followUp' = messages.length ? 'steer' : 'followUp';
+		if (!messages.length) { queue = this.port.agent.followUpQueue; messages = queue.drain(); }
+		if (!messages.length) return;
+		if (typeof this.port._runAgentPrompt === 'function') { await this.port._runAgentPrompt(messages); return; }
+		// Pi 1.4 removed `_runAgentPrompt`: a run starts from a trigger and its loop drains whatever
+		// stays queued, so only the first runnable message starts the run and the rest keep their place.
+		if (typeof this.port._startRun !== 'function') throw new Error('Pi SDK 队列显示协议不兼容');
+		const index = messages.findIndex((message) => message.role === 'user' || message.role === 'custom');
+		if (index < 0) { this.requeue(behavior, messages); return; }
+		const start = messages[index];
+		this.requeue(behavior, messages.filter((_, position) => position !== index));
+		const images = imageParts(start);
+		await this.port._startRun(start.role === 'user'
+			? { messageType: 'user', prompt: rawText(start), ...(images.length ? { images } : {}) }
+			: { messageType: 'custom', message: start });
+	}
+	/** Puts drained messages back into their SDK queue without touching the ledger rows. */
+	private requeue(behavior: 'steer' | 'followUp', messages: Message[]): void {
+		const enqueue = this.rawEnqueue[behavior];
+		if (!enqueue || !messages.length) return;
+		for (const message of messages) enqueue(message);
+		this.mirror();
 	}
 	dispose(): void { for (const restore of this.restore) restore(); }
 }
