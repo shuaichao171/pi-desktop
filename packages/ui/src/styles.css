@@ -738,6 +738,7 @@ div.pd-hover-tooltip:has(.pd-update-notes-body) { max-width: min(400px, calc(100
 /* Clears the fixed workbench toggle (right 116px + 28px) and the window
    controls so header content never renders underneath them. */
 .is-frameless .pd-chat-header { padding-right: 152px; }
+.is-frameless .pd-top-bar { padding-right: 152px; }
 .pd-app-shell:not(.is-frameless) .pd-chat-header { padding-right: 52px; }
 .is-frameless .pd-top-bar button,
 .is-frameless .pd-chat-header button,
