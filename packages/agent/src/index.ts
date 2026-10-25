@@ -105,6 +105,7 @@ export type { DesktopApprovalOptions } from './extensionApproval.ts';
 import { requireInputQueueScope, type UiInputQueue, type UiInputQueueScope, type UiInputQueueMutation, type UiInputReceipt, type UiSubmitInput } from '../../shared/src/inputFeatures.ts';
 import type { ModelTestRequest, ProjectDefaultsWrite, UiSaveProviderUsageQueryRequest, UiUsageQueryConfig, UiUsageQueryResult } from '../../shared/src/managementFeatures.ts';
 import { runProviderUsageQuery, usageQueryInfo, normalizeUsageQueryConfig, validateUsageQueryRequest } from './providerUsageQuery.ts';
+import { clearDisabledModelsForProvider } from './customProviders.ts';
 import { ModelTestService } from './modelTest.ts';
 import { ProjectDefaultsService } from './projectDefaults.ts';
 import { McpManager } from './mcpManager.ts';
@@ -711,7 +712,8 @@ class SingleAgentService {
 				api: typeof config?.api === 'string' ? config.api : typeof catalog[0]?.api === 'string' ? catalog[0].api : null,
 				headerNames: config?.headers && typeof config.headers === 'object' && !Array.isArray(config.headers) ? Object.keys(config.headers) : [],
 				...(typeof config?.desktopUseSystemProxy === 'boolean' ? { useSystemProxy: config.desktopUseSystemProxy } : {}),
-			...(usageQueryInfo(normalizeUsageQueryConfig(config?.desktopUsageQuery) ?? usageQueryPrefs[id] ?? null) ? { usageQuery: usageQueryInfo(normalizeUsageQueryConfig(config?.desktopUsageQuery) ?? usageQueryPrefs[id] ?? null)! } : {}),
+				...(usageQueryInfo(normalizeUsageQueryConfig(config?.desktopUsageQuery) ?? usageQueryPrefs[id] ?? null) ? { usageQuery: usageQueryInfo(normalizeUsageQueryConfig(config?.desktopUsageQuery) ?? usageQueryPrefs[id] ?? null)! } : {}),
+				...(builtin && (entry !== undefined || Boolean(credential) || Boolean(usageQueryPrefs[id]) || Boolean(disabledByProvider[id]?.length)) ? { resettable: true } : {}),
 				models: catalog.map((model) => ({ provider: model.provider, id: model.id, name: model.name, reasoning: model.reasoning,
 					input: [...model.input], contextWindow: model.contextWindow, maxTokens: model.maxTokens, thinkingLevels: getSupportedThinkingLevels(model),
 					...(model.thinkingLevelMap ? { thinkingLevelMap: { ...model.thinkingLevelMap } } : {}) })),
@@ -2571,6 +2573,52 @@ export class AgentService {
 		const entry = Object.hasOwn(document.data.providers, providerId) ? document.data.providers[providerId] : undefined;
 		const prefsConfig = normalizeUsageQueryConfig(entry?.desktopUsageQuery) ? null : (await loadUsageQueryPrefs(directory))[providerId] ?? null;
 		return runProviderUsageQuery({ provider: providerId, entry, prefsConfig, catalogBaseUrl: service.catalogBaseUrl(providerId), authPath: join(directory, 'auth.json') });
+	}
+	/** Clears everything this app saved on a provider: entry overlay, credential, usage query and hidden models. */
+	async resetProvider(provider: string): Promise<void> {
+		const providerId = validateProviderId(provider);
+		const service = this.requireActive();
+		if (this.transition || this.credentialOperation || this.trimOperation) throw new Error('会话或设置正在更新，请稍后再试');
+		const contexts = [...this.contexts.values()];
+		for (const context of contexts) {
+			if (context.getSnapshot().modelProvider === providerId) throw new Error('会话正在使用该供应商，请先为会话切换模型');
+		}
+		const releases: (() => void)[] = [];
+		try { for (const context of contexts) releases.push(context.lockProviderConfiguration(false)); }
+		catch (error) { for (const release of releases) release(); throw error; }
+		const operation = Promise.resolve().then(async () => {
+			const directory = service.agentDirectory;
+			const path = join(directory, 'models.json');
+			const document = await readProviderDocument(path);
+			assertWritableDocument(document);
+			const entry = Object.hasOwn(document.data.providers, providerId) ? document.data.providers[providerId] : undefined;
+			const credential = readStoredCredential(providerId, join(directory, 'auth.json'));
+			const [prefs] = await Promise.all([loadUsageQueryPrefs(directory), getBuiltinProviderIds()]);
+			const hasState = entry !== undefined || Boolean(credential) || Boolean(prefs[providerId]) || Boolean(getCachedDisabledModels()[providerId]?.length);
+			if (!hasState) throw new Error('该供应商没有已保存的配置');
+			let rollback: (() => Promise<void>) | undefined;
+			try {
+				// Credential first (one-way logout); the document commit below is the only rollbackable step.
+				if (credential) {
+					try { await service.removeProviderCredential(providerId); }
+					catch (error) { if (!(error instanceof Error && error.message === 'Provider 无效')) throw error; /* An orphaned credential has no runtime to log out. */ }
+				}
+				if (entry !== undefined) {
+					const next = { ...document.data, providers: { ...document.data.providers } };
+					delete next.providers[providerId];
+					rollback = await commitProviderDocument(path, document, next);
+				}
+				await setUsageQueryPref(directory, providerId, null);
+				await clearDisabledModelsForProvider(directory, providerId);
+				await this.refreshCustomProviderContexts(contexts, providerId, false);
+			} catch (error) {
+				if (rollback) await rollback().catch(() => { /* The pi-desktop-backup file remains for manual recovery. */ });
+				throw error;
+			}
+		});
+		this.providerOperation = operation;
+		try { await operation; }
+		finally { for (const release of releases) release(); if (this.providerOperation === operation) this.providerOperation = null; }
 	}
 	listSlashCommands(): UiSlashCommand[] { return this.active?.listSlashCommands() ?? []; }
 	async executeSlashCommand(request: UiSlashCommandRequest): Promise<void> {

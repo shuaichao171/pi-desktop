@@ -736,6 +736,7 @@ export function registerIpc(options: {
 	handleRendererInvoke(MANAGEMENT_FEATURE_CHANNELS.saveProjectDefaults, (_event, request: Parameters<typeof agentService.saveProjectDefaults>[0]) => agentService.saveProjectDefaults(request));
 	handleRendererInvoke(MANAGEMENT_FEATURE_CHANNELS.queryProviderUsage, (_event, provider: string) => agentService.queryProviderUsage(provider));
 	handleRendererInvoke(MANAGEMENT_FEATURE_CHANNELS.saveProviderUsageQuery, (_event, request: Parameters<typeof agentService.saveProviderUsageQuery>[0]) => agentService.saveProviderUsageQuery(request));
+	handleRendererInvoke(MANAGEMENT_FEATURE_CHANNELS.resetProvider, (_event, provider: string) => agentService.resetProvider(provider));
 	handleRendererInvoke(IPC_CHANNELS.personalizationRead, (event) => {
 		requirePluginSender(event);
 		return agentService.getPersonalization();

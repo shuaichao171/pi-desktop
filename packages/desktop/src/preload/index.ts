@@ -121,6 +121,7 @@ const bridge: AgentBridge = {
 	exportDiagnostics: (...args) => invoke(MANAGEMENT_FEATURE_CHANNELS.exportDiagnostics, ...args),
 	queryProviderUsage: (...args) => invoke(MANAGEMENT_FEATURE_CHANNELS.queryProviderUsage, ...args),
 	saveProviderUsageQuery: (...args) => invoke(MANAGEMENT_FEATURE_CHANNELS.saveProviderUsageQuery, ...args),
+	resetProvider: (...args) => invoke(MANAGEMENT_FEATURE_CHANNELS.resetProvider, ...args),
 
 	getCloudSyncState: () => invoke(CLOUD_SYNC_FEATURE_CHANNELS.getState),
 	saveCloudSyncConfig: (config) => invoke(CLOUD_SYNC_FEATURE_CHANNELS.saveConfig, config),

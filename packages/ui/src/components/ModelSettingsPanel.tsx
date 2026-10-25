@@ -359,6 +359,7 @@ export function ModelSettingsPanel({ initialTarget, renderCredential, onDraftSta
 	const saveProvider = useChatStore((state) => state.saveCustomProvider);
 	const saveProviderModels = useChatStore((state) => state.saveProviderModels);
 	const removeProvider = useChatStore((state) => state.removeCustomProvider);
+	const resetProviderStore = useChatStore((state) => state.resetProvider);
 	const setModel = useChatStore((state) => state.setModel);
 	const setModelEnabled = useChatStore((state) => state.setModelEnabled);
 	const setThinking = useChatStore((state) => state.setThinkingLevel);
@@ -367,7 +368,7 @@ export function ModelSettingsPanel({ initialTarget, renderCredential, onDraftSta
 	const [search, setSearch] = useState('');
 	const [modelSearch, setModelSearch] = useState('');
 	const [editor, setEditor] = useState<SettingsEditor | null>(initialTarget?.kind === 'add-provider' ? { kind: 'templates' } : null);
-	const [confirmRemove, setConfirmRemove] = useState<{ kind: 'provider'; provider: UiModelProvider } | { kind: 'model'; model: string } | null>(null);
+	const [confirmRemove, setConfirmRemove] = useState<{ kind: 'provider'; provider: UiModelProvider } | { kind: 'reset'; provider: UiModelProvider } | { kind: 'model'; model: string } | null>(null);
 	const [usageQueryTarget, setUsageQueryTarget] = useState<UiModelProvider | null>(null);
 	const [pending, setPending] = useState(false);
 	const pendingRef = useRef(false);
@@ -435,7 +436,32 @@ export function ModelSettingsPanel({ initialTarget, renderCredential, onDraftSta
 	// 供应商要能被找到、配置凭据并删除；未配置的内置供应商仍只在
 	// “添加供应商”弹窗中提供，避免数十个内置条目淹没侧栏。
 	const unconfiguredCustom = unconfiguredProviders.filter((item) => item.custom);
-	const availableTemplates = PROVIDER_TEMPLATES.filter((item) => !providers.some((provider) => provider.provider === item.id));
+	// Presets stay available forever; adding the same preset again gets a suffixed id
+	// (deepseek-2) and display name (DeepSeek 2), so multiple accounts coexist.
+	const templateInstance = (item: ProviderTemplate): ProviderTemplate => {
+		if (!providers.some((provider) => provider.provider === item.id)) return item;
+		for (let n = 2; ; n++) {
+			const id = `${item.id}-${n}`;
+			if (!providers.some((provider) => provider.provider === id)) return { ...item, id, name: `${item.name} ${n}` };
+		}
+	};
+	// The preset grid is a fixed card per provider (curated templates first, then
+	// every catalog builtin with an endpoint, in stable catalog order). Cards never
+	// move, rename or duplicate; only the click target changes with state.
+	const presetCards: ProviderTemplate[] = [
+		...PROVIDER_TEMPLATES,
+		...providers.filter((item) => !item.custom && item.baseUrl && !PROVIDER_TEMPLATES.some((template) => template.id === item.provider))
+			.map((item): ProviderTemplate => ({ id: item.provider, name: item.name || item.provider, baseUrl: item.baseUrl ?? '', api: (item.api as UiProviderApi) ?? 'openai-completions' })),
+	];
+	const setupCards = unconfiguredProviders.filter((item) => item.custom || !item.baseUrl);
+	const openPreset = (template: ProviderTemplate) => {
+		const existing = providers.find((item) => item.provider === template.id);
+		// Unknown id → create an entry with the base id; unconfigured builtin →
+		// first-time credential setup; otherwise an independent suffixed copy.
+		if (!existing) setEditor({ kind: 'create', template });
+		else if (!configured(existing)) setEditor({ kind: 'credentials', provider: template.id });
+		else setEditor({ kind: 'create', template: templateInstance(template) });
+	};
 	const defaultProvider = configuredProviders.find((item) => item.provider === modelProvider) ?? configuredProviders[0];
 	const selected = [...configuredProviders, ...unconfiguredCustom].find((item) => item.provider === selectedId) ?? defaultProvider;
 	const selectedConfigured = selected ? configured(selected) : false;
@@ -570,6 +596,11 @@ export function ModelSettingsPanel({ initialTarget, renderCredential, onDraftSta
 		if (!removalProvider || !canChange || !confirmRemove) return;
 		if (confirmRemove.kind === 'provider') {
 			if (await run(() => removeProvider(removalProvider.provider), 'settings.providerRemoved')) { resetDrafts(); setSelectedId(''); }
+		} else if (confirmRemove.kind === 'reset') {
+			// The store action refreshes models, provider auth and the provider list
+			// together — refreshing the list alone leaves a stale auth cache that
+			// keeps the reset provider in the configured group until the next change.
+			if (await run(() => resetProviderStore(removalProvider.provider), 'settings.providerResetDone')) { resetDrafts(); setSelectedId(''); }
 		} else {
 			const current = latestProvider(removalProvider.provider);
 			if (!current || current.models.length < 2) { setError(t('settings.customModelLast')); return; }
@@ -600,8 +631,9 @@ export function ModelSettingsPanel({ initialTarget, renderCredential, onDraftSta
 					<div className="pd-model-provider-detail-head"><div><h3>{selected.name || selected.provider}</h3><div className="pd-model-provider-subtitle"><code>{selected.provider}</code><span className="pd-model-provider-badge">{t(selected.custom && !selected.builtin ? 'settings.providerCustom' : 'settings.providerBuiltin')}</span><span className={`pd-model-provider-auth ${selectedConfigured ? 'is-ready' : 'is-missing'}`}>{t(selectedConfigured ? 'settings.authAvailable' : 'settings.authMissing')}</span></div></div>
 						<div className="pd-model-page-actions">
 							<HoverTooltip title={t('settings.providerEdit')}><button type="button" data-action="edit-provider" className="pd-model-settings-button" disabled={!canChange} aria-label={t('settings.providerEdit')} onClick={() => openEditor({ kind: 'edit', provider: selected.provider })}><Icon name="pencil" width="13" height="13" />{t('settings.providerEdit')}</button></HoverTooltip>
-							{selected.custom && selected.editable && <HoverTooltip title={t('settings.providerRemove')}><button type="button" data-action="remove-provider" className="pd-icon-button is-danger" disabled={!canChange} aria-label={t('settings.providerRemove')} onClick={() => navigate(() => setConfirmRemove({ kind: 'provider', provider: selected }))}><Icon name="trash" width="16" height="16" /></button></HoverTooltip>}
 							{Boolean(selected.baseUrl) && <HoverTooltip title={t('usage.dialogTitleShort')}><button type="button" data-action="configure-usage-query" className={`pd-model-settings-button${selected.usageQuery?.enabled ? ' is-usage-on' : ''}`} disabled={!canChange} aria-label={t('usage.dialogTitleShort')} aria-pressed={Boolean(selected.usageQuery?.enabled)} onClick={() => setUsageQueryTarget(selected)}><Icon name="globe" width="13" height="13" />{t('usage.dialogTitleShort')}{selected.usageQuery?.enabled && <span className="pd-usage-state" aria-hidden="true" />}</button></HoverTooltip>}
+							{selected.custom && selected.editable && <HoverTooltip title={t('settings.providerRemove')}><button type="button" data-action="remove-provider" className="pd-icon-button is-danger is-end" disabled={!canChange} aria-label={t('settings.providerRemove')} onClick={() => navigate(() => setConfirmRemove({ kind: 'provider', provider: selected }))}><Icon name="trash" width="16" height="16" /></button></HoverTooltip>}
+							{!selected.custom && selected.resettable && <HoverTooltip title={t('settings.providerReset')}><button type="button" data-action="reset-provider" className="pd-icon-button is-danger is-end" disabled={!canChange} aria-label={t('settings.providerReset')} onClick={() => navigate(() => setConfirmRemove({ kind: 'reset', provider: selected }))}><Icon name="trash" width="16" height="16" /></button></HoverTooltip>}
 						</div>
 					</div>
 					<div className="pd-model-provider-connection-row"><span className="pd-model-provider-url"><span className="pd-model-provider-url-label">{t('settings.providerBaseUrl')}</span><code title={selected.baseUrl || undefined}>{selected.baseUrl || '—'}</code></span>{protocolLabel && <span className="pd-model-provider-badge pd-model-provider-protocol">{protocolLabel}</span>}</div>
@@ -637,9 +669,9 @@ export function ModelSettingsPanel({ initialTarget, renderCredential, onDraftSta
 			{error && <div className="pd-settings-error" role="alert">{error}</div>}
 			{editor.kind === 'templates' ? <section className="pd-model-template-picker" data-template-picker>
 				<button type="button" data-template="custom" data-autofocus className="pd-model-template-card is-custom" onClick={() => setEditor({ kind: 'create' })}><span className="pd-model-template-custom-icon" aria-hidden="true"><Icon name="plus" width="24" height="24" /></span><span className="pd-model-template-custom-copy"><strong>{t('settings.providerTemplateCustom')}</strong><span>{t('settings.providerTemplateCustomHint')}</span></span></button>
-				{(unconfiguredProviders.length > 0 || availableTemplates.length > 0) && <section className="pd-model-template-options" aria-label={t('settings.providerOtherProviders')}><h4>{t('settings.providerOtherProviders')}</h4><p className="pd-model-settings-notice">{t('settings.providerTemplatesHint')}</p><div className="pd-model-template-grid">
-					{unconfiguredProviders.map((item) => <button key={item.provider} type="button" data-add-provider={item.provider} className="pd-model-template-card" onClick={() => setEditor({ kind: 'credentials', provider: item.provider })}><strong>{item.name || item.provider}</strong><span>{t('settings.providerCount', { count: item.models.length })}</span></button>)}
-					{availableTemplates.map((template) => <button key={template.id} type="button" data-template={template.id} className="pd-model-template-card" onClick={() => setEditor({ kind: 'create', template })}><strong>{template.name}</strong><code>{template.baseUrl}</code></button>)}
+				{(setupCards.length > 0 || presetCards.length > 0) && <section className="pd-model-template-options" aria-label={t('settings.providerOtherProviders')}><h4>{t('settings.providerOtherProviders')}</h4><p className="pd-model-settings-notice">{t('settings.providerTemplatesHint')}</p><div className="pd-model-template-grid">
+					{setupCards.map((item) => <button key={item.provider} type="button" data-add-provider={item.provider} className="pd-model-template-card" onClick={() => setEditor({ kind: 'credentials', provider: item.provider })}><strong>{item.name || item.provider}</strong><span>{t('settings.providerCount', { count: item.models.length })}</span></button>)}
+					{presetCards.map((template) => <button key={template.id} type="button" data-template={template.id} className="pd-model-template-card" onClick={() => openPreset(template)}><strong>{template.name}</strong><code>{template.baseUrl}</code></button>)}
 				</div></section>}
 			</section>
 			: editor.kind === 'credentials' ? <section className="pd-model-provider-setup">
@@ -665,7 +697,7 @@ export function ModelSettingsPanel({ initialTarget, renderCredential, onDraftSta
 				setModalDirty(false); setEditor(null); setSelectedId(request.provider); setSearch(''); setModelSearch(''); return true;
 			}} />}
 		</ModelSettingsDialog>}
-		{confirmRemove && removalProvider && <ModelSettingsDialog compact title={t(confirmRemove.kind === 'provider' ? 'settings.providerRemove' : 'settings.customModelRemove')} busy={saving} onClose={() => setConfirmRemove(null)}><p>{confirmRemove.kind === 'provider' ? t('settings.providerRemoveConfirm', { provider: removalProvider.name || removalProvider.provider }) : t('settings.customModelRemoveConfirm', { model: confirmRemove.model })}</p>{error && <p className="pd-settings-error" role="alert">{error}</p>}<div className="pd-model-settings-form-actions"><button type="button" data-autofocus className="pd-model-settings-button" disabled={saving} onClick={() => setConfirmRemove(null)}>{t('settings.modelSettingsCancel')}</button><button type="button" className="pd-model-settings-button is-danger" data-action="confirm-remove" disabled={!canChange} onClick={() => void confirmRemoval()}>{t('settings.modelSettingsConfirmRemove')}</button></div></ModelSettingsDialog>}
+		{confirmRemove && removalProvider && <ModelSettingsDialog compact title={t(confirmRemove.kind === 'provider' ? 'settings.providerRemove' : confirmRemove.kind === 'reset' ? 'settings.providerReset' : 'settings.customModelRemove')} busy={saving} onClose={() => setConfirmRemove(null)}><p>{confirmRemove.kind === 'provider' ? t('settings.providerRemoveConfirm', { provider: removalProvider.name || removalProvider.provider }) : confirmRemove.kind === 'reset' ? t('settings.providerResetConfirm', { provider: removalProvider.name || removalProvider.provider }) : t('settings.customModelRemoveConfirm', { model: confirmRemove.model })}</p>{error && <p className="pd-settings-error" role="alert">{error}</p>}<div className="pd-model-settings-form-actions"><button type="button" data-autofocus className="pd-model-settings-button" disabled={saving} onClick={() => setConfirmRemove(null)}>{t('settings.modelSettingsCancel')}</button><button type="button" className="pd-model-settings-button is-danger" data-action="confirm-remove" disabled={!canChange} onClick={() => void confirmRemoval()}>{t(confirmRemove.kind === 'reset' ? 'settings.providerResetConfirmAction' : 'settings.modelSettingsConfirmRemove')}</button></div></ModelSettingsDialog>}
 		{leaveAction && <ModelSettingsDialog compact busy={savingLeave} returnFocus={draftFocus.current} title={t('settings.discardTitle')} onClose={() => { if (!savingLeave) setLeaveAction(null); }}><p>{t('settings.discardDescription')}</p>{leaveError && <p role="alert">{t('model.leaveSaveFailed')}</p>}<div className="pd-model-settings-form-actions"><button type="button" data-autofocus disabled={savingLeave} className="pd-model-settings-button" onClick={() => setLeaveAction(null)}>{t('personalization.keepEditing')}</button><button type="button" data-action="discard-model-draft" disabled={savingLeave} className="pd-model-settings-button" onClick={() => { const action = leaveAction; setLeaveAction(null); resetDrafts(); setError(null); setFeedback(null); action(); }}>{t('personalization.discard')}</button><button type="button" data-action="save-model-draft-and-leave" disabled={savingLeave || !canSaveDrafts} className="pd-settings-primary" onClick={() => { if (saveLeaveLock.current) return; setSavingLeave(true); setLeaveError(false); void saveAll().then((saved) => { if (saved) { const action = leaveAction; setLeaveAction(null); action(); } else setLeaveError(true); }).catch(() => setLeaveError(true)).finally(() => setSavingLeave(false)); }}>{savingLeave ? t('personalization.saving') : t('settings.saveAndContinue')}</button></div></ModelSettingsDialog>}
 		{usageQueryTarget && <UsageQueryDialog provider={usageQueryTarget} onClose={() => setUsageQueryTarget(null)} onSaved={() => { void run(refreshCatalog); }} />}
 	</div>;

@@ -468,3 +468,12 @@ export async function setUsageQueryPref(agentDirectory: string, provider: string
 	else usageQueries[provider] = config;
 	await writeModelPrefs(agentDirectory, { disabled: prefs.disabled, usageQueries });
 }
+
+/** Clears one provider's hidden-model list; the rest of the prefs file is untouched. */
+export async function clearDisabledModelsForProvider(agentDirectory: string, provider: string): Promise<void> {
+	const prefs = await loadModelPrefsFile(agentDirectory);
+	if (!prefs.disabled[provider]) return;
+	const disabled = { ...prefs.disabled };
+	delete disabled[provider];
+	await writeModelPrefs(agentDirectory, { disabled, usageQueries: prefs.usageQueries });
+}

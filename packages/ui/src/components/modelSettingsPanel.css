@@ -65,6 +65,8 @@
 .pd-model-provider-url code { min-width: 0; overflow: hidden; color: var(--pd-text); font-family: var(--pd-font-mono, ui-monospace, Consolas, monospace); font-size: var(--pd-font-sm); line-height: 1.5; text-overflow: ellipsis; white-space: nowrap; }
 .pd-model-provider-protocol { flex: 0 0 auto; }
 .pd-model-provider-detail-head .pd-model-page-actions .pd-model-settings-button { min-height: 29px; }
+/* Destructive actions sit at the end of the row, separated from config actions. */
+.pd-model-page-actions .pd-icon-button.is-end { margin-left: 5px; border-left: 1px solid var(--pd-border); border-top-left-radius: 0; border-bottom-left-radius: 0; }
 .pd-model-provider-edit { display: flex; flex-direction: column; gap: 14px; }
 .pd-model-provider-edit .pd-model-provider-connection { margin: 0; }
 .pd-model-count { display: inline-block; min-width: 20px; margin-left: 6px; padding: 0 6px; border-radius: var(--pd-radius-pill, 999px); background: color-mix(in srgb, var(--pd-text) 9%, transparent); color: var(--pd-text-subtle); font-size: var(--pd-font-xs); font-weight: 500; line-height: 18px; text-align: center; vertical-align: 1px; }
