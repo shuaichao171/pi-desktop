@@ -290,7 +290,7 @@ test('cached sessions protect their selected provider and model, while same-mode
   } finally { await f.cleanup(); }
 });
 
-test('running SDK sessions permit new providers without changing the active request and protect existing configuration', async () => {
+test('running SDK sessions allow provider edits for the next request while protecting in-use entries', async () => {
   let release;
   let started;
   const commandStarted = new Promise((resolveStarted) => { started = resolveStarted; });
@@ -332,20 +332,38 @@ test('running SDK sessions permit new providers without changing the active requ
     assert.ok(f.service.listModels().some((model) => model.provider === 'desktop-busy-background-create'));
     assert.equal(session.model, switchedModel, 'background runtime retains its request model');
     assert.equal(commandFinished, false, 'background command continues running after catalog refresh');
-    const before = f.disk();
-    await assert.rejects(f.service.saveCustomProvider(request('desktop-busy-delete', { mode: 'update', name: 'Must not change while busy' })));
-    assert.deepEqual(f.disk(), before, 'existing provider edits remain blocked');
-    await assert.rejects(f.service.saveCustomProvider(request('desktop-busy-current', { mode: 'update', apiKey: 'must-not-change-running-key' })));
-    assert.deepEqual(f.disk(), before, 'running model credentials remain unchanged');
-    await assert.rejects(f.service.removeCustomProvider('desktop-busy-delete'));
-    assert.deepEqual(f.disk(), before);
+    // Provider edits while a turn runs apply to the NEXT request: the command
+    // keeps its resolved model and credentials, and the catalog moves forward.
+    let before = f.disk();
+    await f.service.saveCustomProvider(request('desktop-busy-active-create', {
+      mode: 'update', name: 'Renamed While Busy', apiKey: 'rotate-running-key',
+    }));
+    assert.notDeepEqual(f.disk(), before, 'editing a provider in use lands on disk while the turn runs');
+    assert.equal(commandFinished, false, 'editing a running provider must not abort the active SDK command');
+    assert.equal(session.model.provider, 'desktop-busy-active-create');
+    assert.equal(session.model.id, 'custom-one', 'the in-flight model selection survives a provider edit');
+    const afterEdit = f.disk();
+    await assert.rejects(f.service.saveCustomProvider(request('desktop-busy-active-create', {
+      mode: 'update',
+      models: [{ id: 'custom-two', name: 'Custom Two', reasoning: true, input: ['text'], contextWindow: 32768, maxTokens: 4096 }],
+    })));
+    assert.deepEqual(f.disk(), afterEdit, 'dropping the model a session uses stays blocked while busy');
+    await assert.rejects(f.service.removeCustomProvider('desktop-busy-active-create'));
+    assert.deepEqual(f.disk(), afterEdit, 'removing a provider in use stays blocked while busy');
     await assert.rejects(f.service.saveCustomProvider(request('desktop-busy-active-create', { apiKey: 'must-not-replace-existing' })));
-    assert.deepEqual(f.disk(), before, 'create mode cannot overwrite an existing provider while busy');
+    assert.deepEqual(f.disk(), afterEdit, 'create mode cannot overwrite an existing provider while busy');
+    before = f.disk();
+    await f.service.removeCustomProvider('desktop-busy-delete');
+    assert.notDeepEqual(f.disk(), before, 'removing an unused provider lands on disk while the turn runs');
+    assert.ok((await f.service.listModelProviders()).every((item) => item.provider !== 'desktop-busy-delete'));
+    assert.equal(commandFinished, false, 'removing an unused provider must not abort the active SDK command');
+    await f.service.setModelEnabled('desktop-busy-current', 'custom-one', false);
+    await assert.rejects(f.service.setModelEnabled('desktop-busy-active-create', 'custom-one', false), /正在使用/);
     release();
     await command;
     await new Promise((resolveTurn) => setImmediate(resolveTurn));
     await f.service.saveCustomProvider(request('desktop-after-idle'));
-    await f.service.removeCustomProvider('desktop-busy-delete');
+    await f.service.removeCustomProvider('desktop-busy-current');
     f.assertOffline();
   } finally {
     release?.();

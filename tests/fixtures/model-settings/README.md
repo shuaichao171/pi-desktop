@@ -20,3 +20,5 @@ node tests/fixtures/model-settings/run.mjs --run
 每次测试创建独立 profile、调试端口和 loopback 文件服务，只清理自己启动的浏览器进程。失败时直接记录并清理，不在失败后继续界面探查。PNG 和含构建哈希的 `report.json` 写入忽略目录 `out/review/model-settings/runs/`。本测试覆盖 renderer；真实 IPC、供应商协议与凭据持久化由 `pnpm test` 中的集成测试覆盖。
 
 更新设置的独立检查/安装按钮也复用此驱动：`node tests/fixtures/model-settings/update-scenarios.mjs --check` 仅做静态准备；`node tests/fixtures/model-settings/run.mjs --run --scenario=update-scenarios.mjs` 验证实际按钮状态及 bridge 调用。所有更新状态均为模拟，不下载或安装真实更新。
+
+操作结果提示的自动消失时限同样复用此驱动：`node tests/fixtures/model-settings/run.mjs --run --scenario=notice-timeout-scenarios.mjs` 验证 常规 → 通知 中的时长下拉、写入本地存储、失败提示 6 秒（3 秒 × 2）后自动关闭、悬停期间倒计时暂停、以及选「不限」时仅手动关闭。场景用一次失败的导出操作产生提示，不调用真实导出。

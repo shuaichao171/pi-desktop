@@ -2437,7 +2437,10 @@ export class AgentService {
 		if (this.credentialOperation || this.trimOperation) throw new Error('会话或设置正在更新，请稍后再修改模型');
 		const contexts = [...this.contexts.values()];
 		const releases: (() => void)[] = [];
-		try { for (const context of contexts) releases.push(context.lockProviderConfiguration()); }
+		// Visibility is a selection-layer preference: it applies to the next
+		// request and never disturbs an in-flight turn, so busy sessions may toggle it;
+		// the guard below still pins every model a session currently uses.
+		try { for (const context of contexts) releases.push(context.lockProviderConfiguration(true)); }
 		catch (error) { for (const release of releases) release(); throw error; }
 		const operation = Promise.resolve().then(async () => {
 			if (!enabled && contexts.some((context) => {
@@ -2707,9 +2710,11 @@ export class AgentService {
 		if (this.transition || this.credentialOperation || this.trimOperation) throw new Error('会话或设置正在更新，请稍后再试');
 		const contexts = [...this.contexts.values()];
 		const releases: (() => void)[] = [];
-		// Creating a distinct provider refreshes its catalog only; it never
-		// rebinds the model or credentials used by an in-flight conversation.
-		try { for (const context of contexts) releases.push(context.lockProviderConfiguration(request?.mode === 'create')); }
+		// Provider edits apply to the NEXT request: the SDK resolves model and
+		// credentials per request, so refreshing a catalog mid-turn never disturbs an
+		// in-flight conversation, and dropsSelected below still pins the models and
+		// providers that open sessions rely on.
+		try { for (const context of contexts) releases.push(context.lockProviderConfiguration(true)); }
 		catch (error) { for (const release of releases) release(); throw error; }
 		const operation = Promise.resolve().then(async () => {
 			const directory = service.agentDirectory;

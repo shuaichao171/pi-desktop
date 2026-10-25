@@ -20,6 +20,7 @@ import { useBusyInputBehavior } from '../busyInputBehavior';
 import { ConversationMetricsSettings } from './ConversationMetricsSettings';
 import { useTaskNotificationSoundEnabled } from '../taskNotificationSound';
 import { useExtensionNoticeDisplayEnabled } from '../extensionNoticeDisplay';
+import { OPERATION_NOTICE_TIMEOUT_SECOND_OPTIONS, useOperationNoticeTimeoutSeconds } from '../operationNoticeTimeout';
 import { useMessageStreamShowReasoning } from '../messageStreamShowReasoning';
 import { QUESTION_AUTO_RESOLUTION_MINUTE_OPTIONS, useQuestionAutoResolutionMinutes } from '../extensionQuestionTimeout';
 import { ConversationStorageSettings } from './ConversationStorageSettings';
@@ -160,6 +161,8 @@ export function SettingsPanel({ initialPage = 'general', modelManagementTarget, 
 	const [busyInputSaveFailed, setBusyInputSaveFailed] = useState(false);
 	const [notificationSound, setNotificationSound] = useTaskNotificationSoundEnabled();
 	const [notificationSoundSaveFailed, setNotificationSoundSaveFailed] = useState(false);
+	const [operationNoticeTimeout, setOperationNoticeTimeout] = useOperationNoticeTimeoutSeconds();
+	const [operationNoticeTimeoutSaveFailed, setOperationNoticeTimeoutSaveFailed] = useState(false);
 	const [extensionNotices, setExtensionNotices] = useExtensionNoticeDisplayEnabled();
 	const [extensionNoticesSaveFailed, setExtensionNoticesSaveFailed] = useState(false);
 	const [showReasoning, setShowReasoning] = useMessageStreamShowReasoning();
@@ -458,6 +461,12 @@ export function SettingsPanel({ initialPage = 'general', modelManagementTarget, 
 								<SettingsRow title={t('settings.notificationSound')} description={t('settings.notificationSoundDescription')}
 									footer={notificationSoundSaveFailed && <p className="pd-settings-feedback" role="status">{t('settings.notificationSoundSaveFailed')}</p>}>
 									<SettingsSwitch setting="notification-sound" label={t('settings.notificationSound')} checked={notificationSound} onChange={next => setNotificationSoundSaveFailed(!setNotificationSound(next))} />
+								</SettingsRow>
+								<SettingsRow title={t('settings.operationNoticeTimeout')} description={t('settings.operationNoticeTimeoutDescription')}
+									footer={operationNoticeTimeoutSaveFailed && <p className="pd-settings-feedback" role="status">{t('settings.operationNoticeTimeoutSaveFailed')}</p>}>
+									<select className="pd-settings-select" data-setting="operation-notice-timeout" aria-label={t('settings.operationNoticeTimeout')} value={String(operationNoticeTimeout)} onChange={event => setOperationNoticeTimeoutSaveFailed(!setOperationNoticeTimeout(Number(event.target.value)))}>
+										{OPERATION_NOTICE_TIMEOUT_SECOND_OPTIONS.map(seconds => <option key={seconds} value={seconds}>{seconds === 0 ? t('settings.operationNoticeTimeoutUnlimited') : t('settings.operationNoticeTimeoutSeconds', { count: seconds })}</option>)}
+									</select>
 								</SettingsRow>
 							</SettingsGroup>
 							{desktopSettings && <SettingsGroup title={t('settings.groupSystem')}>

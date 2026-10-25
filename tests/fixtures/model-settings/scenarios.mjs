@@ -284,7 +284,7 @@ export default async function runScenarios(review) {
   await review.click(`${editDialog} .pd-model-dialog-header button`);
   await noOpenModelDialog();
 
-  // Running agent still permits new providers while protecting session settings.
+  // Running agent still permits provider edits and new providers while protecting session settings.
   await review.click('[data-provider="openai"]');
   await review.assert('document.querySelector("[data-model-id=gpt-review] [data-action=toggle-model]").disabled === true', 'The current model cannot be disabled');
   await review.click(gateway);
@@ -294,6 +294,17 @@ export default async function runScenarios(review) {
   await review.assert('document.querySelector("[data-action=edit-provider]").disabled === false', 'Busy state keeps provider settings editing available');
   await review.assert('[...document.querySelectorAll("[data-action=add-model],[data-action=edit-model],[data-action=discover-models],[data-action=remove-provider],[data-action=edit-provider],[data-action=add-provider]")].every(element=>!element.disabled) && [...document.querySelectorAll("[data-action=toggle-model]")].every(element=>!element.disabled)', 'Busy state keeps controls editable; only hiding the in-use model stays blocked');
   await review.screenshot('05-busy-gated-controls');
+  // Editing an existing provider while the conversation runs lands immediately
+  // and never disturbs the busy snapshot; only in-use models stay protected.
+  await review.assert('document.querySelector(".pd-model-settings-notice[role=status]") !== null', 'Busy state shows the next-request notice');
+  await review.click('[data-action="edit-provider"]');
+  await review.waitFor(`Boolean(document.querySelector(${JSON.stringify(connection)}))`);
+  await review.fill(connectionName, '聊天期间改名供应商');
+  await review.click('[data-action="save-connection"]');
+  await review.waitFor('window.__modelReview.providers.find(p=>p.provider==="review-gateway").name === "聊天期间改名供应商"');
+  await review.assert('window.__modelReview.snapshot.status === "busy" && window.__modelReview.snapshot.modelProvider === "openai" && window.__modelReview.snapshot.model === "gpt-review"', 'Editing a provider keeps the task running with its current model');
+  await review.click(`${editDialog} .pd-model-dialog-header button`);
+  await noOpenModelDialog();
   await review.click('[data-action="add-provider"]');
   await review.click('dialog[open] [data-template="custom"]');
   const createDialog = 'dialog[open][data-model-dialog="create"]';
