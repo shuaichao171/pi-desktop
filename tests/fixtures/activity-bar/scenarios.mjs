@@ -12,6 +12,17 @@ export default async function activityBarScenarios(review) {
 
   const rail = 'document.querySelector(".pd-activity-bar")';
   const sidebar = 'document.querySelector(".pd-sidebar")';
+  const topBar = 'document.querySelector(".pd-top-bar")';
+
+  // The window-wide top bar spans everything, including the rail.
+  await review.waitFor(`Boolean(${topBar})`);
+  const barGeometry = await review.evaluate(`(() => { const t = ${topBar}.getBoundingClientRect(); const r = ${rail}.getBoundingClientRect(); return { topWidth: t.width, topLeft: t.left, railTop: r.top, brandFirst: ${topBar}.querySelector(".pd-brand-mark")?.getBoundingClientRect().left ?? -1 }; })()`);
+  await check(barGeometry.topWidth >= 1400 && barGeometry.topLeft <= 4, 'Top bar spans the window above all panels');
+  await check(barGeometry.railTop >= barGeometry.topWidth * 0 + 44 && barGeometry.railTop <= 56, 'Activity bar starts below the top bar');
+  await check(barGeometry.brandFirst >= 0 && barGeometry.brandFirst <= 24, 'Brand mark sits at the far left of the top bar');
+
+  // The sessions toggle sits at the top of the rail, above new-session.
+  await check(await review.evaluate(`(() => { const sessions = ${rail}.querySelector(".pd-activity-sessions"); const first = ${rail}.querySelector(".pd-activity-bar-top button"); return sessions === first; })()`), 'Sessions toggle is the topmost rail button');
 
   // The rail exists and sits left of the sidebar.
   await review.waitFor(`Boolean(${rail})`);
@@ -26,7 +37,7 @@ export default async function activityBarScenarios(review) {
   await check(settingsPinned, 'Settings is pinned at the bottom of the rail');
 
   // Old sidebar chrome is gone: no nav rows, no footer settings entry inside the sidebar.
-  await check(await review.evaluate(`!${sidebar}.querySelector(".pd-nav-row") && !${sidebar}.querySelector(".pd-settings-entry")`), 'Sidebar no longer carries nav rows or its own settings entry');
+  await check(await review.evaluate(`!${sidebar}.querySelector(".pd-nav-row") && !${sidebar}.querySelector(".pd-settings-entry") && !${sidebar}.querySelector(".pd-sidebar-brand")`), 'Sidebar no longer carries nav rows, brand row, or its own settings entry');
   await review.screenshot('activity-bar-default');
 
   // Switching views: automations, plugins, then back via the same icon.
@@ -38,7 +49,7 @@ export default async function activityBarScenarios(review) {
   await check(await review.evaluate('document.querySelector(".pd-activity-automations").classList.contains("is-active")'), 'Automations icon highlights while its page is open');
   await review.click('.pd-activity-automations');
   await review.waitFor('document.querySelector(".pd-chat-view-host")?.getAttribute("hidden") === null');
-  await check(await review.evaluate(`!${rail}.querySelector(".pd-activity-bar-top button.is-active")`), 'Clicking the active icon again returns to the session list');
+  await check(await review.evaluate(`!document.querySelector(".pd-activity-automations")?.classList.contains("is-active")`), 'Clicking the active icon again returns to the session list');
 
   // Settings entry opens the settings dialog.
   await review.click('.pd-settings-entry');
@@ -54,4 +65,12 @@ export default async function activityBarScenarios(review) {
   await review.key('b', { ctrl: true });
   await review.waitFor(`!${sidebar}.classList.contains("is-collapsed")`);
   await check(await review.evaluate(`document.querySelector(".pd-sidebar").getBoundingClientRect().width > 100`), 'Ctrl+B restores the sidebar pane');
+
+  // The sessions toggle in the rail opens/closes the sidebar pane too.
+  await review.click('.pd-activity-sessions');
+  await review.waitFor(`${sidebar}.classList.contains("is-collapsed")`);
+  await check(await review.evaluate(`(() => { const r = document.querySelector(".pd-activity-bar").getBoundingClientRect(); const s = ${sidebar}.getBoundingClientRect(); return r.width > 0 && s.width === 0; })()`), 'Sessions toggle collapses the sidebar but keeps the rail');
+  await review.click('.pd-activity-sessions');
+  await review.waitFor(`!${sidebar}.classList.contains("is-collapsed")`);
+  await check(await review.evaluate(`document.querySelector(".pd-sidebar").getBoundingClientRect().width > 100`), 'Sessions toggle restores the sidebar pane');
 }

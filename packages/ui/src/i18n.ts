@@ -615,6 +615,7 @@ export const translations: Record<string, { 'zh-CN': string; 'en-US': string }> 
   'sidebar.newSessionFailed': { 'zh-CN': '新建对话失败', 'en-US': 'Could not create conversation' },
   // ActivityBar
   'activity.barLabel': { 'zh-CN': '活动栏', 'en-US': 'Activity bar' },
+  'activity.sessionsView': { 'zh-CN': '会话', 'en-US': 'Sessions' },
   'activity.settingsUpdateHint': { 'zh-CN': '设置（有可用更新）', 'en-US': 'Settings (update available)' },
   'sidebar.search': { 'zh-CN': '搜索', 'en-US': 'Search' },
   'sidebar.historyNavigation': { 'zh-CN': '会话导航', 'en-US': 'Conversation history' },

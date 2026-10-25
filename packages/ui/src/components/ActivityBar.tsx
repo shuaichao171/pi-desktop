@@ -18,11 +18,15 @@ interface ActivityBarProps {
 	onOpenSettings(): void;
 	/** True while a session navigation is pending; disables the new-session action. */
 	navigationPending: boolean;
+	/** Sidebar pane visibility; the top rail button toggles it (Ctrl+B twin). */
+	sidebarOpen: boolean;
+	onToggleSidebar(): void;
 }
 
-export function ActivityBar({ mainView, onOpenView, onNewSession, onOpenSettings, navigationPending }: ActivityBarProps) {
+export function ActivityBar({ mainView, onOpenView, onNewSession, onOpenSettings, navigationPending, sidebarOpen, onToggleSidebar }: ActivityBarProps) {
 	const { t } = useT();
 	const bridge = useChatStore((s) => s.bridge);
+	const platform = useChatStore((s) => s.appInfo?.platform);
 	const [updateSnapshot, setUpdateSnapshot] = useState<UiUpdateState | null>(null);
 
 	useEffect(() => {
@@ -45,6 +49,9 @@ export function ActivityBar({ mainView, onOpenView, onNewSession, onOpenSettings
 	return (
 		<nav className="pd-activity-bar" aria-label={t('activity.barLabel')}>
 			<div className="pd-activity-bar-top">
+				<HoverTooltip title={t(sidebarOpen ? 'sidebar.collapse' : 'sidebar.expand')} shortcut={platform === 'darwin' ? '⌘B' : 'Ctrl+B'} align="start">
+					<button type="button" className={`pd-activity-item pd-activity-sessions${sidebarOpen ? ' is-active' : ''}`} aria-label={t('activity.sessionsView')} aria-current={sidebarOpen ? 'page' : undefined} onClick={onToggleSidebar}><Icon name="message" width="20" height="20" /></button>
+				</HoverTooltip>
 				<HoverTooltip title={t('sidebar.newSession')} align="start">
 					<button type="button" className="pd-activity-item pd-activity-new-session" disabled={navigationPending} aria-label={t('sidebar.newSession')} onClick={() => void onNewSession()}><Icon name="plus" width="20" height="20" /></button>
 				</HoverTooltip>

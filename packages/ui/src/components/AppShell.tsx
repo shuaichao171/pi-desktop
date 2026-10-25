@@ -3,6 +3,7 @@ import type { UiAppearanceState, UiSessionSearchResult, WorkspaceEntry } from '@
 import { ChatView, type SearchMessageTarget } from './ChatView';
 import { ScopedErrorBoundary } from './ScopedErrorBoundary';
 import { ActivityBar } from './ActivityBar';
+import { TopBar } from './TopBar';
 import { AutomationPage } from './AutomationPage';
 import { PluginsPage } from './PluginsPage';
 import { SearchDialog, type SearchCommand } from './SearchDialog';
@@ -25,8 +26,7 @@ import { bindingKeysFor, matchesShortcut } from '../shortcuts/bindings';
 import { useT } from '../i18n';
 import { useSessionNavigation } from '../useSessionNavigation';
 import { playTaskNotificationSound, shouldPlayTaskCompletionSound } from '../taskNotificationSound';
-import { HistoryNavigation, type HistoryNavigationProps } from './HistoryNavigation';
-import { SearchButton } from './SearchButton';
+import type { HistoryNavigationProps } from './HistoryNavigation';
 import { applyThemeColors, normalizeColorPreferences, readColorPreferences, writeColorPreferences, type ThemeColorPreferences } from '../themeColors';
 import type { ModelManagementTarget } from '../modelManagement';
 import './shellMotion.css';
@@ -393,7 +393,9 @@ export function AppShell() {
 		setSettingsInitialPage('model');
 		setSettingsOpen(true);
 	}
-	const headerControls = !sidebarOpen && !narrow ? <div className="pd-header-navigation"><HistoryNavigation {...history} /><SearchButton open={searchOpen} onClick={() => setSearchOpen(true)} /></div> : undefined;
+	// The top bar now permanently hosts history navigation and search, so the
+	// per-view header fallback is gone.
+	const headerControls = undefined;
 	const navigationPending = useChatStore((state) => state.navigationPending || state.sessionLoading);
 	const conversationCwd = useChatStore((state) => state.cwd);
 	const conversationId = useChatStore((state) => state.sessionId);
@@ -418,6 +420,8 @@ export function AppShell() {
 	return (
 		<ExtensionDialogHost chatVisible={mainView === 'chat'} notificationTarget={notificationTarget} globalNotices={MAIN_GLOBAL_NOTICES}>
 		<div className={`pd-app-shell flex${isWindows ? ' is-frameless' : ''}${settingsOpen || searchOpen ? ' is-settings-open' : ''}${sidebarResizing ? ' is-sidebar-resizing' : ''}${workbenchResizing ? ' is-workbench-resizing' : ''}`} style={{ '--pd-sidebar-width': `${sidebarWidth}px`, '--pd-workbench-width': `${clampWorkbenchWidth(workbenchWidth, viewportWidth)}px` } as CSSProperties}>
+			<TopBar history={history} searchOpen={searchOpen} onOpenSearch={() => setSearchOpen(true)} sidebarOpen={sidebarOpen} onToggleSidebar={() => setSidebarOpen((open) => !open)} />
+			<div className="pd-app-body">
 			<button type="button" className={`pd-sidebar-scrim${narrow && sidebarOpen ? ' is-open' : ''}`} aria-label={t('app.closeSidebar')} aria-hidden={!narrow || !sidebarOpen} inert={!narrow || !sidebarOpen} tabIndex={-1} onClick={() => setSidebarOpen(false)} />
 			<ActivityBar
 				mainView={mainView}
@@ -425,18 +429,16 @@ export function AppShell() {
 				onNewSession={() => { setMainView('chat'); if (narrow) setSidebarOpen(false); return useChatStore.getState().newSession(); }}
 				onOpenSettings={() => { if (narrow) setSidebarOpen(false); setSettingsInitialPage('general'); setSettingsOpen(true); }}
 				navigationPending={navigationPending}
+				sidebarOpen={sidebarOpen}
+				onToggleSidebar={() => setSidebarOpen((open) => !open)}
 			/>
-			<Sidebar
-				projectRevealRequest={projectRevealRequest}
-				open={sidebarOpen}
-				narrow={narrow}
-				onToggle={() => setSidebarOpen((open) => !open)}
-				onNavigate={() => { setMainView('chat'); if (narrow) setSidebarOpen(false); }}
-				sessionsActive={mainView === 'chat'}
-				searchOpen={searchOpen}
-				history={history}
-				onOpenSearch={() => setSearchOpen(true)}
-			/>
+				<Sidebar
+					projectRevealRequest={projectRevealRequest}
+					open={sidebarOpen}
+					narrow={narrow}
+					onNavigate={() => { setMainView('chat'); if (narrow) setSidebarOpen(false); }}
+					sessionsActive={mainView === 'chat'}
+				/>
 			{!narrow && sidebarOpen && <div className="pd-sidebar-resize" role="separator" aria-label={t('app.resizeSidebar')} aria-orientation="vertical" aria-valuemin={MIN_SIDEBAR_WIDTH} aria-valuemax={MAX_SIDEBAR_WIDTH} aria-valuenow={sidebarWidth} tabIndex={0} onPointerDown={startResize} onPointerMove={moveResize} onPointerUp={stopResize} onPointerCancel={stopResize} onLostPointerCapture={stopResize} onKeyDown={(event) => {
 				if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
 				event.preventDefault();
@@ -452,6 +454,7 @@ export function AppShell() {
 			<button type="button" className={`pd-workbench-scrim${workbenchOpen && mainView === 'chat' ? ' is-open' : ''}`} aria-label={t('app.closeWorkbench')} aria-hidden={!workbenchOpen || mainView !== 'chat'} inert={!workbenchOpen || mainView !== 'chat'} tabIndex={-1} onClick={closeWorkbench} />
 			<ScopedErrorBoundary scope="workbench" resetKeys={[workbenchRequest?.cwd, workbenchRequest?.requestId]}><WorkbenchSidePane open={workbenchOpen && mainView === 'chat'} modal={workbenchOverlay && !settingsOpen && !searchOpen} suspended={settingsOpen || searchOpen} width={clampWorkbenchWidth(workbenchWidth, viewportWidth)} onWidthChange={value => setWorkbenchWidth(clampWorkbenchWidth(value, viewportWidth))} onResizing={setWorkbenchResizing} onClose={closeWorkbench} openRequest={workbenchRequest} terminalRequest={terminalRequest} onTabChange={setWorkbenchTab} /></ScopedErrorBoundary>
 			{mainView === 'chat' && <HoverTooltip title={t('app.workbench')}><button ref={workbenchToggleRef} type="button" className="pd-workbench-toggle pd-icon-button" aria-label={t(workbenchOpen ? 'app.closeWorkbench' : 'app.openWorkbench')} aria-pressed={workbenchOpen} onClick={() => setWorkbenchOpen((value) => !value)}><Icon name="panelRight" width="17" height="17" /></button></HoverTooltip>}
+			</div>
 			{settingsOpen && <SettingsPanel initialPage={settingsInitialPage} modelManagementTarget={settingsInitialPage === 'model' ? modelManagementTarget : undefined} onClose={() => setSettingsOpen(false)} themePreference={themePreference} onThemePreferenceChange={setThemePreference} colorPreferences={colorPreferences} onColorPreferencesChange={setColorPreferences} colorSaveFailed={colorSaveFailed} />}
 			{searchOpen && <div className="pd-overlay-error-host"><ScopedErrorBoundary scope="search" onReset={() => setSearchOpen(false)}><SearchDialog commands={searchCommands} onClose={() => setSearchOpen(false)} onSelectSession={selectSearchSession} onSelectFile={selectSearchFile} /></ScopedErrorBoundary></div>}
 			{isWindows && <WindowControls />}
