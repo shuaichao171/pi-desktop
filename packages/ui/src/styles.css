@@ -886,15 +886,14 @@ div.pd-hover-tooltip:has(.pd-update-notes-body) { max-width: min(400px, calc(100
 .pd-chat-title-measure { visibility: hidden; white-space: pre; padding: 0 6px; border: 1px solid transparent; font: inherit; pointer-events: none; }
 .pd-chat-header-more { flex: 0 0 auto; width: 24px; height: 24px; border-radius: var(--pd-radius-sm); color: var(--pd-text); }
 
-/* zcode WorkspaceEditorButtonGroup look: one bordered pill with the opener icon + a chevron picker. */
+/* Two primary workspace actions stay visible in the top bar: Explorer and VS Code. */
 .pd-workspace-open-wrap { position: relative; flex: 0 0 auto; }
-.pd-workspace-open { display: flex; align-items: stretch; height: 26px; border: 1px solid var(--pd-border); border-radius: var(--pd-radius-md); background: var(--pd-surface); overflow: hidden; transition: border-color 0.12s ease; }
+.pd-workspace-open { display: flex; align-items: center; gap: 2px; height: 28px; padding: 1px; border: 1px solid var(--pd-border); border-radius: var(--pd-radius-md); background: var(--pd-surface); transition: border-color 0.12s ease; }
 .pd-workspace-open-wrap:hover .pd-workspace-open { border-color: var(--pd-border-strong, var(--pd-border)); }
-.pd-workspace-open-main, .pd-workspace-open-menu { display: inline-flex; align-items: center; justify-content: center; border: 0; background: transparent; color: var(--pd-text-subtle); cursor: pointer; transition: background 0.12s ease, color 0.12s ease; }
-.pd-workspace-open-main { width: 30px; }
-.pd-workspace-open-menu { width: 20px; }
-.pd-workspace-open-main:hover, .pd-workspace-open-menu:hover { background: var(--pd-surface-hover); color: var(--pd-text); }
-.pd-workspace-open-main:focus-visible, .pd-workspace-open-menu:focus-visible { outline: 2px solid var(--pd-focus-border); outline-offset: -2px; }
+.pd-workspace-open-button { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 24px; padding: 0; border: 0; border-radius: var(--pd-radius-sm); background: transparent; color: var(--pd-text-subtle); cursor: pointer; transition: background 0.12s ease, color 0.12s ease; }
+.pd-workspace-open-button:hover { background: var(--pd-surface-hover); color: var(--pd-text); }
+.pd-workspace-open-button:focus-visible { outline: 2px solid var(--pd-focus-border); outline-offset: -2px; }
+.pd-workspace-open-error { top: calc(100% + 4px); }
 .pd-workspace-open-error { top: calc(100% + 4px); }
 
 /* Commit dialog (zcode-style) */
