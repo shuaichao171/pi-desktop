@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import type { UiCustomProviderModel, UiDiscoveredProviderModel, UiDiscoverProviderModelsRequest, UiModelProvider, UiModelSummary, UiProviderApi, UiProviderAuthStatus, UiProviderHeaders, UiSaveCustomProviderRequest, UiSaveProviderModelsRequest, UiThinkingLevel } from '@pidesktop/shared';
+import type { UiCustomProviderModel, UiDiscoveredProviderModel, UiDiscoverProviderModelsRequest, UiModelProvider, UiModelSummary, UiProviderApi, UiProviderAuthStatus, UiProviderHeaders, UiSaveCustomProviderRequest, UiSaveProviderModelsRequest, UiThinkingLevel, UiUsageQueryResult, UiUsageQueryTemplate } from '@pidesktop/shared';
+import { usageScriptPreset } from '@pidesktop/shared';
+import { formatUsageBalance } from '../usageDisplay';
 import { useChatStore } from '../store';
 import { useT, type Translate } from '../i18n';
 import type { ModelManagementTarget } from '../modelManagement';
@@ -366,6 +368,7 @@ export function ModelSettingsPanel({ initialTarget, renderCredential, onDraftSta
 	const [modelSearch, setModelSearch] = useState('');
 	const [editor, setEditor] = useState<SettingsEditor | null>(initialTarget?.kind === 'add-provider' ? { kind: 'templates' } : null);
 	const [confirmRemove, setConfirmRemove] = useState<{ kind: 'provider'; provider: UiModelProvider } | { kind: 'model'; model: string } | null>(null);
+	const [usageQueryTarget, setUsageQueryTarget] = useState<UiModelProvider | null>(null);
 	const [pending, setPending] = useState(false);
 	const pendingRef = useRef(false);
 	const [error, setError] = useState<string | null>(null);
@@ -598,6 +601,7 @@ export function ModelSettingsPanel({ initialTarget, renderCredential, onDraftSta
 						<div className="pd-model-page-actions">
 							<HoverTooltip title={t('settings.providerEdit')}><button type="button" data-action="edit-provider" className="pd-model-settings-button" disabled={!canChange} aria-label={t('settings.providerEdit')} onClick={() => openEditor({ kind: 'edit', provider: selected.provider })}><Icon name="pencil" width="13" height="13" />{t('settings.providerEdit')}</button></HoverTooltip>
 							{selected.custom && selected.editable && <HoverTooltip title={t('settings.providerRemove')}><button type="button" data-action="remove-provider" className="pd-icon-button is-danger" disabled={!canChange} aria-label={t('settings.providerRemove')} onClick={() => navigate(() => setConfirmRemove({ kind: 'provider', provider: selected }))}><Icon name="trash" width="16" height="16" /></button></HoverTooltip>}
+							{Boolean(selected.baseUrl) && <HoverTooltip title={t('usage.dialogTitleShort')}><button type="button" data-action="configure-usage-query" className={`pd-model-settings-button${selected.usageQuery?.enabled ? ' is-usage-on' : ''}`} disabled={!canChange} aria-label={t('usage.dialogTitleShort')} aria-pressed={Boolean(selected.usageQuery?.enabled)} onClick={() => setUsageQueryTarget(selected)}><Icon name="globe" width="13" height="13" />{t('usage.dialogTitleShort')}{selected.usageQuery?.enabled && <span className="pd-usage-state" aria-hidden="true" />}</button></HoverTooltip>}
 						</div>
 					</div>
 					<div className="pd-model-provider-connection-row"><span className="pd-model-provider-url"><span className="pd-model-provider-url-label">{t('settings.providerBaseUrl')}</span><code title={selected.baseUrl || undefined}>{selected.baseUrl || '—'}</code></span>{protocolLabel && <span className="pd-model-provider-badge pd-model-provider-protocol">{protocolLabel}</span>}</div>
@@ -663,5 +667,96 @@ export function ModelSettingsPanel({ initialTarget, renderCredential, onDraftSta
 		</ModelSettingsDialog>}
 		{confirmRemove && removalProvider && <ModelSettingsDialog compact title={t(confirmRemove.kind === 'provider' ? 'settings.providerRemove' : 'settings.customModelRemove')} busy={saving} onClose={() => setConfirmRemove(null)}><p>{confirmRemove.kind === 'provider' ? t('settings.providerRemoveConfirm', { provider: removalProvider.name || removalProvider.provider }) : t('settings.customModelRemoveConfirm', { model: confirmRemove.model })}</p>{error && <p className="pd-settings-error" role="alert">{error}</p>}<div className="pd-model-settings-form-actions"><button type="button" data-autofocus className="pd-model-settings-button" disabled={saving} onClick={() => setConfirmRemove(null)}>{t('settings.modelSettingsCancel')}</button><button type="button" className="pd-model-settings-button is-danger" data-action="confirm-remove" disabled={!canChange} onClick={() => void confirmRemoval()}>{t('settings.modelSettingsConfirmRemove')}</button></div></ModelSettingsDialog>}
 		{leaveAction && <ModelSettingsDialog compact busy={savingLeave} returnFocus={draftFocus.current} title={t('settings.discardTitle')} onClose={() => { if (!savingLeave) setLeaveAction(null); }}><p>{t('settings.discardDescription')}</p>{leaveError && <p role="alert">{t('model.leaveSaveFailed')}</p>}<div className="pd-model-settings-form-actions"><button type="button" data-autofocus disabled={savingLeave} className="pd-model-settings-button" onClick={() => setLeaveAction(null)}>{t('personalization.keepEditing')}</button><button type="button" data-action="discard-model-draft" disabled={savingLeave} className="pd-model-settings-button" onClick={() => { const action = leaveAction; setLeaveAction(null); resetDrafts(); setError(null); setFeedback(null); action(); }}>{t('personalization.discard')}</button><button type="button" data-action="save-model-draft-and-leave" disabled={savingLeave || !canSaveDrafts} className="pd-settings-primary" onClick={() => { if (saveLeaveLock.current) return; setSavingLeave(true); setLeaveError(false); void saveAll().then((saved) => { if (saved) { const action = leaveAction; setLeaveAction(null); action(); } else setLeaveError(true); }).catch(() => setLeaveError(true)).finally(() => setSavingLeave(false)); }}>{savingLeave ? t('personalization.saving') : t('settings.saveAndContinue')}</button></div></ModelSettingsDialog>}
+		{usageQueryTarget && <UsageQueryDialog provider={usageQueryTarget} onClose={() => setUsageQueryTarget(null)} onSaved={() => { void run(refreshCatalog); }} />}
 	</div>;
+}
+
+const USAGE_TEMPLATES: readonly UiUsageQueryTemplate[] = ['general', 'newapi', 'sub2api', 'balance', 'custom'];
+const USAGE_SCRIPT_TEMPLATES: readonly UiUsageQueryTemplate[] = ['general', 'newapi', 'sub2api', 'custom'];
+
+/** Per-provider usage-query configuration (cc-switch-style template picker); saving is a targeted write. */
+function UsageQueryDialog({ provider, onClose, onSaved }: { provider: UiModelProvider; onClose(): void; onSaved(): void }) {
+	const { t } = useT();
+	const bridge = useChatStore(s => s.bridge);
+	const stored = provider.usageQuery;
+	const [enabled, setEnabled] = useState(stored?.enabled ?? false);
+	const [template, setTemplate] = useState<UiUsageQueryTemplate>(stored?.template ?? 'general');
+	const [intervalMinutes, setIntervalMinutes] = useState(String(stored?.intervalMinutes ?? 10));
+	const [script, setScript] = useState(stored?.script ?? usageScriptPreset(stored?.template ?? 'general'));
+	const [accessToken, setAccessToken] = useState('');
+	const [accessTokenTouched, setAccessTokenTouched] = useState(false);
+	const [userId, setUserId] = useState(stored?.userId ?? '');
+	const [saving, setSaving] = useState(false);
+	const [error, setError] = useState<string | null>(null);
+	const [test, setTest] = useState<{ busy: boolean; result: UiUsageQueryResult | null }>({ busy: false, result: null });
+	const isScriptTemplate = USAGE_SCRIPT_TEMPLATES.includes(template);
+	useEffect(() => { if (!stored?.script) setScript(usageScriptPreset(template)); }, [template]);
+	async function save() {
+		if (!bridge?.saveProviderUsageQuery) { setError(t('usage.bridgeUnavailable')); return; }
+		setSaving(true); setError(null);
+		try {
+			const minutes = Number.parseInt(intervalMinutes, 10);
+			await bridge.saveProviderUsageQuery({
+				provider: provider.provider,
+				usageQuery: {
+					enabled, template,
+					...(Number.isSafeInteger(minutes) && minutes >= 0 && minutes <= 100_800 ? { intervalMinutes: minutes } : {}),
+					...(isScriptTemplate && script.trim() && script !== usageScriptPreset(template) ? { script } : {}),
+					...(template === 'newapi' && accessTokenTouched ? { accessToken } : {}),
+					...(template === 'newapi' && userId.trim() ? { userId: userId.trim() } : {}),
+				},
+			});
+			onSaved();
+			onClose();
+		} catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
+		finally { setSaving(false); }
+	}
+	async function runTest() {
+		if (!bridge?.queryProviderUsage) { setError(t('usage.bridgeUnavailable')); return; }
+		setTest({ busy: true, result: null }); setError(null);
+		try { setTest({ busy: false, result: await bridge.queryProviderUsage(provider.provider) }); }
+		catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); setTest({ busy: false, result: null }); }
+	}
+	return <ModelSettingsDialog title={t('usage.dialogTitle')} busy={saving} onClose={onClose}>
+		<div className="pd-usage-query">
+			<label className="pd-model-settings-check"><input type="checkbox" role="switch" data-field="usage.enabled" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} />{t('usage.enable')}</label>
+			<p className="pd-usage-hint">{t('usage.enableHint')}</p>
+			<label className="pd-model-settings-field">{t('usage.template')}
+				<select data-field="usage.template" value={template} onChange={(event) => setTemplate(event.target.value as UiUsageQueryTemplate)}>
+					{USAGE_TEMPLATES.map((item) => <option key={item} value={item}>{t(`usage.template.${item}`)}</option>)}
+				</select>
+			</label>
+			{template === 'balance' && <p className="pd-usage-hint">{t('usage.templateBalanceHint')}</p>}
+			{template === 'newapi' && <>
+				<label className="pd-model-settings-field">{t('usage.accessToken')}
+					<input data-field="usage.accessToken" type="password" value={accessToken} placeholder={stored?.hasAccessToken ? t('usage.tokenStored') : t('usage.tokenPlaceholder')} disabled={!enabled} autoComplete="new-password" spellCheck={false}
+						onChange={(event) => { setAccessToken(event.target.value); setAccessTokenTouched(true); }} />
+				</label>
+				<label className="pd-model-settings-field">{t('usage.userId')}
+					<input data-field="usage.userId" type="text" value={userId} placeholder={t('usage.userIdPlaceholder')} disabled={!enabled} spellCheck={false} onChange={(event) => setUserId(event.target.value)} />
+				</label>
+				<p className="pd-usage-hint">{t('usage.newapiHint')}</p>
+			</>}
+			{isScriptTemplate && <label className="pd-model-settings-field pd-usage-script-field">{t('usage.script')}
+				<textarea data-field="usage.script" value={script} rows={10} spellCheck={false} onChange={(event) => setScript(event.target.value)} />
+				<small>{t('usage.scriptHint')}</small>
+			</label>}
+			<label className="pd-model-settings-field">{t('usage.interval')}
+				<input data-field="usage.interval" type="number" min={0} max={100800} value={intervalMinutes} disabled={!enabled} onChange={(event) => setIntervalMinutes(event.target.value)} />
+				<small>{t('usage.intervalHint')}</small>
+			</label>
+			{error && <p className="pd-settings-error" role="alert">{error}</p>}
+			{test.result && <div className="pd-usage-test" role="status">
+				{test.result.ok && test.result.data?.length
+					? test.result.data.map((entry, index) => <span key={index}>{formatUsageBalance(entry)}</span>)
+					: <span className="pd-usage-test-error">{test.result.error ?? t('usage.queryFailed')}</span>}
+			</div>}
+			<div className="pd-model-settings-form-actions">
+				<button type="button" data-action="usage-cancel" className="pd-model-settings-button" disabled={saving} onClick={onClose}>{t('settings.modelSettingsCancel')}</button>
+				<button type="button" data-action="usage-test" className="pd-model-settings-button" disabled={saving || test.busy} onClick={() => void runTest()}>{test.busy ? t('usage.testing') : t('usage.test')}</button>
+				<button type="button" data-action="usage-save" className="pd-settings-primary" disabled={saving} onClick={() => void save()}>{t('settings.save', { count: 1 })}</button>
+			</div>
+			<p className="pd-usage-hint">{t('usage.testUsesSaved')}</p>
+		</div>
+	</ModelSettingsDialog>;
 }

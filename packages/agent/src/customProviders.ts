@@ -3,6 +3,7 @@ import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { ModelRuntime } from '@earendil-works/pi-coding-agent';
 import type { UiCustomProviderModel, UiDiscoverProviderModelsRequest, UiProviderApi, UiProviderHeaders, UiProviderReadOnlyReason, UiSaveCustomProviderRequest, UiSaveProviderModelsRequest, UiThinkingLevel } from '@pidesktop/shared';
+import { normalizeUsageQueryConfig, type UiUsageQueryConfig } from '../../shared/src/managementFeatures.ts';
 
 type JsonObject = Record<string, unknown>;
 /** `invalid` lists entries Pi's schema would reject; they stay readable but block every write. */
@@ -273,6 +274,25 @@ export function mergeProvider(document: ProviderDocument, request: UiSaveCustomP
 	} } };
 }
 
+/** Targeted write of the usage-query settings; every other entry field stays untouched. */
+export function mergeProviderUsageQuery(document: ProviderDocument, provider: string, config: UiUsageQueryConfig | null): ProviderDocument['data'] {
+	if (!own(document.data.providers, provider)) throw new Error('供应商没有本地配置，无法保存用量查询');
+	const previous = document.data.providers[provider]!;
+	const entry: JsonObject = { ...previous };
+	if (config === null) delete entry.desktopUsageQuery;
+	else {
+		// An omitted accessToken/userId means "keep the stored value" (apiKey-style
+		// round-trip: the dialog never reads secrets back); an empty string clears it.
+		const previousQuery = record(previous.desktopUsageQuery) ? previous.desktopUsageQuery : undefined;
+		const previousToken = typeof previousQuery?.accessToken === 'string' ? previousQuery.accessToken : undefined;
+		const previousUserId = typeof previousQuery?.userId === 'string' ? previousQuery.userId : undefined;
+		entry.desktopUsageQuery = { ...config,
+			...(config.accessToken === undefined && previousToken !== undefined ? { accessToken: previousToken } : {}),
+			...(config.userId === undefined && previousUserId !== undefined ? { userId: previousUserId } : {}) };
+	}
+	return { ...document.data, providers: { ...document.data.providers, [provider]: entry } };
+}
+
 export async function validateProviderWithSdk(directory: string, provider: string, config: JsonObject): Promise<void> {
 	await mkdir(directory, { recursive: true });
 	const path = join(directory, `.models-validate-${randomUUID()}.json`);
@@ -322,7 +342,7 @@ export async function restoreProviderBackupFiles(directory: string, files: Provi
 		catch { throw new Error('备份中的 models.json 或 auth.json 格式无效，已取消恢复'); }
 	})();
 	if (files.modelPrefsJson !== null) {
-		try { parseModelPrefs(files.modelPrefsJson); }
+		try { parseModelPrefsFile(files.modelPrefsJson); }
 		catch { throw new Error('备份中的 model-prefs.json 格式无效，已取消恢复'); }
 	}
 	const modelsPath = join(directory, 'models.json');
@@ -358,14 +378,18 @@ export async function restoreProviderBackupFiles(directory: string, files: Provi
 		throw new Error('恢复备份失败，本地配置已恢复原状');
 	}
 	cachedDisabledModels = {};
+	cachedUsageQueryPrefs = {};
 	cachedModelPrefsPath = null;
 	return summary;
 }
 
 let cachedDisabledModels: Record<string, string[]> = {};
+let cachedUsageQueryPrefs: Record<string, UiUsageQueryConfig> = {};
 let cachedModelPrefsPath: string | null = null;
 
-function parseModelPrefs(raw: string): Record<string, string[]> {
+interface ModelPrefsFile { disabled: Record<string, string[]>; usageQueries: Record<string, UiUsageQueryConfig> }
+
+function parseModelPrefsFile(raw: string): ModelPrefsFile {
 	const data: unknown = JSON.parse(raw);
 	if (!record(data)) throw new Error('Invalid model prefs');
 	const disabled: Record<string, string[]> = {};
@@ -374,7 +398,14 @@ function parseModelPrefs(raw: string): Record<string, string[]> {
 		const unique = [...new Set(ids)].filter(() => { try { validateProviderId(provider); return true; } catch { return false; } });
 		if (unique.length) disabled[provider] = unique;
 	}
-	return disabled;
+	// Usage-query prefs ride in the same file; entries Pi does not know are kept as-is.
+	const usageQueries: Record<string, UiUsageQueryConfig> = {};
+	for (const [provider, value] of Object.entries(record(data.usageQueries) ? data.usageQueries : {})) {
+		try { validateProviderId(provider); } catch { continue; }
+		const config = normalizeUsageQueryConfig(value);
+		if (config) usageQueries[provider] = config;
+	}
+	return { disabled, usageQueries };
 }
 
 /** Sync snapshot for listModels filtering; empty until the first load completes. */
@@ -382,31 +413,58 @@ export function getCachedDisabledModels(): Record<string, string[]> {
 	return cachedDisabledModels;
 }
 
-export async function loadModelPrefs(agentDirectory: string): Promise<Record<string, string[]>> {
+export async function loadModelPrefsFile(agentDirectory: string): Promise<ModelPrefsFile> {
 	const path = join(agentDirectory, 'model-prefs.json');
-	if (cachedModelPrefsPath === path) return cachedDisabledModels;
-	try {
-		cachedDisabledModels = parseModelPrefs(await readFile(path, 'utf8'));
-	} catch {
-		// Missing or corrupt prefs never block the catalog; the next toggle rewrites the file.
-		cachedDisabledModels = {};
+	let prefs: ModelPrefsFile;
+	if (cachedModelPrefsPath === path) prefs = { disabled: cachedDisabledModels, usageQueries: cachedUsageQueryPrefs };
+	else {
+		try { prefs = parseModelPrefsFile(await readFile(path, 'utf8')); }
+		catch {
+			// Missing or corrupt prefs never block the catalog; the next toggle rewrites the file.
+			prefs = { disabled: {}, usageQueries: {} };
+		}
+		cachedModelPrefsPath = path;
+		cachedDisabledModels = prefs.disabled;
+		cachedUsageQueryPrefs = prefs.usageQueries;
 	}
+	return prefs;
+}
+
+async function writeModelPrefs(agentDirectory: string, prefs: ModelPrefsFile): Promise<void> {
+	const path = join(agentDirectory, 'model-prefs.json');
+	await mkdir(agentDirectory, { recursive: true });
+	await atomicWrite(path, JSON.stringify({ disabled: prefs.disabled, usageQueries: prefs.usageQueries }, null, 2) + '\n');
 	cachedModelPrefsPath = path;
-	return cachedDisabledModels;
+	cachedDisabledModels = prefs.disabled;
+	cachedUsageQueryPrefs = prefs.usageQueries;
+}
+
+export async function loadModelPrefs(agentDirectory: string): Promise<Record<string, string[]>> {
+	return (await loadModelPrefsFile(agentDirectory)).disabled;
+}
+
+/** Usage-query configs for providers without a models.json entry (official/builtin providers). */
+export async function loadUsageQueryPrefs(agentDirectory: string): Promise<Record<string, UiUsageQueryConfig>> {
+	return (await loadModelPrefsFile(agentDirectory)).usageQueries;
 }
 
 export async function setModelDisabled(agentDirectory: string, provider: string, modelId: string, disabled: boolean): Promise<Record<string, string[]>> {
-	const current = await loadModelPrefs(agentDirectory);
-	const next: Record<string, string[]> = { ...current };
+	const prefs = await loadModelPrefsFile(agentDirectory);
+	const next: Record<string, string[]> = { ...prefs.disabled };
 	const ids = new Set(next[provider] ?? []);
 	if (disabled) ids.add(modelId);
 	else ids.delete(modelId);
 	if (ids.size) next[provider] = [...ids];
 	else delete next[provider];
-	const path = join(agentDirectory, 'model-prefs.json');
-	await mkdir(agentDirectory, { recursive: true });
-	await atomicWrite(path, JSON.stringify({ disabled: next }, null, 2) + '\n');
-	cachedDisabledModels = next;
-	cachedModelPrefsPath = path;
+	await writeModelPrefs(agentDirectory, { disabled: next, usageQueries: prefs.usageQueries });
 	return next;
+}
+
+/** Targeted write of a usage-query pref; the disabled map is preserved verbatim. */
+export async function setUsageQueryPref(agentDirectory: string, provider: string, config: UiUsageQueryConfig | null): Promise<void> {
+	const prefs = await loadModelPrefsFile(agentDirectory);
+	const usageQueries = { ...prefs.usageQueries };
+	if (config === null) delete usageQueries[provider];
+	else usageQueries[provider] = config;
+	await writeModelPrefs(agentDirectory, { disabled: prefs.disabled, usageQueries });
 }
