@@ -23,6 +23,10 @@
 .pd-top-bar .pd-brand-mark { margin-right: 2px; }
 .pd-top-bar-navigation { display: flex; flex: 0 0 auto; align-items: center; gap: 4px; -webkit-app-region: no-drag; }
 .pd-top-bar-actions { display: flex; flex: 0 0 auto; align-items: center; gap: 4px; margin-left: auto; -webkit-app-region: no-drag; }
+.pd-top-bar-session { display: flex; flex: 1 1 auto; align-items: center; gap: 4px; min-width: 0; margin-left: 14px; }
+.pd-top-bar-session .pd-chat-title { flex: 0 1 auto; min-width: 0; max-width: min(460px, 42vw); }
+.pd-top-bar-session .pd-chat-title h1 { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pd-top-bar-session .pd-workspace-open-wrap { flex: 0 0 auto; margin-left: auto; }
 .pd-app-body { display: flex; flex: 1; min-height: 0; min-width: 0; }
 
 :root {
@@ -738,7 +742,7 @@ div.pd-hover-tooltip:has(.pd-update-notes-body) { max-width: min(400px, calc(100
 /* Clears the fixed workbench toggle (right 116px + 28px) and the window
    controls so header content never renders underneath them. */
 .is-frameless .pd-chat-header { padding-right: 152px; }
-.is-frameless .pd-top-bar { padding-right: 152px; }
+.is-frameless .pd-top-bar { padding-right: 10px; }
 .pd-app-shell:not(.is-frameless) .pd-chat-header { padding-right: 52px; }
 .is-frameless .pd-top-bar button,
 .is-frameless .pd-chat-header button,
@@ -747,6 +751,7 @@ div.pd-hover-tooltip:has(.pd-update-notes-body) { max-width: min(400px, calc(100
 .is-frameless.is-settings-open .pd-chat-header button { pointer-events: none; }
 
 .pd-window-controls { position: fixed; top: 14px; right: 14px; z-index: var(--pd-z-window-controls); display: flex; align-items: center; gap: 2px; -webkit-app-region: no-drag; }
+.pd-window-controls.is-inline { position: static; top: auto; right: auto; z-index: auto; }
 .pd-window-control { display: grid; flex: 0 0 auto; place-items: center; width: 28px; height: 28px; padding: 0; border: 0; border-radius: var(--pd-radius-md); background: transparent; color: var(--pd-text-subtle); -webkit-app-region: no-drag; }
 .pd-window-control:hover { background: var(--pd-surface-hover); color: var(--pd-text); }
 .pd-window-control.is-close:hover { background: var(--pd-window-close-hover); color: #fff; }

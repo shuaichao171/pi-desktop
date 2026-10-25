@@ -245,7 +245,7 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 		const target = trashFocus.current; trashFocus.current = null;
 		const row = [...(scrollRef.current?.querySelectorAll<HTMLElement>('[data-session-path]') ?? [])].find((item) => item.dataset.sessionPath === target.path);
 		const available = (element: HTMLElement | null | undefined): element is HTMLElement => Boolean(element?.isConnected && !element.closest('[inert]') && !element.matches(':disabled') && element.getClientRects().length);
-		const focus = [target.anchor, row?.querySelector<HTMLButtonElement>('.pd-session-row'), scrollRef.current, document.querySelector<HTMLButtonElement>('.pd-header-sidebar-toggle')].find(available);
+		const focus = [target.anchor, row?.querySelector<HTMLButtonElement>('.pd-session-row'), scrollRef.current, document.querySelector<HTMLButtonElement>('.pd-activity-sessions')].find(available);
 		focus?.focus();
 	}, [trashTarget, bulkTrashTarget]);
 

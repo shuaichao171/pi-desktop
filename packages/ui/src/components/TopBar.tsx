@@ -1,27 +1,28 @@
-import { useChatStore } from '../store';
 import { useT } from '../i18n';
-import { Icon } from './Icons';
-import { HoverTooltip } from './HoverTooltip';
 import { HistoryNavigation, type HistoryNavigationProps } from './HistoryNavigation';
 import { SearchButton } from './SearchButton';
+import { ChatTitle, type ChatTitleHandle } from './ChatTitle';
+import { ChatHeaderMenu } from './ChatHeaderMenu';
+import { WorkspaceOpenButton } from './WorkspaceOpenButton';
+import { WindowControls } from './WindowControls';
+import type { RefObject } from 'react';
 
 interface TopBarProps {
 	history: HistoryNavigationProps;
 	searchOpen: boolean;
 	onOpenSearch(): void;
-	/** Collapses/expands the sidebar pane (Ctrl+B twin). The rail is always visible. */
-	sidebarOpen: boolean;
-	onToggleSidebar(): void;
+	mainView: 'chat' | 'automations' | 'plugins';
+	title: string;
+	sessionPath: string | null;
+	cwd: string;
+	titleRef: RefObject<ChatTitleHandle | null>;
+	onOpenCommit(): void;
+	isWindows: boolean;
 }
 
-/**
- * Window-wide top bar: brand mark leftmost, history navigation, search, and
- * the sidebar toggle on the right. Replaces the sidebar's old brand row so the
- * chrome stays reachable even when the sidebar pane is collapsed.
- */
-export function TopBar({ history, searchOpen, onOpenSearch, sidebarOpen, onToggleSidebar }: TopBarProps) {
+/** Window-wide VS Code-style title bar. It owns app navigation and the current session title. */
+export function TopBar({ history, searchOpen, onOpenSearch, mainView, title, sessionPath, cwd, titleRef, onOpenCommit, isWindows }: TopBarProps) {
 	const { t } = useT();
-	const platform = useChatStore((s) => s.appInfo?.platform);
 	return (
 		<header className="pd-top-bar" aria-label={t('sidebar.main')}>
 			<span className="pd-brand-mark" aria-hidden="true">π</span>
@@ -29,11 +30,12 @@ export function TopBar({ history, searchOpen, onOpenSearch, sidebarOpen, onToggl
 				<HistoryNavigation {...history} />
 				<SearchButton open={searchOpen} onClick={onOpenSearch} />
 			</div>
-			<div className="pd-top-bar-actions">
-				<HoverTooltip title={t(sidebarOpen ? 'sidebar.collapse' : 'sidebar.expand')} shortcut={platform === 'darwin' ? '⌘B' : 'Ctrl+B'}>
-					<button type="button" className="pd-icon-button pd-sidebar-collapse" onClick={onToggleSidebar} aria-label={t(sidebarOpen ? 'sidebar.collapse' : 'sidebar.expand')}><Icon name="panel" width="16" height="16" /></button>
-				</HoverTooltip>
-			</div>
+			{mainView === 'chat' && <div className="pd-top-bar-session">
+				<ChatTitle ref={titleRef} title={title} sessionPath={sessionPath} />
+				<ChatHeaderMenu title={title} sessionPath={sessionPath} cwd={cwd} onRename={() => titleRef.current?.beginRename()} onOpenCommit={onOpenCommit} />
+				<WorkspaceOpenButton cwd={cwd} />
+			</div>}
+			<div className="pd-top-bar-actions">{isWindows && <WindowControls inline />}</div>
 		</header>
 	);
 }

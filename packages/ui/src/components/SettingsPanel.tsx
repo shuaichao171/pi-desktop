@@ -325,7 +325,7 @@ export function SettingsPanel({ initialPage = 'general', modelManagementTarget, 
 				return;
 			}
 			const settingsEntry = document.querySelector<HTMLButtonElement>('.pd-settings-entry, .pd-pai-settings');
-			const sidebarToggle = document.querySelector<HTMLButtonElement>('.pd-header-sidebar-toggle');
+			const sidebarToggle = document.querySelector<HTMLButtonElement>('.pd-activity-sessions');
 			if (canReceiveFocus(settingsEntry)) settingsEntry.focus();
 			else if (canReceiveFocus(sidebarToggle)) sidebarToggle.focus();
 		};

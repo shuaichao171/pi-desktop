@@ -4,8 +4,8 @@ import { useT } from '../i18n';
 import { Icon } from './Icons';
 import { HoverTooltip } from './HoverTooltip';
 
-/** Windows frameless controls, kept above dialogs so the window can always be closed. */
-export function WindowControls() {
+/** Windows frameless controls. Inline mode places them in the global top bar. */
+export function WindowControls({ inline = false }: { inline?: boolean }) {
 	const { t } = useT();
 	const bridge = useChatStore((state) => state.bridge);
 	const [maximized, setMaximized] = useState(false);
@@ -38,7 +38,7 @@ export function WindowControls() {
 	}
 
 	return (
-		<div className="pd-window-controls" aria-label={t('window.controls')}>
+		<div className={`pd-window-controls${inline ? ' is-inline' : ''}`} aria-label={t('window.controls')}>
 			{error && <span className="pd-window-control-error" role="alert">{error}</span>}
 			<HoverTooltip title={t('window.minimizeShort')}><button type="button" className="pd-window-control" aria-label={t('window.minimize')} onClick={() => run(() => bridge.minimizeWindow())}><Icon name="minimize" width="16" height="16" /></button></HoverTooltip>
 			<HoverTooltip title={t(maximized ? 'window.restoreShort' : 'window.maximizeShort')}><button type="button" className="pd-window-control" aria-label={t(maximized ? 'window.restore' : 'window.maximize')} onClick={() => run(() => bridge.toggleMaximizeWindow())}><Icon name={maximized ? 'restore' : 'maximize'} width="16" height="16" /></button></HoverTooltip>

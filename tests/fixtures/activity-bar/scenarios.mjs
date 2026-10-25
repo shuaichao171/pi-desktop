@@ -22,6 +22,8 @@ export default async function activityBarScenarios(review) {
   await check(barGeometry.brandFirst >= 0 && barGeometry.brandFirst <= 24, 'Brand mark sits at the far left of the top bar');
   await check(await review.evaluate('document.querySelectorAll(".pd-brand-mark").length === 1'), 'Only the top bar owns the brand mark');
   await check(await review.evaluate('document.querySelectorAll(".pd-window-controls").length <= 1'), 'Window controls are mounted once');
+  await check(await review.evaluate('document.querySelectorAll(".pd-chat-header").length === 0'), 'The app uses one global top bar instead of per-panel title bars');
+  await check(await review.evaluate('!document.querySelector(".pd-window-controls") || document.querySelector(".pd-window-controls").closest(".pd-top-bar") !== null'), 'Window controls live inside the global top bar when available');
 
   // The sessions toggle sits at the top of the rail, above new-session.
   await check(await review.evaluate(`(() => { const sessions = ${rail}.querySelector(".pd-activity-sessions"); const first = ${rail}.querySelector(".pd-activity-bar-top button"); return sessions === first; })()`), 'Sessions toggle is the topmost rail button');

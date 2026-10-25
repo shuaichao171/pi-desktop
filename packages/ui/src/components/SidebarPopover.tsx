@@ -70,7 +70,7 @@ export function SidebarPopover({ anchor, trigger = anchor, point, label, dialog 
 				if (document.activeElement !== document.body) return;
 				const available = (element: HTMLElement) => !element.closest('[inert]') && element.getClientRects().length > 0;
 				if (trigger.isConnected && available(trigger)) { trigger.focus(); return; }
-				[...document.querySelectorAll<HTMLButtonElement>('.pd-sidebar-mode [aria-selected="true"], .pd-new-session, .pd-header-sidebar-toggle')].find(available)?.focus();
+				[...document.querySelectorAll<HTMLButtonElement>('.pd-sidebar-mode [aria-selected="true"], .pd-new-session, .pd-activity-sessions')].find(available)?.focus();
 			});
 		};
 	}, [trigger]);
