@@ -5,6 +5,7 @@ import type { UiAgentError } from './agentErrors';
 export * from './agentErrors.ts';
 import type { UiApprovalDetails, UiExtensionDialogResponse } from './approval';
 export * from './approval.ts';
+export * from './activity.ts';
 import type { PluginUpdatesBridge } from './pluginUpdates';
 import type { McpFeaturesBridge } from './mcpFeatures';
 import type { ResultFilesBridge } from './resultFiles';

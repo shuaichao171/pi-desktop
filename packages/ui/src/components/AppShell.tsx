@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type 
 import type { UiAppearanceState, UiSessionSearchResult, WorkspaceEntry } from '@pidesktop/shared';
 import { ChatView, type SearchMessageTarget } from './ChatView';
 import { ScopedErrorBoundary } from './ScopedErrorBoundary';
+import { ActivityBar } from './ActivityBar';
 import { AutomationPage } from './AutomationPage';
 import { PluginsPage } from './PluginsPage';
 import { SearchDialog, type SearchCommand } from './SearchDialog';
@@ -81,6 +82,12 @@ export function AppShell() {
 	const [settingsOpen, setSettingsOpen] = useState(false);
 	const [searchOpen, setSearchOpen] = useState(false);
 	const [mainView, setMainView] = useState<'chat' | 'automations' | 'plugins'>('chat');
+	// Activity bar: clicking a builtin view icon switches the sidebar/main area; clicking
+	// the already-active icon returns to the session list ('chat'). The rail itself never
+	// collapses — Ctrl+B toggles only the sidebar pane to its right.
+	function openActivityView(view: 'automations' | 'plugins') {
+		setMainView((current) => (current === view ? 'chat' : view));
+	}
 	const preparationRequestId = useChatStore((state) => state.sessionPreparation?.requestId ?? state.draftTransfer?.requestId ?? null);
 	const [searchMessageTarget, setSearchMessageTarget] = useState<SearchMessageTarget | null>(null);
 	const [workbenchRequest, setWorkbenchRequest] = useState<WorkbenchOpenRequest | null>(null);
@@ -412,17 +419,20 @@ export function AppShell() {
 		<ExtensionDialogHost chatVisible={mainView === 'chat'} notificationTarget={notificationTarget} globalNotices={MAIN_GLOBAL_NOTICES}>
 		<div className={`pd-app-shell flex${isWindows ? ' is-frameless' : ''}${settingsOpen || searchOpen ? ' is-settings-open' : ''}${sidebarResizing ? ' is-sidebar-resizing' : ''}${workbenchResizing ? ' is-workbench-resizing' : ''}`} style={{ '--pd-sidebar-width': `${sidebarWidth}px`, '--pd-workbench-width': `${clampWorkbenchWidth(workbenchWidth, viewportWidth)}px` } as CSSProperties}>
 			<button type="button" className={`pd-sidebar-scrim${narrow && sidebarOpen ? ' is-open' : ''}`} aria-label={t('app.closeSidebar')} aria-hidden={!narrow || !sidebarOpen} inert={!narrow || !sidebarOpen} tabIndex={-1} onClick={() => setSidebarOpen(false)} />
+			<ActivityBar
+				mainView={mainView}
+				onOpenView={(view: 'automations' | 'plugins') => { openActivityView(view); setSidebarOpen(true); }}
+				onNewSession={() => { setMainView('chat'); if (narrow) setSidebarOpen(false); return useChatStore.getState().newSession(); }}
+				onOpenSettings={() => { if (narrow) setSidebarOpen(false); setSettingsInitialPage('general'); setSettingsOpen(true); }}
+				navigationPending={navigationPending}
+			/>
 			<Sidebar
 				projectRevealRequest={projectRevealRequest}
 				open={sidebarOpen}
 				narrow={narrow}
 				onToggle={() => setSidebarOpen((open) => !open)}
 				onNavigate={() => { setMainView('chat'); if (narrow) setSidebarOpen(false); }}
-				automationsOpen={mainView === 'automations'}
-				onOpenAutomations={() => { setMainView('automations'); if (narrow) setSidebarOpen(false); }}
-				pluginsOpen={mainView === 'plugins'}
-				onOpenPlugins={() => { setMainView('plugins'); if (narrow) setSidebarOpen(false); }}
-				onOpenSettings={(page) => { if (narrow) setSidebarOpen(false); setSettingsInitialPage(page ?? 'general'); setSettingsOpen(true); }}
+				sessionsActive={mainView === 'chat'}
 				searchOpen={searchOpen}
 				history={history}
 				onOpenSearch={() => setSearchOpen(true)}

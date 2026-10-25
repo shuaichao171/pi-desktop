@@ -88,7 +88,7 @@ export default async function settingsReview(review) {
   await review.screenshot('model-picker-crowded-list');
   await review.key('Escape');
   await review.evaluate(`(() => { const fixture=window.__modelReview; fixture.installAttempts=0; window.piDesktop.installUpdate=async()=>{fixture.installAttempts++;if(fixture.installAttempts===1)throw new Error('Update unavailable for this test');return new Promise(resolve=>{fixture.finishInstallation=resolve;});};fixture.emit('onUpdateStateChanged',{phase:'available',currentVersion:'0.1.5',availableVersion:'0.1.6'});})()`);
-  await review.click('.pd-sidebar-update');
+  await review.click('.pd-update-notice-primary');
   await review.waitFor('Boolean(document.querySelector(".pd-operation-notice.is-error"))');
   await review.click('.pd-sidebar-collapse');
   await review.assert('Boolean(document.querySelector(".pd-sidebar.is-collapsed")) && !document.querySelector(".pd-operation-notice").closest(".pd-sidebar")', 'Sidebar failure remains accessible after collapsing the sidebar');
