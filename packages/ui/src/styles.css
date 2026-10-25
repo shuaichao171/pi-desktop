@@ -23,6 +23,10 @@
 .pd-top-bar .pd-brand-mark { margin-right: 2px; }
 .pd-top-bar-navigation { display: flex; flex: 0 0 auto; align-items: center; gap: 4px; -webkit-app-region: no-drag; }
 .pd-top-bar-actions { display: flex; flex: 0 0 auto; align-items: center; gap: 4px; margin-left: auto; -webkit-app-region: no-drag; }
+.pd-top-bar-workspace-actions { display: flex; flex: 0 0 auto; align-items: center; gap: 2px; margin-left: auto; -webkit-app-region: no-drag; }
+.pd-top-bar-workspace-button { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 28px; padding: 0; border: 0; border-radius: var(--pd-radius-sm); background: transparent; color: var(--pd-text-subtle); cursor: pointer; }
+.pd-top-bar-workspace-button:hover, .pd-top-bar-workspace-button.is-active { background: var(--pd-surface-hover); color: var(--pd-text); }
+.pd-top-bar-workspace-button:focus-visible { outline: 2px solid var(--pd-focus-border); outline-offset: -2px; }
 .pd-top-bar-session { display: flex; flex: 1 1 auto; align-items: center; gap: 4px; min-width: 0; margin-left: 14px; }
 .pd-top-bar-session .pd-chat-title { flex: 0 1 auto; min-width: 0; max-width: min(460px, 42vw); }
 .pd-top-bar-session .pd-chat-title h1 { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -886,14 +890,12 @@ div.pd-hover-tooltip:has(.pd-update-notes-body) { max-width: min(400px, calc(100
 .pd-chat-title-measure { visibility: hidden; white-space: pre; padding: 0 6px; border: 1px solid transparent; font: inherit; pointer-events: none; }
 .pd-chat-header-more { flex: 0 0 auto; width: 24px; height: 24px; border-radius: var(--pd-radius-sm); color: var(--pd-text); }
 
-/* Two primary workspace actions stay visible in the top bar: Explorer and VS Code. */
+/* Three independent top-bar actions: Explorer, VS Code, and the right workbench. */
 .pd-workspace-open-wrap { position: relative; flex: 0 0 auto; }
-.pd-workspace-open { display: flex; align-items: center; gap: 2px; height: 28px; padding: 1px; border: 1px solid var(--pd-border); border-radius: var(--pd-radius-md); background: var(--pd-surface); transition: border-color 0.12s ease; }
-.pd-workspace-open-wrap:hover .pd-workspace-open { border-color: var(--pd-border-strong, var(--pd-border)); }
-.pd-workspace-open-button { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 24px; padding: 0; border: 0; border-radius: var(--pd-radius-sm); background: transparent; color: var(--pd-text-subtle); cursor: pointer; transition: background 0.12s ease, color 0.12s ease; }
+.pd-workspace-open { display: flex; align-items: center; gap: 2px; height: 28px; }
+.pd-workspace-open-button { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 28px; padding: 0; border: 0; border-radius: var(--pd-radius-sm); background: transparent; color: var(--pd-text-subtle); cursor: pointer; transition: background 0.12s ease, color 0.12s ease; }
 .pd-workspace-open-button:hover { background: var(--pd-surface-hover); color: var(--pd-text); }
 .pd-workspace-open-button:focus-visible { outline: 2px solid var(--pd-focus-border); outline-offset: -2px; }
-.pd-workspace-open-error { top: calc(100% + 4px); }
 .pd-workspace-open-error { top: calc(100% + 4px); }
 
 /* Commit dialog (zcode-style) */
@@ -1144,9 +1146,6 @@ html.pd-popover-open :is(.pd-sidebar-toolbar, .pd-chat-header, .pd-chat-heading,
 .pd-message-text-preview { max-height: 220px; margin: 0; padding: 8px 10px; overflow: auto; border-top: 1px solid var(--pd-border); color: var(--pd-text-subtle); font: var(--pd-code-font-size, 12px)/1.5 var(--pd-font-mono); white-space: pre-wrap; overflow-wrap: anywhere; }
 
 /* Optional workspace inspector */
-.pd-workbench-toggle { position: fixed; top: 14px; right: 14px; z-index: var(--pd-z-chrome); width: 28px; height: 28px; -webkit-app-region: no-drag; }
-.pd-workbench-toggle[aria-pressed='true'] { background: var(--pd-selected); color: var(--pd-text); }
-.is-frameless .pd-workbench-toggle { right: 116px; }
 .pd-workbench-scrim { display: none; }
 .pd-workbench { display: none; flex: 0 0 0; flex-direction: column; min-width: 0; height: 100%; border-left: 1px solid var(--pd-border-soft); background: var(--pd-sidebar); }
 .pd-workbench.is-open { display: flex; flex-basis: 360px; }

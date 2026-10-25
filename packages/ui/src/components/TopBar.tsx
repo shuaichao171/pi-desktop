@@ -1,4 +1,6 @@
 import { useT } from '../i18n';
+import { Icon } from './Icons';
+import { HoverTooltip } from './HoverTooltip';
 import { HistoryNavigation, type HistoryNavigationProps } from './HistoryNavigation';
 import { SearchButton } from './SearchButton';
 import { ChatTitle, type ChatTitleHandle } from './ChatTitle';
@@ -18,10 +20,13 @@ interface TopBarProps {
 	titleRef: RefObject<ChatTitleHandle | null>;
 	onOpenCommit(): void;
 	isWindows: boolean;
+	workbenchOpen: boolean;
+	onToggleWorkbench(): void;
+	workbenchToggleRef: RefObject<HTMLButtonElement | null>;
 }
 
 /** Window-wide VS Code-style title bar. It owns app navigation and the current session title. */
-export function TopBar({ history, searchOpen, onOpenSearch, mainView, title, sessionPath, cwd, titleRef, onOpenCommit, isWindows }: TopBarProps) {
+export function TopBar({ history, searchOpen, onOpenSearch, mainView, title, sessionPath, cwd, titleRef, onOpenCommit, isWindows, workbenchOpen, onToggleWorkbench, workbenchToggleRef }: TopBarProps) {
 	const { t } = useT();
 	return (
 		<header className="pd-top-bar" aria-label={t('sidebar.main')}>
@@ -33,7 +38,12 @@ export function TopBar({ history, searchOpen, onOpenSearch, mainView, title, ses
 			{mainView === 'chat' && <div className="pd-top-bar-session">
 				<ChatTitle ref={titleRef} title={title} sessionPath={sessionPath} />
 				<ChatHeaderMenu title={title} sessionPath={sessionPath} cwd={cwd} onRename={() => titleRef.current?.beginRename()} onOpenCommit={onOpenCommit} />
-				<WorkspaceOpenButton cwd={cwd} />
+				<div className="pd-top-bar-workspace-actions">
+					<WorkspaceOpenButton cwd={cwd} />
+					<HoverTooltip title={t(workbenchOpen ? 'app.closeWorkbench' : 'app.openWorkbench')}>
+						<button ref={workbenchToggleRef} type="button" className={`pd-top-bar-workspace-button${workbenchOpen ? ' is-active' : ''}`} aria-label={t(workbenchOpen ? 'app.closeWorkbench' : 'app.openWorkbench')} aria-pressed={workbenchOpen} onClick={onToggleWorkbench}><Icon name="panelRight" width="17" height="17" /></button>
+					</HoverTooltip>
+				</div>
 			</div>}
 			<div className="pd-top-bar-actions">{isWindows && <WindowControls inline />}</div>
 		</header>
