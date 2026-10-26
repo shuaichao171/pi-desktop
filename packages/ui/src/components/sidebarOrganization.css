@@ -1,9 +1,9 @@
 .pd-organized-sessions { padding-top: 0; border-top: 0; }
 .pd-sidebar-group-toggle > .pd-session-state-counts { display: inline-flex; flex: 0 0 auto; align-items: center; gap: 5px; margin-left: auto; overflow: visible; }
 /* Group-heading aggregates share the row indicator vocabulary (zcode STATUS_DOT). */
-.pd-session-state-counts b { width: 6px; height: 6px; border-radius: 50%; }
-.pd-session-state-counts b.is-running { background: var(--pd-warning); animation: pd-pulse 1.6s ease-in-out infinite; }
-.pd-session-state-counts b.is-waiting { background: var(--pd-warning); }
+.pd-session-state-counts b { width: 7px; height: 7px; border-radius: 50%; }
+.pd-session-state-counts b.is-running { background: var(--pd-warning); }
+.pd-session-state-counts b.is-waiting { background: var(--pd-brand); animation: pd-pulse 1.6s ease-in-out infinite; }
 .pd-session-state-counts b.is-failed { background: var(--pd-danger); }
 .pd-session-state-counts b.is-unread { background: var(--pd-status-unread); }
 .pd-workspace-list-error { margin: 8px; padding: 8px; font-size: var(--pd-font-sm); line-height: 1.5; color: var(--pd-text-subtle); overflow-wrap: anywhere; }

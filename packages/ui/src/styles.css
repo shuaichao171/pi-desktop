@@ -736,8 +736,7 @@ div.pd-hover-tooltip:has(.pd-update-notes-body) { max-width: min(400px, calc(100
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .pd-spinning, .pd-session-spinner { animation: none; }
-  .pd-session-state-counts b.is-running { animation: none; }
+  .pd-spinning, .pd-session-spinner, .pd-session-indicator.is-waiting, .pd-session-state-counts b.is-waiting { animation: none; }
   .pd-chevron { transition: none; }
 }
 
@@ -807,11 +806,18 @@ div.pd-hover-tooltip:has(.pd-update-notes-body) { max-width: min(400px, calc(100
 .pd-session-item .pd-session-copy strong { font-size: var(--pd-font-base); }
 /* zcode-style leading slot: one vocabulary for rows and group headings. */
 .pd-session-leading { flex: 0 0 16px; width: 16px; height: 16px; display: inline-flex; align-items: center; justify-content: center; }
-.pd-session-indicator { width: 6px; height: 6px; border-radius: 50%; }
-.pd-session-indicator.is-failed { background: var(--pd-danger); }
-.pd-session-indicator.is-unread { background: var(--pd-status-unread); }
-.pd-session-indicator.is-waiting { background: var(--pd-warning); }
-.pd-session-spinner { color: var(--pd-text-subtle); animation: pd-spin 1.2s linear infinite; }
+/* Status dots read from a distance: 8px core + a soft same-hue halo, one hue per
+   meaning, and only action-demanding states animate (breathing = "needs you"). */
+.pd-session-indicator { width: 8px; height: 8px; border-radius: 50%; }
+.pd-session-indicator.is-failed { background: var(--pd-danger); box-shadow: 0 0 0 3px color-mix(in srgb, var(--pd-danger) 18%, transparent); }
+.pd-session-indicator.is-unread { background: var(--pd-status-unread); box-shadow: 0 0 0 3px color-mix(in srgb, var(--pd-status-unread) 18%, transparent); }
+.pd-session-indicator.is-waiting { background: var(--pd-brand); box-shadow: 0 0 0 3px color-mix(in srgb, var(--pd-brand) 20%, transparent); animation: pd-pulse 1.6s ease-in-out infinite; }
+.pd-session-spinner { color: var(--pd-warning); animation: pd-spin 1.2s linear infinite; }
+/* Failed and waiting rows carry a faint full-row tint so peripheral vision
+   catches them before the eye reaches the leading dot. */
+.pd-session-item.has-indicator.is-failed-row { --pd-session-background: color-mix(in srgb, var(--pd-danger) 7%, var(--pd-sidebar)); }
+.pd-session-item.has-indicator.is-waiting-row { --pd-session-background: color-mix(in srgb, var(--pd-brand) 8%, var(--pd-sidebar)); }
+.pd-session-item.has-indicator.is-failed-row:hover, .pd-session-item.has-indicator.is-waiting-row:hover { --pd-session-background: var(--pd-sidebar-hover); }
 /* The pin action lives in the leading slot (zcode): hover or focus swaps the
    indicator for it; a pinned row without live state keeps it visible. */
 .pd-session-pin { position: absolute; left: 2px; top: 50%; transform: translateY(-50%); z-index: 2; display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; padding: 0; border: 0; border-radius: var(--pd-radius-sm); background: transparent; color: var(--pd-text-subtle); opacity: 0; pointer-events: none; }
