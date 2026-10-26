@@ -262,7 +262,7 @@ button:focus-visible, textarea:focus-visible, input:focus-visible { outline: 2px
 .pd-session-list { flex: 1; min-height: 0; overflow-x: hidden; overflow-y: auto; padding: 0 8px 12px 20px; scrollbar-gutter: stable; }
 .pd-session-list::-webkit-scrollbar, .pd-transcript::-webkit-scrollbar { width: 9px; }
 .pd-session-list::-webkit-scrollbar-thumb, .pd-transcript::-webkit-scrollbar-thumb { border: 2px solid transparent; border-radius: var(--pd-radius-pill); background: var(--pd-scrollbar-thumb); background-clip: padding-box; }
-.pd-session-row { display: flex; align-items: center; gap: 6px; width: 100%; min-height: 34px; padding: 0 8px; border: 0; border-radius: var(--pd-radius-md); background: transparent; color: var(--pd-text); text-align: left; }
+.pd-session-row { display: flex; align-items: center; gap: 6px; width: 100%; min-height: 24px; padding: 0 8px; border: 0; border-radius: var(--pd-radius-sm); background: transparent; color: var(--pd-text); font-size: var(--pd-font-caption); text-align: left; }
 .pd-session-row:hover:not(:disabled) { background: var(--pd-sidebar-hover); color: var(--pd-text); }
 .pd-session-row.is-active { background: var(--pd-sidebar-selected); color: var(--pd-text); }
 .pd-session-copy { flex: 1; min-width: 0; }
@@ -789,13 +789,6 @@ div.pd-hover-tooltip:has(.pd-update-notes-body) { max-width: min(400px, calc(100
 .pd-project-list { flex: 1; min-height: 0; overflow-x: hidden; overflow-y: auto; padding: 2px 9px 16px; scrollbar-gutter: stable; }
 .pd-project-list::-webkit-scrollbar { width: 8px; }
 .pd-project-list::-webkit-scrollbar-thumb { border: 2px solid transparent; border-radius: var(--pd-radius-pill); background: var(--pd-scrollbar-thumb); background-clip: padding-box; }
-.pd-project { margin-bottom: 3px; }
-.pd-project-row { width: 100%; height: 37px; margin: 0; padding: 0 2px 0 0; background: transparent; }
-.pd-project-row:hover, .pd-project.is-current > .pd-project-row { background: var(--pd-selected); }
-.pd-workspace-button { display: flex; flex: 1; align-items: center; gap: 9px; min-width: 0; height: 100%; padding: 0 4px 0 9px; border: 0; background: transparent; color: var(--pd-text); text-align: left; }
-.pd-workspace-button:hover { color: var(--pd-text); }
-.pd-project.is-current .pd-workspace-button { color: var(--pd-text); }
-.pd-project-expand { width: 26px; height: 26px; }
 .pd-session-section { display: block; padding: 2px 0 7px 9px; }
 .pd-section-heading { height: 29px; min-height: 29px; padding: 0 3px 0 13px; }
 .pd-session-group + .pd-session-group { margin-top: 3px; }
@@ -821,13 +814,14 @@ div.pd-hover-tooltip:has(.pd-update-notes-body) { max-width: min(400px, calc(100
 .pd-session-spinner { color: var(--pd-text-subtle); animation: pd-spin 1.2s linear infinite; }
 /* The pin action lives in the leading slot (zcode): hover or focus swaps the
    indicator for it; a pinned row without live state keeps it visible. */
-.pd-session-pin { position: absolute; left: 2px; top: 50%; transform: translateY(-50%); z-index: 2; display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; padding: 0; border: 0; border-radius: var(--pd-radius-sm); background: transparent; color: var(--pd-text-subtle); opacity: 0; pointer-events: none; }
+.pd-session-pin { position: absolute; left: 2px; top: 50%; transform: translateY(-50%); z-index: 2; display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; padding: 0; border: 0; border-radius: var(--pd-radius-sm); background: transparent; color: var(--pd-text-subtle); opacity: 0; pointer-events: none; }
 .pd-session-pin:hover { color: var(--pd-text); }
 .pd-session-pin[aria-pressed='true'] { color: var(--pd-text); }
 .pd-session-item:is(:hover, :has(:focus-visible)) .pd-session-pin, .pd-session-item.is-pinned:not(.has-indicator) .pd-session-pin { opacity: 1; pointer-events: auto; }
 .pd-session-item:is(:hover, :has(:focus-visible)) .pd-session-leading { visibility: hidden; }
 /* Recency sits at the row's end and yields its place to the hover actions. */
 .pd-session-time { flex: 0 0 auto; margin-left: 6px; color: var(--pd-text-weak); font-size: var(--pd-font-xs); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.pd-organized-list .pd-session-time { font-size: var(--pd-font-xs); }
 .pd-session-item:is(:hover, :has(:focus-visible), .is-archive-confirming) .pd-session-time { display: none; }
 /* The unsaved draft row is not a second "New session" button: it reads as a quiet placeholder title. */
 .pd-session-unsaved-title { color: var(--pd-text-subtle); font-weight: 400 !important; font-style: italic; }
@@ -845,7 +839,7 @@ div.pd-hover-tooltip:has(.pd-update-notes-body) { max-width: min(400px, calc(100
   .pd-session-item:not(.is-drag-source):is(:hover, :has(:focus-visible)) .pd-session-title.is-overflowing { text-overflow: clip; mask-image: linear-gradient(to right, transparent, #000 8px, #000 calc(100% - 8px), transparent); }
   .pd-session-item:not(.is-drag-source):is(:hover, :has(:focus-visible)) .pd-session-title.is-overflowing .pd-session-title-text { width: max-content; padding: 0 8px; overflow: visible; animation: pd-session-title-scroll var(--pd-title-duration) var(--pd-title-easing) infinite alternate; }
 }
-.pd-session-action { width: 26px; height: 26px; }
+.pd-session-action { width: 22px; height: 22px; }
 .pd-session-action[aria-pressed='true'] { color: var(--pd-brand); }
 /* zcode inline archive confirm: the destructive confirm button stays visible
    while the row waits for a second click, even without hover. */
