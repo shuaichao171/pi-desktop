@@ -23,6 +23,8 @@ export function ConversationMetrics() {
 	const providerId = useChatStore(s => s.modelProvider);
 	const providers = useChatStore(s => s.modelProviders);
 	const balanceEnabled = preferences.balance && providers.some((entry) => entry.provider === providerId && entry.usageQuery?.enabled);
+	const balancePending = preferences.balance && navigating;
+	const balanceVisible = balanceEnabled || balancePending;
 	const enabled = Object.values(preferences).some(Boolean);
 	const scope = JSON.stringify([cwd, sessionPath, sessionId, generation]);
 	const [sample, setSample] = useState<{ scope: string; stats: UiSessionStats } | null>(null);
@@ -46,7 +48,7 @@ export function ConversationMetrics() {
 	// Nothing has run yet: an all-zero stats line is just noise under a fresh composer.
 	// A pending switch transiently clears runs/messages — keep the row mounted
 	// (showing em-dashes) so the composer dock never jumps while loading.
-	if (!enabled || (!navigating && runs.length === 0 && messageCount === 0 && status !== 'busy' && !balanceEnabled)) return null;
+	if (!enabled || (!navigating && runs.length === 0 && messageCount === 0 && status !== 'busy' && !balanceVisible)) return null;
 	const stats = !navigating && sample?.scope === scope ? sample.stats : null;
 	const metrics = conversationMetricsAt(stats, now, status === 'busy');
 	const latestRun = runs.at(-1);
@@ -58,17 +60,17 @@ export function ConversationMetrics() {
 	const showTokens = preferences.tokens && (stats?.tokens.total ?? 0) > 0;
 	const showDuration = preferences.duration && (metrics.durationMs ?? 0) > 0;
 	// With nothing measured yet the row stays mounted but blank, so the composer dock never jumps.
-	if (!showSpeed && !showTokens && !showDuration && !balanceEnabled) return <div className="pd-conversation-metrics is-empty" aria-hidden="true" />;
+	if (!showSpeed && !showTokens && !showDuration && !balanceVisible) return <div className="pd-conversation-metrics is-empty" aria-hidden="true" />;
 	return <div className="pd-conversation-metrics" role="group" aria-label={t('settings.conversationMetrics')}>
 		{showSpeed && <span className="pd-metric-group pd-metric-speed" aria-label={`${t('settings.metrics.speed')}: ${speed?.toFixed(1)} t/s`}>{speed?.toLocaleString(locale, { maximumFractionDigits: 1 })} t/s</span>}
 		{showTokens && <span className="pd-metric-group" aria-label={t('metrics.tokensDescription', { input: exact(stats?.tokens.input), output: exact(stats?.tokens.output), total: exact(stats?.tokens.total) })}><span className="pd-metric-input">↑{tokens(stats?.tokens.input)}</span><span className="pd-metric-output">↓{tokens(stats?.tokens.output)}</span><span>Σ {tokens(stats?.tokens.total)}</span></span>}
 		{showDuration && <span className="pd-metric-group pd-metric-duration" aria-label={`${t('settings.metrics.duration')}: ${formatMetricDuration(metrics.durationMs)}`}><Icon name="clock" width="12" height="12" />{formatMetricDuration(metrics.durationMs)}</span>}
-		{balanceEnabled && <ProviderBalance />}
+		{balanceVisible && <ProviderBalance pending={balancePending} />}
 	</div>;
 }
 
 /** Balance segment for the current model's provider; auto refreshes only while that provider is in use. */
-function ProviderBalance() {
+function ProviderBalance({ pending: switching = false }: { pending?: boolean }) {
 	const { t } = useT();
 	const bridge = useChatStore(s => s.bridge);
 	const providerId = useChatStore(s => s.modelProvider);
@@ -86,7 +88,7 @@ function ProviderBalance() {
 		wasBusy.current = status === 'busy';
 	}, [status]);
 	useEffect(() => {
-		if (!usageQuery?.enabled || !bridge?.queryProviderUsage) return;
+		if (switching || !usageQuery?.enabled || !bridge?.queryProviderUsage) return;
 		let active = true, pending = false;
 		const query = async () => {
 			if (pending) return;
@@ -100,7 +102,8 @@ function ProviderBalance() {
 		void query();
 		const timer = intervalMinutes > 0 ? window.setInterval(() => { void query(); }, intervalMinutes * 60_000) : undefined;
 		return () => { active = false; if (timer !== undefined) window.clearInterval(timer); };
-	}, [bridge, providerId, usageQuery?.enabled, intervalMinutes, tick]);
+	}, [bridge, providerId, usageQuery?.enabled, intervalMinutes, tick, switching]);
+	if (switching) return <button type="button" className="pd-metric-group pd-metric-balance" data-action="refresh-balance" title={t('usage.refreshing')} aria-label={t('usage.refreshing')} disabled>—</button>;
 	if (!usageQuery?.enabled) return null;
 	const refresh = () => setTick((current) => current + 1);
 	const first = result?.data?.find((entry) => entry.remaining !== undefined) ?? result?.data?.[0];
