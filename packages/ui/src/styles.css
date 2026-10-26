@@ -24,11 +24,16 @@
 .pd-top-bar-navigation { display: flex; flex: 0 0 auto; align-items: center; gap: 4px; -webkit-app-region: no-drag; }
 .pd-top-bar-actions { display: flex; flex: 0 0 auto; align-items: center; gap: 4px; margin-left: auto; -webkit-app-region: no-drag; }
 .pd-top-bar-workspace-actions { display: flex; flex: 0 0 auto; align-items: center; gap: 2px; margin-left: auto; -webkit-app-region: no-drag; }
+/* The rail/sidebar hover tint is several steps apart from --pd-sidebar, so
+   top-bar buttons stay visible on hover and focus (surface-hover is not). */
+.pd-top-bar .pd-icon-button:hover, .pd-top-bar .pd-icon-button[aria-expanded='true'],
+.pd-top-bar-workspace-button:hover, .pd-top-bar-workspace-button.is-active { background: var(--pd-sidebar-hover); color: var(--pd-text); }
+.pd-top-bar .pd-icon-button:focus-visible, .pd-top-bar-workspace-button:focus-visible { outline: 2px solid var(--pd-focus-border); outline-offset: -2px; background: var(--pd-sidebar-hover); }
+/* Extension slot sits left of a divider; system actions stay right-aligned. */
+.pd-top-bar-extensions { display: flex; flex: 0 0 auto; align-items: center; gap: 4px; -webkit-app-region: no-drag; }
+.pd-top-bar-divider { flex: 0 0 auto; align-self: center; width: 1px; height: 20px; margin: 0 6px; background: var(--pd-sidebar-surface); }
 .pd-top-bar-workspace-button { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 28px; padding: 0; border: 0; border-radius: var(--pd-radius-sm); background: transparent; color: var(--pd-text-subtle); cursor: pointer; }
-.pd-top-bar-workspace-button:hover, .pd-top-bar-workspace-button.is-active { background: var(--pd-surface-hover); color: var(--pd-text); }
-.pd-top-bar-workspace-button:focus-visible { outline: 2px solid var(--pd-focus-border); outline-offset: -2px; }
 .pd-top-bar-menu { flex: 0 0 30px; width: 30px; height: 28px; color: var(--pd-text); }
-.pd-top-bar-menu:hover, .pd-top-bar-menu[aria-expanded='true'] { background: var(--pd-surface-hover); color: var(--pd-text); }
 .pd-top-bar-session { display: flex; flex: 1 1 auto; align-items: center; gap: 4px; min-width: 0; margin-left: 14px; }
 .pd-top-bar-session .pd-chat-title { flex: 0 1 auto; min-width: 0; max-width: min(460px, 42vw); }
 .pd-top-bar-session .pd-chat-title h1 { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
