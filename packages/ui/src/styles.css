@@ -141,8 +141,9 @@
   --pd-ease-exit: cubic-bezier(.8, 0, .4, 1);
   /* UI and content sizes are independent; startup restores each saved preference. */
   --pd-ui-font-size: 14px;
-  /* ZCode's mono fallback keeps Chinese code comments in a sans-serif face. */
-  --pd-font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', 'Microsoft YaHei UI', 'Microsoft YaHei', 'PingFang SC', 'Noto Sans CJK SC', monospace;
+  /* Font-family settings (fontFamily.ts) write --pd-*-font-override inline on
+     the root; `var(--x, fallback)` picks it up without touching the stacks. */
+  --pd-font-mono: var(--pd-mono-font-override, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', 'Microsoft YaHei UI', 'Microsoft YaHei', 'PingFang SC', 'Noto Sans CJK SC', monospace);
   --pd-font-xl: calc(var(--pd-ui-font-size) + 4px);
   --pd-font-lg: calc(var(--pd-ui-font-size) + 2px);
   --pd-font-base: var(--pd-ui-font-size);
@@ -161,7 +162,7 @@
   --pd-hl-tag: #7ee787;
   /* System UI face first, then an explicit CJK face so Chinese never falls
      back to whatever the platform picks (e.g. SimSun). */
-  --pd-font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei UI', 'Microsoft YaHei', 'Noto Sans CJK SC', 'Noto Sans SC', Roboto, 'Helvetica Neue', Arial, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji';
+  --pd-font-sans: var(--pd-sans-font-override, -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei UI', 'Microsoft YaHei', 'Noto Sans CJK SC', 'Noto Sans SC', Roboto, 'Helvetica Neue', Arial, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji');
   font-family: var(--pd-font-sans);
   font-size: 14px;
 }
