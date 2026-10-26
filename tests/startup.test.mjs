@@ -20,8 +20,8 @@ const stubs = {
   './appLocale': `export const getAppLocale = () => 'en-US';`,
   './tray': `export const createAppTray = (options) => { globalThis.__startupTest.calls.trays += 1; globalThis.__startupTest.calls.trayOptions = options; }; export const destroyAppTray = () => {};`,
   './splash': `
-    export const createSplashHtml = () => '<html>Splash</html>';
-    export const createSplashErrorHtml = (message) => '<html>' + message + '</html>';
+    export const createBootHtml = () => '<html>Boot</html>';
+    export const createBootErrorHtml = (message) => '<html>' + message + '</html>';
   `,
   './paiPipe.ts': `
     export const paiPipeName = () => 'pi-desktop-pai-test';
@@ -82,7 +82,9 @@ async function createStartupHarness(t, { workspaceError, initialization = deferr
       });
       windows.push(this);
     }
-    loadURL(url) { this.url = url; return this.options.transparent ? Promise.resolve() : this.load.promise; }
+    // Only the splash loads data: URLs, which settle immediately in Chromium;
+    // real page loads stay deferred so tests can control the reveal timing.
+    loadURL(url) { this.url = url; return Promise.resolve(); }
     loadFile(path, options) { this.url = path; this.query = options?.query; return this.load.promise; }
     isDestroyed() { return this.destroyed; }
     isVisible() { return this.visible; }
@@ -159,7 +161,9 @@ async function createStartupHarness(t, { workspaceError, initialization = deferr
   }
   await settle();
   const splash = windows[0];
-  assert.ok(splash.options.transparent, 'the first window is the splash');
+  assert.equal(splash.options.backgroundColor, '#111216', 'the first window is the dark boot splash');
+  assert.equal(splash.options.width, 1280, 'the boot splash matches the main window size');
+  assert.equal(splash.options.transparent, undefined, 'the boot splash is opaque');
   return {
     app, windows, splash, calls, initialization, ipcMain,
     getDialogWindow: () => getDialogWindow?.(),

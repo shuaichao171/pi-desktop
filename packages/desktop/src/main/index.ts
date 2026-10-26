@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { IPC_CHANNELS } from '@pidesktop/shared';
 import { getAppLocale } from './appLocale';
-import { createSplashErrorHtml, createSplashHtml } from './splash';
+import { createBootErrorHtml, createBootHtml } from './splash';
 import { showEditContextMenu } from './editContextMenu.ts';
 import { createAppTray, destroyAppTray } from './tray';
 import { paiPipeName, startPaiPipeServer } from './paiPipe.ts';
@@ -112,9 +112,7 @@ function showStartupError(splash: BrowserWindow, error: unknown): void {
 		return;
 	}
 	if (!splash.isVisible()) splash.show();
-	splash.setSize(420, 300);
-	splash.center();
-	void splash.loadURL(splashUrl(createSplashErrorHtml(message, getAppLocale())))
+	void splash.loadURL(splashUrl(createBootErrorHtml(message, getAppLocale())))
 		.catch(() => {})
 		.finally(() => {
 			if (splash.isDestroyed()) return;
@@ -448,18 +446,20 @@ if (!hasSingleInstanceLock) {
 	session.defaultSession.setPermissionRequestHandler((_webContents, permission, callback) => {
 		callback(permission === 'clipboard-sanitized-write');
 	});
+	// A ZCode-style boot window: the same size and shell as the real window,
+	// with the main window's background color so the swap is invisible.
 	const splash = new BrowserWindow({
-		width: 224,
-		height: 224,
+		width: 1280,
+		height: 820,
 		resizable: false,
 		maximizable: false,
-		minimizable: false,
-		frame: false,
+		minimizable: true,
+		frame: process.platform !== 'win32',
+		autoHideMenuBar: process.platform === 'win32',
 		center: true,
 		show: false,
-		transparent: true,
-		hasShadow: false,
-		backgroundColor: '#00000000',
+		hasShadow: true,
+		backgroundColor: '#111216',
 		title: 'Pi Desktop',
 		webPreferences: {
 			contextIsolation: true,
@@ -484,7 +484,7 @@ if (!hasSingleInstanceLock) {
 		}, 100);
 	};
 	splash.once('ready-to-show', showAndStart);
-	void splash.loadURL(splashUrl(createSplashHtml(getAppLocale())))
+	void splash.loadURL(splashUrl(createBootHtml(getAppLocale())))
 		.then(() => {
 			// A fallback for environments that never emit ready-to-show.
 			setTimeout(showAndStart, 800);
