@@ -19,7 +19,9 @@
 .pd-activity-icon.is-error, .pd-activity-status.is-error { color: var(--pd-danger); }
 .pd-activity-icon.is-interrupted, .pd-activity-status.is-interrupted { color: var(--pd-warning); }
 .pd-activity-copy { display: flex; align-items: baseline; gap: 6px; min-width: 0; flex: 1; }
-.pd-activity-kind { flex: 0 1 auto; min-width: 0; max-width: 50%; }
+/* The kind label never shrinks: long command titles ellipsize instead, so
+   "执行" is not squeezed to a half character in narrow transcripts. */
+.pd-activity-kind { flex: 0 0 auto; min-width: 0; max-width: 50%; }
 .pd-activity-kind > .pd-activity-label { display: block; overflow: hidden; text-overflow: ellipsis; }
 .pd-activity-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--pd-text-subtle); font-size: var(--pd-font-sm); line-height: 1.5; }
 .pd-activity-status { flex: 0 0 auto; color: var(--pd-text-weak); font-size: var(--pd-font-xs); white-space: nowrap; }
