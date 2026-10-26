@@ -1738,25 +1738,6 @@ export function registerIpc(options: {
 		cloudSync?.service.onProviderDatabaseChanged();
 	});
 	handleRendererInvoke(IPC_CHANNELS.agentListExtensions, (event) => agentFor(event).listExtensions());
-	handleRendererInvoke(IPC_CHANNELS.agentSetModel, (_event, provider: string, id: string) => agentService.setModel(provider, id));
-	handleRendererInvoke(IPC_CHANNELS.agentSetThinkingLevel, (_event, level: UiThinkingLevel) => agentService.setThinkingLevel(level));
-	handleRendererInvoke(IPC_CHANNELS.agentListProviderAuth, () => agentService.listProviderAuth());
-	handleRendererInvoke(IPC_CHANNELS.agentSetProviderApiKey, async (_event, provider: string, key: string) => {
-		await agentService.setProviderApiKey(provider, key);
-		cloudSync?.service.onProviderDatabaseChanged();
-	});
-	handleRendererInvoke(IPC_CHANNELS.agentRemoveProviderCredential, async (_event, provider: string) => {
-		await agentService.removeProviderCredential(provider);
-		cloudSync?.service.onProviderDatabaseChanged();
-	});
-	handleRendererInvoke(IPC_CHANNELS.agentSetModelEnabled, async (_event, provider: unknown, modelId: unknown, enabled: unknown) => {
-		if (typeof provider !== 'string' || !provider.trim() || provider.length > 80 || /[\u0000]/u.test(provider)
-			|| typeof modelId !== 'string' || !modelId.trim() || modelId.trim().length > 200 || /[\u0000]/u.test(modelId)
-			|| typeof enabled !== 'boolean') throw new Error('模型启用参数无效');
-		await agentService.setModelEnabled(provider, modelId.trim(), enabled);
-		cloudSync?.service.onProviderDatabaseChanged();
-	});
-	handleRendererInvoke(IPC_CHANNELS.agentListExtensions, () => agentService.listExtensions());
 	handleRendererInvoke(IPC_CHANNELS.agentSetExtensionEnabled, (event, path: string, enabled: boolean) => {
 		requirePluginSender(event);
 		return withPluginMutation(activeWorkspace, () => agentService.setExtensionEnabled(path, enabled));

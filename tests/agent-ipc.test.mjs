@@ -20,7 +20,10 @@ const stubs = {
     };
     export const dialog = { showErrorBox: () => {}, showOpenDialog: (...args) => globalThis.__ipcOpenDialog(...args) };
     export const Notification = class { static isSupported() { return false; } on() { return this; } show() {} };
-    export const ipcMain = { handle: (channel, handler) => globalThis.__ipcHandlers.set(channel, handler) };
+    export const ipcMain = { handle: (channel, handler) => {
+      if (globalThis.__ipcHandlers.has(channel)) throw new Error(\`Attempted to register a second handler for '\${channel}'\`);
+      globalThis.__ipcHandlers.set(channel, handler);
+    } };
     export const powerSaveBlocker = { start: () => 1, stop: () => {}, isStarted: () => false };
   `,
   './agentClient': `
