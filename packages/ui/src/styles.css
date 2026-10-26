@@ -802,18 +802,18 @@ div.pd-hover-tooltip:has(.pd-update-notes-body) { max-width: min(400px, calc(100
 .pd-section-heading { height: 29px; min-height: 29px; padding: 0 3px 0 13px; }
 .pd-session-group + .pd-session-group { margin-top: 3px; }
 .pd-session-group-label { height: 25px; padding-left: 11px; }
-.pd-session-item { --pd-session-background: var(--pd-sidebar); --pd-session-actions-width: 30px; position: relative; display: flex; align-items: center; min-height: 34px; border-radius: var(--pd-radius-sm); }
+.pd-session-item { --pd-session-background: var(--pd-sidebar); --pd-session-actions-width: 26px; position: relative; display: flex; align-items: center; min-height: 22px; border-radius: var(--pd-radius-sm); }
 .pd-session-item:hover { --pd-session-background: var(--pd-sidebar-hover); background: var(--pd-session-background); }
 .pd-session-item.is-active { --pd-session-background: var(--pd-sidebar-selected); background: var(--pd-session-background); }
 /* The accent bar marks the open conversation, so its row needs no "current" label. */
-.pd-session-item.is-active::before { position: absolute; top: 8px; bottom: 8px; left: 0; z-index: 1; width: 2px; border-radius: 0 2px 2px 0; background: var(--pd-brand); content: ''; pointer-events: none; }
+.pd-session-item.is-active::before { position: absolute; top: 4px; bottom: 4px; left: 0; z-index: 1; width: 2px; border-radius: 0 2px 2px 0; background: var(--pd-brand); content: ''; pointer-events: none; }
 /* zcode-style draft frame: the not-yet-persisted new session carries a dashed border, like ZCode's new-chat marker. */
 .pd-session-item.is-unsaved { border: 1px dashed color-mix(in srgb, var(--pd-border-strong) 70%, transparent); }
 /* The border adds 2px to the item; shrink the row so draft rows keep the same height as persisted ones. */
-.pd-session-item.is-unsaved .pd-session-row { min-height: 32px; }
-.pd-session-item .pd-session-row { min-height: 34px; width: 100%; padding: 0 9px; background: transparent; }
+.pd-session-item.is-unsaved .pd-session-row { min-height: 20px; }
+.pd-session-item .pd-session-row { min-height: 22px; width: 100%; padding: 0 6px; background: transparent; }
 .pd-session-item .pd-session-row:hover:not(:disabled), .pd-session-item .pd-session-row.is-active { background: transparent; }
-.pd-session-item .pd-session-copy strong { font-size: var(--pd-font-base); }
+.pd-session-item .pd-session-copy strong { font-size: var(--pd-font-caption); }
 /* zcode-style leading slot: one vocabulary for rows and group headings. */
 .pd-session-leading { flex: 0 0 16px; width: 16px; height: 16px; display: inline-flex; align-items: center; justify-content: center; }
 /* Status dots read from a distance: 8px core + a soft same-hue halo, one hue per
