@@ -24,11 +24,19 @@
 .pd-top-bar-navigation { display: flex; flex: 0 0 auto; align-items: center; gap: 4px; -webkit-app-region: no-drag; }
 .pd-top-bar-actions { display: flex; flex: 0 0 auto; align-items: center; gap: 4px; margin-left: auto; -webkit-app-region: no-drag; }
 .pd-top-bar-workspace-actions { display: flex; flex: 0 0 auto; align-items: center; gap: 2px; margin-left: auto; -webkit-app-region: no-drag; }
+/* The rail/sidebar hover tint is several steps apart from --pd-sidebar, so
+   top-bar buttons stay visible on hover and focus (surface-hover is not). */
+/* One namespace for every interactive element in the top bar, so future buttons
+   inherit the visible tint automatically (surface-hover is invisible on --pd-sidebar). */
+.pd-top-bar :is(button, [role='button']):hover:not(:disabled),
+.pd-top-bar .pd-icon-button[aria-expanded='true'],
+.pd-top-bar-workspace-button.is-active { background: var(--pd-sidebar-hover); color: var(--pd-text); }
+.pd-top-bar :is(button, [role='button']):focus-visible { outline: 2px solid var(--pd-focus-border); outline-offset: -2px; background: var(--pd-sidebar-hover); }
+/* Extension slot sits left of a divider; system actions stay right-aligned. */
+.pd-top-bar-extensions { display: flex; flex: 0 0 auto; align-items: center; gap: 4px; -webkit-app-region: no-drag; }
+.pd-top-bar-divider { flex: 0 0 auto; align-self: center; width: 1px; height: 20px; margin: 0 6px; background: var(--pd-sidebar-surface); }
 .pd-top-bar-workspace-button { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 28px; padding: 0; border: 0; border-radius: var(--pd-radius-sm); background: transparent; color: var(--pd-text-subtle); cursor: pointer; }
-.pd-top-bar-workspace-button:hover, .pd-top-bar-workspace-button.is-active { background: var(--pd-surface-hover); color: var(--pd-text); }
-.pd-top-bar-workspace-button:focus-visible { outline: 2px solid var(--pd-focus-border); outline-offset: -2px; }
 .pd-top-bar-menu { flex: 0 0 30px; width: 30px; height: 28px; color: var(--pd-text); }
-.pd-top-bar-menu:hover, .pd-top-bar-menu[aria-expanded='true'] { background: var(--pd-surface-hover); color: var(--pd-text); }
 .pd-top-bar-session { display: flex; flex: 1 1 auto; align-items: center; gap: 4px; min-width: 0; margin-left: 14px; }
 .pd-top-bar-session .pd-chat-title { flex: 0 1 auto; min-width: 0; max-width: min(460px, 42vw); }
 .pd-top-bar-session .pd-chat-title h1 { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -133,8 +141,9 @@
   --pd-ease-exit: cubic-bezier(.8, 0, .4, 1);
   /* UI and content sizes are independent; startup restores each saved preference. */
   --pd-ui-font-size: 14px;
-  /* ZCode's mono fallback keeps Chinese code comments in a sans-serif face. */
-  --pd-font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', 'Microsoft YaHei UI', 'Microsoft YaHei', 'PingFang SC', 'Noto Sans CJK SC', monospace;
+  /* Font-family settings (fontFamily.ts) write --pd-*-font-override inline on
+     the root; `var(--x, fallback)` picks it up without touching the stacks. */
+  --pd-font-mono: var(--pd-mono-font-override, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', 'Microsoft YaHei UI', 'Microsoft YaHei', 'PingFang SC', 'Noto Sans CJK SC', monospace);
   --pd-font-xl: calc(var(--pd-ui-font-size) + 4px);
   --pd-font-lg: calc(var(--pd-ui-font-size) + 2px);
   --pd-font-base: var(--pd-ui-font-size);
@@ -153,7 +162,7 @@
   --pd-hl-tag: #7ee787;
   /* System UI face first, then an explicit CJK face so Chinese never falls
      back to whatever the platform picks (e.g. SimSun). */
-  --pd-font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei UI', 'Microsoft YaHei', 'Noto Sans CJK SC', 'Noto Sans SC', Roboto, 'Helvetica Neue', Arial, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji';
+  --pd-font-sans: var(--pd-sans-font-override, -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei UI', 'Microsoft YaHei', 'Noto Sans CJK SC', 'Noto Sans SC', Roboto, 'Helvetica Neue', Arial, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji');
   font-family: var(--pd-font-sans);
   font-size: 14px;
 }
@@ -262,7 +271,7 @@ button:focus-visible, textarea:focus-visible, input:focus-visible { outline: 2px
 .pd-session-list { flex: 1; min-height: 0; overflow-x: hidden; overflow-y: auto; padding: 0 8px 12px 20px; scrollbar-gutter: stable; }
 .pd-session-list::-webkit-scrollbar, .pd-transcript::-webkit-scrollbar { width: 9px; }
 .pd-session-list::-webkit-scrollbar-thumb, .pd-transcript::-webkit-scrollbar-thumb { border: 2px solid transparent; border-radius: var(--pd-radius-pill); background: var(--pd-scrollbar-thumb); background-clip: padding-box; }
-.pd-session-row { display: flex; align-items: center; gap: 6px; width: 100%; min-height: 34px; padding: 0 8px; border: 0; border-radius: var(--pd-radius-md); background: transparent; color: var(--pd-text); text-align: left; }
+.pd-session-row { display: flex; align-items: center; gap: 6px; width: 100%; min-height: 24px; padding: 0 8px; border: 0; border-radius: var(--pd-radius-sm); background: transparent; color: var(--pd-text); font-size: var(--pd-font-caption); text-align: left; }
 .pd-session-row:hover:not(:disabled) { background: var(--pd-sidebar-hover); color: var(--pd-text); }
 .pd-session-row.is-active { background: var(--pd-sidebar-selected); color: var(--pd-text); }
 .pd-session-copy { flex: 1; min-width: 0; }
@@ -736,8 +745,7 @@ div.pd-hover-tooltip:has(.pd-update-notes-body) { max-width: min(400px, calc(100
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .pd-spinning, .pd-session-spinner { animation: none; }
-  .pd-session-state-counts b.is-running { animation: none; }
+  .pd-spinning, .pd-session-spinner, .pd-session-indicator.is-waiting, .pd-session-state-counts b.is-waiting { animation: none; }
   .pd-chevron { transition: none; }
 }
 
@@ -759,6 +767,8 @@ div.pd-hover-tooltip:has(.pd-update-notes-body) { max-width: min(400px, calc(100
 .pd-window-controls { position: fixed; top: 14px; right: 14px; z-index: var(--pd-z-window-controls); display: flex; align-items: center; gap: 2px; -webkit-app-region: no-drag; }
 .pd-window-controls.is-inline { position: static; top: auto; right: auto; z-index: auto; }
 .pd-window-control { display: grid; flex: 0 0 auto; place-items: center; width: 28px; height: 28px; padding: 0; border: 0; border-radius: var(--pd-radius-md); background: transparent; color: var(--pd-text-subtle); -webkit-app-region: no-drag; }
+/* Inline instance lives in .pd-top-bar (namespaced tint); the PAI-mode overlay sits on the chat background and keeps surface-hover. */
+.pd-top-bar .pd-window-control:hover { background: var(--pd-sidebar-hover); color: var(--pd-text); }
 .pd-window-control:hover { background: var(--pd-surface-hover); color: var(--pd-text); }
 .pd-window-control.is-close:hover { background: var(--pd-window-close-hover); color: #fff; }
 .pd-window-control-error { position: absolute; top: 33px; right: 0; width: max-content; max-width: 240px; padding: 5px 8px; border: 1px solid var(--pd-danger-border); border-radius: var(--pd-radius-sm); background: var(--pd-surface); color: var(--pd-danger); font-size: var(--pd-font-sm); }
@@ -789,45 +799,46 @@ div.pd-hover-tooltip:has(.pd-update-notes-body) { max-width: min(400px, calc(100
 .pd-project-list { flex: 1; min-height: 0; overflow-x: hidden; overflow-y: auto; padding: 2px 9px 16px; scrollbar-gutter: stable; }
 .pd-project-list::-webkit-scrollbar { width: 8px; }
 .pd-project-list::-webkit-scrollbar-thumb { border: 2px solid transparent; border-radius: var(--pd-radius-pill); background: var(--pd-scrollbar-thumb); background-clip: padding-box; }
-.pd-project { margin-bottom: 3px; }
-.pd-project-row { width: 100%; height: 37px; margin: 0; padding: 0 2px 0 0; background: transparent; }
-.pd-project-row:hover, .pd-project.is-current > .pd-project-row { background: var(--pd-selected); }
-.pd-workspace-button { display: flex; flex: 1; align-items: center; gap: 9px; min-width: 0; height: 100%; padding: 0 4px 0 9px; border: 0; background: transparent; color: var(--pd-text); text-align: left; }
-.pd-workspace-button:hover { color: var(--pd-text); }
-.pd-project.is-current .pd-workspace-button { color: var(--pd-text); }
-.pd-project-expand { width: 26px; height: 26px; }
 .pd-session-section { display: block; padding: 2px 0 7px 9px; }
 .pd-section-heading { height: 29px; min-height: 29px; padding: 0 3px 0 13px; }
 .pd-session-group + .pd-session-group { margin-top: 3px; }
 .pd-session-group-label { height: 25px; padding-left: 11px; }
-.pd-session-item { --pd-session-background: var(--pd-sidebar); --pd-session-actions-width: 30px; position: relative; display: flex; align-items: center; min-height: 34px; border-radius: var(--pd-radius-sm); }
+.pd-session-item { --pd-session-background: var(--pd-sidebar); --pd-session-actions-width: 26px; position: relative; display: flex; align-items: center; min-height: 22px; border-radius: var(--pd-radius-sm); }
 .pd-session-item:hover { --pd-session-background: var(--pd-sidebar-hover); background: var(--pd-session-background); }
 .pd-session-item.is-active { --pd-session-background: var(--pd-sidebar-selected); background: var(--pd-session-background); }
 /* The accent bar marks the open conversation, so its row needs no "current" label. */
-.pd-session-item.is-active::before { position: absolute; top: 8px; bottom: 8px; left: 0; z-index: 1; width: 2px; border-radius: 0 2px 2px 0; background: var(--pd-brand); content: ''; pointer-events: none; }
+.pd-session-item.is-active::before { position: absolute; top: 4px; bottom: 4px; left: 0; z-index: 1; width: 2px; border-radius: 0 2px 2px 0; background: var(--pd-brand); content: ''; pointer-events: none; }
 /* zcode-style draft frame: the not-yet-persisted new session carries a dashed border, like ZCode's new-chat marker. */
 .pd-session-item.is-unsaved { border: 1px dashed color-mix(in srgb, var(--pd-border-strong) 70%, transparent); }
 /* The border adds 2px to the item; shrink the row so draft rows keep the same height as persisted ones. */
-.pd-session-item.is-unsaved .pd-session-row { min-height: 32px; }
-.pd-session-item .pd-session-row { min-height: 34px; width: 100%; padding: 0 9px; background: transparent; }
+.pd-session-item.is-unsaved .pd-session-row { min-height: 20px; }
+.pd-session-item .pd-session-row { min-height: 22px; width: 100%; padding: 0 6px; background: transparent; }
 .pd-session-item .pd-session-row:hover:not(:disabled), .pd-session-item .pd-session-row.is-active { background: transparent; }
-.pd-session-item .pd-session-copy strong { font-size: var(--pd-font-base); }
+.pd-session-item .pd-session-copy strong { font-size: var(--pd-font-caption); }
 /* zcode-style leading slot: one vocabulary for rows and group headings. */
 .pd-session-leading { flex: 0 0 16px; width: 16px; height: 16px; display: inline-flex; align-items: center; justify-content: center; }
-.pd-session-indicator { width: 6px; height: 6px; border-radius: 50%; }
-.pd-session-indicator.is-failed { background: var(--pd-danger); }
-.pd-session-indicator.is-unread { background: var(--pd-status-unread); }
-.pd-session-indicator.is-waiting { background: var(--pd-warning); }
-.pd-session-spinner { color: var(--pd-text-subtle); animation: pd-spin 1.2s linear infinite; }
+/* Status dots read from a distance: 8px core + a soft same-hue halo, one hue per
+   meaning, and only action-demanding states animate (breathing = "needs you"). */
+.pd-session-indicator { width: 8px; height: 8px; border-radius: 50%; }
+.pd-session-indicator.is-failed { background: var(--pd-danger); box-shadow: 0 0 0 3px color-mix(in srgb, var(--pd-danger) 18%, transparent); }
+.pd-session-indicator.is-unread { background: var(--pd-status-unread); box-shadow: 0 0 0 3px color-mix(in srgb, var(--pd-status-unread) 18%, transparent); }
+.pd-session-indicator.is-waiting { background: var(--pd-brand); box-shadow: 0 0 0 3px color-mix(in srgb, var(--pd-brand) 20%, transparent); animation: pd-pulse 1.6s ease-in-out infinite; }
+.pd-session-spinner { color: var(--pd-warning); animation: pd-spin 1.2s linear infinite; }
+/* Failed and waiting rows carry a faint full-row tint so peripheral vision
+   catches them before the eye reaches the leading dot. */
+.pd-session-item.has-indicator.is-failed-row { --pd-session-background: color-mix(in srgb, var(--pd-danger) 7%, var(--pd-sidebar)); }
+.pd-session-item.has-indicator.is-waiting-row { --pd-session-background: color-mix(in srgb, var(--pd-brand) 8%, var(--pd-sidebar)); }
+.pd-session-item.has-indicator.is-failed-row:hover, .pd-session-item.has-indicator.is-waiting-row:hover { --pd-session-background: var(--pd-sidebar-hover); }
 /* The pin action lives in the leading slot (zcode): hover or focus swaps the
    indicator for it; a pinned row without live state keeps it visible. */
-.pd-session-pin { position: absolute; left: 2px; top: 50%; transform: translateY(-50%); z-index: 2; display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; padding: 0; border: 0; border-radius: var(--pd-radius-sm); background: transparent; color: var(--pd-text-subtle); opacity: 0; pointer-events: none; }
+.pd-session-pin { position: absolute; left: 2px; top: 50%; transform: translateY(-50%); z-index: 2; display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; padding: 0; border: 0; border-radius: var(--pd-radius-sm); background: transparent; color: var(--pd-text-subtle); opacity: 0; pointer-events: none; }
 .pd-session-pin:hover { color: var(--pd-text); }
 .pd-session-pin[aria-pressed='true'] { color: var(--pd-text); }
 .pd-session-item:is(:hover, :has(:focus-visible)) .pd-session-pin, .pd-session-item.is-pinned:not(.has-indicator) .pd-session-pin { opacity: 1; pointer-events: auto; }
 .pd-session-item:is(:hover, :has(:focus-visible)) .pd-session-leading { visibility: hidden; }
 /* Recency sits at the row's end and yields its place to the hover actions. */
 .pd-session-time { flex: 0 0 auto; margin-left: 6px; color: var(--pd-text-weak); font-size: var(--pd-font-xs); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.pd-organized-list .pd-session-time { font-size: var(--pd-font-xs); }
 .pd-session-item:is(:hover, :has(:focus-visible), .is-archive-confirming) .pd-session-time { display: none; }
 /* The unsaved draft row is not a second "New session" button: it reads as a quiet placeholder title. */
 .pd-session-unsaved-title { color: var(--pd-text-subtle); font-weight: 400 !important; font-style: italic; }
@@ -845,7 +856,7 @@ div.pd-hover-tooltip:has(.pd-update-notes-body) { max-width: min(400px, calc(100
   .pd-session-item:not(.is-drag-source):is(:hover, :has(:focus-visible)) .pd-session-title.is-overflowing { text-overflow: clip; mask-image: linear-gradient(to right, transparent, #000 8px, #000 calc(100% - 8px), transparent); }
   .pd-session-item:not(.is-drag-source):is(:hover, :has(:focus-visible)) .pd-session-title.is-overflowing .pd-session-title-text { width: max-content; padding: 0 8px; overflow: visible; animation: pd-session-title-scroll var(--pd-title-duration) var(--pd-title-easing) infinite alternate; }
 }
-.pd-session-action { width: 27px; height: 27px; }
+.pd-session-action { width: 22px; height: 22px; }
 .pd-session-action[aria-pressed='true'] { color: var(--pd-brand); }
 /* zcode inline archive confirm: the destructive confirm button stays visible
    while the row waits for a second click, even without hover. */
@@ -882,7 +893,7 @@ div.pd-hover-tooltip:has(.pd-update-notes-body) { max-width: min(400px, calc(100
 .is-frameless .pd-chat-heading { transform: translateY(-4px); }
 .is-frameless .pd-chat-header { padding-right: 152px; }
 .is-frameless .pd-top-bar button, .is-frameless .pd-chat-header button { -webkit-app-region: no-drag; }
-.pd-opener-icon { display: block; width: 15px; height: 15px; border-radius: var(--pd-radius-xs); }
+.pd-opener-icon { display: block; width: 16px; height: 16px; padding: 0.5px; border-radius: var(--pd-radius-xs); object-fit: contain; }
 .pd-chat-title { position: relative; flex: 0 1 auto; min-width: 0; max-width: 100%; -webkit-app-region: no-drag; }
 .pd-chat-title.is-editing { flex: 0 1 auto; }
 .pd-chat-heading:has(.pd-chat-title.is-editing) { max-width: min(520px, 80%); }
@@ -896,8 +907,7 @@ div.pd-hover-tooltip:has(.pd-update-notes-body) { max-width: min(400px, calc(100
 .pd-workspace-open-wrap { position: relative; flex: 0 0 auto; }
 .pd-workspace-open { display: flex; align-items: center; gap: 2px; height: 28px; }
 .pd-workspace-open-button { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 28px; padding: 0; border: 0; border-radius: var(--pd-radius-sm); background: transparent; color: var(--pd-text-subtle); cursor: pointer; transition: background 0.12s ease, color 0.12s ease; }
-.pd-workspace-open-button:hover { background: var(--pd-surface-hover); color: var(--pd-text); }
-.pd-workspace-open-button:focus-visible { outline: 2px solid var(--pd-focus-border); outline-offset: -2px; }
+/* Hover/focus tint comes from the .pd-top-bar namespace (see its comment). */
 .pd-workspace-open-error { top: calc(100% + 4px); }
 
 /* Commit dialog (zcode-style) */

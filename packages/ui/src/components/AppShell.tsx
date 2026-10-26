@@ -432,7 +432,7 @@ export function AppShell() {
 			<ActivityBar
 				mainView={mainView}
 				onOpenView={(view: 'automations' | 'plugins') => { openActivityView(view); setSidebarOpen(true); }}
-				onNewSession={() => { setMainView('chat'); if (narrow) setSidebarOpen(false); return useChatStore.getState().newSession(); }}
+				onNewSession={() => { setMainView('chat'); if (narrow) setSidebarOpen(false); return useChatStore.getState().newSession().catch(() => { /* Navigation errors are shown by the store. */ }); }}
 				onOpenSettings={() => { if (narrow) setSidebarOpen(false); setSettingsInitialPage('general'); setSettingsOpen(true); }}
 				navigationPending={navigationPending}
 				sidebarOpen={sidebarOpen}

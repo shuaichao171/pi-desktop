@@ -19,3 +19,5 @@ export {
 initUiFontSize();
 import { initContentFontSizes } from './contentFontSize';
 initContentFontSizes();
+import { initFontFamilies } from './fontFamily';
+initFontFamilies();

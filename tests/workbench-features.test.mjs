@@ -106,3 +106,19 @@ test('commits without a Git identity fail early with setup instructions and leav
   await assert.rejects(git('rev-parse', '--verify', 'HEAD'));
   assert.equal((await git('status', '--porcelain')).stdout, '?? a.txt\n');
 });
+
+test('soleCodeWorkspaceFile prefers a single saved workspace file and ignores ambiguity', async t => {
+  const { soleCodeWorkspaceFile } = await import('../packages/desktop/src/main/workbenchService.ts');
+  const root = await mkdtemp(join(tmpdir(), 'pi-workspace-file-test-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  assert.equal(await soleCodeWorkspaceFile(root), null, 'no workspace file falls back to the folder');
+  await writeFile(join(root, 'project.code-workspace'), '{"folders":[]}');
+  await mkdir(join(root, 'nested'));
+  assert.equal(await soleCodeWorkspaceFile(root), join(root, 'project.code-workspace'));
+  await writeFile(join(root, 'other.code-workspace'), '{"folders":[]}');
+  assert.equal(await soleCodeWorkspaceFile(root), null, 'two candidates are ambiguous');
+  await writeFile(join(root, 'nested/inner.code-workspace'), '{"folders":[]}');
+  assert.equal(await soleCodeWorkspaceFile(root), null, 'search does not descend into subfolders');
+  await writeFile(join(root, 'notes.code-workspace-backup'), 'x');
+  assert.equal(await soleCodeWorkspaceFile(root), null, 'suffixes that merely contain the extension do not count');
+});

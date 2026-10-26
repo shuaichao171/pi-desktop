@@ -9,6 +9,7 @@ import { ScopedErrorBoundary } from './ScopedErrorBoundary';
 import { ModelSettingsPanel } from './ModelSettingsPanel';
 import { CloudSyncPanel } from './CloudSyncPanel';
 import { CONTENT_FONT_MIN, CONTENT_FONT_MAX, DEFAULT_CONTENT_FONT_SIZE, readContentFontSize, saveContentFontSize, type ContentFontKind } from '../contentFontSize';
+import { FONT_FAMILY_CHOICES, MONO_CHOICES, readFontFamily, saveFontFamily, type FontFamilyKind } from '../fontFamily';
 import { ShortcutSettings } from './ShortcutSettings';
 import { ColorThemeSettings } from './ColorThemeSettings';
 import { PersonalizationPanel } from './PersonalizationPanel';
@@ -170,6 +171,7 @@ export function SettingsPanel({ initialPage = 'general', modelManagementTarget, 
 	const [questionAutoResolutionMinutes, setQuestionAutoResolutionMinutes] = useQuestionAutoResolutionMinutes();
 	const [questionAutoResolutionSaveFailed, setQuestionAutoResolutionSaveFailed] = useState(false);
 	const [contentFonts, setContentFonts] = useState(() => ({ code: readContentFontSize('code'), command: readContentFontSize('command') }));
+	const [fontFamilies, setFontFamilies] = useState(() => ({ mono: readFontFamily('mono'), sans: readFontFamily('sans') }));
 	const [savingLeave, setSavingLeave] = useState(false);
 	const [leaveError, setLeaveError] = useState(false);
 	const [pendingLeave, setPendingLeave] = useState<PendingLeave | null>(null);
@@ -507,6 +509,13 @@ export function SettingsPanel({ initialPage = 'general', modelManagementTarget, 
 								</SettingsRow>
 								{(['code', 'command'] as ContentFontKind[]).map(kind => <SettingsRow stacked key={kind} setting={kind + '-font'} labelFor={'pd-' + kind + '-font'} title={t(kind === 'code' ? 'settings.codeFontSize' : 'settings.commandFontSize')}>
 									<div className="pd-font-size-row"><input id={'pd-' + kind + '-font'} type="range" min={CONTENT_FONT_MIN} max={CONTENT_FONT_MAX} step={1} value={contentFonts[kind]} onChange={event => { const value = Number(event.target.value); saveContentFontSize(kind, value); setContentFonts(old => ({ ...old, [kind]: value })); }} /><output className="pd-font-size-value">{contentFonts[kind]}px</output><button type="button" className="pd-font-size-reset" disabled={contentFonts[kind] === DEFAULT_CONTENT_FONT_SIZE} onClick={() => { saveContentFontSize(kind, DEFAULT_CONTENT_FONT_SIZE); setContentFonts(old => ({ ...old, [kind]: DEFAULT_CONTENT_FONT_SIZE })); }}>{t('settings.uiFontSizeReset')}</button></div>
+								</SettingsRow>)}
+							</SettingsGroup>
+							<SettingsGroup title={t('settings.groupFontFamilies')}>
+								{(['mono', 'sans'] as FontFamilyKind[]).map(kind => <SettingsRow stacked key={kind} setting={kind + '-font-family'} title={t(kind === 'mono' ? 'settings.monoFontFamily' : 'settings.sansFontFamily')} description={t(kind === 'mono' ? 'settings.monoFontFamilyDescription' : 'settings.sansFontFamilyDescription')}>
+									<select className="pd-settings-select" data-setting={kind + '-font-family'} aria-label={t(kind === 'mono' ? 'settings.monoFontFamily' : 'settings.sansFontFamily')} value={fontFamilies[kind]} onChange={event => { const value = event.target.value; saveFontFamily(kind, value); setFontFamilies(old => ({ ...old, [kind]: value })); }}>
+										{FONT_FAMILY_CHOICES.filter(choice => kind === 'sans' ? choice.value === '' || !MONO_CHOICES.has(choice.value) : choice.value === '' || MONO_CHOICES.has(choice.value)).map(choice => <option key={choice.value || 'default'} value={choice.value}>{t(choice.labelKey)}</option>)}
+									</select>
 								</SettingsRow>)}
 							</SettingsGroup>
 							<SettingsGroup title={t('settings.color.title')} description={t('settings.color.description')}>

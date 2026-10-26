@@ -739,6 +739,8 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 			: phase === 'waiting-input' || phase === 'waiting-approval'
 				? { kind: 'waiting' as const, label: session.runtime?.message ? `${copy[phase]} · ${session.runtime.message}` : copy[phase] }
 			: null;
+		// Row-level tint hooks: only the two states that demand a response tint the row.
+		const rowTint = indicator?.kind === 'failed' ? ' is-failed-row' : indicator?.kind === 'waiting' ? ' is-waiting-row' : '';
 		const togglePin = (event: ReactMouseEvent<HTMLButtonElement>) => sessionAction(session, event.currentTarget, () => updateSessionMeta(session.path, { pinned: !session.pinned }));
 		const toggleArchive = (event: ReactMouseEvent<HTMLButtonElement>) => {
 			// zcode inline confirm: unarchive is reversible and stays immediate;
@@ -755,7 +757,7 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 			sessionAction(session, event.currentTarget, () => updateSessionMeta(session.path, { archived: true }));
 		};
 		const pinButton = (className: string) => <HoverTooltip title={pinLabel} side="right" interactive={false}><button type="button" className={className} data-session-action="pin" aria-label={`${pinLabel}: ${title}`} aria-pressed={Boolean(session.pinned)} onClick={togglePin}><Icon name="pin" width="14" height="14" /></button></HoverTooltip>;
-		return <div className={`pd-session-item${active ? ' is-active' : ''}${isDragSource ? ' is-drag-source' : ''}${session.pinned ? ' is-pinned' : ''}${indicator ? ' has-indicator' : ''}${confirmingArchive ? ' is-archive-confirming' : ''}${archived ? ' has-archive-selection' : ''}${archived && archiveSelection.has(session.path) ? ' is-selected-for-trash' : ''}`} key={session.path} data-session-path={session.path}
+		return <div className={`pd-session-item${active ? ' is-active' : ''}${isDragSource ? ' is-drag-source' : ''}${session.pinned ? ' is-pinned' : ''}${indicator ? ` has-indicator${rowTint}` : ''}${confirmingArchive ? ' is-archive-confirming' : ''}${archived ? ' has-archive-selection' : ''}${archived && archiveSelection.has(session.path) ? ' is-selected-for-trash' : ''}`} key={session.path} data-session-path={session.path}
 			data-drag-path={container && dragMode ? session.path : undefined} onPointerDown={container && dragMode ? (event) => beginDrag({ kind: 'session', path: session.path, from: container }, event) : undefined}
 			onContextMenu={(event) => {
 				if (renaming === session.path) return;

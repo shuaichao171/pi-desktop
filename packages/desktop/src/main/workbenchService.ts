@@ -34,6 +34,21 @@ async function editorIcon(executable: string): Promise<string | undefined> {
 		return undefined;
 	}
 }
+
+/**
+ * The saved multi-root workspace file to prefer, if the project root contains
+ * exactly one `.code-workspace` entry; zero or several candidates are ambiguous
+ * and fall back to opening the folder itself. Read errors resolve to null.
+ */
+export async function soleCodeWorkspaceFile(root: string): Promise<string | null> {
+	try {
+		const entries = await readdir(root, { withFileTypes: true });
+		const files = entries.filter((item) => item.isFile() && item.name.toLowerCase().endsWith('.code-workspace')).map((item) => item.name);
+		return files.length === 1 ? join(root, files[0]!) : null;
+	} catch {
+		return null;
+	}
+}
 /**
  * Runs the VS Code CLI from PATH. On Windows it is `code.cmd`, and Node refuses
  * to spawn batch files without a shell (CVE-2024-27980, EINVAL). Route it
@@ -152,6 +167,17 @@ export class WorkbenchService {
 		// Any known workspace is a valid target: the conversation and project
 		// context menus can open folders outside the currently active workspace.
 		const root = await this.workspaceRoot(cwd);
+		// The VS Code button prefers a saved multi-root workspace file in the project
+		// root; exactly one match removes the ambiguity, more fall back to the folder.
+		if (openerId === 'vscode') {
+			const workspaceFile = await soleCodeWorkspaceFile(root);
+			if (workspaceFile) {
+				const editor = (await this.detectedEditors()).find((item) => item.definition.id === 'vscode');
+				if (editor) { await launchEditor(editor, workspaceFile); return; }
+				await runVsCodeCli([workspaceFile]);
+				return;
+			}
+		}
 		const editor = (await this.detectedEditors()).find((item) => item.definition.id === openerId);
 		if (editor) { await launchEditor(editor, root); return; }
 		if (openerId !== 'vscode') throw new Error('未找到该应用，可能已被卸载，请刷新后重试');
