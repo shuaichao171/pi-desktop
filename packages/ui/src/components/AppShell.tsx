@@ -1,7 +1,11 @@
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type PointerEvent } from 'react';
 import type { UiAppearanceState, UiSessionSearchResult, WorkspaceEntry } from '@pidesktop/shared';
 import { ChatView, type SearchMessageTarget } from './ChatView';
+import { ChatCommitDialog } from './ChatCommitDialog';
+import type { ChatTitleHandle } from './ChatTitle';
 import { ScopedErrorBoundary } from './ScopedErrorBoundary';
+import { ActivityBar } from './ActivityBar';
+import { TopBar } from './TopBar';
 import { AutomationPage } from './AutomationPage';
 import { PluginsPage } from './PluginsPage';
 import { SearchDialog, type SearchCommand } from './SearchDialog';
@@ -24,8 +28,7 @@ import { bindingKeysFor, matchesShortcut } from '../shortcuts/bindings';
 import { useT } from '../i18n';
 import { useSessionNavigation } from '../useSessionNavigation';
 import { playTaskNotificationSound, shouldPlayTaskCompletionSound } from '../taskNotificationSound';
-import { HistoryNavigation, type HistoryNavigationProps } from './HistoryNavigation';
-import { SearchButton } from './SearchButton';
+import type { HistoryNavigationProps } from './HistoryNavigation';
 import { applyThemeColors, normalizeColorPreferences, readColorPreferences, writeColorPreferences, type ThemeColorPreferences } from '../themeColors';
 import type { ModelManagementTarget } from '../modelManagement';
 import './shellMotion.css';
@@ -81,6 +84,12 @@ export function AppShell() {
 	const [settingsOpen, setSettingsOpen] = useState(false);
 	const [searchOpen, setSearchOpen] = useState(false);
 	const [mainView, setMainView] = useState<'chat' | 'automations' | 'plugins'>('chat');
+	// Activity bar: clicking a builtin view icon switches the sidebar/main area; clicking
+	// the already-active icon returns to the session list ('chat'). The rail itself never
+	// collapses — Ctrl+B toggles only the sidebar pane to its right.
+	function openActivityView(view: 'automations' | 'plugins') {
+		setMainView((current) => (current === view ? 'chat' : view));
+	}
 	const preparationRequestId = useChatStore((state) => state.sessionPreparation?.requestId ?? state.draftTransfer?.requestId ?? null);
 	const [searchMessageTarget, setSearchMessageTarget] = useState<SearchMessageTarget | null>(null);
 	const [workbenchRequest, setWorkbenchRequest] = useState<WorkbenchOpenRequest | null>(null);
@@ -386,17 +395,23 @@ export function AppShell() {
 		setSettingsInitialPage('model');
 		setSettingsOpen(true);
 	}
-	const headerControls = !sidebarOpen && !narrow ? <div className="pd-header-navigation"><HistoryNavigation {...history} /><SearchButton open={searchOpen} onClick={() => setSearchOpen(true)} /></div> : undefined;
 	const navigationPending = useChatStore((state) => state.navigationPending || state.sessionLoading);
 	const conversationCwd = useChatStore((state) => state.cwd);
 	const conversationId = useChatStore((state) => state.sessionId);
 	const conversationPath = useChatStore((state) => state.sessionPath);
+	const titleRef = useRef<ChatTitleHandle>(null);
+	const [commitOpen, setCommitOpen] = useState(false);
+	const sessions = useChatStore((state) => state.sessions ?? []);
+	const messages = useChatStore((state) => state.messages ?? []);
+	const activeSession = sessions.find((session) => session.path === conversationPath);
+	const firstUserText = messages.find((message) => message.role === 'user')?.text;
+	const currentTitle = activeSession?.name?.trim() || activeSession?.firstMessage?.trim().split(/\r?\n/)[0] || firstUserText?.trim().split(/\r?\n/)[0] || t('chat.newSession');
 	const [notificationTarget, setNotificationTarget] = useState<HTMLDivElement | null>(null);
 	if (paiMode) return (
 		<ExtensionDialogHost chatVisible notificationTarget={notificationTarget} globalNotices={PAI_GLOBAL_NOTICES}>
 			<div className={`pd-app-shell is-pai${isWindows ? ' is-frameless' : ''}${settingsOpen ? ' is-settings-open' : ''}`}>
 				<div className="pd-main-view">
-				<div className="pd-chat-view-host"><ChatView compact navigationError={navigation.error} onToggleSidebar={() => {}} onOpenModelManagement={openModelManagement} historyControls={<div className="pd-pai-controls">
+				<div className="pd-chat-view-host"><ChatView compact navigationError={navigation.error} onOpenModelManagement={openModelManagement} historyControls={<div className="pd-pai-controls">
 					<HoverTooltip title={t('sidebar.newSession')}><button className="pd-icon-button" type="button" disabled={navigationPending} aria-label={t('sidebar.newSession')} onClick={() => { void useChatStore.getState().newSession().catch(() => {}); }}><Icon name="plus" width="17" height="17" /></button></HoverTooltip>
 					<HoverTooltip title={t('sidebar.settings')}><button className="pd-icon-button pd-pai-settings" type="button" aria-label={t('sidebar.settings')} onClick={() => { setSettingsInitialPage('general'); setSettingsOpen(true); }}><Icon name="settings" width="17" height="17" /></button></HoverTooltip>
 				</div>} /></div>
@@ -411,40 +426,43 @@ export function AppShell() {
 	return (
 		<ExtensionDialogHost chatVisible={mainView === 'chat'} notificationTarget={notificationTarget} globalNotices={MAIN_GLOBAL_NOTICES}>
 		<div className={`pd-app-shell flex${isWindows ? ' is-frameless' : ''}${settingsOpen || searchOpen ? ' is-settings-open' : ''}${sidebarResizing ? ' is-sidebar-resizing' : ''}${workbenchResizing ? ' is-workbench-resizing' : ''}`} style={{ '--pd-sidebar-width': `${sidebarWidth}px`, '--pd-workbench-width': `${clampWorkbenchWidth(workbenchWidth, viewportWidth)}px` } as CSSProperties}>
+			<TopBar history={history} searchOpen={searchOpen} onOpenSearch={() => setSearchOpen(true)} mainView={mainView} title={currentTitle} sessionPath={conversationPath} cwd={conversationCwd} titleRef={titleRef} onOpenCommit={() => setCommitOpen(true)} isWindows={isWindows} workbenchOpen={workbenchOpen} onToggleWorkbench={() => setWorkbenchOpen((value) => !value)} workbenchToggleRef={workbenchToggleRef} />
+			<div className="pd-app-body">
 			<button type="button" className={`pd-sidebar-scrim${narrow && sidebarOpen ? ' is-open' : ''}`} aria-label={t('app.closeSidebar')} aria-hidden={!narrow || !sidebarOpen} inert={!narrow || !sidebarOpen} tabIndex={-1} onClick={() => setSidebarOpen(false)} />
-			<Sidebar
-				projectRevealRequest={projectRevealRequest}
-				open={sidebarOpen}
-				narrow={narrow}
-				onToggle={() => setSidebarOpen((open) => !open)}
-				onNavigate={() => { setMainView('chat'); if (narrow) setSidebarOpen(false); }}
-				automationsOpen={mainView === 'automations'}
-				onOpenAutomations={() => { setMainView('automations'); if (narrow) setSidebarOpen(false); }}
-				pluginsOpen={mainView === 'plugins'}
-				onOpenPlugins={() => { setMainView('plugins'); if (narrow) setSidebarOpen(false); }}
-				onOpenSettings={(page) => { if (narrow) setSidebarOpen(false); setSettingsInitialPage(page ?? 'general'); setSettingsOpen(true); }}
-				searchOpen={searchOpen}
-				history={history}
-				onOpenSearch={() => setSearchOpen(true)}
+			<ActivityBar
+				mainView={mainView}
+				onOpenView={(view: 'automations' | 'plugins') => { openActivityView(view); setSidebarOpen(true); }}
+				onNewSession={() => { setMainView('chat'); if (narrow) setSidebarOpen(false); return useChatStore.getState().newSession(); }}
+				onOpenSettings={() => { if (narrow) setSidebarOpen(false); setSettingsInitialPage('general'); setSettingsOpen(true); }}
+				navigationPending={navigationPending}
+				sidebarOpen={sidebarOpen}
+				onToggleSidebar={() => setSidebarOpen((open) => !open)}
 			/>
+				<Sidebar
+					projectRevealRequest={projectRevealRequest}
+					open={sidebarOpen}
+					narrow={narrow}
+					onNavigate={() => { setMainView('chat'); if (narrow) setSidebarOpen(false); }}
+					sessionsActive={mainView === 'chat'}
+				/>
 			{!narrow && sidebarOpen && <div className="pd-sidebar-resize" role="separator" aria-label={t('app.resizeSidebar')} aria-orientation="vertical" aria-valuemin={MIN_SIDEBAR_WIDTH} aria-valuemax={MAX_SIDEBAR_WIDTH} aria-valuenow={sidebarWidth} tabIndex={0} onPointerDown={startResize} onPointerMove={moveResize} onPointerUp={stopResize} onPointerCancel={stopResize} onLostPointerCapture={stopResize} onKeyDown={(event) => {
 				if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
 				event.preventDefault();
 				setSidebarWidth((value) => Math.max(MIN_SIDEBAR_WIDTH, Math.min(MAX_SIDEBAR_WIDTH, value + (event.key === 'ArrowRight' ? 16 : -16))));
 			}} />}
 			<div className="pd-main-view">
-			<div className="pd-chat-view-host" hidden={mainView !== 'chat'} inert={mainView !== 'chat'}><ScopedErrorBoundary scope="conversation" resetKeys={[conversationCwd, conversationId, conversationPath]}><ChatView active={mainView === 'chat'} onToggleSidebar={() => setSidebarOpen((open) => !open)} onOpenModelManagement={openModelManagement} searchTarget={searchMessageTarget} navigationError={navigation.error} historyControls={mainView === 'chat' ? headerControls : undefined} /></ScopedErrorBoundary></div>
-			{mainView === 'automations' && <ScopedErrorBoundary scope="automation"><AutomationPage headerControls={headerControls} onToggleSidebar={() => setSidebarOpen((open) => !open)} onOpenSession={async (cwd, path) => { const selected = await useChatStore.getState().selectSession(cwd, path); if (selected) { setSearchMessageTarget(null); setMainView('chat'); if (narrow) setSidebarOpen(false); } return selected; }} /></ScopedErrorBoundary>}
-			{mainView === 'plugins' && <ScopedErrorBoundary scope="plugins"><PluginsPage headerControls={headerControls} onToggleSidebar={() => setSidebarOpen((open) => !open)} /></ScopedErrorBoundary>}
+			<div className="pd-chat-view-host" hidden={mainView !== 'chat'} inert={mainView !== 'chat'}><ScopedErrorBoundary scope="conversation" resetKeys={[conversationCwd, conversationId, conversationPath]}><ChatView onOpenModelManagement={openModelManagement} searchTarget={searchMessageTarget} navigationError={navigation.error} /></ScopedErrorBoundary></div>
+			{mainView === 'automations' && <ScopedErrorBoundary scope="automation"><AutomationPage onOpenSession={async (cwd, path) => { const selected = await useChatStore.getState().selectSession(cwd, path); if (selected) { setSearchMessageTarget(null); setMainView('chat'); if (narrow) setSidebarOpen(false); } return selected; }} /></ScopedErrorBoundary>}
+			{mainView === 'plugins' && <ScopedErrorBoundary scope="plugins"><PluginsPage /></ScopedErrorBoundary>}
 			{/* Pages without a composer keep notices at the top of the view. */}
 			<div className="pd-notification-center">{mainView !== 'chat' && <><OperationFeedback /><UpdateNotice /></>}<div ref={setNotificationTarget} className="pd-extension-notification-slot" /></div>
 			</div>
 			<button type="button" className={`pd-workbench-scrim${workbenchOpen && mainView === 'chat' ? ' is-open' : ''}`} aria-label={t('app.closeWorkbench')} aria-hidden={!workbenchOpen || mainView !== 'chat'} inert={!workbenchOpen || mainView !== 'chat'} tabIndex={-1} onClick={closeWorkbench} />
 			<ScopedErrorBoundary scope="workbench" resetKeys={[workbenchRequest?.cwd, workbenchRequest?.requestId]}><WorkbenchSidePane open={workbenchOpen && mainView === 'chat'} modal={workbenchOverlay && !settingsOpen && !searchOpen} suspended={settingsOpen || searchOpen} width={clampWorkbenchWidth(workbenchWidth, viewportWidth)} onWidthChange={value => setWorkbenchWidth(clampWorkbenchWidth(value, viewportWidth))} onResizing={setWorkbenchResizing} onClose={closeWorkbench} openRequest={workbenchRequest} terminalRequest={terminalRequest} onTabChange={setWorkbenchTab} /></ScopedErrorBoundary>
-			{mainView === 'chat' && <HoverTooltip title={t('app.workbench')}><button ref={workbenchToggleRef} type="button" className="pd-workbench-toggle pd-icon-button" aria-label={t(workbenchOpen ? 'app.closeWorkbench' : 'app.openWorkbench')} aria-pressed={workbenchOpen} onClick={() => setWorkbenchOpen((value) => !value)}><Icon name="panelRight" width="17" height="17" /></button></HoverTooltip>}
+			</div>
+			{commitOpen && mainView === 'chat' && <ChatCommitDialog onClose={() => setCommitOpen(false)} />}
 			{settingsOpen && <SettingsPanel initialPage={settingsInitialPage} modelManagementTarget={settingsInitialPage === 'model' ? modelManagementTarget : undefined} onClose={() => setSettingsOpen(false)} themePreference={themePreference} onThemePreferenceChange={setThemePreference} colorPreferences={colorPreferences} onColorPreferencesChange={setColorPreferences} colorSaveFailed={colorSaveFailed} />}
 			{searchOpen && <div className="pd-overlay-error-host"><ScopedErrorBoundary scope="search" onReset={() => setSearchOpen(false)}><SearchDialog commands={searchCommands} onClose={() => setSearchOpen(false)} onSelectSession={selectSearchSession} onSelectFile={selectSearchFile} /></ScopedErrorBoundary></div>}
-			{isWindows && <WindowControls />}
 			<FolderProjectDropZone onAdded={revealAddedProjects} />
 			<ResultFilePreviewDialogRoot />
 		</div>

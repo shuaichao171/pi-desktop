@@ -58,6 +58,8 @@ export function installModelSettingsFixture(options = {}) {
     getWorkspaceBranches: () => ({ isRepository: true, current: 'review-fixture', detached: false, branches: ['review-fixture'] }),
     getWorkspaceGitStatus: () => ({ isRepository: true, branch: 'review-fixture', entries: [], truncated: false }),
     listWorkspaceOpeners: () => [],
+    // Activity-bar scenarios open the automation view; provide an empty backend.
+    getAutomationSnapshot: () => ({ revision: 0, automations: [], runs: [] }),
     // The workbench subscribes to file-system changes while open (auto refresh).
     watchWorkspace: () => undefined,
     getWorkspaceGitGraph: () => [],

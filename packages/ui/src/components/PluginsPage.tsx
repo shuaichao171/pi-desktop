@@ -66,7 +66,7 @@ function ResourceGroups({ resources, expanded, renderResource }: { resources: Ui
 	})}</div>;
 }
 
-export function PluginsPage({ onToggleSidebar, headerControls }: { onToggleSidebar(): void; headerControls?: ReactNode }) {
+export function PluginsPage() {
 	const { t } = useT();
 	const bridge = useChatStore((state) => state.bridge);
 	const cwd = useChatStore((state) => state.cwd);
@@ -184,7 +184,6 @@ export function PluginsPage({ onToggleSidebar, headerControls }: { onToggleSideb
 	const detailResources = detail && catalog ? resourcesFor(catalog, detail).filter((resource) => `${resource.name} ${resource.description} ${resource.path} ${resource.error || ''}`.toLocaleLowerCase().includes(detailQuery.trim().toLocaleLowerCase())) : [];
 	const renderResource = (resource: UiPluginResource) => <ResourceRow key={resourceKey(resource)} resource={resource} canChange={canChange && (resource.scope === 'user' || Boolean(catalog?.projectTrusted))} busy={busy} onToggle={() => toggleResource(resource)} onPreview={() => void showPreview(resource)} />;
 	return <main className="pd-main pd-plugins-page">
-		<header className="pd-chat-header">{headerControls}<button className="pd-icon-button pd-header-sidebar-toggle" type="button" onClick={onToggleSidebar} aria-label={t('chat.toggleSidebar')}><Icon name="panel" /></button><div className="pd-plugins-header-title"><Icon name="plugins" width="16" height="16" /><span>{t('sidebar.plugins')}</span>{detail && <><Icon name="chevronRight" width="13" height="13" /><span>{detail.name}</span></>}</div></header>
 		<div className="pd-plugins-scroll" ref={scrollRef}><div className="pd-plugins-content">
 			{detail ? <>
 				<button type="button" className="pd-plugin-button is-quiet pd-plugin-back" onClick={backToList}><Icon name="arrowLeft" width="15" height="15" />{t('plugins.back')}</button>

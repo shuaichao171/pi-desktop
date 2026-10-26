@@ -50,7 +50,7 @@ function mountSearch() {
   };
   vm.runInNewContext(source, context);
   context.exports.AppShell();
-  nodes.find((node) => node.type === 'Sidebar').props.onOpenSearch();
+  nodes.find((node) => node.type === 'TopBar').props.onOpenSearch();
   cursor = 0;
   nodes.length = 0;
   context.exports.AppShell();

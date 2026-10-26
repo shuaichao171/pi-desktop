@@ -17,13 +17,7 @@ import { useFileChangeDiffs } from '../fileChangeDiffs';
 import { findChangeMatches } from '../changesFind';
 import { RunStatusBar } from './RunStatusBar';
 import { ComposerContextBar } from './ComposerContextBar';
-import { ChatTitle, type ChatTitleHandle } from './ChatTitle';
-import { ChatHeaderMenu } from './ChatHeaderMenu';
-import { ChatCommitDialog } from './ChatCommitDialog';
-import { WorkspaceOpenButton } from './WorkspaceOpenButton';
-import { WorkspaceFolderButton } from './WorkspaceFolderButton';
 import { Icon } from './Icons';
-import { HoverTooltip } from './HoverTooltip';
 import { MessageItem } from './MessageItem';
 import { ConversationTurn } from './ConversationTurn';
 import { ActivityLabel } from './ActivityDisclosure';
@@ -80,7 +74,7 @@ function SessionSwitchingBar() {
 
 export interface SearchMessageTarget { sessionPath: string; messageId: string; snippet?: string; requestId: number }
 
-export function ChatView({ onToggleSidebar, onOpenModelManagement, searchTarget, historyControls, navigationError, compact = false, active = true }: { onToggleSidebar(): void; onOpenModelManagement(target: ModelManagementTarget): void; searchTarget?: SearchMessageTarget | null; historyControls?: ReactNode; navigationError?: string | null; compact?: boolean; /** False while another main view hides the chat; rising edges re-apply the remembered reading position (12). */ active?: boolean }) {
+export function ChatView({ onOpenModelManagement, searchTarget, historyControls, navigationError, compact = false, active = true }: { onOpenModelManagement(target: ModelManagementTarget): void; searchTarget?: SearchMessageTarget | null; historyControls?: ReactNode; navigationError?: string | null; compact?: boolean; /** False while another main view hides the chat; rising edges re-apply the remembered reading position (12). */ active?: boolean }) {
 	const { t } = useT();
 	const extensionRequestPending = useExtensionRequestPending();
 	const messages = useChatStore((s) => s.messages);
@@ -99,7 +93,6 @@ export function ChatView({ onToggleSidebar, onOpenModelManagement, searchTarget,
 		? changesByRun.get(fileChangeActiveRunId) ?? []
 		: changesByRun.get(null) ?? fileChanges;
 	const legacyChanges = changesByRun.get(null) ?? [];
-	const sessions = useChatStore((s) => s.sessions);
 	const sessionPath = useChatStore((s) => s.sessionPath);
 	const sessionId = useChatStore((s) => s.sessionId);
 	const cwd = useChatStore((s) => s.cwd);
@@ -201,9 +194,6 @@ export function ChatView({ onToggleSidebar, onOpenModelManagement, searchTarget,
 	const memoryKey = readingKey(cwd, contentSessionPath, messages.at(-1)?.id ?? 'empty');
 	const memoryKeyRef = useRef(memoryKey);
 	const memoryIdentity = useRef({ cwd, sessionPath: contentSessionPath, historyGeneration });
-	const activeSession = sessions.find((session) => session.path === sessionPath);
-	const firstUserText = messages.find((message) => message.role === 'user')?.text;
-	const title = activeSession?.name?.trim() || activeSession?.firstMessage?.trim().split(/\r?\n/)[0] || firstUserText?.trim().split(/\r?\n/)[0] || t('chat.newSession');
 
 	// --- In-conversation find (2.5) ---
 	const [findOpen, setFindOpen] = useState(false);
@@ -647,8 +637,6 @@ export function ChatView({ onToggleSidebar, onOpenModelManagement, searchTarget,
 		scrollAnimationRef.current = requestAnimationFrame(tick);
 	}
 
-	const titleRef = useRef<ChatTitleHandle>(null);
-	const [commitOpen, setCommitOpen] = useState(false);
 
 
 	// Regeneration rewinds to the latest user turn; offered only on the last reply while idle (3.4).
@@ -676,13 +664,8 @@ export function ChatView({ onToggleSidebar, onOpenModelManagement, searchTarget,
 			canRegenerateId={canRegenerateLatest ? lastReplyId : null} />;
 
 	return (
-		<main className={`pd-main${settledEmpty ? ' is-empty' : ''}`}>
-			<header className="pd-chat-header">
-				{historyControls}
-				{!compact && <HoverTooltip title={t('chat.toggleSidebar')}><button type="button" className="pd-icon-button pd-header-sidebar-toggle" onClick={onToggleSidebar} aria-label={t('chat.toggleSidebar')}><Icon name="panel" /></button></HoverTooltip>}
-				<div className="pd-chat-heading"><WorkspaceFolderButton key={`folder:${cwd}\0${sessionId}`} cwd={cwd} /><ChatTitle key={`${cwd}\0${sessionId}`} ref={titleRef} title={title} sessionPath={sessionPath} /><ChatHeaderMenu title={title} sessionPath={sessionPath} cwd={cwd} onRename={() => titleRef.current?.beginRename()} onOpenCommit={() => setCommitOpen(true)} /></div>
-				<div className="pd-chat-header-actions"><WorkspaceOpenButton cwd={cwd} /></div>
-			</header>
+		<main className={`pd-main${settledEmpty ? ' is-empty' : ''}${compact ? ' is-compact' : ''}`}>
+			{historyControls && <div className="pd-compact-controls">{historyControls}</div>}
 
 			<div ref={bodyRef} className={`pd-conversation-body${settledEmpty ? ' is-empty' : ''}${extensionRequestPending ? ' has-extension-request' : ''}`}>
 				<div className="pd-chat-content">
@@ -753,7 +736,6 @@ export function ChatView({ onToggleSidebar, onOpenModelManagement, searchTarget,
 				{!isEmpty && !sessionLoading && <ConversationRail messages={messages} getScrollElement={getScrollElement} markedIds={railMarkedIds ?? undefined} onJumpToMessage={jumpToMessage} />}
 				<Composer header={settledEmpty ? <ComposerContextBar /> : undefined} onOpenModelManagement={onOpenModelManagement} changesSlotRef={setChangesDock} />
 			</div>
-			{commitOpen && <ChatCommitDialog onClose={() => setCommitOpen(false)} />}
 			{changesReview !== null && reviewItems.length > 0 && <ChangesDialog
 				key={`${changesReview.scope.kind}:${changesReview.scope.kind === 'turn' ? changesReview.scope.runId : ''}:${changesReview.path}`}
 				items={reviewItems} diffs={changesReview.scope.kind === 'conversation' && findOpen && findScope === 'changes' ? findDiffs : reviewDiffs}

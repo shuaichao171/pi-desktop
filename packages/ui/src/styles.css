@@ -2,6 +2,39 @@
 @import './controlStandards.css';
 @source './';
 
+/* Activity bar: leftmost icon rail (VS Code style). It never collapses — Ctrl+B
+ * toggles only the sidebar pane to its right. Views switch via icons; the rail
+ * also hosts the primary new-session action and the pinned settings entry. */
+.pd-activity-bar { display: flex; flex: 0 0 48px; flex-direction: column; justify-content: space-between; height: 100%; border-right: 1px solid var(--pd-sidebar-surface); background: var(--pd-sidebar); }
+.pd-activity-bar-top, .pd-activity-bar-bottom { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 8px 0; }
+.pd-activity-item { display: grid; place-items: center; width: 40px; height: 40px; padding: 0; border: 0; border-radius: var(--pd-radius-md); background: transparent; color: var(--pd-text-weak); position: relative; }
+.pd-activity-item:hover:not(:disabled) { background: var(--pd-sidebar-hover); color: var(--pd-text); }
+.pd-activity-item.is-active { background: var(--pd-sidebar-selected); color: var(--pd-text); }
+.pd-activity-item.is-active::before { content: ''; position: absolute; left: -4px; width: 3px; height: 24px; border-radius: var(--pd-radius-pill); background: var(--pd-brand); }
+.pd-activity-new-session { color: var(--pd-text); }
+.pd-activity-new-session svg { stroke-width: 2.2; }
+.pd-activity-item.has-notice::after { content: ''; position: absolute; top: 7px; right: 7px; width: 8px; height: 8px; border: 2px solid var(--pd-sidebar); border-radius: 50%; background: var(--pd-danger); }
+.pd-activity-item:disabled { cursor: default; opacity: .45; }
+
+/* Window-wide top bar: brand mark leftmost, history navigation, search, and
+ * the sidebar toggle. Replaces the old sidebar brand row; always visible. */
+.pd-app-shell.flex { flex-direction: column; }
+.pd-top-bar { display: flex; flex: 0 0 48px; align-items: center; gap: 8px; min-width: 0; padding: 0 10px 0 14px; border-bottom: 1px solid var(--pd-sidebar-surface); background: var(--pd-sidebar); }
+.pd-top-bar .pd-brand-mark { margin-right: 2px; }
+.pd-top-bar-navigation { display: flex; flex: 0 0 auto; align-items: center; gap: 4px; -webkit-app-region: no-drag; }
+.pd-top-bar-actions { display: flex; flex: 0 0 auto; align-items: center; gap: 4px; margin-left: auto; -webkit-app-region: no-drag; }
+.pd-top-bar-workspace-actions { display: flex; flex: 0 0 auto; align-items: center; gap: 2px; margin-left: auto; -webkit-app-region: no-drag; }
+.pd-top-bar-workspace-button { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 28px; padding: 0; border: 0; border-radius: var(--pd-radius-sm); background: transparent; color: var(--pd-text-subtle); cursor: pointer; }
+.pd-top-bar-workspace-button:hover, .pd-top-bar-workspace-button.is-active { background: var(--pd-surface-hover); color: var(--pd-text); }
+.pd-top-bar-workspace-button:focus-visible { outline: 2px solid var(--pd-focus-border); outline-offset: -2px; }
+.pd-top-bar-menu { flex: 0 0 30px; width: 30px; height: 28px; color: var(--pd-text); }
+.pd-top-bar-menu:hover, .pd-top-bar-menu[aria-expanded='true'] { background: var(--pd-surface-hover); color: var(--pd-text); }
+.pd-top-bar-session { display: flex; flex: 1 1 auto; align-items: center; gap: 4px; min-width: 0; margin-left: 14px; }
+.pd-top-bar-session .pd-chat-title { flex: 0 1 auto; min-width: 0; max-width: min(460px, 42vw); }
+.pd-top-bar-session .pd-chat-title h1 { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pd-top-bar-session .pd-workspace-open-wrap { flex: 0 0 auto; margin-left: auto; }
+.pd-app-body { display: flex; flex: 1; min-height: 0; min-width: 0; }
+
 :root {
   color-scheme: dark;
   --pd-bg: #161616;
@@ -198,7 +231,7 @@ button:focus-visible, textarea:focus-visible, input:focus-visible { outline: 2px
 
 .pd-app-shell { display: flex; width: 100%; height: 100%; min-width: 0; overflow: hidden; background: var(--pd-bg); }
 .pd-sidebar { display: flex; flex: 0 0 264px; flex-direction: column; min-width: 0; height: 100%; overflow: hidden; background: var(--pd-sidebar); border-right: 1px solid var(--pd-sidebar-surface); transition: flex-basis .18s ease; }
-.pd-sidebar.is-collapsed { flex-basis: 56px; }
+.pd-sidebar.is-collapsed { flex-basis: 0; border-right: 0; }
 .pd-sidebar.is-collapsed .pd-sidebar-detail { display: none; }
 .pd-sidebar-scrim { display: none; }
 .pd-sidebar-toolbar { display: flex; flex: 0 0 48px; align-items: center; gap: 8px; padding: 0 10px 0 18px; }
@@ -504,7 +537,7 @@ button:focus-visible, textarea:focus-visible, input:focus-visible { outline: 2px
 }
 
 @media (max-width: 880px) {
-  .pd-sidebar { position: absolute; top: 0; bottom: 0; left: 0; z-index: var(--pd-z-drawer); width: 264px; transform: translateX(-100%); transition: transform .18s ease; box-shadow: var(--pd-shadow-dialog); }
+  .pd-sidebar { position: absolute; top: 48px; bottom: 0; left: 0; z-index: var(--pd-z-drawer); width: 264px; transform: translateX(-100%); transition: transform .18s ease; box-shadow: var(--pd-shadow-dialog); }
   .pd-sidebar.is-open { transform: translateX(0); }
   .pd-sidebar-scrim { position: absolute; inset: 0; z-index: var(--pd-z-drawer-scrim); display: block; width: 100%; height: 100%; padding: 0; border: 0; background: var(--pd-overlay); }
   .pd-header-sidebar-toggle { display: grid; }
@@ -710,19 +743,21 @@ div.pd-hover-tooltip:has(.pd-update-notes-body) { max-width: min(400px, calc(100
 
 /* Windows: title and window controls share a single 48px draggable header. */
 .pd-app-shell.is-frameless { position: relative; border: 4px solid #0c0d11; border-radius: var(--pd-radius-md); }
-.is-frameless .pd-sidebar-toolbar,
+.is-frameless .pd-top-bar,
 .is-frameless .pd-chat-header { -webkit-app-region: drag; user-select: none; }
 /* Clears the fixed workbench toggle (right 116px + 28px) and the window
    controls so header content never renders underneath them. */
 .is-frameless .pd-chat-header { padding-right: 152px; }
+.is-frameless .pd-top-bar { padding-right: 10px; }
 .pd-app-shell:not(.is-frameless) .pd-chat-header { padding-right: 52px; }
-.is-frameless .pd-sidebar-toolbar button,
+.is-frameless .pd-top-bar button,
 .is-frameless .pd-chat-header button,
 .is-frameless .pd-chat-heading { -webkit-app-region: no-drag; }
-.is-frameless.is-settings-open .pd-sidebar-toolbar button,
+.is-frameless.is-settings-open .pd-top-bar button,
 .is-frameless.is-settings-open .pd-chat-header button { pointer-events: none; }
 
 .pd-window-controls { position: fixed; top: 14px; right: 14px; z-index: var(--pd-z-window-controls); display: flex; align-items: center; gap: 2px; -webkit-app-region: no-drag; }
+.pd-window-controls.is-inline { position: static; top: auto; right: auto; z-index: auto; }
 .pd-window-control { display: grid; flex: 0 0 auto; place-items: center; width: 28px; height: 28px; padding: 0; border: 0; border-radius: var(--pd-radius-md); background: transparent; color: var(--pd-text-subtle); -webkit-app-region: no-drag; }
 .pd-window-control:hover { background: var(--pd-surface-hover); color: var(--pd-text); }
 .pd-window-control.is-close:hover { background: var(--pd-window-close-hover); color: #fff; }
@@ -730,7 +765,7 @@ div.pd-hover-tooltip:has(.pd-update-notes-body) { max-width: min(400px, calc(100
 
 /* Project navigation and desktop chrome */
 .pd-sidebar { flex-basis: var(--pd-sidebar-width, 274px); flex-shrink: 0; transition: none; }
-.pd-sidebar.is-collapsed { flex-basis: 56px; }
+.pd-sidebar.is-collapsed { flex-basis: 0; border-right: 0; }
 .pd-sidebar-resize { position: relative; z-index: 5; flex: 0 0 5px; width: 5px; margin-left: -3px; margin-right: -2px; cursor: col-resize; touch-action: none; -webkit-app-region: no-drag; }
 .pd-sidebar-resize::after { content: ''; position: absolute; inset: 0 1px; background: transparent; }
 .pd-sidebar-resize:hover::after, .pd-sidebar-resize:focus-visible::after { background: var(--pd-brand); opacity: .7; }
@@ -843,10 +878,10 @@ div.pd-hover-tooltip:has(.pd-update-notes-body) { max-width: min(400px, calc(100
 .pd-chat-heading { max-width: min(500px, 65%); }
 .pd-chat-heading h1 { font-size: var(--pd-font-base); }
 .pd-app-shell.is-frameless { border: 1px solid var(--pd-chrome-border); border-radius: 0; }
-.is-frameless .pd-sidebar-toolbar, .is-frameless .pd-chat-header, .is-frameless .pd-chat-heading { -webkit-app-region: drag; user-select: none; }
+.is-frameless .pd-top-bar, .is-frameless .pd-chat-header, .is-frameless .pd-chat-heading { -webkit-app-region: drag; user-select: none; }
 .is-frameless .pd-chat-heading { transform: translateY(-4px); }
 .is-frameless .pd-chat-header { padding-right: 152px; }
-.is-frameless .pd-sidebar-toolbar button, .is-frameless .pd-chat-header button { -webkit-app-region: no-drag; }
+.is-frameless .pd-top-bar button, .is-frameless .pd-chat-header button { -webkit-app-region: no-drag; }
 .pd-opener-icon { display: block; width: 15px; height: 15px; border-radius: var(--pd-radius-xs); }
 .pd-chat-title { position: relative; flex: 0 1 auto; min-width: 0; max-width: 100%; -webkit-app-region: no-drag; }
 .pd-chat-title.is-editing { flex: 0 1 auto; }
@@ -857,15 +892,12 @@ div.pd-hover-tooltip:has(.pd-update-notes-body) { max-width: min(400px, calc(100
 .pd-chat-title-measure { visibility: hidden; white-space: pre; padding: 0 6px; border: 1px solid transparent; font: inherit; pointer-events: none; }
 .pd-chat-header-more { flex: 0 0 auto; width: 24px; height: 24px; border-radius: var(--pd-radius-sm); color: var(--pd-text); }
 
-/* zcode WorkspaceEditorButtonGroup look: one bordered pill with the opener icon + a chevron picker. */
+/* Three independent top-bar actions: Explorer, VS Code, and the right workbench. */
 .pd-workspace-open-wrap { position: relative; flex: 0 0 auto; }
-.pd-workspace-open { display: flex; align-items: stretch; height: 26px; border: 1px solid var(--pd-border); border-radius: var(--pd-radius-md); background: var(--pd-surface); overflow: hidden; transition: border-color 0.12s ease; }
-.pd-workspace-open-wrap:hover .pd-workspace-open { border-color: var(--pd-border-strong, var(--pd-border)); }
-.pd-workspace-open-main, .pd-workspace-open-menu { display: inline-flex; align-items: center; justify-content: center; border: 0; background: transparent; color: var(--pd-text-subtle); cursor: pointer; transition: background 0.12s ease, color 0.12s ease; }
-.pd-workspace-open-main { width: 30px; }
-.pd-workspace-open-menu { width: 20px; }
-.pd-workspace-open-main:hover, .pd-workspace-open-menu:hover { background: var(--pd-surface-hover); color: var(--pd-text); }
-.pd-workspace-open-main:focus-visible, .pd-workspace-open-menu:focus-visible { outline: 2px solid var(--pd-focus-border); outline-offset: -2px; }
+.pd-workspace-open { display: flex; align-items: center; gap: 2px; height: 28px; }
+.pd-workspace-open-button { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 28px; padding: 0; border: 0; border-radius: var(--pd-radius-sm); background: transparent; color: var(--pd-text-subtle); cursor: pointer; transition: background 0.12s ease, color 0.12s ease; }
+.pd-workspace-open-button:hover { background: var(--pd-surface-hover); color: var(--pd-text); }
+.pd-workspace-open-button:focus-visible { outline: 2px solid var(--pd-focus-border); outline-offset: -2px; }
 .pd-workspace-open-error { top: calc(100% + 4px); }
 
 /* Commit dialog (zcode-style) */
@@ -1116,9 +1148,6 @@ html.pd-popover-open :is(.pd-sidebar-toolbar, .pd-chat-header, .pd-chat-heading,
 .pd-message-text-preview { max-height: 220px; margin: 0; padding: 8px 10px; overflow: auto; border-top: 1px solid var(--pd-border); color: var(--pd-text-subtle); font: var(--pd-code-font-size, 12px)/1.5 var(--pd-font-mono); white-space: pre-wrap; overflow-wrap: anywhere; }
 
 /* Optional workspace inspector */
-.pd-workbench-toggle { position: fixed; top: 14px; right: 14px; z-index: var(--pd-z-chrome); width: 28px; height: 28px; -webkit-app-region: no-drag; }
-.pd-workbench-toggle[aria-pressed='true'] { background: var(--pd-selected); color: var(--pd-text); }
-.is-frameless .pd-workbench-toggle { right: 116px; }
 .pd-workbench-scrim { display: none; }
 .pd-workbench { display: none; flex: 0 0 0; flex-direction: column; min-width: 0; height: 100%; border-left: 1px solid var(--pd-border-soft); background: var(--pd-sidebar); }
 .pd-workbench.is-open { display: flex; flex-basis: 360px; }

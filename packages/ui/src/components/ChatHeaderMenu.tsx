@@ -88,7 +88,7 @@ export function ChatHeaderMenu({ title, sessionPath, cwd, onRename, onOpenCommit
 	}
 
 	return <>
-		<button type="button" className="pd-icon-button pd-chat-header-more" aria-label={t('chat.menuLabel')} aria-haspopup="menu" aria-expanded={Boolean(anchor)} onClick={(event) => { setNotice(null); setAnchor(event.currentTarget); }}><Icon name="more" width="15" height="15" /></button>
+		<button type="button" className="pd-icon-button pd-chat-header-more pd-top-bar-menu" aria-label={t('chat.menuLabel')} aria-haspopup="menu" aria-expanded={Boolean(anchor)} onClick={(event) => { setNotice(null); setAnchor(event.currentTarget); }}><Icon name="more" width="17" height="17" /></button>
 		{anchor && <SidebarPopover anchor={anchor} label={t('chat.menuLabel')} onClose={close}>
 			{item(t('sidebar.rename'), () => { close(); onRename(); }, !saved)}
 			{item(t(session?.pinned ? 'sidebar.unpin' : 'sidebar.pin'), () => perform({ pinned: !session?.pinned }), !saved)}
