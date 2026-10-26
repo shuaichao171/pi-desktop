@@ -26,9 +26,12 @@
 .pd-top-bar-workspace-actions { display: flex; flex: 0 0 auto; align-items: center; gap: 2px; margin-left: auto; -webkit-app-region: no-drag; }
 /* The rail/sidebar hover tint is several steps apart from --pd-sidebar, so
    top-bar buttons stay visible on hover and focus (surface-hover is not). */
-.pd-top-bar .pd-icon-button:hover, .pd-top-bar .pd-icon-button[aria-expanded='true'],
-.pd-top-bar-workspace-button:hover, .pd-top-bar-workspace-button.is-active { background: var(--pd-sidebar-hover); color: var(--pd-text); }
-.pd-top-bar .pd-icon-button:focus-visible, .pd-top-bar-workspace-button:focus-visible { outline: 2px solid var(--pd-focus-border); outline-offset: -2px; background: var(--pd-sidebar-hover); }
+/* One namespace for every interactive element in the top bar, so future buttons
+   inherit the visible tint automatically (surface-hover is invisible on --pd-sidebar). */
+.pd-top-bar :is(button, [role='button']):hover:not(:disabled),
+.pd-top-bar .pd-icon-button[aria-expanded='true'],
+.pd-top-bar-workspace-button.is-active { background: var(--pd-sidebar-hover); color: var(--pd-text); }
+.pd-top-bar :is(button, [role='button']):focus-visible { outline: 2px solid var(--pd-focus-border); outline-offset: -2px; background: var(--pd-sidebar-hover); }
 /* Extension slot sits left of a divider; system actions stay right-aligned. */
 .pd-top-bar-extensions { display: flex; flex: 0 0 auto; align-items: center; gap: 4px; -webkit-app-region: no-drag; }
 .pd-top-bar-divider { flex: 0 0 auto; align-self: center; width: 1px; height: 20px; margin: 0 6px; background: var(--pd-sidebar-surface); }
@@ -763,7 +766,9 @@ div.pd-hover-tooltip:has(.pd-update-notes-body) { max-width: min(400px, calc(100
 .pd-window-controls { position: fixed; top: 14px; right: 14px; z-index: var(--pd-z-window-controls); display: flex; align-items: center; gap: 2px; -webkit-app-region: no-drag; }
 .pd-window-controls.is-inline { position: static; top: auto; right: auto; z-index: auto; }
 .pd-window-control { display: grid; flex: 0 0 auto; place-items: center; width: 28px; height: 28px; padding: 0; border: 0; border-radius: var(--pd-radius-md); background: transparent; color: var(--pd-text-subtle); -webkit-app-region: no-drag; }
-.pd-window-control:hover { background: var(--pd-sidebar-hover); color: var(--pd-text); }
+/* Inline instance lives in .pd-top-bar (namespaced tint); the PAI-mode overlay sits on the chat background and keeps surface-hover. */
+.pd-top-bar .pd-window-control:hover { background: var(--pd-sidebar-hover); color: var(--pd-text); }
+.pd-window-control:hover { background: var(--pd-surface-hover); color: var(--pd-text); }
 .pd-window-control.is-close:hover { background: var(--pd-window-close-hover); color: #fff; }
 .pd-window-control-error { position: absolute; top: 33px; right: 0; width: max-content; max-width: 240px; padding: 5px 8px; border: 1px solid var(--pd-danger-border); border-radius: var(--pd-radius-sm); background: var(--pd-surface); color: var(--pd-danger); font-size: var(--pd-font-sm); }
 
@@ -901,9 +906,7 @@ div.pd-hover-tooltip:has(.pd-update-notes-body) { max-width: min(400px, calc(100
 .pd-workspace-open-wrap { position: relative; flex: 0 0 auto; }
 .pd-workspace-open { display: flex; align-items: center; gap: 2px; height: 28px; }
 .pd-workspace-open-button { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 28px; padding: 0; border: 0; border-radius: var(--pd-radius-sm); background: transparent; color: var(--pd-text-subtle); cursor: pointer; transition: background 0.12s ease, color 0.12s ease; }
-/* Same visible tint as the other top-bar buttons (surface-hover is invisible on --pd-sidebar). */
-.pd-workspace-open-button:hover { background: var(--pd-sidebar-hover); color: var(--pd-text); }
-.pd-workspace-open-button:focus-visible { outline: 2px solid var(--pd-focus-border); outline-offset: -2px; background: var(--pd-sidebar-hover); }
+/* Hover/focus tint comes from the .pd-top-bar namespace (see its comment). */
 .pd-workspace-open-error { top: calc(100% + 4px); }
 
 /* Commit dialog (zcode-style) */
