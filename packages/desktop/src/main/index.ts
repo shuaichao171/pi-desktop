@@ -1,4 +1,5 @@
 import { initializeDiagnostics, recordDiagnostic } from './diagnostics.ts';
+import { userInfo } from 'node:os';
 import { app, BrowserWindow, dialog, Menu, session, shell } from 'electron';
 import { mkdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
@@ -8,16 +9,19 @@ import { getAppLocale } from './appLocale';
 import { createSplashErrorHtml, createSplashHtml } from './splash';
 import { showEditContextMenu } from './editContextMenu.ts';
 import { createAppTray, destroyAppTray } from './tray';
-import { parseDesktopLaunch, rendererLaunchUrl, reservePaiProfile, validatePaiSession, validatePaiWorkspace, type DesktopLaunch, type PaiProfile } from './desktopLaunch.ts';
+import { paiPipeName, startPaiPipeServer } from './paiPipe.ts';
+import { parseDesktopLaunch, reservePaiProfile, validatePaiSession, validatePaiWorkspace, type DesktopLaunch, type PaiProfile } from './desktopLaunch.ts';
 
 let paiProfile: PaiProfile | null = null;
-// Pai and --multi windows relocate userData to an isolated profile;
-// appearance and other shared state still live in the original base directory.
+// A --multi window relocates userData to an isolated profile; appearance and
+// other shared state still live in the original base directory.
 let baseUserData: string | undefined;
+// A cold `pai` launch: this process becomes the main instance (holding the
+// app singleton) and opens a hosted pai chat window once boot completes.
+let pendingPaiLaunch: { cwd: string; sessionPath?: string } | null = null;
 const launch: DesktopLaunch = (() => {
 	try {
 		const parsed = parseDesktopLaunch(process.argv);
-		if (parsed.windowMode === 'full') return parsed;
 		if (parsed.windowMode === 'multi') {
 			// A second full-size instance with its own profile: skips the app
 			// singleton, tray and updater, and starts a fresh conversation so it
@@ -28,15 +32,15 @@ const launch: DesktopLaunch = (() => {
 			app.setPath('sessionData', paiProfile.sessionData);
 			return { windowMode: 'multi' };
 		}
-		const cwd = validatePaiWorkspace(parsed.cwd);
-		const sessionPath = parsed.sessionPath === undefined ? undefined : validatePaiSession(parsed.sessionPath);
-		// The pai profile relocates userData; keep the base path for shared state.
-		baseUserData = app.getPath('userData');
-		paiProfile = reservePaiProfile(baseUserData);
-		// Must be configured before app.ready creates Chromium's default session.
-		app.setPath('userData', paiProfile.userData);
-		app.setPath('sessionData', paiProfile.sessionData);
-		return sessionPath ? { windowMode: 'pai', cwd, sessionPath } : { windowMode: 'pai', cwd };
+		if (parsed.windowMode === 'pai') {
+			// Hosted mode: no isolated profile and no second agent boot in this
+			// process. If the singleton is taken, the bid fails below and the
+			// running instance receives the request through `second-instance`.
+			const cwd = validatePaiWorkspace(parsed.cwd);
+			const sessionPath = parsed.sessionPath === undefined ? undefined : validatePaiSession(parsed.sessionPath);
+			pendingPaiLaunch = sessionPath ? { cwd, sessionPath } : { cwd };
+		}
+		return { windowMode: 'full' };
 	} catch (error) {
 		dialog.showErrorBox('Pi Desktop', error instanceof Error ? error.message : String(error));
 		app.exit(1);
@@ -44,7 +48,7 @@ const launch: DesktopLaunch = (() => {
 	}
 })();
 // Electron/agent shutdown completes before the process exits. Keep the lease
-// until then so another pai cannot open a profile still used by this instance.
+// until then so another instance cannot open a profile still used by this one.
 if (paiProfile) process.once('exit', () => paiProfile?.release());
 
 const here = fileURLToPath(new URL('.', import.meta.url));
@@ -63,6 +67,25 @@ function showMainWindow(): void {
 	if (target.isMinimized()) target.restore();
 	target.show();
 	target.focus();
+}
+
+/**
+ * A second process lost its singleton bid. A `pai` spawn hands its window
+ * request over to this instance; a plain launch just reveals the main window.
+ */
+function openPaiHandoff(commandLine: readonly string[]): void {
+	try {
+		const parsed = parseDesktopLaunch(commandLine);
+		if (parsed.windowMode !== 'pai') {
+			showMainWindow();
+			return;
+		}
+		const cwd = validatePaiWorkspace(parsed.cwd);
+		const sessionPath = parsed.sessionPath === undefined ? undefined : validatePaiSession(parsed.sessionPath);
+		void import('./ipc').then(module => module.openPaiWindow(sessionPath ? { cwd, sessionPath } : { cwd }));
+	} catch (error) {
+		dialog.showErrorBox('pai', error instanceof Error ? error.message : String(error));
+	}
 }
 
 function openSettings(): void {
@@ -107,12 +130,12 @@ function showStartupError(splash: BrowserWindow, error: unknown): void {
 
 function createWindow(onReady?: () => void, onLoadError?: (error: unknown) => void): BrowserWindow {
 	const win = new BrowserWindow({
-		width: launch.windowMode === 'pai' ? 920 : 1280,
-		height: launch.windowMode === 'pai' ? 780 : 820,
+		width: 1280,
+		height: 820,
 		minWidth: 680,
 		minHeight: 520,
 		backgroundColor: '#111216',
-		title: launch.windowMode === 'pai' ? 'pai' : 'Pi Desktop',
+		title: 'Pi Desktop',
 		// Match ZCode's Windows chrome: the renderer draws the title bar and controls.
 		// Keep the native title bar on macOS and Linux.
 		frame: process.platform !== 'win32',
@@ -315,8 +338,8 @@ function createWindow(onReady?: () => void, onLoadError?: (error: unknown) => vo
 
 	// electron-vite dev serves the renderer from the HMR server.
 	const load = !app.isPackaged && process.env.ELECTRON_RENDERER_URL
-		? win.loadURL(rendererLaunchUrl(process.env.ELECTRON_RENDERER_URL, launch))
-		: win.loadFile(join(here, '../renderer/index.html'), { query: launch.windowMode === 'pai' ? { mode: 'pai' } : {} });
+		? win.loadURL(process.env.ELECTRON_RENDERER_URL)
+		: win.loadFile(join(here, '../renderer/index.html'));
 	void load.then(() => {
 		loaded = true;
 		reveal();
@@ -340,7 +363,7 @@ async function bootstrap(splash: BrowserWindow): Promise<void> {
 				return focused && rendererWindows.has(focused) ? focused : [...rendererWindows][0];
 			},
 		});
-		const workspace = module.defaultWorkspace(launch.windowMode === 'pai' ? launch.cwd : undefined);
+		const workspace = module.defaultWorkspace();
 		// A workspace that already exists — notably a Windows drive root such as
 		// D:\ — must not be passed to mkdirSync: recursive mkdir still fails with
 		// EPERM on drive roots. Only create the directory when it is missing.
@@ -360,34 +383,51 @@ async function bootstrap(splash: BrowserWindow): Promise<void> {
 		}, (error) => showStartupError(splash, error));
 		// Load the UI and Pi history concurrently, keeping the logo until React
 		// acknowledges a committed conversation (or a required extension dialog).
-		// A pai window opened from "Open in new window" resumes that conversation;
-		// every other extra instance starts fresh so it never reopens a transcript in use.
-		const resumePath = launch.windowMode === 'pai' ? launch.sessionPath : undefined;
-		void module.agentService.init({ cwd: workspace, ...(resumePath ? { sessionPath: resumePath } : launch.windowMode !== 'full' ? { fresh: true } : {}) }).catch((error: unknown) => {
+		// Extra instances start fresh so they never reopen a transcript in use;
+		// a hosted pai window (below) resumes its own conversation.
+		void module.agentService.init({ cwd: workspace, ...(launch.windowMode !== 'full' ? { fresh: true } : {}) }).catch((error: unknown) => {
 			recordDiagnostic({ stage: 'startup', action: 'agent-init', outcome: 'failure' });
 			console.error('Pi agent failed to initialize:', error);
 			if (startupCancelled || mainRevealed) return;
 			mainWindow.destroy();
 			showStartupError(splash, error);
 		});
+		// A cold `pai` launch booted the main instance; open its window now that
+		// IPC, the tray and the main window's agent are on their way.
+		if (pendingPaiLaunch) {
+			const request = pendingPaiLaunch;
+			pendingPaiLaunch = null;
+			module.openPaiWindow(request);
+		}
 	} catch (error) {
 		if (!startupCancelled) showStartupError(splash, error);
 		recordDiagnostic({ stage: 'startup', action: 'bootstrap', outcome: 'failure' });
 	}
 }
 
+// Full launches and cold `pai` launches share userData, so they compete for
+// the same app singleton; --multi keeps its isolated profile and skips it.
 const hasSingleInstanceLock = launch.windowMode !== 'full' || app.requestSingleInstanceLock();
 if (!hasSingleInstanceLock) {
+	// This process was spawned as `pai` while the main app is already running;
+	// its request is handed to the holder through the second-instance event.
 	app.quit();
 } else {
-	app.on('second-instance', () => {
-		// Also restores a window hidden to the tray (neither visible nor minimized).
-		showMainWindow();
+	app.on('second-instance', (_event, commandLine) => {
+		openPaiHandoff(commandLine);
 	});
 
 	void app.whenReady().then(() => {
 		initializeDiagnostics(join(app.getPath('userData'), 'diagnostics'));
 		recordDiagnostic({ stage: 'startup', action: 'app-ready', outcome: 'success' });
+		// Fast path for the `pai` command: the running instance serves pipe
+		// requests without starting another Electron process.
+		if (process.platform === 'win32' && launch.windowMode === 'full') {
+			startPaiPipeServer({
+				pipeName: paiPipeName(userInfo().username || process.env.USERNAME || 'user'),
+				handle: async (request) => { (await import('./ipc')).openPaiWindow(request); },
+			});
+		}
 	if (process.platform === 'win32') {
 		app.setAppUserModelId('dev.pidesktop.app');
 		Menu.setApplicationMenu(null);

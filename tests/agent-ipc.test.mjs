@@ -29,7 +29,7 @@ const stubs = {
       return globalThis.__ipcAgent;
     }
   `,
-  './updateService': 'export const updateService = { stop() {}, setAutoInstallSource: async () => {} };',
+  './updateService': 'export const updateService = { stop() {}, setAutoInstallSource: async () => {}, getState: () => ({ phase: "idle" }) };',
   './workbenchIpc': `
     export const registerWorkbenchIpc = () => globalThis.__ipcWorkbench ?? ({ reset: async () => {}, dispose: async () => {} });
   `,
@@ -226,51 +226,52 @@ test('switching workspaces waits for in-flight crash recovery and keeps the chos
   await ipc.disposeServices();
 });
 
-test('pai IPC exposes its mode, disables background features, and recovers only its own session', async (t) => {
+test('hosted pai windows route to their own agent and lose main-window-only features', async (t) => {
   const temp = await realpath(tmpdir());
   const root = await mkdtemp(join(temp, 'pi-pai-ipc-'));
-  const cwd = join(root, 'project');
-  await mkdir(cwd);
   const main = createIpcWindow();
+  const pai = createIpcWindow();
   globalThis.__ipcUserData = root;
-  globalThis.__ipcWindows = [main];
+  globalThis.__ipcWindows = [main, pai];
   globalThis.__ipcHandlers = new Map();
-  const calls = [];
-  let agentEvent;
-  let recovered;
   globalThis.__ipcAgent = {
-    onEvent(listener) { agentEvent = listener; }, onBackgroundActivity() {}, async dispose() {},
-    async init(options) { calls.push(options); recovered?.(); },
-    async listSessions() { throw new Error('pai recovery must not search for another instance\'s session'); },
+    onEvent() {}, onBackgroundActivity() {}, async dispose() {},
+    async getSnapshot() { return { cwd: 'main', sessionPath: null }; },
   };
-  const ipc = await import('../packages/desktop/src/main/ipc.ts?pai-mode');
+  const paiAgent = {
+    async getSnapshot() { return { cwd: 'pai', sessionPath: null }; },
+  };
+  const ipc = await import('../packages/desktop/src/main/ipc.ts?pai-hosted');
+  const { registerPaiWindowSlot, unregisterPaiWindowSlot } = await import('../packages/desktop/src/main/paiWindows.ts');
   const { IPC_CHANNELS: channels } = await import('../packages/shared/src/index.ts');
   t.after(async () => {
+    unregisterPaiWindowSlot(pai);
     await ipc.disposeServices();
     assert.equal(dirname(root), temp);
     await rm(root, { recursive: true, force: true });
   });
-  ipc.registerIpc({ windowMode: 'pai', getDialogWindow: () => main });
-  assert.equal(ipc.defaultWorkspace(cwd), cwd);
-  const valid = { sender: main.webContents, senderFrame: main.webContents.mainFrame };
-  const call = (channel, ...args) => globalThis.__ipcHandlers.get(channel)(valid, ...args);
-  assert.equal(call(channels.appInfo).windowMode, 'pai');
-  assert.deepEqual(call(channels.updateState), { phase: 'unavailable', unavailableReason: 'unsupported', currentVersion: '0.1.7-test' });
-  for (const channel of [channels.updateCheck, channels.updateInstall]) assert.throws(() => call(channel), /main Pi Desktop window/);
+  ipc.registerIpc({ windowMode: 'full', getDialogWindow: () => main });
+  const mainSender = { sender: main.webContents, senderFrame: main.webContents.mainFrame };
+  const paiSender = { sender: pai.webContents, senderFrame: pai.webContents.mainFrame };
+  const call = (sender, channel, ...args) => globalThis.__ipcHandlers.get(channel)(sender, ...args);
+  registerPaiWindowSlot({ win: pai, agent: paiAgent, liveSessionPath: null, busy: false });
+  assert.equal(call(paiSender, channels.appInfo).windowMode, 'pai');
+  assert.equal(call(mainSender, channels.appInfo).windowMode, 'full');
+  assert.deepEqual(call(paiSender, channels.updateState), { phase: 'unavailable', unavailableReason: 'unsupported', currentVersion: '0.1.7-test' });
+  for (const channel of [channels.updateCheck, channels.updateInstall]) assert.throws(() => call(paiSender, channel), /主窗口|main Pi Desktop window/);
   for (const channel of [channels.automationSnapshot, channels.automationSave, channels.automationSetEnabled, channels.automationDelete, channels.automationRun, channels.automationCancelRun]) {
-    assert.throws(() => call(channel), /main Pi Desktop window/);
+    // Refused either centrally (rendererIpc restriction) or by the handler gate.
+    assert.throws(() => call(paiSender, channel), /主窗口|main Pi Desktop window/);
   }
-  call(channels.rendererReady);
-  let ready = new Promise(resolve => { recovered = resolve; });
-  globalThis.__ipcAgentUi.onHostCrash();
-  await ready;
-  assert.deepEqual(calls[0], { cwd, fresh: true }, 'an unpersisted pai session cannot adopt the latest global history');
-  const ownSession = join(cwd, 'own-session.jsonl');
-  agentEvent({ sequence: 1, event: { type: 'ready', cwd, sessionPath: ownSession } });
-  ready = new Promise(resolve => { recovered = resolve; });
-  globalThis.__ipcAgentUi.onHostCrash();
-  await ready;
-  assert.deepEqual(calls[1], { cwd, sessionPath: ownSession });
+  // The main-window-only surface (workspace and session management) is blocked centrally.
+  assert.throws(() => call(paiSender, channels.workspaceSwitch, 'D:\\nowhere'), /主窗口/);
+  assert.throws(() => call(paiSender, channels.agentInit, 'D:\\nowhere'), /主窗口/);
+  // Agent calls route to the requesting window's own agent host.
+  assert.deepEqual(await call(paiSender, channels.agentSnapshot), { cwd: 'pai', sessionPath: null });
+  assert.deepEqual(await call(mainSender, channels.agentSnapshot), { cwd: 'main', sessionPath: null });
+  unregisterPaiWindowSlot(pai);
+  // Without a registered slot the same window is treated like a full window again.
+  assert.equal(call(paiSender, channels.appInfo).windowMode, 'full');
 });
 
 test('composer workspace selection creates a fresh session, including the first detach to home, while normal selection restores history', async (t) => {

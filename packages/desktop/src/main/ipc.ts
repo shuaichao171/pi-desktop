@@ -4,17 +4,18 @@ import { registerDebugApiIpc } from './debugApiIpc';
 /**
  * IPC wiring: renderer ⇄ main ⇄ AgentService.
  *
- * All agent events fan out to every renderer window; every renderer→main call
- * is a typed invoke against the contract in @pidesktop/shared.
+ * Agent events fan out to the requesting renderer window; every renderer→main
+ * call is a typed invoke against the contract in @pidesktop/shared. Hosted pai
  */
 
 import { app, BrowserWindow, dialog, shell, type IpcMainInvokeEvent } from 'electron';
-import { spawn } from 'node:child_process';
 import { mkdirSync, statSync } from 'node:fs';
 import { rm, stat } from 'node:fs/promises';
 import { basename, dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { IPC_CHANNELS, type AgentEventEnvelope, type AppLocale, type UiAppCommand, type UiAttachment, type UiExtensionDialogRequest, type UiInputScope, type UiSessionMetaPatch, type UiSidebarGroupChange, type UiSlashCommandRequest, type UiThinkingLevel } from '@pidesktop/shared';
 import { createIsolatedAgentService } from './agentClient';
+import { isPaiSender, isPaiWindow, paiHeldSessionPaths, paiSlotForSender, paiWindowSlots, registerPaiWindowSlot, unregisterPaiWindowSlot } from './paiWindows';
 import { getAppLocale, setAppLocale } from './appLocale';
 import { destroyAppTray, invalidateAppTrayData, updateAppTrayMenu } from './tray';
 import { updateService } from './updateService';
@@ -23,13 +24,13 @@ import { registerWorkbenchIpc } from './workbenchIpc';
 import type { WorkbenchService } from './workbenchService';
 import { backupCorruptStateFile, backupCorruptStateFileAsync, CorruptStateFileError, readStateFile, readStateFileAsync, writeStateFile, writeStateFileAsync } from './stateFiles';
 import { SessionGroupService } from './sessionGroups';
-import { broadcastToRenderers, handleRendererInvoke, requireRendererSender } from './rendererIpc';
+import { broadcastToRenderers, handleRendererInvoke, requireRendererSender, setRendererSenderRestriction } from './rendererIpc';
 import { normalizeUiDiagnostic } from '@pidesktop/shared';
 import { flushDiagnostics, initializeDiagnostics, recordDiagnostic } from './diagnostics';
 import { createInterface } from 'node:readline';
 import { createReadStream } from 'node:fs';
 import { normalizeSessionPath, pruneMissingSessionMeta } from './sessionPaths';
-import { paiSessionLaunchArgs } from './desktopLaunch';
+import { rendererLaunchUrl, validatePaiSession, validatePaiWorkspace } from './desktopLaunch';
 import { prepareWorkspaceDrop } from './workspaceDrop';
 import { createProjectCreator } from './projectCreation';
 import { createConversationWorkspace, createConversationWorkspaceSync, prepareConversationStorageDirectory } from './conversationStorage';
@@ -90,7 +91,6 @@ let lastSessionMetaPrune = 0;
 let sessionGroupService: SessionGroupService | null = null;
 let automationService: ReturnType<typeof createAutomationService> | null = null;
 let pluginMutationActive = false;
-let currentWindowMode: 'full' | 'pai' | 'multi' = 'full';
 const discoverPlugins = createPluginDiscovery();
 /** Resolved each time an agent host process is forked; custom engines apply after an app restart. */
 const agentEngineOptions: AgentHostEngineOptions = {
@@ -104,6 +104,303 @@ const automationExecutor = createAutomationExecutor({
 	withSessionSetup: (action) => queueWorkspaceActivation(action),
 });
 
+// ---------------------------------------------------------------------------
+// Hosted pai chat windows
+//
+// `pai` used to cold-start a second Pi Desktop process for every window.
+// Hosted windows live inside the main instance instead: each window owns an
+// isolated agent host process, its renderer talks through the same channels,
+// and agent events are delivered per window instead of broadcast.
+// ---------------------------------------------------------------------------
+
+export interface PaiWindowRequest {
+	cwd: string;
+	sessionPath?: string;
+}
+type PaiAgentService = ReturnType<typeof createIsolatedAgentService>;
+interface PaiWindowEntry {
+	win: BrowserWindow;
+	cwd: string;
+	sessionPath?: string;
+	agent: PaiAgentService;
+	/** Session the hosted agent currently has open; null while switching or fresh. */
+	liveSessionPath: string | null;
+	busy: boolean;
+	loaded: boolean;
+	firstPaintReady: boolean;
+	rendererReady: boolean;
+	revealed: boolean;
+	closing: boolean;
+	disposed: boolean;
+}
+const pendingPaiWindowRequests: PaiWindowRequest[] = [];
+let paiWindowsReady = false;
+let mainAgentBusy = false;
+
+/** Pai windows keep their own agent host; every other window shares the main service. */
+function agentFor(event: IpcMainInvokeEvent): PaiAgentService {
+	return (paiSlotForSender(event.sender)?.agent as PaiAgentService | undefined) ?? agentService;
+}
+
+
+function updateKeepAwakeBusy(): void {
+	let busy = mainAgentBusy;
+	for (const entry of paiWindowSlots()) busy = busy || entry.busy;
+	keepAwake?.setAgentBusy(busy);
+}
+
+async function disposePaiEntry(entry: PaiWindowEntry): Promise<void> {
+	if (entry.disposed) return;
+	entry.disposed = true;
+	try { await entry.agent.dispose(); }
+	catch (error) { console.error('pai agent disposal failed:', error); }
+	updateKeepAwakeBusy();
+}
+
+function closePaiWindow(entry: PaiWindowEntry): void {
+	if (entry.closing || entry.win.isDestroyed()) return;
+	entry.closing = true;
+	void (async () => {
+		try {
+			if (entry.busy) {
+				const english = getAppLocale() === 'en-US';
+				const { response } = await dialog.showMessageBox(entry.win, {
+					type: 'warning',
+					message: english ? 'Tasks are still running' : '仍有任务在运行',
+					detail: english ? 'Closing this window interrupts its conversation.' : '关闭小窗会中断其中正在运行的会话。',
+					buttons: [english ? 'Cancel' : '取消', english ? 'Close' : '关闭'],
+					defaultId: 0,
+					cancelId: 0,
+					noLink: true,
+				});
+				if (response !== 1) { entry.closing = false; return; }
+			}
+		} catch { /* A failed confirm still allows closing the window. */ }
+		unregisterPaiWindowSlot(entry.win);
+		await disposePaiEntry(entry);
+		if (!entry.win.isDestroyed()) entry.win.destroy();
+	})().catch((error: unknown) => console.error('pai window close failed:', error));
+}
+
+async function recoverPaiAgent(entry: PaiWindowEntry): Promise<void> {
+	if (entry.win.isDestroyed() || disposingServices) return;
+	const held = new Set(paiHeldSessionPaths());
+	held.delete(entry.liveSessionPath ?? '');
+	const excludeSessionPaths = [...automationExecutor.sessionPaths(entry.cwd), ...held];
+	try {
+		if (entry.liveSessionPath) await entry.agent.init({ cwd: entry.cwd, sessionPath: entry.liveSessionPath, excludeSessionPaths });
+		else await entry.agent.init({ cwd: entry.cwd, fresh: true });
+	} catch (error) {
+		console.error('pai agent recovery failed:', error);
+	}
+}
+
+function requestPaiProjectTrust(entry: PaiWindowEntry, cwd: string): Promise<{ trusted: boolean; remember: boolean }> {
+	const english = getAppLocale() === 'en-US';
+	const options = {
+		type: 'warning',
+		buttons: english ? ['Open without trusting', 'Trust this time', 'Always trust'] : ['不信任，继续打开', '仅本次信任', '始终信任'],
+		defaultId: 0,
+		cancelId: 0,
+		noLink: true,
+		title: english ? 'Trust workspace' : '信任工作区',
+		message: english ? 'Do you trust this workspace?' : '是否信任此工作区？',
+		detail: english
+			? `${cwd}\n\nTrusting lets Pi load project settings, skills, and extensions, which may run local code. You can still open the folder without trust; those project resources will be skipped.`
+			: `${cwd}\n\n信任后，Pi 可以加载此文件夹中的设置、技能和扩展；扩展可能执行本机代码。不信任仍可打开文件夹，但会跳过这些项目资源。`,
+	} as const;
+	const choice = entry.win.isDestroyed() ? dialog.showMessageBox(options) : dialog.showMessageBox(entry.win, options);
+	return choice.then(({ response }) => ({ trusted: response !== 0, remember: response === 2 }));
+}
+
+function requestPaiExtensionDialog(entry: PaiWindowEntry, request: UiExtensionDialogRequest, signal?: AbortSignal): Promise<UiExtensionDialogResponse> {
+	const owner = entry.win;
+	if (disposingServices || owner.isDestroyed() || owner.webContents.isDestroyed()) return Promise.resolve(null);
+	if (request.kind === 'notify') {
+		if (notificationReadyWindows.has(owner)) owner.webContents.send(IPC_CHANNELS.agentExtensionDialog, request);
+		else {
+			const queue = notificationsFor(owner);
+			queue.requests.push(request);
+			if (queue.requests.length > MAX_STARTUP_NOTIFICATIONS) queue.requests.shift();
+		}
+		return Promise.resolve(null);
+	}
+	return extensionDialogFor(owner, request, signal);
+}
+
+function notifyPaiRendererReady(win: BrowserWindow): void {
+	const entry = paiWindowSlots().find((slot) => slot.win === win) as PaiWindowEntry | undefined;
+	if (!entry) return;
+	entry.rendererReady = true;
+	revealPaiWindow(entry);
+}
+
+function revealPaiWindow(entry: PaiWindowEntry): void {
+	if (entry.revealed || entry.win.isDestroyed()) return;
+	if (!entry.loaded || !entry.firstPaintReady || !entry.rendererReady) return;
+	entry.revealed = true;
+	entry.win.show();
+	entry.win.webContents.setBackgroundThrottling(true);
+}
+
+function createPaiWindow(request: PaiWindowRequest): void {
+	const cwd = validatePaiWorkspace(request.cwd);
+	const sessionPath = request.sessionPath === undefined ? undefined : validatePaiSession(request.sessionPath);
+	// A conversation the user asks for twice focuses its existing window.
+	if (sessionPath) {
+		for (const slot of paiWindowSlots()) {
+			const entry = slot as PaiWindowEntry;
+			if (entry.sessionPath === sessionPath || entry.liveSessionPath === sessionPath) {
+				if (entry.win.isMinimized()) entry.win.restore();
+				entry.win.show();
+				entry.win.focus();
+				return;
+			}
+		}
+	}
+	const here = fileURLToPath(new URL('.', import.meta.url));
+	const win = new BrowserWindow({
+		width: 920,
+		height: 780,
+		minWidth: 680,
+		minHeight: 520,
+		backgroundColor: '#111216',
+		title: 'pai',
+		frame: process.platform !== 'win32',
+		autoHideMenuBar: process.platform === 'win32',
+		show: false,
+		webPreferences: {
+			preload: join(here, '../preload/index.mjs'),
+			backgroundThrottling: false,
+			contextIsolation: true,
+			sandbox: false,
+			nodeIntegration: false,
+		},
+	});
+	const entry: PaiWindowEntry = {
+		win, cwd,
+		...(sessionPath ? { sessionPath } : {}),
+		agent: null!,
+		liveSessionPath: null,
+		busy: false,
+		loaded: false,
+		firstPaintReady: false,
+		rendererReady: false,
+		revealed: false,
+		closing: false,
+		disposed: false,
+	};
+	entry.agent = createIsolatedAgentService({
+		requestProjectTrust: (target) => requestPaiProjectTrust(entry, target),
+		requestExtensionDialog: (dialogRequest, signal) => requestPaiExtensionDialog(entry, dialogRequest, signal),
+		onHostCrash: () => {
+			setTimeout(() => void recoverPaiAgent(entry), 250);
+		},
+	}, agentEngineOptions);
+	registerPaiWindowSlot(entry);
+	const publishChromeState = (): void => {
+		if (win.webContents.isDestroyed()) return;
+		win.webContents.send(IPC_CHANNELS.windowChromeStateChanged, { isMaximized: win.isMaximized() });
+	};
+	win.on('maximize', publishChromeState);
+	win.on('unmaximize', publishChromeState);
+	let failureReported = false;
+	const reportFailure = (reason: string): void => {
+		if (failureReported || entry.disposed) return;
+		failureReported = true;
+		console.error('pai renderer failed:', reason);
+		dialog.showErrorBox('pai', reason);
+		closePaiWindow(entry);
+	};
+	win.webContents.on('render-process-gone', (_event, details) => {
+		if (details.reason !== 'clean-exit') reportFailure(details.reason);
+	});
+	win.webContents.on('did-fail-load', (_event, code, description, _url, isMainFrame) => {
+		if (isMainFrame && code !== -3) reportFailure(description);
+	});
+	win.webContents.setWindowOpenHandler(({ url }) => {
+		try {
+			const parsed = new URL(url);
+			if (parsed.protocol === 'https:' || parsed.protocol === 'http:') void shell.openExternal(parsed.toString());
+		} catch { /* Ignore malformed links from generated content. */ }
+		return { action: 'deny' };
+	});
+	win.on('close', (event) => {
+		if (entry.closing) return;
+		event.preventDefault();
+		closePaiWindow(entry);
+	});
+	win.on('closed', () => {
+		unregisterPaiWindowSlot(win);
+		void disposePaiEntry(entry);
+	});
+	entry.agent.onEvent((envelope: AgentEventEnvelope) => {
+		const event = envelope.event;
+		if (event.type === 'ready') entry.liveSessionPath = event.sessionPath;
+		if (event.type === 'status') {
+			entry.busy = event.status === 'busy';
+			updateKeepAwakeBusy();
+		}
+		if (!entry.revealed && !entry.win.isDestroyed()) return; // Nothing is listening yet; the snapshot covers pre-reveal state.
+		if (!win.isDestroyed() && !win.webContents.isDestroyed()) win.webContents.send(IPC_CHANNELS.agentEvent, envelope);
+	});
+	entry.agent.onBackgroundActivity((_cwd, path) => {
+		if (entry.liveSessionPath === path || pendingUnreadPaths.has(path)) return;
+		pendingUnreadPaths.add(path);
+		void (async () => {
+			await withSessionMeta(async (meta) => {
+				const stamp = Math.max(Date.now(), (meta[path]?.unreadAt ?? 0) + 1);
+				meta[path] = { ...meta[path], unread: true, unreadAt: stamp };
+				await saveSessionMeta(meta);
+			});
+		})().catch((error: unknown) => {
+			console.error('Failed to save session activity metadata:', error);
+		}).finally(() => pendingUnreadPaths.delete(path));
+	});
+	updateKeepAwakeBusy();
+	win.once('ready-to-show', () => {
+		entry.firstPaintReady = true;
+		revealPaiWindow(entry);
+	});
+	const load = !app.isPackaged && process.env.ELECTRON_RENDERER_URL
+		? win.loadURL(rendererLaunchUrl(process.env.ELECTRON_RENDERER_URL, { windowMode: 'pai', cwd }))
+		: win.loadFile(join(here, '../renderer/index.html'), { query: { mode: 'pai' } });
+	void load.then(() => {
+		entry.loaded = true;
+		revealPaiWindow(entry);
+	}).catch((error: unknown) => reportFailure(error instanceof Error ? error.message : String(error)));
+	void entry.agent.init({ cwd, ...(sessionPath ? { sessionPath } : { fresh: true }) })
+		.catch((error: unknown) => {
+			console.error('pai agent failed to initialize:', error);
+			dialog.showErrorBox('pai', error instanceof Error ? error.message : String(error));
+			closePaiWindow(entry);
+		});
+}
+
+/**
+ * Opens a hosted pai chat window. Called by the pai pipe server, the
+ * second-instance handoff, a cold `--pai` launch and "open in new window".
+ * Requests that arrive before IPC is wired are queued and replayed.
+ */
+export function openPaiWindow(request: PaiWindowRequest): void {
+	if (!paiWindowsReady) {
+		pendingPaiWindowRequests.push(request);
+		return;
+	}
+	createPaiWindow(request);
+}
+
+async function disposeAllPaiWindows(): Promise<void> {
+	const entries = paiWindowSlots() as PaiWindowEntry[];
+	for (const entry of entries) {
+		entry.closing = true;
+		unregisterPaiWindowSlot(entry.win);
+	}
+	await Promise.allSettled(entries.map(async (entry) => {
+		if (!entry.win.isDestroyed()) entry.win.destroy();
+		await disposePaiEntry(entry);
+	}));
+}
 function notificationsFor(owner: BrowserWindow): StartupNotifications {
 	const existing = startupNotifications.get(owner);
 	if (existing) return existing;
@@ -129,23 +426,9 @@ function notificationsFor(owner: BrowserWindow): StartupNotifications {
 	return queue;
 }
 
-function requestExtensionDialog(request: UiExtensionDialogRequest, signal?: AbortSignal): Promise<UiExtensionDialogResponse> {
-	if (disposingServices) return Promise.resolve(null);
-	// The focused window can still be the logo splash while Pi initializes.
-	// Only a renderer with our preload bridge can display/answer extension UI.
-	const owner = getDialogWindow();
-	if (!owner || owner.isDestroyed() || owner.webContents.isDestroyed()) return Promise.resolve(null);
-	if (request.kind === 'notify') {
-		if (notificationReadyWindows.has(owner)) owner.webContents.send(IPC_CHANNELS.agentExtensionDialog, request);
-		else {
-			// Do not lose startup notices before React subscribes, or let their
-			// dismissal timers expire behind the splash. A notice never reveals UI.
-			const queue = notificationsFor(owner);
-			queue.requests.push(request);
-			if (queue.requests.length > MAX_STARTUP_NOTIFICATIONS) queue.requests.shift();
-		}
-		return Promise.resolve(null);
-	}
+/** Displays (or queues) one extension dialog request on a specific owner window. */
+function extensionDialogFor(owner: BrowserWindow, request: UiExtensionDialogRequest, signal?: AbortSignal): Promise<UiExtensionDialogResponse> {
+	if (owner.isDestroyed() || owner.webContents.isDestroyed()) return Promise.resolve(null);
 	return new Promise((resolve) => {
 		let timer: ReturnType<typeof setTimeout> | undefined;
 		const finish = (value: UiExtensionDialogResponse): void => {
@@ -174,6 +457,26 @@ function requestExtensionDialog(request: UiExtensionDialogRequest, signal?: Abor
 	});
 }
 
+function requestExtensionDialog(request: UiExtensionDialogRequest, signal?: AbortSignal): Promise<UiExtensionDialogResponse> {
+	if (disposingServices) return Promise.resolve(null);
+	// The focused window can still be the logo splash while Pi initializes.
+	// Only a renderer with our preload bridge can display/answer extension UI.
+	const owner = getDialogWindow();
+	if (!owner || owner.isDestroyed() || owner.webContents.isDestroyed()) return Promise.resolve(null);
+	if (request.kind === 'notify') {
+		if (notificationReadyWindows.has(owner)) owner.webContents.send(IPC_CHANNELS.agentExtensionDialog, request);
+		else {
+			// Do not lose startup notices before React subscribes, or let their
+			// dismissal timers expire behind the splash. A notice never reveals UI.
+			const queue = notificationsFor(owner);
+			queue.requests.push(request);
+			if (queue.requests.length > MAX_STARTUP_NOTIFICATIONS) queue.requests.shift();
+		}
+		return Promise.resolve(null);
+	}
+	return extensionDialogFor(owner, request, signal);
+}
+
 export const agentService = createIsolatedAgentService({ requestProjectTrust: async (cwd) => {
 	const english = getAppLocale() === 'en-US';
 	const { response } = await dialog.showMessageBox({
@@ -199,13 +502,9 @@ export const agentService = createIsolatedAgentService({ requestProjectTrust: as
 		// workspace selection so neither transition can interrupt the other.
 		void queueWorkspaceActivation(async () => {
 			if (activeWorkspace !== cwd) return;
-			if (currentWindowMode === 'pai') {
-				// Another pai can be working in this cwd. Never restore its most
-				// recent session while recovering this process's agent host.
-				await agentService.init({ cwd, ...(sessionPath ? { sessionPath } : { fresh: true }) });
-				return;
-			}
-			const excluded = automationExecutor.sessionPaths(cwd);
+			// Hosted pai windows and automations keep working in this cwd; never
+			// restore one of their sessions while recovering the main agent host.
+			const excluded = [...automationExecutor.sessionPaths(cwd), ...paiHeldSessionPaths()];
 			await agentService.init(excluded.length ? { cwd, excludeSessionPaths: excluded } : { cwd });
 			if (sessionPath && (await agentService.listSessions(cwd)).some((session) => session.path === sessionPath)) {
 				await agentService.switchSession(sessionPath);
@@ -560,6 +859,8 @@ async function readSessionHeaderOwner(path: string): Promise<string | null> {
 async function requireSessionOwners(paths: string[], allowCurrentDraft = false): Promise<Map<string, string>> {
 	const targets = [...new Set(paths.map(normalizeSessionPath))];
 	if (targets.some((path) => automationExecutor.isSessionRunning(path))) throw new Error('自动化仍在运行，请结束后再打开会话');
+	const heldByPai = new Set(paiHeldSessionPaths());
+	if (targets.some((path) => heldByPai.has(path))) throw new Error('会话已在 pai 小窗中打开，请先关闭该小窗');
 	// Only explicit naming may materialize a currently loaded, unsaved session.
 	// Snapshot identity is trusted host state; the agent rechecks its runtime path.
 	const current = allowCurrentDraft ? await agentService.getSnapshot() : null;
@@ -637,7 +938,9 @@ async function performWorkspaceActivation(cwd: string, initialize: boolean, fres
 	const previous = activeWorkspace;
 	activeWorkspace = cwd;
 	try {
-		const excludeSessionPaths = automationExecutor.sessionPaths(cwd);
+		// Hosted pai windows keep working in their own cwd; the main agent never
+		// restores a conversation one of their windows is writing.
+		const excludeSessionPaths = [...automationExecutor.sessionPaths(cwd), ...paiHeldSessionPaths()];
 		if (fresh) await agentService.init({ cwd, fresh: true });
 		else if (initialize) await agentService.init(excludeSessionPaths.length ? { cwd, excludeSessionPaths } : { cwd });
 		else if (excludeSessionPaths.length) await agentService.switchWorkspace(cwd, excludeSessionPaths);
@@ -694,6 +997,53 @@ async function withPluginMutation<T>(cwd: string, action: () => Promise<T>): Pro
 	} finally { pluginMutationActive = false; }
 }
 
+/**
+ * Trusted sender check for channels a pai settings page also reaches
+ * (personalization, cloud backup, debug API): the main window or the pai
+ * window's own renderer. Plugin management stays main-window-only.
+ */
+function requireTrustedSender(event: IpcMainInvokeEvent): BrowserWindow {
+	const paiSlot = paiSlotForSender(event.sender);
+	if (paiSlot) return paiSlot.win;
+	return requirePluginSender(event);
+}
+
+/**
+ * Channels a hosted pai window must not reach: everything that drives the
+ * main window's agent navigation, workspace/workbench surface, session
+ * management, plugins, automations and updates. Enforced centrally in
+ * handleRendererInvoke so modules registered outside ipc.ts are covered too.
+ */
+const mainOnlyChannels = new Set<string>([
+	IPC_CHANNELS.agentInit, IPC_CHANNELS.agentNewSession, IPC_CHANNELS.agentResidentSnapshot, IPC_CHANNELS.agentActivateResident,
+	IPC_CHANNELS.agentListWorkspaces, IPC_CHANNELS.workspaceListConversations, IPC_CHANNELS.conversationStoragePick,
+	IPC_CHANNELS.agentListSessions, IPC_CHANNELS.agentSearchSessions, IPC_CHANNELS.agentSwitchSession,
+	IPC_CHANNELS.sessionRevealFile, IPC_CHANNELS.sessionFork, IPC_CHANNELS.sessionOpenWindow, IPC_CHANNELS.sessionDelete,
+	IPC_CHANNELS.agentUpdateSessionMeta, IPC_CHANNELS.agentUpdateSessionOrders, IPC_CHANNELS.agentListSessionGroups, IPC_CHANNELS.agentUpdateSessionGroups,
+	IPC_CHANNELS.contextRead, IPC_CHANNELS.workspaceSearchFiles, IPC_CHANNELS.appRelaunch,
+	IPC_CHANNELS.workspacePick, IPC_CHANNELS.workspaceProjectsDirectory, IPC_CHANNELS.workspaceCreateProject, IPC_CHANNELS.workspaceAddDropped,
+	IPC_CHANNELS.workspaceSwitch, IPC_CHANNELS.workspaceDefault, IPC_CHANNELS.workspaceRemove, IPC_CHANNELS.workspaceListPinned, IPC_CHANNELS.workspaceSetPinned,
+	IPC_CHANNELS.pluginCatalog, IPC_CHANNELS.pluginMutate, IPC_CHANNELS.pluginPreview, IPC_CHANNELS.pluginPickDirectory, IPC_CHANNELS.pluginDiscover,
+	IPC_CHANNELS.agentSetExtensionEnabled, PLUGIN_UPDATE_CHANNELS.checkPluginUpdate,
+	IPC_CHANNELS.updateCheck, IPC_CHANNELS.updateInstall,
+	IPC_CHANNELS.automationSnapshot, IPC_CHANNELS.automationSave, IPC_CHANNELS.automationSetEnabled, IPC_CHANNELS.automationDelete, IPC_CHANNELS.automationRun, IPC_CHANNELS.automationCancelRun,
+	IPC_CHANNELS.workspaceOpenFolder, IPC_CHANNELS.workspaceListEntries, IPC_CHANNELS.workspaceReadFile,
+	IPC_CHANNELS.workspaceCreateEntry, IPC_CHANNELS.workspaceRenameEntry, IPC_CHANNELS.workspaceDeleteEntry,
+	IPC_CHANNELS.resultFileOpen, IPC_CHANNELS.resultFileReveal, IPC_CHANNELS.resultFilePreview,
+	IPC_CHANNELS.workspaceGitStatus, IPC_CHANNELS.workspaceGitDiff, IPC_CHANNELS.workspaceBranches, IPC_CHANNELS.workspaceCheckoutBranch,
+	IPC_CHANNELS.workspaceGitSetStaged, IPC_CHANNELS.workspaceGitDiscard, IPC_CHANNELS.workspaceGitLog, IPC_CHANNELS.workspaceGitGraph,
+	IPC_CHANNELS.workspaceGitSync, IPC_CHANNELS.workspaceGitCreateBranch,
+	IPC_CHANNELS.workspaceOpenPathInEditor, IPC_CHANNELS.workspaceRevealPath, IPC_CHANNELS.workspaceOpenInVsCode, IPC_CHANNELS.workspaceOpenWith,
+	IPC_CHANNELS.workspaceOpeners, IPC_CHANNELS.workspaceCommitContext, IPC_CHANNELS.workspaceCommit,
+	IPC_CHANNELS.workspaceCommandStart, IPC_CHANNELS.workspaceCommandStop, IPC_CHANNELS.workspaceWatch,
+	WORKBENCH_FEATURE_CHANNELS.getWorkspaceCommitPreview, WORKBENCH_FEATURE_CHANNELS.commitWorkspacePreview,
+	WORKBENCH_FEATURE_CHANNELS.createTaskWorktree, WORKBENCH_FEATURE_CHANNELS.listTaskWorktrees, WORKBENCH_FEATURE_CHANNELS.bindTaskWorktree,
+	WORKBENCH_FEATURE_CHANNELS.getGitDeliveryPreview, WORKBENCH_FEATURE_CHANNELS.pushWorkspaceBranch, WORKBENCH_FEATURE_CHANNELS.createWorkspaceDraftPr,
+	WORKBENCH_FEATURE_CHANNELS.openWorkspaceTerminal, WORKBENCH_FEATURE_CHANNELS.getWorkspaceTerminal, WORKBENCH_FEATURE_CHANNELS.writeWorkspaceTerminal,
+	WORKBENCH_FEATURE_CHANNELS.resizeWorkspaceTerminal, WORKBENCH_FEATURE_CHANNELS.acknowledgeWorkspaceTerminal, WORKBENCH_FEATURE_CHANNELS.closeWorkspaceTerminal,
+	DATA_FEATURE_CHANNELS.listMachineSessions, DATA_FEATURE_CHANNELS.searchSessionsPage, DATA_FEATURE_CHANNELS.searchProjectFiles, DATA_FEATURE_CHANNELS.cancelDataSearch,
+]);
+
 export function registerIpc(options: {
 	windowMode?: 'full' | 'pai' | 'multi';
 	onRendererReady?(win: BrowserWindow): void;
@@ -701,7 +1051,6 @@ export function registerIpc(options: {
 	baseUserData?: string;
 } = {}): void {
 	const windowMode = options.windowMode ?? 'full';
-	currentWindowMode = windowMode;
 	getDialogWindow = options.getDialogWindow ?? (() => undefined);
 	const notifier = createDesktopNotifier({
 		settingsPath: desktopSettingsPath,
@@ -712,45 +1061,53 @@ export function registerIpc(options: {
 	keepAwake = createKeepAwakeController({ settingsPath: desktopSettingsPath, defaultStorageDirectory: join(app.getPath('home'), 'PiDesktopWorkspace') });
 	updateService.setAutoInstallSource(() => readCurrentDesktopSettings().autoInstallUpdates === true);
 	appearancePath = appearanceStatePath(options.baseUserData ?? app.getPath('userData'));
-		handleRendererInvoke(MCP_FEATURE_CHANNELS.getMcpSnapshot, () => agentService.getMcpSnapshot());
-	handleRendererInvoke(MCP_FEATURE_CHANNELS.saveMcpServer, (_event, request: Parameters<typeof agentService.saveMcpServer>[0]) => agentService.saveMcpServer(request));
-	handleRendererInvoke(MCP_FEATURE_CHANNELS.removeMcpServer, (_event, request: Parameters<typeof agentService.removeMcpServer>[0]) => agentService.removeMcpServer(request));
-	handleRendererInvoke(MCP_FEATURE_CHANNELS.connectMcpServer, (_event, request: Parameters<typeof agentService.connectMcpServer>[0]) => agentService.connectMcpServer(request));
-	handleRendererInvoke(MCP_FEATURE_CHANNELS.disconnectMcpServer, (_event, request: Parameters<typeof agentService.disconnectMcpServer>[0]) => agentService.disconnectMcpServer(request));
-	handleRendererInvoke(MCP_FEATURE_CHANNELS.testMcpServer, (_event, request: Parameters<typeof agentService.testMcpServer>[0]) => agentService.testMcpServer(request));
+	// Hosted pai windows may be requested before IPC is wired (pipe server or
+	// second-instance handoff during boot); replay those requests now.
+	paiWindowsReady = true;
+	for (const request of pendingPaiWindowRequests.splice(0)) {
+		try { createPaiWindow(request); }
+		catch (error) { dialog.showErrorBox('pai', error instanceof Error ? error.message : String(error)); }
+	}
+	setRendererSenderRestriction({ isPaiSender, mainOnlyChannels });
+	handleRendererInvoke(MCP_FEATURE_CHANNELS.getMcpSnapshot, (event) => agentFor(event).getMcpSnapshot());
+	handleRendererInvoke(MCP_FEATURE_CHANNELS.saveMcpServer, (event, request: Parameters<typeof agentService.saveMcpServer>[0]) => agentFor(event).saveMcpServer(request));
+	handleRendererInvoke(MCP_FEATURE_CHANNELS.removeMcpServer, (event, request: Parameters<typeof agentService.removeMcpServer>[0]) => agentFor(event).removeMcpServer(request));
+	handleRendererInvoke(MCP_FEATURE_CHANNELS.connectMcpServer, (event, request: Parameters<typeof agentService.connectMcpServer>[0]) => agentFor(event).connectMcpServer(request));
+	handleRendererInvoke(MCP_FEATURE_CHANNELS.disconnectMcpServer, (event, request: Parameters<typeof agentService.disconnectMcpServer>[0]) => agentFor(event).disconnectMcpServer(request));
+	handleRendererInvoke(MCP_FEATURE_CHANNELS.testMcpServer, (event, request: Parameters<typeof agentService.testMcpServer>[0]) => agentFor(event).testMcpServer(request));
 	workbenchService = registerWorkbenchIpc(() => activeWorkspace);
 	workbenchFeatures = registerWorkbenchFeatureIpc(() => activeWorkspace, app.getPath('userData'));
 	inputFeatures = registerInputAttachmentIpc(() => ({ cwd: activeWorkspace, sessionPath: activeSessionPath }));
-	handleRendererInvoke(INPUT_FEATURE_CHANNELS.submitInput, (_event, request: Parameters<typeof agentService.submitInput>[0]) => agentService.submitInput(request));
-	handleRendererInvoke(INPUT_FEATURE_CHANNELS.getInputQueue, (_event, scope: Parameters<typeof agentService.getInputQueue>[0]) => agentService.getInputQueue(requireInputQueueScope(scope)));
-	handleRendererInvoke(INPUT_FEATURE_CHANNELS.mutateInputQueue, (_event, request: Parameters<typeof agentService.mutateInputQueue>[0]) => {
-		requireInputQueueScope(request?.scope); return agentService.mutateInputQueue(request);
+	handleRendererInvoke(INPUT_FEATURE_CHANNELS.submitInput, (event, request: Parameters<typeof agentService.submitInput>[0]) => agentFor(event).submitInput(request));
+	handleRendererInvoke(INPUT_FEATURE_CHANNELS.getInputQueue, (event, scope: Parameters<typeof agentService.getInputQueue>[0]) => agentFor(event).getInputQueue(requireInputQueueScope(scope)));
+	handleRendererInvoke(INPUT_FEATURE_CHANNELS.mutateInputQueue, (event, request: Parameters<typeof agentService.mutateInputQueue>[0]) => {
+		requireInputQueueScope(request?.scope); return agentFor(event).mutateInputQueue(request);
 	});
-	handleRendererInvoke(WORKBENCH_FEATURE_CHANNELS.getFileCheckpoint, () => agentService.getFileCheckpoint());
-	handleRendererInvoke(WORKBENCH_FEATURE_CHANNELS.rewindFileCheckpoint, (_event, request: Parameters<typeof agentService.rewindFileCheckpoint>[0]) => agentService.rewindFileCheckpoint(request));
-	handleRendererInvoke(WORKBENCH_FEATURE_CHANNELS.getEditRewindPreview, (_event, entryId: string) => agentService.getEditRewindPreview(entryId));
-	handleRendererInvoke(WORKBENCH_FEATURE_CHANNELS.getFileChangeDiffs, (_event, scope: Parameters<typeof agentService.getFileChangeDiffs>[0]) => agentService.getFileChangeDiffs(scope));
-	handleRendererInvoke(MANAGEMENT_FEATURE_CHANNELS.testProviderModel, (_event, request: Parameters<typeof agentService.testProviderModel>[0]) => agentService.testProviderModel(request));
-	handleRendererInvoke(MANAGEMENT_FEATURE_CHANNELS.cancelProviderModelTest, (_event, id: string) => agentService.cancelProviderModelTest(id));
-	handleRendererInvoke(MANAGEMENT_FEATURE_CHANNELS.getProjectDefaults, () => agentService.getProjectDefaults());
-	handleRendererInvoke(MANAGEMENT_FEATURE_CHANNELS.saveProjectDefaults, (_event, request: Parameters<typeof agentService.saveProjectDefaults>[0]) => agentService.saveProjectDefaults(request));
-	handleRendererInvoke(MANAGEMENT_FEATURE_CHANNELS.queryProviderUsage, (_event, provider: string) => agentService.queryProviderUsage(provider));
-	handleRendererInvoke(MANAGEMENT_FEATURE_CHANNELS.saveProviderUsageQuery, (_event, request: Parameters<typeof agentService.saveProviderUsageQuery>[0]) => agentService.saveProviderUsageQuery(request));
-	handleRendererInvoke(MANAGEMENT_FEATURE_CHANNELS.resetProvider, (_event, provider: string) => agentService.resetProvider(provider));
+	handleRendererInvoke(WORKBENCH_FEATURE_CHANNELS.getFileCheckpoint, (event) => agentFor(event).getFileCheckpoint());
+	handleRendererInvoke(WORKBENCH_FEATURE_CHANNELS.rewindFileCheckpoint, (event, request: Parameters<typeof agentService.rewindFileCheckpoint>[0]) => agentFor(event).rewindFileCheckpoint(request));
+	handleRendererInvoke(WORKBENCH_FEATURE_CHANNELS.getEditRewindPreview, (event, entryId: string) => agentFor(event).getEditRewindPreview(entryId));
+	handleRendererInvoke(WORKBENCH_FEATURE_CHANNELS.getFileChangeDiffs, (event, scope: Parameters<typeof agentService.getFileChangeDiffs>[0]) => agentFor(event).getFileChangeDiffs(scope));
+	handleRendererInvoke(MANAGEMENT_FEATURE_CHANNELS.testProviderModel, (event, request: Parameters<typeof agentService.testProviderModel>[0]) => agentFor(event).testProviderModel(request));
+	handleRendererInvoke(MANAGEMENT_FEATURE_CHANNELS.cancelProviderModelTest, (event, id: string) => agentFor(event).cancelProviderModelTest(id));
+	handleRendererInvoke(MANAGEMENT_FEATURE_CHANNELS.getProjectDefaults, (event) => agentFor(event).getProjectDefaults());
+	handleRendererInvoke(MANAGEMENT_FEATURE_CHANNELS.saveProjectDefaults, (event, request: Parameters<typeof agentService.saveProjectDefaults>[0]) => agentFor(event).saveProjectDefaults(request));
+	handleRendererInvoke(MANAGEMENT_FEATURE_CHANNELS.queryProviderUsage, (event, provider: string) => agentFor(event).queryProviderUsage(provider));
+	handleRendererInvoke(MANAGEMENT_FEATURE_CHANNELS.saveProviderUsageQuery, (event, request: Parameters<typeof agentService.saveProviderUsageQuery>[0]) => agentFor(event).saveProviderUsageQuery(request));
+	handleRendererInvoke(MANAGEMENT_FEATURE_CHANNELS.resetProvider, (event, provider: string) => agentFor(event).resetProvider(provider));
 	handleRendererInvoke(IPC_CHANNELS.personalizationRead, (event) => {
-		requirePluginSender(event);
-		return agentService.getPersonalization();
+		requireTrustedSender(event);
+		return agentFor(event).getPersonalization();
 	});
 	handleRendererInvoke(IPC_CHANNELS.personalizationSave, (event, request: UiSaveInstructionRequest) => {
-		requirePluginSender(event);
-		return agentService.saveInstruction(request);
+		requireTrustedSender(event);
+		return agentFor(event).saveInstruction(request);
 	});
-	cloudSync = registerCloudSyncIpc(agentService, requirePluginSender);
+	cloudSync = registerCloudSyncIpc(agentService, requireTrustedSender);
 	debugApi = registerDebugApiIpc({
 		settingsPath: desktopSettingsPath(),
 		cloudSync: () => cloudSync?.service ?? null,
 		appVersion: () => app.getVersion(),
-		requireTrustedSender: (event) => { requirePluginSender(event); },
+		requireTrustedSender: (event) => { requireTrustedSender(event); },
 	});
 	const diagnosticsService = initializeDiagnostics(join(app.getPath('userData'), 'diagnostics'));
 	// Kept for the error-details export affordance; the data-management page itself is gone.
@@ -847,10 +1204,10 @@ export function registerIpc(options: {
 		if (typeof path !== 'string' || !path.trim()) throw new Error('引擎目录无效');
 		return probePiEngine(path, readBuiltinEngineInfo()?.version ?? null);
 	});
-	handleRendererInvoke(IPC_CHANNELS.piEngineStatus, () => {
+	handleRendererInvoke(IPC_CHANNELS.piEngineStatus, (event) => {
 		const builtinVersion = readBuiltinEngineInfo()?.version ?? null;
 		const selection = readCurrentDesktopSettings().piEngine ?? { mode: 'builtin' as const };
-		const active = agentService.getActiveEngine();
+		const active = agentFor(event).getActiveEngine();
 		const selectionVersion = selection.mode === 'custom' ? probePiEngine(selection.path, builtinVersion).version : builtinVersion;
 		const sameEngine = active !== null && (
 			(selection.mode === 'builtin' && active.mode === 'builtin')
@@ -917,7 +1274,7 @@ export function registerIpc(options: {
 		return discoverPlugins(query);
 	});
 	const automationHandler = (action: (...args: any[]) => unknown) => (event: IpcMainInvokeEvent, ...args: unknown[]) => {
-		if (windowMode === 'pai') throw new Error('Automations are available in the main Pi Desktop window');
+		if (isPaiSender(event)) throw new Error('Automations are available in the main Pi Desktop window');
 		const owner = getDialogWindow();
 		if (disposingServices || !owner || owner.isDestroyed() || owner.webContents.isDestroyed()
 			|| event.sender !== owner.webContents || event.senderFrame !== owner.webContents.mainFrame) throw new Error('Invalid automation sender');
@@ -943,6 +1300,7 @@ export function registerIpc(options: {
 	handleRendererInvoke(IPC_CHANNELS.rendererReady, (event) => {
 		const win = invokingWindow(event);
 		if (event.senderFrame !== win.webContents.mainFrame) throw new Error('Invalid renderer-ready sender');
+		notifyPaiRendererReady(win);
 		options.onRendererReady?.(win);
 		if (windowMode === 'full') void automations.start().catch((error: unknown) => {
 			if (!disposingServices) console.error('Automation scheduler failed to start:', error);
@@ -953,13 +1311,17 @@ export function registerIpc(options: {
 			queue.flush();
 		}
 	});
-	// Agent events → all renderer windows.
+	// Main-window agent events go to every full window; hosted pai windows
+	// receive only their own agent's envelopes (routed in createPaiWindow).
 	agentService.onEvent((event: AgentEventEnvelope) => {
 		if (event.event.type === 'ready') activeSessionPath = event.event.sessionPath;
 		if (event.event.type === 'ready' || event.event.type === 'status' || event.event.type === 'sessions-changed') invalidateAppTrayData();
-		if (event.event.type === 'status') keepAwake?.setAgentBusy(event.event.status === 'busy');
+		if (event.event.type === 'status') {
+			mainAgentBusy = event.event.status === 'busy';
+			updateKeepAwakeBusy();
+		}
 		notifier.handleAgentEvent(event, activeSessionPath, agentService.cwd || activeWorkspace);
-		broadcastToRenderers(IPC_CHANNELS.agentEvent, event);
+		broadcastToRenderers(IPC_CHANNELS.agentEvent, event, (win) => !isPaiWindow(win));
 	});
 	agentService.onBackgroundActivity((_, path) => {
 		if (pendingUnreadPaths.has(path)) return;
@@ -980,25 +1342,25 @@ export function registerIpc(options: {
 		}).finally(() => pendingUnreadPaths.delete(path));
 	});
 
-	handleRendererInvoke(IPC_CHANNELS.appInfo, () => ({
+	handleRendererInvoke(IPC_CHANNELS.appInfo, (event) => ({
 		appVersion: app.getVersion(),
 		nodeVersion: process.versions.node ?? 'unknown',
 		electronVersion: process.versions.electron ?? 'unknown',
 		platform: process.platform,
-		windowMode,
+		windowMode: isPaiSender(event) ? 'pai' as const : windowMode,
 	}));
 	handleRendererInvoke(IPC_CHANNELS.appSetLocale, (_event, locale: AppLocale) => {
 		setAppLocale(locale);
 		updateAppTrayMenu();
 	});
-	handleRendererInvoke(IPC_CHANNELS.updateState, () => windowMode === 'pai'
+	handleRendererInvoke(IPC_CHANNELS.updateState, (event) => isPaiSender(event)
 		? { phase: 'unavailable', unavailableReason: 'unsupported', currentVersion: app.getVersion() } : updateService.getState());
-	handleRendererInvoke(IPC_CHANNELS.updateCheck, (_event, autoInstall?: unknown) => {
-		if (windowMode === 'pai') throw new Error('Install updates from the main Pi Desktop window');
+	handleRendererInvoke(IPC_CHANNELS.updateCheck, (event, autoInstall?: unknown) => {
+		if (isPaiSender(event)) throw new Error('Install updates from the main Pi Desktop window');
 		return updateService.check(autoInstall === true);
 	});
-	handleRendererInvoke(IPC_CHANNELS.updateInstall, () => {
-		if (windowMode === 'pai') throw new Error('Install updates from the main Pi Desktop window');
+	handleRendererInvoke(IPC_CHANNELS.updateInstall, (event) => {
+		if (isPaiSender(event)) throw new Error('Install updates from the main Pi Desktop window');
 		return updateService.install();
 	});
 	handleRendererInvoke(IPC_CHANNELS.windowChromeState, (event) => ({
@@ -1093,7 +1455,7 @@ export function registerIpc(options: {
 		for (const [path, owner] of sessionOwnerByPath) if (workspaceKey(owner) === target) sessionOwnerByPath.delete(path);
 	}));
 	handleRendererInvoke(IPC_CHANNELS.agentInit, (_event, cwd: string) => activateWorkspace(cwd, true));
-	handleRendererInvoke(IPC_CHANNELS.agentSnapshot, () => agentService.getSnapshot());
+	handleRendererInvoke(IPC_CHANNELS.agentSnapshot, (event) => agentFor(event).getSnapshot());
 	handleRendererInvoke(IPC_CHANNELS.agentResidentSnapshot, (_event, scope: { cwd: string; sessionId: string; sessionPath: string | null }) => agentService.getResidentSessionSnapshot(scope));
 	handleRendererInvoke(IPC_CHANNELS.agentActivateResident, (_event, scope: { cwd: string; sessionId: string; sessionPath: string | null }) => queueWorkspaceActivation(async () => {
 		const snapshot = await agentService.getResidentSessionSnapshot(scope);
@@ -1117,33 +1479,33 @@ export function registerIpc(options: {
 		if (++diagnosticCount > 240) return;
 		recordDiagnostic({ stage: 'renderer', action: diagnostic.kind, outcome: diagnostic.outcome === 'cancelled' ? 'exit' : diagnostic.outcome, durationMs: diagnostic.durationMs, ui: diagnostic });
 	});
-	handleRendererInvoke(IPC_CHANNELS.agentHistoryPage, (_event, offset: unknown, limit: unknown) => {
+	handleRendererInvoke(IPC_CHANNELS.agentHistoryPage, (event, offset: unknown, limit: unknown) => {
 		const pageOffset = typeof offset === 'number' ? offset : Number.NaN;
 		const pageLimit = typeof limit === 'number' ? limit : Number.NaN;
 		if (!Number.isInteger(pageOffset) || !Number.isInteger(pageLimit) || pageOffset < 0 || pageLimit < 1 || pageLimit > 500) throw new Error('历史分页参数无效');
-		return agentService.getHistoryPage(pageOffset, pageLimit);
+		return agentFor(event).getHistoryPage(pageOffset, pageLimit);
 	});
-	handleRendererInvoke(IPC_CHANNELS.agentSessionStats, () => agentService.getSessionStats());
-	handleRendererInvoke(IPC_CHANNELS.agentMessageAttachment, (_event, sessionPath: unknown, messageId: unknown, index: unknown) => {
+	handleRendererInvoke(IPC_CHANNELS.agentSessionStats, (event) => agentFor(event).getSessionStats());
+	handleRendererInvoke(IPC_CHANNELS.agentMessageAttachment, (event, sessionPath: unknown, messageId: unknown, index: unknown) => {
 		if (typeof sessionPath !== 'string' || !sessionPath || sessionPath.length > 32768 || typeof messageId !== 'string' || !messageId || messageId.length > 256 || typeof index !== 'number' || !Number.isInteger(index) || index < 0 || index > 999) throw new Error('附件参数无效');
-		return agentService.getMessageAttachment(sessionPath, messageId, index);
+		return agentFor(event).getMessageAttachment(sessionPath, messageId, index);
 	});
 	handleRendererInvoke(IPC_CHANNELS.agentExportSession, async (event, format: unknown) => {
 		const kind = format === 'html' ? 'html' : format === 'jsonl' ? 'jsonl' : null;
 		if (!kind) throw new Error('导出格式无效');
 		const win = invokingWindow(event);
 		if (event.senderFrame !== win.webContents.mainFrame) throw new Error('Invalid export sender');
-		const snapshot = await agentService.getSnapshot();
+		const snapshot = await agentFor(event).getSnapshot();
 		const baseName = (snapshot.sessionPath ? basename(snapshot.sessionPath).replace(/\.jsonl$/i, '') : snapshot.sessionId ?? 'session').replace(/[\\/:*?"<>|]+/g, '_').slice(0, 80) || 'session';
 		const filters = [{ name: kind.toUpperCase(), extensions: [kind] }];
 		const choice = await dialog.showSaveDialog(win, { defaultPath: `${baseName}.${kind}`, filters });
 		if (choice.canceled || !choice.filePath) return null;
-		return agentService.exportSession(choice.filePath, kind);
+		return agentFor(event).exportSession(choice.filePath, kind);
 	});
-	handleRendererInvoke(IPC_CHANNELS.agentSessionTree, () => agentService.getSessionTree());
-	handleRendererInvoke(IPC_CHANNELS.agentSwitchBranch, (_event, entryId: unknown) => {
+	handleRendererInvoke(IPC_CHANNELS.agentSessionTree, (event) => agentFor(event).getSessionTree());
+	handleRendererInvoke(IPC_CHANNELS.agentSwitchBranch, (event, entryId: unknown) => {
 		if (typeof entryId !== 'string' || !entryId.trim()) throw new Error('目标条目无效');
-		return agentService.switchSessionBranch(entryId);
+		return agentFor(event).switchSessionBranch(entryId);
 	});
 	handleRendererInvoke(IPC_CHANNELS.agentListSessions, async (_event, cwd?: string) => {
 		const targetCwd = cwd ?? activeWorkspace;
@@ -1202,18 +1564,14 @@ export function registerIpc(options: {
 		if (!(await stat(target)).isFile()) throw new Error('会话文件不存在');
 		const owner = await requireSessionOwner(target);
 		if (!statSync(owner, { throwIfNoEntry: false })?.isDirectory()) throw new Error('会话所属的工作区已不存在');
-		// A separate pai instance owns its own agent and profile slot; detach it so
-		// it keeps running after this window closes.
-		const child = spawn(process.execPath, paiSessionLaunchArgs({ packaged: app.isPackaged, appPath: app.getAppPath(), cwd: owner, sessionPath: target }), { detached: true, stdio: 'ignore', windowsHide: false });
-		await new Promise<void>((resolveSpawn, rejectSpawn) => {
-			child.once('spawn', () => resolveSpawn());
-			child.once('error', rejectSpawn);
-		});
-		child.unref();
+		// A hosted pai window owns its own agent host and keeps running after
+		// the main window that opened it closes.
+		openPaiWindow({ cwd: owner, sessionPath: target });
 	});
 	handleRendererInvoke(IPC_CHANNELS.agentSwitchSession, (_event, path: string) => queueWorkspaceActivation(async () => {
 		path = normalizeSessionPath(path);
 		if (automationExecutor.isSessionRunning(path)) throw new Error('自动化仍在运行，请结束后再打开会话');
+		if (new Set(paiHeldSessionPaths()).has(path)) throw new Error('会话已在 pai 小窗中打开，请先关闭该小窗');
 		await agentService.switchSession(path);
 		await markSessionRead(path);
 	}));
@@ -1271,7 +1629,7 @@ export function registerIpc(options: {
 			agentService.getSnapshot(),
 			SessionManager.listAll(),
 		]);
-		const running = new Set(runtimeSnapshot.sessionRuntimes?.filter(item => !['idle', 'failed'].includes(item.runtime.phase)).map(item => item.path) ?? []);
+		const running = new Set([...(runtimeSnapshot.sessionRuntimes?.filter(item => !['idle', 'failed'].includes(item.runtime.phase)).map(item => item.path) ?? []), ...paiHeldSessionPaths()]);
 		const rows: UiMachineSessionSummary[] = [];
 		for (const session of sessions) {
 			if (!session.cwd) continue;
@@ -1334,33 +1692,52 @@ export function registerIpc(options: {
 			await saveSessionMeta(meta);
 		});
 	});
-	handleRendererInvoke(IPC_CHANNELS.agentListModels, () => agentService.listModels());
-	handleRendererInvoke(IPC_CHANNELS.agentListModelProviders, () => agentService.listModelProviders());
+	handleRendererInvoke(IPC_CHANNELS.agentListModels, (event) => agentFor(event).listModels());
+	handleRendererInvoke(IPC_CHANNELS.agentListModelProviders, (event) => agentFor(event).listModelProviders());
 	handleRendererInvoke(IPC_CHANNELS.agentDiscoverProviderModels, (event, request: Parameters<typeof agentService.discoverProviderModels>[0]) => {
-		requirePluginSender(event);
-		return agentService.discoverProviderModels(request);
+		requireTrustedSender(event);
+		return agentFor(event).discoverProviderModels(request);
 	});
-	handleRendererInvoke(IPC_CHANNELS.agentSaveCustomProvider, async (_event, request: Parameters<typeof agentService.saveCustomProvider>[0]) => {
-		await agentService.saveCustomProvider(request);
+	handleRendererInvoke(IPC_CHANNELS.agentSaveCustomProvider, async (event, request: Parameters<typeof agentService.saveCustomProvider>[0]) => {
+		await agentFor(event).saveCustomProvider(request);
 		// Auto-sync mirrors cc-switch: every provider-database change re-uploads.
 		cloudSync?.service.onProviderDatabaseChanged();
 	});
-	handleRendererInvoke(IPC_CHANNELS.agentRemoveCustomProvider, async (_event, provider: string) => {
-		await agentService.removeCustomProvider(provider);
+	handleRendererInvoke(IPC_CHANNELS.agentRemoveCustomProvider, async (event, provider: string) => {
+		await agentFor(event).removeCustomProvider(provider);
 		cloudSync?.service.onProviderDatabaseChanged();
 	});
-	handleRendererInvoke(IPC_CHANNELS.agentSaveProviderModels, async (_event, request: Parameters<typeof agentService.saveProviderModels>[0]) => {
-		await agentService.saveProviderModels(request);
+	handleRendererInvoke(IPC_CHANNELS.agentSaveProviderModels, async (event, request: Parameters<typeof agentService.saveProviderModels>[0]) => {
+		await agentFor(event).saveProviderModels(request);
 		cloudSync?.service.onProviderDatabaseChanged();
 	});
-	handleRendererInvoke(IPC_CHANNELS.agentListSlashCommands, () => agentService.listSlashCommands());
+	handleRendererInvoke(IPC_CHANNELS.agentListSlashCommands, (event) => agentFor(event).listSlashCommands());
 	handleRendererInvoke(IPC_CHANNELS.agentExecuteSlashCommand, (event, request: UiSlashCommandRequest) => {
 		if (request?.name === 'reload') {
 			requirePluginSender(event);
 			return withPluginMutation(request.cwd, () => agentService.executeSlashCommand(request));
 		}
-		return agentService.executeSlashCommand(request);
+		return agentFor(event).executeSlashCommand(request);
 	});
+	handleRendererInvoke(IPC_CHANNELS.agentSetModel, (event, provider: string, id: string) => agentFor(event).setModel(provider, id));
+	handleRendererInvoke(IPC_CHANNELS.agentSetThinkingLevel, (event, level: UiThinkingLevel) => agentFor(event).setThinkingLevel(level));
+	handleRendererInvoke(IPC_CHANNELS.agentListProviderAuth, (event) => agentFor(event).listProviderAuth());
+	handleRendererInvoke(IPC_CHANNELS.agentSetProviderApiKey, async (event, provider: string, key: string) => {
+		await agentFor(event).setProviderApiKey(provider, key);
+		cloudSync?.service.onProviderDatabaseChanged();
+	});
+	handleRendererInvoke(IPC_CHANNELS.agentRemoveProviderCredential, async (event, provider: string) => {
+		await agentFor(event).removeProviderCredential(provider);
+		cloudSync?.service.onProviderDatabaseChanged();
+	});
+	handleRendererInvoke(IPC_CHANNELS.agentSetModelEnabled, async (event, provider: unknown, modelId: unknown, enabled: unknown) => {
+		if (typeof provider !== 'string' || !provider.trim() || provider.length > 80 || /[\u0000]/u.test(provider)
+			|| typeof modelId !== 'string' || !modelId.trim() || modelId.trim().length > 200 || /[\u0000]/u.test(modelId)
+			|| typeof enabled !== 'boolean') throw new Error('模型启用参数无效');
+		await agentFor(event).setModelEnabled(provider, modelId.trim(), enabled);
+		cloudSync?.service.onProviderDatabaseChanged();
+	});
+	handleRendererInvoke(IPC_CHANNELS.agentListExtensions, (event) => agentFor(event).listExtensions());
 	handleRendererInvoke(IPC_CHANNELS.agentSetModel, (_event, provider: string, id: string) => agentService.setModel(provider, id));
 	handleRendererInvoke(IPC_CHANNELS.agentSetThinkingLevel, (_event, level: UiThinkingLevel) => agentService.setThinkingLevel(level));
 	handleRendererInvoke(IPC_CHANNELS.agentListProviderAuth, () => agentService.listProviderAuth());
@@ -1385,32 +1762,32 @@ export function registerIpc(options: {
 		return withPluginMutation(activeWorkspace, () => agentService.setExtensionEnabled(path, enabled));
 	});
 
-	handleRendererInvoke(IPC_CHANNELS.agentPrompt, async (_event, text: string, behavior?: 'steer' | 'followUp', attachments?: UiAttachment[]) => {
-		await agentService.prompt(text, behavior, attachments);
+	handleRendererInvoke(IPC_CHANNELS.agentPrompt, async (event, text: string, behavior?: 'steer' | 'followUp', attachments?: UiAttachment[]) => {
+		await agentFor(event).prompt(text, behavior, attachments);
 	});
 
-	handleRendererInvoke(IPC_CHANNELS.agentEditMessage, async (_event, entryId: string, text: string, attachments?: UiAttachment[]) => {
-		await agentService.editUserMessage(entryId, text, attachments);
+	handleRendererInvoke(IPC_CHANNELS.agentEditMessage, async (event, entryId: string, text: string, attachments?: UiAttachment[]) => {
+		await agentFor(event).editUserMessage(entryId, text, attachments);
 	});
 
-	handleRendererInvoke(IPC_CHANNELS.agentForkMessage, async (_event, entryId: string) => {
+	handleRendererInvoke(IPC_CHANNELS.agentForkMessage, async (event, entryId: string) => {
 		if (typeof entryId !== 'string' || !entryId.trim() || entryId.length > 512 || entryId.includes('\0')) throw new Error('消息标识无效');
-		await agentService.forkAssistantMessage(entryId);
+		await agentFor(event).forkAssistantMessage(entryId);
 	});
 
-	handleRendererInvoke(IPC_CHANNELS.agentUpdateQueuedMessage, async (_event, id: string, action: 'edit' | 'remove' | 'steer', text?: string) => {
+	handleRendererInvoke(IPC_CHANNELS.agentUpdateQueuedMessage, async (event, id: string, action: 'edit' | 'remove' | 'steer', text?: string) => {
 		if (typeof id !== 'string' || !id.trim() || id.length > 512 || id.includes('\0')) throw new Error('排队消息标识无效');
 		if (action !== 'edit' && action !== 'remove' && action !== 'steer') throw new Error('排队消息操作无效');
 		if (action === 'edit' && (typeof text !== 'string' || !text.trim() || text.length > 256 * 1024 || text.includes('\0'))) throw new Error('排队消息内容无效');
-		await agentService.updateQueuedMessage(id, action, action === 'edit' ? text : undefined);
+		await agentFor(event).updateQueuedMessage(id, action, action === 'edit' ? text : undefined);
 	});
 
-	handleRendererInvoke(IPC_CHANNELS.agentGenerateCommitMessage, (_event, context: string) => {
+	handleRendererInvoke(IPC_CHANNELS.agentGenerateCommitMessage, (event, context: string) => {
 		if (typeof context !== 'string' || !context.trim() || context.length > 256 * 1024) throw new Error('提交上下文无效或过长');
-		return agentService.generateCommitMessage(context);
+		return agentFor(event).generateCommitMessage(context);
 	});
 
-	handleRendererInvoke(IPC_CHANNELS.agentAbort, () => agentService.abort());
+	handleRendererInvoke(IPC_CHANNELS.agentAbort, (event) => agentFor(event).abort());
 
 	handleRendererInvoke(IPC_CHANNELS.agentNewSession, (_event, options?: unknown) => newConversation(options));
 	handleRendererInvoke(IPC_CHANNELS.agentExtensionDialogPending, (event) => [...pendingDialogs.values()]
@@ -1441,6 +1818,9 @@ export function disposeServices(): Promise<void> {
 		await workspaceSettingsQueue;
 		// A pending move may still need the agent to validate session ownership.
 		await sessionGroupService?.flush();
+		// Hosted pai windows and their agent hosts go first: their metadata may
+		// still be queued on the shared session-meta pipeline below.
+		await disposeAllPaiWindows();
 		inputFeatures?.dispose();
 		// Flush a pending auto-sync upload before the agent host goes away.
 		await cloudSync?.dispose();

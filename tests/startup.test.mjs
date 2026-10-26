@@ -15,13 +15,17 @@ const stubs = {
   `,
   './ipc': `
     const env = globalThis.__startupTest;
-    export const { agentService, updateService, registerIpc, defaultWorkspace, disposeServices, readCurrentDesktopSettings, isAgentWorkActive, saveCloseChoice, sendAppCommand } = env;
+    export const { agentService, updateService, registerIpc, defaultWorkspace, disposeServices, readCurrentDesktopSettings, isAgentWorkActive, saveCloseChoice, sendAppCommand, openPaiWindow } = env;
   `,
   './appLocale': `export const getAppLocale = () => 'en-US';`,
   './tray': `export const createAppTray = (options) => { globalThis.__startupTest.calls.trays += 1; globalThis.__startupTest.calls.trayOptions = options; }; export const destroyAppTray = () => {};`,
   './splash': `
     export const createSplashHtml = () => '<html>Splash</html>';
     export const createSplashErrorHtml = (message) => '<html>' + message + '</html>';
+  `,
+  './paiPipe.ts': `
+    export const paiPipeName = () => 'pi-desktop-pai-test';
+    export const startPaiPipeServer = () => { globalThis.__startupTest.calls.pipeStarts += 1; return { stop() {} } };
   `,
 };
 registerHooks({
@@ -50,7 +54,7 @@ async function settle() {
 async function createStartupHarness(t, { workspaceError, initialization = deferred(), shutdown = async () => {}, closeBehavior = 'quit', confirmBusyClose = true, busy = false, closeChoice = 1, checkboxChecked = false, launchArgs, userData = 'test-user-data' } = {}) {
   t.mock.timers.enable({ apis: ['setTimeout'] });
   const windows = [];
-  const calls = { init: [], startUpdates: 0, dispose: 0, quit: 0, errors: [], logs: [], registered: 0, trays: 0, trayOptions: null, appCommands: [], singleInstanceLocks: 0, paths: {}, windowMode: null, messageBoxes: [], closeChoices: [] };
+  const calls = { init: [], startUpdates: 0, dispose: 0, quit: 0, errors: [], logs: [], registered: 0, trays: 0, trayOptions: null, appCommands: [], singleInstanceLocks: 0, paths: {}, windowMode: null, messageBoxes: [], closeChoices: [], paiWindows: [], pipeStarts: 0 };
   const desktopSettingsState = { notificationsEnabled: true, closeBehavior, confirmBusyClose };
   t.mock.method(console, 'error', (...args) => calls.logs.push(args));
   let rendererReady;
@@ -133,6 +137,7 @@ async function createStartupHarness(t, { workspaceError, initialization = deferr
     // Mirrors ipc.saveCloseChoice: the behavior remembered in the dialog is what Settings then shows.
     saveCloseChoice: async (behavior) => { calls.closeChoices.push(behavior); Object.assign(desktopSettingsState, { closeBehavior: behavior, confirmBusyClose: false }); },
     sendAppCommand: (command) => calls.appCommands.push(command),
+    openPaiWindow: (request) => { calls.paiWindows.push(request); },
     agentService: { init: (...args) => { calls.init.push(args); return initialization.promise; } },
     updateService: {
       setBeforeInstall: (callback) => { beforeInstall = callback; },
@@ -236,32 +241,44 @@ test('tray settings restore a hidden or minimized window before opening settings
   assert.equal(harness.calls.appCommands.length, 2);
 });
 
-test('pai boot uses an isolated profile, opens a fresh cwd, and closes without a tray or updater', async (t) => {
+test('cold pai boot joins the main instance and hands its window request to IPC', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'pi-pai-startup-'));
   const cwd = join(root, 'project');
   await mkdir(cwd);
   const harness = await createStartupHarness(t, { launchArgs: ['--pai', '--cwd', cwd], userData: root, closeBehavior: 'tray' });
   t.after(async () => { await rm(root, { recursive: true, force: true, maxRetries: 4 }); });
   const main = await harness.start();
-  assert.deepEqual(harness.calls.init, [[{ cwd, fresh: true }]]);
-  assert.equal(harness.calls.windowMode, 'pai');
-  assert.equal(harness.calls.singleInstanceLocks, 0, 'pai does not contend for the main application singleton');
-  assert.equal(harness.calls.trays, 0);
-  assert.equal(harness.calls.startUpdates, 0);
-  assert.ok(harness.calls.paths.userData.startsWith(join(root, 'pai-profiles')));
-  assert.equal(harness.calls.paths.sessionData, join(harness.calls.paths.userData, 'chromium'));
-  assert.deepEqual(main.query, { mode: 'pai' });
+  // The process boots as the main instance: default workspace, singleton, tray, updater.
+  assert.deepEqual(harness.calls.init, [[{ cwd: process.cwd() }]], 'the main agent keeps the default workspace');
+  assert.equal(harness.calls.windowMode, 'full');
+  assert.equal(harness.calls.singleInstanceLocks, 1, 'a cold pai boot contends for the singleton like a normal launch');
+  assert.equal(harness.calls.trays, process.platform === 'win32' ? 1 : 0);
+  assert.equal(harness.calls.startUpdates, 1);
+  assert.equal(harness.calls.paths.userData, undefined, 'no isolated pai profile is reserved anymore');
+  assert.equal(harness.calls.pipeStarts, process.platform === 'win32' ? 1 : 0, 'the pai pipe server starts with the main instance');
+  // The pai request is handed to the IPC bridge, which opens a hosted window.
+  assert.deepEqual(harness.calls.paiWindows, [{ cwd }]);
   main.load.resolve(); main.emit('ready-to-show'); harness.initialization.resolve();
   await harness.rendererReady(main);
+  // Later pai spawns reach the running instance through the second-instance handoff.
+  harness.app.emit('second-instance', undefined, ['pi.exe', '--pai', '--cwd', cwd]);
+  await settle(); await settle();
+  assert.deepEqual(harness.calls.paiWindows, [{ cwd }, { cwd }]);
+  // A plain second launch reveals the main window instead.
+  main.hide();
+  harness.app.emit('second-instance', undefined, ['pi.exe']);
+  await settle(); await settle();
+  assert.equal(main.isVisible(), true);
+  // The full-window close policy still applies (tray here), and shutdown disposes once.
   let prevented = false;
   main.emit('close', { preventDefault() { prevented = true; } });
   await settle();
   assert.equal(prevented, true);
-  assert.equal(harness.calls.quit, 1, 'pai exits even if the saved close behavior requests a tray');
+  assert.equal(harness.calls.quit, 0, 'closing the main window follows the tray policy');
   harness.app.emit('before-quit', { preventDefault() {} });
   await settle();
   assert.equal(harness.calls.dispose, 1);
-  assert.equal(harness.calls.quit, 2);
+  assert.equal(harness.calls.quit, 1);
 });
 
 test('pai boot accepts a Windows drive root workspace without trying to mkdir it', { skip: process.platform !== 'win32' }, async (t) => {
@@ -272,8 +289,8 @@ test('pai boot accepts a Windows drive root workspace without trying to mkdir it
   const harness = await createStartupHarness(t, { launchArgs: ['--pai', '--cwd', drive], userData: root, closeBehavior: 'tray' });
   t.after(async () => { await rm(root, { recursive: true, force: true, maxRetries: 4 }); });
   const main = await harness.start();
-  assert.ok(main, 'the main window is created for a drive-root workspace');
-  assert.deepEqual(harness.calls.init, [[{ cwd: drive, fresh: true }]], 'the agent starts with the drive root as its workspace');
+  assert.ok(main, 'the main window is created for a drive-root pai request');
+  assert.deepEqual(harness.calls.paiWindows, [{ cwd: drive }], 'the drive root is handed to the hosted pai window untouched');
   assert.equal(harness.calls.errors.length, 0, 'no startup failure is reported');
   assert.doesNotMatch(harness.splash.url, /EPERM/, 'the splash does not fall back to the startup error page');
 });
@@ -292,7 +309,7 @@ test('multi boot opens a full-size isolated instance without the singleton, tray
   assert.equal(main.options.height, 820);
   assert.equal(main.options.title, 'Pi Desktop');
   assert.ok(harness.calls.paths.userData.startsWith(join(root, 'multi-profiles')));
-  assert.deepEqual(main.query, {}, 'the full renderer launches without a mode parameter');
+  assert.equal(main.query, undefined, 'the full renderer launches without a mode parameter');
   main.load.resolve(); main.emit('ready-to-show'); harness.initialization.resolve();
   await harness.rendererReady(main);
   let prevented = false;
@@ -473,20 +490,7 @@ test('Windows close stops asking once the busy-close prompt was dismissed', { sk
   assert.equal(harness.calls.quit, 1);
 });
 
-test('pai keeps its quit confirmation instead of offering a memory it could not undo', { skip: process.platform !== 'win32' }, async (t) => {
-  const root = await mkdtemp(join(tmpdir(), 'pi-pai-close-'));
-  const cwd = join(root, 'project');
-  await mkdir(cwd);
-  const harness = await createStartupHarness(t, { launchArgs: ['--pai', '--cwd', cwd], userData: root, closeBehavior: 'tray', busy: true });
-  t.after(async () => { await rm(root, { recursive: true, force: true, maxRetries: 4 }); });
-  const main = await harness.start();
-  main.load.resolve();
-  main.emit('ready-to-show');
-  harness.initialization.resolve();
-  await harness.rendererReady(main);
-  main.emit('close', { preventDefault() {} });
-  await settle();
-  assert.equal(harness.calls.messageBoxes.length, 1, 'pai still asks before interrupting a running task');
-  assert.equal(harness.calls.messageBoxes[0][1].checkboxLabel, undefined, 'pai has no Settings entry to restore a remembered choice');
-  assert.equal(harness.calls.quit, 1);
-});
+// The old "pai keeps its quit confirmation" case moved with hosted windows:
+// the busy-close confirm for a pai window now lives in ipc.ts (closePaiWindow)
+// and never offers a remembered choice; the process here always boots the
+// main window, whose close policy is covered by the tests above.

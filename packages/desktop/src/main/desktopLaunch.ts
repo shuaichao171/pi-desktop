@@ -56,15 +56,6 @@ export function validatePaiSession(path: string): string {
 	return realpathSync(path);
 }
 
-/**
- * Arguments that start another app instance as a pai chat window on one
- * conversation. Development runs pass the app folder to the Electron binary;
- * packaged builds launch the executable directly.
- */
-export function paiSessionLaunchArgs(options: { packaged: boolean; appPath: string; cwd: string; sessionPath: string }): string[] {
-	return [...(options.packaged ? [] : [options.appPath]), '--pai', '--cwd', options.cwd, '--session', options.sessionPath];
-}
-
 export function validatePaiWorkspace(cwd: string): string {
 	if (!isAbsolute(cwd) || !statSync(cwd).isDirectory()) throw new Error('--cwd must name an existing folder');
 	return realpathSync(cwd);
