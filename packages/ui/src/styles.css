@@ -763,7 +763,7 @@ div.pd-hover-tooltip:has(.pd-update-notes-body) { max-width: min(400px, calc(100
 .pd-window-controls { position: fixed; top: 14px; right: 14px; z-index: var(--pd-z-window-controls); display: flex; align-items: center; gap: 2px; -webkit-app-region: no-drag; }
 .pd-window-controls.is-inline { position: static; top: auto; right: auto; z-index: auto; }
 .pd-window-control { display: grid; flex: 0 0 auto; place-items: center; width: 28px; height: 28px; padding: 0; border: 0; border-radius: var(--pd-radius-md); background: transparent; color: var(--pd-text-subtle); -webkit-app-region: no-drag; }
-.pd-window-control:hover { background: var(--pd-surface-hover); color: var(--pd-text); }
+.pd-window-control:hover { background: var(--pd-sidebar-hover); color: var(--pd-text); }
 .pd-window-control.is-close:hover { background: var(--pd-window-close-hover); color: #fff; }
 .pd-window-control-error { position: absolute; top: 33px; right: 0; width: max-content; max-width: 240px; padding: 5px 8px; border: 1px solid var(--pd-danger-border); border-radius: var(--pd-radius-sm); background: var(--pd-surface); color: var(--pd-danger); font-size: var(--pd-font-sm); }
 
@@ -901,8 +901,9 @@ div.pd-hover-tooltip:has(.pd-update-notes-body) { max-width: min(400px, calc(100
 .pd-workspace-open-wrap { position: relative; flex: 0 0 auto; }
 .pd-workspace-open { display: flex; align-items: center; gap: 2px; height: 28px; }
 .pd-workspace-open-button { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 28px; padding: 0; border: 0; border-radius: var(--pd-radius-sm); background: transparent; color: var(--pd-text-subtle); cursor: pointer; transition: background 0.12s ease, color 0.12s ease; }
-.pd-workspace-open-button:hover { background: var(--pd-surface-hover); color: var(--pd-text); }
-.pd-workspace-open-button:focus-visible { outline: 2px solid var(--pd-focus-border); outline-offset: -2px; }
+/* Same visible tint as the other top-bar buttons (surface-hover is invisible on --pd-sidebar). */
+.pd-workspace-open-button:hover { background: var(--pd-sidebar-hover); color: var(--pd-text); }
+.pd-workspace-open-button:focus-visible { outline: 2px solid var(--pd-focus-border); outline-offset: -2px; background: var(--pd-sidebar-hover); }
 .pd-workspace-open-error { top: calc(100% + 4px); }
 
 /* Commit dialog (zcode-style) */
