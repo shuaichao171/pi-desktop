@@ -892,7 +892,7 @@ div.pd-hover-tooltip:has(.pd-update-notes-body) { max-width: min(400px, calc(100
 .is-frameless .pd-chat-heading { transform: translateY(-4px); }
 .is-frameless .pd-chat-header { padding-right: 152px; }
 .is-frameless .pd-top-bar button, .is-frameless .pd-chat-header button { -webkit-app-region: no-drag; }
-.pd-opener-icon { display: block; width: 15px; height: 15px; border-radius: var(--pd-radius-xs); }
+.pd-opener-icon { display: block; width: 16px; height: 16px; padding: 0.5px; border-radius: var(--pd-radius-xs); object-fit: contain; }
 .pd-chat-title { position: relative; flex: 0 1 auto; min-width: 0; max-width: 100%; -webkit-app-region: no-drag; }
 .pd-chat-title.is-editing { flex: 0 1 auto; }
 .pd-chat-heading:has(.pd-chat-title.is-editing) { max-width: min(520px, 80%); }

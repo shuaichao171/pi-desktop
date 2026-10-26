@@ -14,8 +14,8 @@ function errorText(cause: unknown): string {
 
 /** The top bar keeps the two primary workspace actions visible: Explorer and VS Code. */
 function OpenerIcon({ opener }: { opener: WorkspaceOpener }) {
-	if (opener.icon) return <img src={opener.icon} alt='' className='pd-opener-icon' width='15' height='15' />;
-	return <Icon name={fallbackIcon(opener)} width='15' height='15' />;
+	if (opener.icon) return <img src={opener.icon} alt='' className='pd-opener-icon' width='16' height='16' />;
+	return <Icon name={fallbackIcon(opener)} width='16' height='16' />;
 }
 
 export function WorkspaceOpenButton({ cwd }: { cwd: string | null }) {
