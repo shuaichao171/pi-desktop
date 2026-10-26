@@ -38,27 +38,27 @@
 .pd-sidebar-archive-count { min-width: 20px; padding: 0 6px; border-radius: var(--pd-radius-pill); background: color-mix(in srgb, var(--pd-text) 9%, transparent); color: var(--pd-text-subtle); font-size: var(--pd-font-xs); line-height: 18px; text-align: center; }
 .pd-sidebar-popover button[role='menuitem'] > svg { color: var(--pd-text-weak); }
 .pd-organized-list { padding-top: 2px; padding-right: 4px; }
-.pd-sidebar-group { margin-bottom: 7px; }
-.pd-sidebar-group.is-pinned { margin-bottom: 12px; padding-bottom: 7px; border-bottom: 1px solid var(--pd-sidebar-surface); }
+.pd-sidebar-group { margin-bottom: 4px; }
+.pd-sidebar-group.is-pinned { margin-bottom: 6px; padding-bottom: 4px; border-bottom: 1px solid var(--pd-sidebar-surface); }
 .pd-sidebar-group.is-pinned > .pd-sidebar-group-content { margin-left: 0; padding-left: 0; border-left: 0; }
-.pd-sidebar-group-heading { display: flex; align-items: center; min-height: 32px; border-radius: var(--pd-radius-sm); }
+.pd-sidebar-group-heading { display: flex; align-items: center; min-height: 26px; border-radius: var(--pd-radius-sm); }
 .pd-sidebar-group-heading:hover { background: var(--pd-sidebar-hover); }
-.pd-sidebar-group-toggle { display: flex; flex: 1; align-items: center; gap: 6px; min-width: 0; height: 32px; padding: 0 7px; border: 0; border-radius: var(--pd-radius-sm); background: transparent; color: var(--pd-text); text-align: left; }
+.pd-sidebar-group-toggle { display: flex; flex: 1; align-items: center; gap: 6px; min-width: 0; height: 26px; padding: 0 7px; border: 0; border-radius: var(--pd-radius-sm); background: transparent; color: var(--pd-text); text-align: left; }
 .pd-sidebar-group-toggle > svg { flex: 0 0 auto; color: var(--pd-group-color, var(--pd-text)); }
 .pd-sidebar-group-toggle > span { overflow: hidden; font-size: var(--pd-font-caption); font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
 .pd-sidebar-group-toggle > .is-expanded { transform: rotate(90deg); }
 .pd-sidebar-group.is-current > .pd-sidebar-group-heading .pd-sidebar-group-toggle > span { color: var(--pd-text); }
 .pd-sidebar-group-heading .pd-group-more { width: 23px; height: 25px; margin-right: 2px; opacity: 0; }
 .pd-sidebar-group-heading:hover .pd-group-more, .pd-sidebar-group-heading:focus-within .pd-group-more, .pd-group-more[aria-expanded='true'] { opacity: 1; }
-.pd-sidebar-group-content { margin-left: 12px; padding-left: 5px; border-left: 1px solid var(--pd-sidebar-surface); }
+.pd-sidebar-group-content { margin-left: 10px; padding-left: 5px; border-left: 1px solid var(--pd-sidebar-surface); }
 .pd-sidebar-group.is-custom > .pd-sidebar-group-content { border-left-color: var(--pd-group-color); }
-.pd-organized-list .pd-session-item .pd-session-row { min-height: 36px; padding: 5px 7px; gap: 5px; }
+.pd-organized-list .pd-session-item .pd-session-row { min-height: 28px; padding: 3px 7px; gap: 5px; }
 .pd-organized-list .pd-session-item { --pd-session-actions-width: 30px; }
-/* Draft dashed frame (see styles.css): keep organized draft rows 36px tall too. */
-.pd-organized-list .pd-session-item.is-unsaved .pd-session-row { min-height: 34px; }
-.pd-organized-list .pd-session-copy strong { line-height: 1.5; }
+/* Draft dashed frame (see styles.css): keep organized draft rows 28px tall too. */
+.pd-organized-list .pd-session-item.is-unsaved .pd-session-row { min-height: 26px; }
+.pd-organized-list .pd-session-copy strong { line-height: 1.35; }
 .pd-organized-list .pd-session-actions { top: 50%; right: 1px; transform: translateY(-50%); }
-.pd-organized-list .pd-session-action { width: 25px; height: 26px; }
+.pd-organized-list .pd-session-action { width: 24px; height: 24px; }
 .pd-archive-selection-toolbar { display: flex; flex: 0 0 auto; align-items: center; flex-wrap: wrap; gap: 8px; margin: 2px 10px 7px; padding: 6px 3px; border-bottom: 1px solid var(--pd-sidebar-surface); font-size: var(--pd-font-caption); }
 .pd-archive-selection-toolbar label { display: inline-flex; align-items: center; gap: 5px; cursor: pointer; white-space: nowrap; }
 .pd-archive-selection-toolbar input, .pd-archive-session-checkbox { flex: 0 0 auto; width: 14px; height: 14px; margin: 0; accent-color: var(--pd-brand); cursor: pointer; }

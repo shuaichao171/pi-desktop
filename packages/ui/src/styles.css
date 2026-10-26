@@ -845,7 +845,7 @@ div.pd-hover-tooltip:has(.pd-update-notes-body) { max-width: min(400px, calc(100
   .pd-session-item:not(.is-drag-source):is(:hover, :has(:focus-visible)) .pd-session-title.is-overflowing { text-overflow: clip; mask-image: linear-gradient(to right, transparent, #000 8px, #000 calc(100% - 8px), transparent); }
   .pd-session-item:not(.is-drag-source):is(:hover, :has(:focus-visible)) .pd-session-title.is-overflowing .pd-session-title-text { width: max-content; padding: 0 8px; overflow: visible; animation: pd-session-title-scroll var(--pd-title-duration) var(--pd-title-easing) infinite alternate; }
 }
-.pd-session-action { width: 27px; height: 27px; }
+.pd-session-action { width: 26px; height: 26px; }
 .pd-session-action[aria-pressed='true'] { color: var(--pd-brand); }
 /* zcode inline archive confirm: the destructive confirm button stays visible
    while the row waits for a second click, even without hover. */
