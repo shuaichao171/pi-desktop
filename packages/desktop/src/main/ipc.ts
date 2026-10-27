@@ -12,7 +12,6 @@ import { app, BrowserWindow, dialog, shell, type IpcMainInvokeEvent } from 'elec
 import { mkdirSync, statSync } from 'node:fs';
 import { rm, stat } from 'node:fs/promises';
 import { basename, dirname, join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { IPC_CHANNELS, type AgentEventEnvelope, type AppLocale, type UiAppCommand, type UiAttachment, type UiExtensionDialogRequest, type UiInputScope, type UiSessionMetaPatch, type UiSidebarGroupChange, type UiSlashCommandRequest, type UiThinkingLevel } from '@pidesktop/shared';
 import { createIsolatedAgentService } from './agentClient';
 import { isPaiSender, isPaiWindow, paiHeldSessionPaths, paiSlotForSender, paiWindowSlots, registerPaiWindowSlot, unregisterPaiWindowSlot } from './paiWindows';
@@ -243,6 +242,21 @@ function revealPaiWindow(entry: PaiWindowEntry): void {
 	entry.win.webContents.setBackgroundThrottling(true);
 }
 
+/**
+ * pai failures use the async dialog: the synchronous showErrorBox would
+ * freeze the whole app (pipe server included) until the box is dismissed.
+ */
+function showPaiErrorDialog(owner: BrowserWindow | null | undefined, message: string): void {
+	const options = {
+		type: 'error' as const,
+		title: 'pai',
+		message,
+		buttons: [getAppLocale() === 'en-US' ? 'Close' : '关闭'],
+	};
+	const shown = owner && !owner.isDestroyed() ? dialog.showMessageBox(owner, options) : dialog.showMessageBox(options);
+	void shown.catch(() => {});
+}
+
 function createPaiWindow(request: PaiWindowRequest): void {
 	const cwd = validatePaiWorkspace(request.cwd);
 	const sessionPath = request.sessionPath === undefined ? undefined : validatePaiSession(request.sessionPath);
@@ -258,7 +272,9 @@ function createPaiWindow(request: PaiWindowRequest): void {
 			}
 		}
 	}
-	const here = fileURLToPath(new URL('.', import.meta.url));
+	// This module is bundled into out/main/chunks/, so relative paths from here
+	// would miss; the app root carries the same out/ layout packaged and in dev.
+	const appRoot = app.getAppPath();
 	const win = new BrowserWindow({
 		width: 920,
 		height: 780,
@@ -270,7 +286,7 @@ function createPaiWindow(request: PaiWindowRequest): void {
 		autoHideMenuBar: process.platform === 'win32',
 		show: false,
 		webPreferences: {
-			preload: join(here, '../preload/index.mjs'),
+			preload: join(appRoot, 'out', 'preload', 'index.mjs'),
 			backgroundThrottling: false,
 			contextIsolation: true,
 			sandbox: false,
@@ -309,7 +325,7 @@ function createPaiWindow(request: PaiWindowRequest): void {
 		if (failureReported || entry.disposed) return;
 		failureReported = true;
 		console.error('pai renderer failed:', reason);
-		dialog.showErrorBox('pai', reason);
+		showPaiErrorDialog(win, reason);
 		closePaiWindow(entry);
 	};
 	win.webContents.on('render-process-gone', (_event, details) => {
@@ -362,17 +378,25 @@ function createPaiWindow(request: PaiWindowRequest): void {
 		entry.firstPaintReady = true;
 		revealPaiWindow(entry);
 	});
-	const load = !app.isPackaged && process.env.ELECTRON_RENDERER_URL
-		? win.loadURL(rendererLaunchUrl(process.env.ELECTRON_RENDERER_URL, { windowMode: 'pai', cwd }))
-		: win.loadFile(join(here, '../renderer/index.html'), { query: { mode: 'pai' } });
-	void load.then(() => {
-		entry.loaded = true;
-		revealPaiWindow(entry);
-	}).catch((error: unknown) => reportFailure(error instanceof Error ? error.message : String(error)));
+	// The renderer bootstraps from a single snapshot and receives no agent
+	// events before it is revealed; loading it before the agent finishes
+	// initializing would snapshot a session-less agent and the window would
+	// never become ready. Load only once the agent can serve a real snapshot.
+	const startLoad = (): void => {
+		if (entry.disposed || entry.win.isDestroyed()) return;
+		const load = !app.isPackaged && process.env.ELECTRON_RENDERER_URL
+			? win.loadURL(rendererLaunchUrl(process.env.ELECTRON_RENDERER_URL, { windowMode: 'pai', cwd }))
+			: win.loadFile(join(appRoot, 'out', 'renderer', 'index.html'), { query: { mode: 'pai' } });
+		void load.then(() => {
+			entry.loaded = true;
+			revealPaiWindow(entry);
+		}).catch((error: unknown) => reportFailure(error instanceof Error ? error.message : String(error)));
+	};
 	void entry.agent.init({ cwd, ...(sessionPath ? { sessionPath } : { fresh: true }) })
+		.then(() => { startLoad(); })
 		.catch((error: unknown) => {
 			console.error('pai agent failed to initialize:', error);
-			dialog.showErrorBox('pai', error instanceof Error ? error.message : String(error));
+			showPaiErrorDialog(win, error instanceof Error ? error.message : String(error));
 			closePaiWindow(entry);
 		});
 }
@@ -1066,7 +1090,7 @@ export function registerIpc(options: {
 	paiWindowsReady = true;
 	for (const request of pendingPaiWindowRequests.splice(0)) {
 		try { createPaiWindow(request); }
-		catch (error) { dialog.showErrorBox('pai', error instanceof Error ? error.message : String(error)); }
+		catch (error) { showPaiErrorDialog(undefined, error instanceof Error ? error.message : String(error)); }
 	}
 	setRendererSenderRestriction({ isPaiSender, mainOnlyChannels });
 	handleRendererInvoke(MCP_FEATURE_CHANNELS.getMcpSnapshot, (event) => agentFor(event).getMcpSnapshot());

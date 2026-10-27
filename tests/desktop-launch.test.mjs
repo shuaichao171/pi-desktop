@@ -25,6 +25,22 @@ test('pai parses explicit folders without changing regular Electron launch behav
   ]) assert.throws(() => parseDesktopLaunch(args, 'win32'), /--pai|--cwd/);
 });
 
+
+test('pai tolerates Chromium switches Electron injects into second-instance command lines', () => {
+  // Observed on Windows: the winner receives --allow-file-access-from-files
+  // (and friends) between our own switches and their values.
+  assert.deepEqual(parseDesktopLaunch(['pi.exe', '--pai', '--cwd', '--allow-file-access-from-files', 'D:\\项目'], 'win32'), { windowMode: 'pai', cwd: 'D:\\项目' });
+  assert.deepEqual(parseDesktopLaunch(['--allow-file-access-from-files', '--pai', '--cwd', 'D:\\proj'], 'win32'), { windowMode: 'pai', cwd: 'D:\\proj' });
+  assert.deepEqual(parseDesktopLaunch(['--pai', '--allow-file-access-from-files', '--cwd=D:\\proj'], 'win32'), { windowMode: 'pai', cwd: 'D:\\proj' });
+  assert.deepEqual(parseDesktopLaunch(['--type=utility', '--pai', '--cwd', 'D:\\proj', '--enable-features=X'], 'win32'), { windowMode: 'pai', cwd: 'D:\\proj' });
+  assert.deepEqual(parseDesktopLaunch(['--pai', '--cwd', '--allow-file-access-from-files', '/work/proj'], 'linux'), { windowMode: 'pai', cwd: '/work/proj' });
+  assert.deepEqual(parseDesktopLaunch(['--pai', '--cwd', 'D:\\proj', '--session', '--allow-file-access-from-files', 'D:\\a.jsonl'], 'win32'), { windowMode: 'pai', cwd: 'D:\\proj', sessionPath: 'D:\\a.jsonl' });
+  assert.deepEqual(parseDesktopLaunch(['pi.exe', '--allow-file-access-from-files'], 'win32'), { windowMode: 'full' });
+  assert.deepEqual(parseDesktopLaunch(['--multi', '--allow-file-access-from-files'], 'win32'), { windowMode: 'multi' });
+  // A value that never arrives is still an error, with or without the noise.
+  assert.throws(() => parseDesktopLaunch(['--pai', '--cwd', '--allow-file-access-from-files'], 'win32'), /--cwd/);
+  assert.throws(() => parseDesktopLaunch(['--pai', '--cwd', '--type=utility'], 'win32'), /--cwd/);
+});
 test('pai can open one conversation file in its own window', async () => {
   assert.deepEqual(parseDesktopLaunch(['pi.exe', '--pai', '--cwd', 'D:\\proj', '--session', 'C:\\pi\\sessions\\a.jsonl'], 'win32'), { windowMode: 'pai', cwd: 'D:\\proj', sessionPath: 'C:\\pi\\sessions\\a.jsonl' });
   assert.deepEqual(parseDesktopLaunch(['--pai', '--cwd=/work', '--session=/home/u/.pi/s.jsonl'], 'linux'), { windowMode: 'pai', cwd: '/work', sessionPath: '/home/u/.pi/s.jsonl' });

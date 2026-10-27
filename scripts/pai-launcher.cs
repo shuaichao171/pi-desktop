@@ -55,6 +55,10 @@ internal static class PaiLauncher
     /// </summary>
     private static bool TryOpenHostedWindow(string directory, string sessionPath)
     {
+        // Test isolation: a real Pi Desktop of the same user may own the pipe
+        // and answer ok without our capture stub ever running. The native
+        // launcher test opts out of the fast path to stay deterministic.
+        if (Environment.GetEnvironmentVariable("PAI_TEST_SKIP_PIPE") == "1") return false;
         bool delivered = false;
         Thread worker = new Thread(delegate()
         {

@@ -82,6 +82,19 @@ function showMainWindow(): void {
  * A second process lost its singleton bid. A `pai` spawn hands its window
  * request over to this instance; a plain launch just reveals the main window.
  */
+function showPaiError(error: unknown): void {
+	const message = error instanceof Error ? error.message : String(error);
+	console.error('pai request failed:', message);
+	// The async dialog keeps the app responsive; showErrorBox is synchronous and
+	// would freeze the main process (and the pai pipe server) until dismissed.
+	void dialog.showMessageBox({
+		type: 'error',
+		title: 'pai',
+		message,
+		buttons: [getAppLocale() === 'en-US' ? 'Close' : '关闭'],
+	}).catch(() => {});
+}
+
 function openPaiHandoff(commandLine: readonly string[]): void {
 	try {
 		const parsed = parseDesktopLaunch(commandLine);
@@ -91,9 +104,11 @@ function openPaiHandoff(commandLine: readonly string[]): void {
 		}
 		const cwd = validatePaiWorkspace(parsed.cwd);
 		const sessionPath = parsed.sessionPath === undefined ? undefined : validatePaiSession(parsed.sessionPath);
-		void import('./ipc').then(module => module.openPaiWindow(sessionPath ? { cwd, sessionPath } : { cwd }));
+		void import('./ipc')
+			.then(module => module.openPaiWindow(sessionPath ? { cwd, sessionPath } : { cwd }))
+			.catch((error: unknown) => showPaiError(error));
 	} catch (error) {
-		dialog.showErrorBox('pai', error instanceof Error ? error.message : String(error));
+		showPaiError(error);
 	}
 }
 

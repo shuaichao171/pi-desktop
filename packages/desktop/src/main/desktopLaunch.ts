@@ -4,8 +4,23 @@ import { isAbsolute, join, posix, resolve, win32 } from 'node:path';
 
 export type DesktopLaunch = { windowMode: 'full' } | { windowMode: 'multi' } | { windowMode: 'pai'; cwd: string; sessionPath?: string };
 
+/**
+ * Electron appends its own Chromium switches (for example
+ * --allow-file-access-from-files) to the command line it forwards with the
+ * `second-instance` event — between our own switches and their values. Keep
+ * only the switches this launcher owns; their values never start with "--".
+ */
+const LAUNCH_SWITCHES = ['--pai', '--multi', '--cwd', '--session'] as const;
+
+function stripInjectedSwitches(argv: readonly string[]): string[] {
+	return argv.filter((argument) =>
+		!argument.startsWith('--')
+		|| (LAUNCH_SWITCHES as readonly string[]).some((name) => argument === name || argument.startsWith(`${name}=`)));
+}
+
 /** Electron switches and its development entry point may surround our arguments. */
 export function parseDesktopLaunch(argv: readonly string[], platform: NodeJS.Platform = process.platform): DesktopLaunch {
+	argv = stripInjectedSwitches(argv);
 	let pai = false;
 	let multi = false;
 	let cwd: string | undefined;

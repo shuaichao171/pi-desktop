@@ -8,6 +8,11 @@ import { setTimeout } from 'node:timers/promises';
 import { test } from 'node:test';
 import { preparePaiLauncher } from '../scripts/prepare-pai-launcher.mjs';
 
+// Deterministic isolation: every spawned launcher must skip the per-user pipe
+// fast path — a real Pi Desktop of this user may be running and would answer
+// the request without our capture stub ever executing.
+process.env.PAI_TEST_SKIP_PIPE = '1';
+
 const captureSource = `using System;
 using System.Collections.Generic;
 using System.Diagnostics;
