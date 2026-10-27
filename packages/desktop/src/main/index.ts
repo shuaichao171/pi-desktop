@@ -11,6 +11,15 @@ import { showEditContextMenu } from './editContextMenu.ts';
 import { createAppTray, destroyAppTray } from './tray';
 import { paiPipeName, startPaiPipeServer } from './paiPipe.ts';
 import { parseDesktopLaunch, reservePaiProfile, validatePaiSession, validatePaiWorkspace, type DesktopLaunch, type PaiProfile } from './desktopLaunch.ts';
+import {
+	MAIN_WINDOW_MIN_HEIGHT,
+	MAIN_WINDOW_MIN_WIDTH,
+	resolveStartupWindowState,
+	trackWindowState,
+	windowStateFromWindow,
+	windowStatePath,
+	type WindowState,
+} from './windowState';
 
 let paiProfile: PaiProfile | null = null;
 // A --multi window relocates userData to an isolated profile; appearance and
@@ -126,12 +135,24 @@ function showStartupError(splash: BrowserWindow, error: unknown): void {
 		});
 }
 
-function createWindow(onReady?: () => void, onLoadError?: (error: unknown) => void): BrowserWindow {
+interface CreateMainWindowOptions {
+	/** Where the window opens: the saved placement, aligned with the boot window. */
+	state: WindowState;
+	/** Follow this window's position when revealed (the boot window the user may drag). */
+	mirror?: BrowserWindow;
+	onReady?: () => void;
+	onLoadError?: (error: unknown) => void;
+}
+
+function createWindow(options: CreateMainWindowOptions): BrowserWindow {
+	const { state, onReady, onLoadError } = options;
 	const win = new BrowserWindow({
-		width: 1280,
-		height: 820,
-		minWidth: 680,
-		minHeight: 520,
+		width: state.bounds.width,
+		height: state.bounds.height,
+		x: state.bounds.x,
+		y: state.bounds.y,
+		minWidth: MAIN_WINDOW_MIN_WIDTH,
+		minHeight: MAIN_WINDOW_MIN_HEIGHT,
 		backgroundColor: '#111216',
 		title: 'Pi Desktop',
 		// Match ZCode's Windows chrome: the renderer draws the title bar and controls.
@@ -150,6 +171,11 @@ function createWindow(onReady?: () => void, onLoadError?: (error: unknown) => vo
 			nodeIntegration: false,
 		},
 	});
+	// A window closed maximized reopens maximized; maximize() before the first
+	// show() reveals it already covering the work area.
+	if (state.maximized) win.maximize();
+	// Remember where the user leaves the window so the next launch opens here.
+	trackWindowState(win, windowStatePath(app.getPath('userData')));
 	rendererWindows.add(win);
 	const publishChromeState = (): void => {
 		if (win.webContents.isDestroyed()) return;
@@ -297,6 +323,13 @@ function createWindow(onReady?: () => void, onLoadError?: (error: unknown) => vo
 		if (!loaded || !firstPaintReady || !rendererReady || revealed || startupCancelled || win.isDestroyed()) return;
 		revealed = true;
 		pendingWindowReveals.delete(win);
+		// The boot window may have been dragged since the main window was
+		// created; take its current position so the swap happens in place.
+		const mirror = options.mirror;
+		if (mirror && !mirror.isDestroyed() && !mirror.isMaximized() && !win.isMaximized()) {
+			const bounds = mirror.getBounds();
+			win.setPosition(bounds.x, bounds.y);
+		}
 		win.show();
 		win.webContents.setBackgroundThrottling(true);
 		onReady?.();
@@ -371,14 +404,22 @@ async function bootstrap(splash: BrowserWindow): Promise<void> {
 			readyToQuit = true;
 		});
 		updateService?.start();
-		const mainWindow = createWindow(() => {
-			mainRevealed = true;
-			if (!splash.isDestroyed()) splash.close();
-			if (pendingOpenSettings) {
-				pendingOpenSettings = false;
-				module.sendAppCommand({ type: 'open-settings' });
-			}
-		}, (error) => showStartupError(splash, error));
+		// Open the main window where the boot window is right now — the saved
+		// placement plus any drag made while the app was still loading — and
+		// keep following the boot window's position until the reveal.
+		const mainWindow = createWindow({
+			state: windowStateFromWindow(splash),
+			mirror: splash,
+			onReady: () => {
+				mainRevealed = true;
+				if (!splash.isDestroyed()) splash.close();
+				if (pendingOpenSettings) {
+					pendingOpenSettings = false;
+					module.sendAppCommand({ type: 'open-settings' });
+				}
+			},
+			onLoadError: (error) => showStartupError(splash, error),
+		});
 		// Load the UI and Pi history concurrently, keeping the logo until React
 		// acknowledges a committed conversation (or a required extension dialog).
 		// Extra instances start fresh so they never reopen a transcript in use;
@@ -447,16 +488,20 @@ if (!hasSingleInstanceLock) {
 		callback(permission === 'clipboard-sanitized-write');
 	});
 	// A ZCode-style boot window: the same size and shell as the real window,
-	// with the main window's background color so the swap is invisible.
+	// with the main window's background color so the swap is invisible. It
+	// opens at the main window's saved placement (centered on first run) so
+	// the finished window appears exactly where loading started.
+	const startupState = resolveStartupWindowState(windowStatePath(app.getPath('userData')));
 	const splash = new BrowserWindow({
-		width: 1280,
-		height: 820,
+		width: startupState.bounds.width,
+		height: startupState.bounds.height,
+		x: startupState.bounds.x,
+		y: startupState.bounds.y,
 		resizable: false,
 		maximizable: false,
 		minimizable: true,
 		frame: process.platform !== 'win32',
 		autoHideMenuBar: process.platform === 'win32',
-		center: true,
 		show: false,
 		hasShadow: true,
 		backgroundColor: '#111216',
@@ -467,6 +512,7 @@ if (!hasSingleInstanceLock) {
 			nodeIntegration: false,
 		},
 	});
+	if (startupState.maximized) splash.maximize();
 	splash.on('closed', () => {
 		if (!mainRevealed) {
 			startupCancelled = true;
@@ -496,7 +542,9 @@ if (!hasSingleInstanceLock) {
 		});
 
 	app.on('activate', () => {
-		if (BrowserWindow.getAllWindows().length === 0 && ipc) createWindow();
+		if (BrowserWindow.getAllWindows().length === 0 && ipc) {
+			createWindow({ state: resolveStartupWindowState(windowStatePath(app.getPath('userData'))) });
+		}
 	});
 	});
 }

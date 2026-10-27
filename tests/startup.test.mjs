@@ -19,6 +19,14 @@ const stubs = {
   `,
   './appLocale': `export const getAppLocale = () => 'en-US';`,
   './tray': `export const createAppTray = (options) => { globalThis.__startupTest.calls.trays += 1; globalThis.__startupTest.calls.trayOptions = options; }; export const destroyAppTray = () => {};`,
+  './windowState': `
+    export const MAIN_WINDOW_MIN_WIDTH = 680;
+    export const MAIN_WINDOW_MIN_HEIGHT = 520;
+    export const resolveStartupWindowState = () => ({ bounds: { x: 40, y: 30, width: 1280, height: 820 }, maximized: false });
+    export const windowStateFromWindow = () => ({ bounds: { x: 40, y: 30, width: 1280, height: 820 }, maximized: false });
+    export const windowStatePath = (dir) => dir + '/window-state.json';
+    export const trackWindowState = () => {};
+  `,
   './splash': `
     export const createBootHtml = () => '<html>Boot</html>';
     export const createBootErrorHtml = (message) => '<html>' + message + '</html>';
@@ -96,6 +104,9 @@ async function createStartupHarness(t, { workspaceError, initialization = deferr
     close() { this.destroy(); }
     destroy() { if (this.destroyed) return; this.destroyed = true; this.visible = false; this.emit('closed'); }
     setSize() {}
+    getBounds() { return { x: this.options.x ?? 0, y: this.options.y ?? 0, width: this.options.width, height: this.options.height }; }
+    setPosition(x, y) { this.options.x = x; this.options.y = y; }
+    maximize() { this.maximized = true; }
     center() {}
     focus() { this.focusCount += 1; }
     reload() {}
