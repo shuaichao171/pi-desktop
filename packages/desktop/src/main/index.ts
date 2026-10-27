@@ -461,7 +461,9 @@ async function bootstrap(splash: BrowserWindow): Promise<void> {
 
 // Full launches and cold `pai` launches share userData, so they compete for
 // the same app singleton; --multi keeps its isolated profile and skips it.
-const hasSingleInstanceLock = launch.windowMode !== 'full' || app.requestSingleInstanceLock();
+// A pai spawn that loses the bid hands its request to the holder via the
+// second-instance event instead of booting a second full instance.
+const hasSingleInstanceLock = launch.windowMode === 'multi' || app.requestSingleInstanceLock();
 if (!hasSingleInstanceLock) {
 	// This process was spawned as `pai` while the main app is already running;
 	// its request is handed to the holder through the second-instance event.

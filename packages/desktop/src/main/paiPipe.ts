@@ -52,9 +52,15 @@ function encodeResponse(response: PaiPipeResponse): string {
 	return `{"ok":${response.ok ? 'true' : 'false'},${error}}\n`;
 }
 
+/** 端口被占用时的重试间隔：新旧实例交叠（更新/重启）只持续片刻。 */
+const RETRY_LISTEN_MS = 10_000;
+
 /**
  * 启动管道服务。每个连接只处理一条请求：读一行 JSON、交给 handler、
  * 回一行结果后断开。handler 抛出的错误作为失败响应返回，服务保持监听。
+ *
+ * listen 失败（典型为更新/重启交叠期的 EADDRINUSE）按固定间隔重试，
+ * 直到本实例拿到管道名；否则管道会一直失效，pai 只能退回冷启动。
  */
 export function startPaiPipeServer(options: { pipeName: string; handle(request: PaiPipeRequest): Promise<void> }): { stop(): void } {
 	const server = createServer((socket: Socket) => {
@@ -95,13 +101,22 @@ export function startPaiPipeServer(options: { pipeName: string; handle(request: 
 			}
 		});
 	});
+	let stopped = false;
+	let retry: NodeJS.Timeout | null = null;
+	const listen = (): void => {
+		if (stopped) return;
+		server.listen(`\\\\.\\pipe\\${options.pipeName}`);
+	};
 	server.on('error', (error) => {
 		// 端口被占用（例如另一个主实例）只会让 pai 走回退路径，不致命。
 		console.error('pai pipe server failed:', error);
+		if (!stopped) retry = setTimeout(listen, RETRY_LISTEN_MS);
 	});
-	server.listen(`\\\\.\\pipe\\${options.pipeName}`);
+	listen();
 	return {
 		stop: () => {
+			stopped = true;
+			if (retry) clearTimeout(retry);
 			server.close();
 		},
 	};
