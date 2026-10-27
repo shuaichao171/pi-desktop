@@ -6,14 +6,16 @@ import { AttachmentStore } from '@pidesktop/agent/attachmentStore';
 import { handleRendererInvoke } from './rendererIpc.ts';
 import { PdfInputProcessor } from './pdfInput.ts';
 
-export function registerInputAttachmentIpc(getScope: () => UiInputScope): { dispose(): void; storage: AttachmentStore; rememberScope(scope: UiInputScope): void } {
+export function registerInputAttachmentIpc(getScopes: () => UiInputScope[]): { dispose(): void; storage: AttachmentStore; rememberScope(scope: UiInputScope): void } {
 	const storage = new AttachmentStore(join(getAgentDir(), 'desktop-inputs', 'attachments'));
 	const pdf = new PdfInputProcessor();
 	const knownScopes = new Set<string>();
-	// Main-process navigation can finish after the renderer has left its local
-	// draft. Authorize only that actual scope for the deferred draft handoff.
+	// Every live window owns a draft scope: the main conversation plus each hosted
+	// pai window (see ipc.ts). Main-process navigation can still finish after a
+	// renderer has left its local draft, so authorize any of those scopes plus
+	// scopes explicitly remembered for the deferred draft handoff.
 	const rememberScope = (scope: UiInputScope) => { knownScopes.add(JSON.stringify([scope.cwd, scope.sessionPath])); };
-	const check = (scope: UiInputScope) => { const active = getScope(); const key = JSON.stringify([scope?.cwd, scope?.sessionPath]); if (scope?.cwd === active.cwd && scope.sessionPath === active.sessionPath) knownScopes.add(key); else if (!knownScopes.has(key)) throw new Error('草稿所属工作区或会话已变化'); };
+	const check = (scope: UiInputScope) => { const key = JSON.stringify([scope?.cwd, scope?.sessionPath]); if (getScopes().some((active) => scope?.cwd === active.cwd && scope?.sessionPath === active.sessionPath)) knownScopes.add(key); else if (!knownScopes.has(key)) throw new Error('草稿所属工作区或会话已变化'); };
 	handleRendererInvoke(INPUT_FEATURE_CHANNELS.putInputAttachment, (_event, scope: UiInputScope, attachment: UiAttachment) => { check(scope); return storage.put(scope, attachment); });
 	handleRendererInvoke(INPUT_FEATURE_CHANNELS.readInputAttachment, (_event, scope: UiInputScope, id: string) => { check(scope); return storage.read(scope, id); });
 	handleRendererInvoke(INPUT_FEATURE_CHANNELS.getInputDraft, (_event, scope: UiInputScope) => { check(scope); return storage.getDraft(scope); });

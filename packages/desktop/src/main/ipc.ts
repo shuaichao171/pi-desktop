@@ -1101,7 +1101,10 @@ export function registerIpc(options: {
 	handleRendererInvoke(MCP_FEATURE_CHANNELS.testMcpServer, (event, request: Parameters<typeof agentService.testMcpServer>[0]) => agentFor(event).testMcpServer(request));
 	workbenchService = registerWorkbenchIpc(() => activeWorkspace);
 	workbenchFeatures = registerWorkbenchFeatureIpc(() => activeWorkspace, app.getPath('userData'));
-	inputFeatures = registerInputAttachmentIpc(() => ({ cwd: activeWorkspace, sessionPath: activeSessionPath }));
+	inputFeatures = registerInputAttachmentIpc(() => [
+		{ cwd: activeWorkspace, sessionPath: activeSessionPath },
+		...(paiWindowSlots() as PaiWindowEntry[]).map((entry) => ({ cwd: entry.cwd, sessionPath: entry.liveSessionPath })),
+	]);
 	handleRendererInvoke(INPUT_FEATURE_CHANNELS.submitInput, (event, request: Parameters<typeof agentService.submitInput>[0]) => agentFor(event).submitInput(request));
 	handleRendererInvoke(INPUT_FEATURE_CHANNELS.getInputQueue, (event, scope: Parameters<typeof agentService.getInputQueue>[0]) => agentFor(event).getInputQueue(requireInputQueueScope(scope)));
 	handleRendererInvoke(INPUT_FEATURE_CHANNELS.mutateInputQueue, (event, request: Parameters<typeof agentService.mutateInputQueue>[0]) => {
