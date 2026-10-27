@@ -24,3 +24,4 @@ desktop.ini
 # Local Electron dist extracted for manual e2e (locked asar while app runs)
 tmp-electron-dist/
 tmp/
+pai-bug-investigation.md

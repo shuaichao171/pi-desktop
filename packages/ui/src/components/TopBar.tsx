@@ -36,9 +36,9 @@ export function TopBar({ history, searchOpen, onOpenSearch, mainView, title, ses
 				<SearchButton open={searchOpen} onClick={onOpenSearch} />
 			</div>
 			{mainView === 'chat' && <div className="pd-top-bar-session">
+				<WorkspaceOpenButton cwd={cwd} />
 				<ChatTitle ref={titleRef} title={title} sessionPath={sessionPath} />
 				<div className="pd-top-bar-workspace-actions">
-					<WorkspaceOpenButton cwd={cwd} />
 					<HoverTooltip title={t(workbenchOpen ? 'app.closeWorkbench' : 'app.openWorkbench')}>
 						<button ref={workbenchToggleRef} type="button" className={`pd-top-bar-workspace-button${workbenchOpen ? ' is-active' : ''}`} aria-label={t(workbenchOpen ? 'app.closeWorkbench' : 'app.openWorkbench')} aria-pressed={workbenchOpen} onClick={onToggleWorkbench}><Icon name="panelRight" width="16" height="16" /></button>
 					</HoverTooltip>

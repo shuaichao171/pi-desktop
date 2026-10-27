@@ -42,7 +42,6 @@
 .pd-top-bar-session { display: flex; flex: 1 1 auto; align-items: center; gap: 4px; min-width: 0; margin-left: 14px; }
 .pd-top-bar-session .pd-chat-title { flex: 0 1 auto; min-width: 0; max-width: min(460px, 42vw); }
 .pd-top-bar-session .pd-chat-title h1 { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.pd-top-bar-session .pd-workspace-open-wrap { flex: 0 0 auto; margin-left: auto; }
 .pd-app-body { display: flex; flex: 1; min-height: 0; min-width: 0; }
 
 :root {
@@ -296,6 +295,7 @@ button:focus-visible, textarea:focus-visible, input:focus-visible { outline: 2px
 .pd-chat-header-actions { display: flex; flex: 0 0 auto; align-items: center; gap: 8px; margin-left: auto; min-width: 0; -webkit-app-region: no-drag; }
 .pd-chat-workspace { position: relative; display: flex; flex: 0 0 auto; }
 .pd-chat-workspace > .pd-chat-workspace-error { max-width: min(320px, calc(100vw - 48px)); }
+/* Top-bar open-with menu button: folder icon with a small chevron suffix. */
 .pd-chat-heading h1 { min-width: 0; margin: 0; overflow: hidden; font-size: var(--pd-font-base); font-weight: 600; line-height: 1.3; text-overflow: ellipsis; white-space: nowrap; }
 .pd-chat-content { position: relative; display: flex; flex: 1; flex-direction: column; min-width: 0; min-height: 0; }
 .pd-conversation-body { position: relative; display: flex; flex: 1; flex-direction: column; min-height: 0; overflow: hidden; }
@@ -323,11 +323,11 @@ button:focus-visible, textarea:focus-visible, input:focus-visible { outline: 2px
 .pd-context-project-control { display: inline-flex; align-items: center; min-width: 0; max-width: 100%; border-radius: var(--pd-radius-pill); }
 .pd-context-project-control.is-attached { border: 1px solid var(--pd-border); transition: background 0.12s ease; }
 .pd-context-project-control.is-attached:has(button:hover:not(:disabled)), .pd-context-project-control.is-attached:focus-within { background: var(--pd-surface-hover); }
-.pd-context-project-clear { display: grid; flex: 0 0 25px; place-items: center; height: 25px; padding: 0; border: 0; border-radius: var(--pd-radius-pill) 0 0 var(--pd-radius-pill); background: transparent; color: var(--pd-text-weak); cursor: pointer; }
+.pd-context-project-clear { display: grid; flex: 0 0 25px; place-items: center; height: 25px; padding: 0; border: 0; border-radius: var(--pd-radius-md) 0 0 var(--pd-radius-md); background: transparent; color: var(--pd-text-weak); cursor: pointer; }
 .pd-context-project-clear:hover:not(:disabled) { color: var(--pd-text); }
 .pd-context-project-clear:focus-visible { outline: 2px solid var(--pd-focus-border); outline-offset: -2px; }
 .pd-context-project-clear:disabled { opacity: 0.5; cursor: default; }
-.pd-context-project-control.is-attached > .pd-context-chip { min-width: 0; height: 25px; padding-left: 3px; border-radius: 0 var(--pd-radius-pill) var(--pd-radius-pill) 0; background: transparent; }
+.pd-context-project-control.is-attached > .pd-context-chip { min-width: 0; height: 25px; padding-left: 3px; border-radius: 0 var(--pd-radius-md) var(--pd-radius-md) 0; background: transparent; }
 .pd-context-project-control.is-attached > .pd-context-chip:focus-visible { outline-offset: -2px; }
 .pd-context-chip { display: inline-flex; align-items: center; gap: 6px; height: 27px; max-width: 260px; padding: 0 11px; border: 0; border-radius: var(--pd-radius-pill); background: transparent; color: var(--pd-text); font-size: var(--pd-font-caption); cursor: pointer; transition: background 0.12s ease, color 0.12s ease; }
 .pd-context-chip:hover:not(:disabled) { background: var(--pd-surface-hover); color: var(--pd-text); }
@@ -905,11 +905,15 @@ div.pd-hover-tooltip:has(.pd-update-notes-body) { max-width: min(400px, calc(100
 .pd-chat-title-measure { visibility: hidden; white-space: pre; padding: 0 6px; border: 1px solid transparent; font: inherit; pointer-events: none; }
 .pd-chat-header-more { flex: 0 0 auto; width: 24px; height: 24px; border-radius: var(--pd-radius-sm); color: var(--pd-text); }
 
-/* Three independent top-bar actions: Explorer, VS Code, and the right workbench. */
+/* Segmented open-workspace control wrapped in one capsule: main launches the
+   selected app, the attached chevron opens the app picker. */
 .pd-workspace-open-wrap { position: relative; flex: 0 0 auto; }
-.pd-workspace-open { display: flex; align-items: center; gap: 2px; height: 28px; }
-.pd-workspace-open-button { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 28px; padding: 0; border: 0; border-radius: var(--pd-radius-sm); background: transparent; color: var(--pd-text-subtle); cursor: pointer; transition: background 0.12s ease, color 0.12s ease; }
-/* Hover/focus tint comes from the .pd-top-bar namespace (see its comment). */
+.pd-workspace-open { display: flex; align-items: stretch; height: 28px; border-radius: var(--pd-radius-md); background: var(--pd-sidebar-hover); overflow: hidden; }
+.pd-workspace-open-main { display: inline-flex; align-items: center; justify-content: center; width: 30px; padding: 0; border: 0; border-radius: var(--pd-radius-md) 0 0 var(--pd-radius-md); background: transparent; color: var(--pd-text-subtle); cursor: pointer; }
+.pd-workspace-open-menu { display: inline-flex; align-items: center; justify-content: center; width: 18px; padding: 0; border: 0; border-left: 1px solid color-mix(in srgb, var(--pd-sidebar) 55%, var(--pd-sidebar-hover)); border-radius: 0 var(--pd-radius-md) var(--pd-radius-md) 0; background: transparent; color: var(--pd-text-subtle); cursor: pointer; }
+/* The capsule replaces the top-bar hover namespace for these two buttons. */
+.pd-top-bar .pd-workspace-open :is(.pd-workspace-open-main, .pd-workspace-open-menu):hover:not(:disabled) { background: color-mix(in srgb, var(--pd-text) 13%, transparent); color: var(--pd-text); }
+.pd-top-bar-session .pd-workspace-open-wrap { margin-right: 8px; }
 .pd-workspace-open-error { top: calc(100% + 4px); }
 
 /* Commit dialog (zcode-style) */
