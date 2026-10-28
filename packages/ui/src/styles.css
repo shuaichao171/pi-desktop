@@ -913,7 +913,9 @@ div.pd-hover-tooltip:has(.pd-update-notes-body) { max-width: min(400px, calc(100
 .pd-workspace-open-menu { display: inline-flex; align-items: center; justify-content: center; width: 18px; padding: 0; border: 0; border-left: 1px solid color-mix(in srgb, var(--pd-sidebar) 55%, var(--pd-sidebar-hover)); border-radius: 0 var(--pd-radius-md) var(--pd-radius-md) 0; background: transparent; color: var(--pd-text-subtle); cursor: pointer; }
 /* The capsule replaces the top-bar hover namespace for these two buttons. */
 .pd-top-bar .pd-workspace-open :is(.pd-workspace-open-main, .pd-workspace-open-menu):hover:not(:disabled) { background: color-mix(in srgb, var(--pd-text) 13%, transparent); color: var(--pd-text); }
-.pd-top-bar-session .pd-workspace-open-wrap { margin-right: 8px; }
+/* The capsule slot reserves the split control's footprint on every main view,
+   so the session title keeps its position when the capsule hides off-chat. */
+.pd-top-bar-session .pd-workspace-open-slot { flex: 0 0 auto; width: 48px; height: 28px; margin-right: 8px; }
 .pd-workspace-open-error { top: calc(100% + 4px); }
 
 /* Commit dialog (zcode-style) */
