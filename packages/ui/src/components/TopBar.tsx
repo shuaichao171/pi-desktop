@@ -35,16 +35,21 @@ export function TopBar({ history, searchOpen, onOpenSearch, mainView, title, ses
 				<HistoryNavigation {...history} />
 				<SearchButton open={searchOpen} onClick={onOpenSearch} />
 			</div>
-			{mainView === 'chat' && <div className="pd-top-bar-session">
-				<WorkspaceOpenButton cwd={cwd} />
+			{/* The session row stays mounted on every main view: the capsule slot
+				reserves its footprint so the title never shifts when the capsule
+				hides on the automations/plugins pages. */}
+			<div className="pd-top-bar-session">
+				<div className="pd-workspace-open-slot">{mainView === 'chat' && <WorkspaceOpenButton cwd={cwd} />}</div>
 				<ChatTitle ref={titleRef} title={title} sessionPath={sessionPath} />
-				<div className="pd-top-bar-workspace-actions">
-					<HoverTooltip title={t(workbenchOpen ? 'app.closeWorkbench' : 'app.openWorkbench')}>
-						<button ref={workbenchToggleRef} type="button" className={`pd-top-bar-workspace-button${workbenchOpen ? ' is-active' : ''}`} aria-label={t(workbenchOpen ? 'app.closeWorkbench' : 'app.openWorkbench')} aria-pressed={workbenchOpen} onClick={onToggleWorkbench}><Icon name="panelRight" width="16" height="16" /></button>
-					</HoverTooltip>
-				</div>
+				{mainView === 'chat' && <>
+					<div className="pd-top-bar-workspace-actions">
+						<HoverTooltip title={t(workbenchOpen ? 'app.closeWorkbench' : 'app.openWorkbench')}>
+							<button ref={workbenchToggleRef} type="button" className={`pd-top-bar-workspace-button${workbenchOpen ? ' is-active' : ''}`} aria-label={t(workbenchOpen ? 'app.closeWorkbench' : 'app.openWorkbench')} aria-pressed={workbenchOpen} onClick={onToggleWorkbench}><Icon name="panelRight" width="16" height="16" /></button>
+						</HoverTooltip>
+					</div>
 					<ChatHeaderMenu title={title} sessionPath={sessionPath} cwd={cwd} onRename={() => titleRef.current?.beginRename()} onOpenCommit={onOpenCommit} />
-			</div>}
+				</>}
+			</div>
 			{/* Extension slot: views contributed by plugins render here, left of the divider. */}
 			<div className="pd-top-bar-extensions" data-extension-slot="top-bar" />
 			<div className="pd-top-bar-divider" aria-hidden="true" />
