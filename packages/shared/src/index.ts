@@ -154,6 +154,8 @@ export const IPC_CHANNELS = {
   workspaceOpenInVsCode: 'workspace:open-in-vscode',
   workspaceOpenWith: 'workspace:open-with',
   workspaceOpeners: 'workspace:openers',
+  workspaceProjectNickname: 'workspace:project-nickname',
+  workspaceSetProjectNickname: 'workspace:set-project-nickname',
   workspaceCommitContext: 'workspace:commit-context',
   workspaceCommit: 'workspace:commit',
   workspaceCommandStart: 'workspace:command-start',
@@ -876,6 +878,14 @@ export interface WorkspaceOpener {
   /** Extracted editor icon as a data URL, when the executable was found. */
   icon?: string;
 }
+
+/** The effective project remark (备用名): the root's sole .code-workspace file wins, app-side storage answers without one. */
+export interface WorkspaceProjectNickname {
+  /** The remark; null when unset (neither the file field nor app-side storage has one). */
+  nickname: string | null;
+  /** True when the project root contains exactly one .code-workspace file (writes then target the file). */
+  hasWorkspaceFile: boolean;
+}
 export interface WorkspaceBranches {
   isRepository: boolean;
   current: string | null;
@@ -1095,6 +1105,10 @@ export interface AgentBridge extends InputFeatureBridge, DataFeaturesBridge, Wor
   openWorkspaceWith(cwd: string, openerId: string): Promise<void>;
   /** Lists apps able to open the workspace for the open-with picker. */
   listWorkspaceOpeners(): Promise<WorkspaceOpener[]>;
+  /** Reads the project remark: wpmanager.wpnickname from the root's sole .code-workspace file wins, falling back to app-side storage. */
+  getProjectNickname(cwd: string): Promise<WorkspaceProjectNickname>;
+  /** Saves the remark into the existing sole .code-workspace file when present, otherwise app-side; the file is never created. */
+  setProjectNickname(cwd: string, nickname: string): Promise<void>;
   /** Assembles the diff/status context used to generate a commit message. */
   getWorkspaceCommitContext(): Promise<string>;
   /** Stages all changes and commits them; returns the short commit hash. */

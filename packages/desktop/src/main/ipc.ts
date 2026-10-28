@@ -546,6 +546,7 @@ interface WorkspaceSettings {
 	conversationWorkspaces?: string[];
 	conversationStorageDirectories?: string[];
 	explicitWorkspaces?: string[];
+	workspaceNicknames?: Record<string, string>;
 }
 function workspaceKey(cwd: string): string {
 	const key = resolve(cwd);
@@ -568,6 +569,7 @@ function isWorkspaceSettings(value: unknown): value is WorkspaceSettings {
 		&& (value.conversationWorkspaces === undefined || (Array.isArray(value.conversationWorkspaces) && value.conversationWorkspaces.every((cwd) => typeof cwd === 'string')))
 		&& (value.conversationStorageDirectories === undefined || (Array.isArray(value.conversationStorageDirectories) && value.conversationStorageDirectories.every((cwd) => typeof cwd === 'string')))
 		&& (value.explicitWorkspaces === undefined || (Array.isArray(value.explicitWorkspaces) && value.explicitWorkspaces.every((cwd) => typeof cwd === 'string')))
+		&& (value.workspaceNicknames === undefined || (isRecord(value.workspaceNicknames) && Object.values(value.workspaceNicknames).every((nickname) => typeof nickname === 'string' && nickname.length <= 80)))
 		&& (value.pinnedWorkspaces === undefined || (Array.isArray(value.pinnedWorkspaces) && value.pinnedWorkspaces.every((cwd) => typeof cwd === 'string')));
 }
 
@@ -1059,6 +1061,7 @@ const mainOnlyChannels = new Set<string>([
 	IPC_CHANNELS.workspaceGitSync, IPC_CHANNELS.workspaceGitCreateBranch,
 	IPC_CHANNELS.workspaceOpenPathInEditor, IPC_CHANNELS.workspaceRevealPath, IPC_CHANNELS.workspaceOpenInVsCode, IPC_CHANNELS.workspaceOpenWith,
 	IPC_CHANNELS.workspaceOpeners, IPC_CHANNELS.workspaceCommitContext, IPC_CHANNELS.workspaceCommit,
+	IPC_CHANNELS.workspaceProjectNickname, IPC_CHANNELS.workspaceSetProjectNickname,
 	IPC_CHANNELS.workspaceCommandStart, IPC_CHANNELS.workspaceCommandStop, IPC_CHANNELS.workspaceWatch,
 	WORKBENCH_FEATURE_CHANNELS.getWorkspaceCommitPreview, WORKBENCH_FEATURE_CHANNELS.commitWorkspacePreview,
 	WORKBENCH_FEATURE_CHANNELS.createTaskWorktree, WORKBENCH_FEATURE_CHANNELS.listTaskWorktrees, WORKBENCH_FEATURE_CHANNELS.bindTaskWorktree,
@@ -1099,7 +1102,24 @@ export function registerIpc(options: {
 	handleRendererInvoke(MCP_FEATURE_CHANNELS.connectMcpServer, (event, request: Parameters<typeof agentService.connectMcpServer>[0]) => agentFor(event).connectMcpServer(request));
 	handleRendererInvoke(MCP_FEATURE_CHANNELS.disconnectMcpServer, (event, request: Parameters<typeof agentService.disconnectMcpServer>[0]) => agentFor(event).disconnectMcpServer(request));
 	handleRendererInvoke(MCP_FEATURE_CHANNELS.testMcpServer, (event, request: Parameters<typeof agentService.testMcpServer>[0]) => agentFor(event).testMcpServer(request));
-	workbenchService = registerWorkbenchIpc(() => activeWorkspace);
+	workbenchService = registerWorkbenchIpc(() => activeWorkspace, {
+		// App-side remark store: only used when a project root has no .code-workspace
+		// file; keys follow the same normalization as every other workspace record.
+		read: (cwd) => withWorkspaceSettings((saved) => saved.workspaceNicknames?.[workspaceKey(cwd)] ?? null),
+		write: async (cwd, nickname) => {
+			await withWorkspaceSettings(async (previous) => {
+				await writeStateFileAsync(workspaceSettingsPath(), { ...previous, workspaceNicknames: { ...(previous.workspaceNicknames ?? {}), [workspaceKey(cwd)]: nickname } });
+			});
+		},
+		clear: async (cwd) => {
+			await withWorkspaceSettings(async (previous) => {
+				if (!previous.workspaceNicknames?.[workspaceKey(cwd)]) return;
+				const workspaceNicknames = { ...previous.workspaceNicknames };
+				delete workspaceNicknames[workspaceKey(cwd)];
+				await writeStateFileAsync(workspaceSettingsPath(), { ...previous, workspaceNicknames });
+			});
+		},
+	});
 	workbenchFeatures = registerWorkbenchFeatureIpc(() => activeWorkspace, app.getPath('userData'));
 	inputFeatures = registerInputAttachmentIpc(() => [
 		{ cwd: activeWorkspace, sessionPath: activeSessionPath },

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
-import type { UiSessionGroup, UiSidebarGroupChange, WorkspaceOpener } from '@pidesktop/shared';
+import type { UiSessionGroup, UiSidebarGroupChange, WorkspaceOpener, WorkspaceProjectNickname } from '@pidesktop/shared';
 import { useChatStore } from '../store';
 import { useT } from '../i18n';
 import { managementCopy } from '../managementCopy';
@@ -28,6 +28,7 @@ type Popup = { anchor: HTMLElement; trigger?: HTMLElement; point?: ContextMenuPo
 	| { kind: 'group'; group: UiSessionGroup }
 	| { kind: 'project'; workspace: string }
 	| { kind: 'edit-group'; group?: UiSessionGroup }
+	| { kind: 'rename-project'; workspace: string }
 );
 
 /** A sidebar list that participates in drag reordering. */
@@ -143,10 +144,24 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 	const [pinSaving, setPinSaving] = useState(false);
 	const pinWritePending = useRef(false);
 	const pinRequest = useRef(0);
+	const [projectNicknames, setProjectNicknames] = useState<Record<string, WorkspaceProjectNickname>>({});
+	const nicknameRequest = useRef(0);
+	const [nicknameDraft, setNicknameDraft] = useState('');
 	const workspacePaths = useMemo(() => {
 		const paths = cwd && !workspaces.includes(cwd) ? [cwd, ...workspaces] : workspaces;
 		return defaultWorkspace && !paths.some(path => sidebarWorkspaceKey(path) === sidebarWorkspaceKey(defaultWorkspace)) ? [...paths, defaultWorkspace] : paths;
 	}, [cwd, workspaces, defaultWorkspace]);
+	// Project remarks live in each root's sole .code-workspace file (wpmanager.wpnickname);
+	// projects without one simply report no remark and never gain a generated file.
+	useEffect(() => {
+		if (!bridge || workspacePaths.length === 0) { setProjectNicknames({}); return; }
+		const request = ++nicknameRequest.current;
+		void Promise.all(workspacePaths.map(async (workspace) => {
+			try { return [workspace, await bridge.getProjectNickname(workspace)] as const; }
+			catch { return [workspace, { nickname: null, hasWorkspaceFile: false }] as const; }
+		})).then((entries) => { if (nicknameRequest.current === request) setProjectNicknames(Object.fromEntries(entries)); });
+	}, [bridge, workspacePaths]);
+	const projectDisplayName = (workspace: string) => projectNicknames[workspace]?.nickname || workspaceName(workspace);
 	const projectPaths = useMemo(() => sidebarProjectPaths(workspaces, null, conversationWorkspaces), [workspaces, conversationWorkspaces]);
 	const pinnedWorkspaceSet = useMemo(() => new Set(splitSidebarProjects(projectPaths, new Set(pinnedProjects)).pinned), [projectPaths, pinnedProjects]);
 	const pinnedWorkspaceKeys = useMemo(() => new Set([...pinnedWorkspaceSet].map(sidebarWorkspaceKey)), [pinnedWorkspaceSet]);
@@ -630,6 +645,11 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 		try { await action(); if (navigate) onNavigate(); }
 		catch (error) { onError(error instanceof Error ? error.message : String(error)); }
 	}
+	function openProjectNickname(workspace: string, anchor: HTMLElement) {
+		setNicknameDraft(projectNicknames[workspace]?.nickname ?? '');
+		setFormError(null);
+		setPopup({ kind: 'rename-project', anchor, trigger: anchor, workspace });
+	}
 	function toggleProjectPin(workspace: string, anchor: HTMLElement) {
 		if (!bridge || !pinsReady || pinsLoading || pinWritePending.current) return;
 		const wasPinned = pinnedWorkspaceSet.has(workspace);
@@ -809,7 +829,7 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 	}
 	function renderProject(workspace: string) {
 		const items = projectByWorkspace.get(workspace)?.sessions ?? [];
-		return section(projectKey(workspace), workspaceName(workspace), <>
+		return section(projectKey(workspace), projectDisplayName(workspace), <>
 			{showUnsaved && workspace === unsavedProject && unsaved()}
 			{items.slice(0, limitOf(projectKey(workspace))).map(session => renderSession(session, null))}
 			{moreButton(projectKey(workspace), items.length)}
@@ -1011,7 +1031,7 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 				</>)}
 			</>}
 			{!projectPaths.length && !archived && <div className="pd-project-empty"><Icon name="folder" width="18" height="18" aria-hidden="true" /><p>{t('sidebar.noProjects')}</p><button type="button" disabled={!bridge || status === 'starting' || workspaceNavigationPending || navigating} onClick={() => { setPopup(null); setCreatingProject(true); }}><Icon name="plus" width="13" height="13" aria-hidden="true" />{t('sidebar.newProject')}</button></div>}
-			{workspacePaths.map((workspace) => workspaceRequests[workspace]?.phase === 'error' ? <div key={workspace} className="pd-workspace-list-error" role="alert"><strong>{!isConversationWorkspace(workspace, conversationWorkspaces) && `${workspaceName(workspace)} · `}{copy.loadFailed}</strong><p>{workspaceRequests[workspace]?.error}</p><button type="button" onClick={() => void refreshWorkspaceSessions(workspace)}>{copy.retry}</button></div> : null)}
+			{workspacePaths.map((workspace) => workspaceRequests[workspace]?.phase === 'error' ? <div key={workspace} className="pd-workspace-list-error" role="alert"><strong>{!isConversationWorkspace(workspace, conversationWorkspaces) && `${projectDisplayName(workspace)} · `}{copy.loadFailed}</strong><p>{workspaceRequests[workspace]?.error}</p><button type="button" onClick={() => void refreshWorkspaceSessions(workspace)}>{copy.retry}</button></div> : null)}
 		</div>
 		{/* A failing dialog shows a local error card instead of blanking the whole window. */}
 		<ScopedErrorBoundary scope="dialog" resetKeys={[creatingProject, projectRemovalTarget, trashTarget, bulkTrashTarget]}>
@@ -1040,9 +1060,9 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 		}} />}
 		</ScopedErrorBoundary>
 		{drag && (ghostSession || ghostGroup || ghostProject) && <div className="pd-sidebar-drag-ghost" style={{ left: drag.ghost.x, top: drag.ghost.y, width: drag.ghost.width }} aria-hidden>
-			{ghostProject ? <><Icon name={pinnedWorkspaceSet.has(ghostProject) ? 'pin' : 'folder'} width="14" height="14" /><span>{workspaceName(ghostProject)}</span></> : ghostGroup ? <><Icon name="hash" width="14" height="14" /><span>{ghostGroup.name}</span></> : <span>{titleOf(ghostSession!)}</span>}
+			{ghostProject ? <><Icon name={pinnedWorkspaceSet.has(ghostProject) ? 'pin' : 'folder'} width="14" height="14" /><span>{projectDisplayName(ghostProject)}</span></> : ghostGroup ? <><Icon name="hash" width="14" height="14" /><span>{ghostGroup.name}</span></> : <span>{titleOf(ghostSession!)}</span>}
 		</div>}
-		{popup && <SidebarPopover key={popup.kind} anchor={popup.anchor} trigger={popup.trigger} point={popup.point} label={t(popup.kind === 'filter' ? 'sidebar.viewOptions' : popup.kind === 'edit-group' ? popup.group ? 'sidebar.renameGroup' : 'sidebar.newGroup' : popup.kind === 'group' ? 'sidebar.groupActions' : popup.kind === 'project' ? 'sidebar.projectActions' : 'sidebar.menuTitle')} dialog={popup.kind === 'edit-group'} className={popup.kind === 'session' || popup.kind === 'project' || popup.kind === 'group' ? 'pd-context-menu' : undefined} onClose={() => setPopup(null)}>
+		{popup && <SidebarPopover key={popup.kind} anchor={popup.anchor} trigger={popup.trigger} point={popup.point} label={t(popup.kind === 'filter' ? 'sidebar.viewOptions' : popup.kind === 'rename-project' ? 'sidebar.projectNicknameEdit' : popup.kind === 'edit-group' ? popup.group ? 'sidebar.renameGroup' : 'sidebar.newGroup' : popup.kind === 'group' ? 'sidebar.groupActions' : popup.kind === 'project' ? 'sidebar.projectActions' : 'sidebar.menuTitle')} dialog={popup.kind === 'edit-group' || popup.kind === 'rename-project'} className={popup.kind === 'session' || popup.kind === 'project' || popup.kind === 'group' ? 'pd-context-menu' : undefined} onClose={() => setPopup(null)}>
 			{popup.kind === 'filter' && <>
 				{preferences.mode === 'project' && !archived && <><div className="pd-sidebar-menu-label">{t('sidebar.organize')}</div>{radio(t('sidebar.byProject'), preferences.projectView === 'project', () => preference({ projectView: 'project' }))}{radio(t('sidebar.byTime'), preferences.projectView === 'timeline', () => preference({ projectView: 'timeline' }))}<hr /></>}
 				<div className="pd-sidebar-menu-label">{t('sidebar.filterHeading')}</div>
@@ -1082,6 +1102,7 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 				{menuItem({ icon: 'panelRight', label: t('sidebar.openIn'), shortcut: 'O', submenu: 'open' })}
 				<hr />
 				{menuItem({ icon: 'pin', label: t(pinnedWorkspaceSet.has(popup.workspace) ? 'sidebar.projectUnpin' : 'sidebar.projectPin'), shortcut: 'P', action: pinnedWorkspaceSet.has(popup.workspace) ? 'unpin-project' : 'pin-project', disabled: !bridge || !pinsReady || pinsLoading || pinSaving, onSelect: () => toggleProjectPin(popup.workspace, popup.trigger ?? popup.anchor) })}
+				{menuItem({ icon: 'pencil', label: t('sidebar.projectNickname'), shortcut: 'B', disabled: !bridge, onSelect: () => openProjectNickname(popup.workspace, popup.trigger ?? popup.anchor) })}
 				{menuItem({ icon: 'copy', label: t('sidebar.copyProjectPath'), shortcut: 'C', onSelect: () => { const workspace = popup.workspace; setPopup(null); void perform(() => navigator.clipboard.writeText(workspace)); } })}
 				<hr />
 				{menuItem({ icon: 'trash', label: t('sidebar.projectRemove'), shortcut: 'Delete', danger: true, disabled: pinSaving, onSelect: () => {
@@ -1092,10 +1113,34 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 						const phase = sessionRuntimes[sessionRuntimeKey(workspace, session.path)]?.phase;
 						return phase === 'running' || phase === 'waiting-input' || phase === 'waiting-approval';
 					}).length + (workspace === cwd && !sessionPath && (status === 'busy' || status === 'starting') ? 1 : 0);
-					setProjectRemovalTarget({ summary: { workspace, name: workspaceName(workspace), sessionCount: projectSessions.length, activeCount }, anchor });
+					setProjectRemovalTarget({ summary: { workspace, name: projectDisplayName(workspace), sessionCount: projectSessions.length, activeCount }, anchor });
 					setPopup(null);
 				} })}
 			</>}
+			{popup.kind === 'rename-project' && <form onSubmit={(event) => {
+				event.preventDefault();
+				if (!bridge || pending) return;
+				const target = popup;
+				const nickname = nicknameDraft.trim();
+				setFormError(null);
+				setPending(true);
+				void (async () => {
+					try {
+						await bridge.setProjectNickname(target.workspace, nickname);
+									setProjectNicknames((current) => ({ ...current, [target.workspace]: { nickname: nickname || null, hasWorkspaceFile: current[target.workspace]?.hasWorkspaceFile ?? false } }));
+						if (popupRef.current === target) setPopup(null);
+					} catch (error) {
+						const message = error instanceof Error ? error.message : String(error);
+						if (popupRef.current === target) setFormError(message); else onError(message);
+					} finally { setPending(false); }
+				})();
+			}}>
+				<label htmlFor="pd-sidebar-project-nickname">{t('sidebar.projectNicknameEdit')}</label>
+				<input id="pd-sidebar-project-nickname" maxLength={80} value={nicknameDraft} placeholder={t('sidebar.projectNicknamePlaceholder')} disabled={pending} onChange={(event) => setNicknameDraft(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && event.nativeEvent.isComposing) event.preventDefault(); }} />
+				<p className="pd-sidebar-menu-note">{t(projectNicknames[popup.workspace]?.hasWorkspaceFile ? 'sidebar.projectNicknameHintFile' : 'sidebar.projectNicknameHintApp')}</p>
+				{formError && <p role="alert">{formError}</p>}
+				<div className="pd-sidebar-form-actions"><button type="button" onClick={() => { setPopup(null); popup.anchor.focus(); }}>{t('sidebar.cancel')}</button><button type="submit" disabled={pending}>{t(pending ? 'sidebar.saving' : 'sidebar.save')}</button></div>
+			</form>}
 			{popup.kind === 'group' && <>
 				{menuItem({ icon: 'pencil', label: t('sidebar.renameGroup'), shortcut: 'R', onSelect: () => editGroup(popup.trigger ?? popup.anchor, popup.group) })}
 				{menuItem({ icon: 'close', label: t('sidebar.dissolveGroup'), shortcut: 'D', disabled: pending, onSelect: () => { const group = popup.group; setPopup(null); void perform(async () => { await changeGroups({ type: 'delete', id: group.id }); }); } })}
