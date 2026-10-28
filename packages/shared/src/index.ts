@@ -154,6 +154,8 @@ export const IPC_CHANNELS = {
   workspaceOpenInVsCode: 'workspace:open-in-vscode',
   workspaceOpenWith: 'workspace:open-with',
   workspaceOpeners: 'workspace:openers',
+  workspaceProjectNickname: 'workspace:project-nickname',
+  workspaceSetProjectNickname: 'workspace:set-project-nickname',
   workspaceCommitContext: 'workspace:commit-context',
   workspaceCommit: 'workspace:commit',
   workspaceCommandStart: 'workspace:command-start',
@@ -876,6 +878,14 @@ export interface WorkspaceOpener {
   /** Extracted editor icon as a data URL, when the executable was found. */
   icon?: string;
 }
+
+/** The project remark (备用名) stored as wpmanager.wpnickname in the root's sole .code-workspace file. */
+export interface WorkspaceProjectNickname {
+  /** The stored remark; null when the field is absent or the file is missing or ambiguous. */
+  nickname: string | null;
+  /** True when the project root contains exactly one .code-workspace file. */
+  hasWorkspaceFile: boolean;
+}
 export interface WorkspaceBranches {
   isRepository: boolean;
   current: string | null;
@@ -1095,6 +1105,10 @@ export interface AgentBridge extends InputFeatureBridge, DataFeaturesBridge, Wor
   openWorkspaceWith(cwd: string, openerId: string): Promise<void>;
   /** Lists apps able to open the workspace for the open-with picker. */
   listWorkspaceOpeners(): Promise<WorkspaceOpener[]>;
+  /** Reads wpmanager.wpnickname from the project root's sole .code-workspace file; never creates the file. */
+  getProjectNickname(cwd: string): Promise<WorkspaceProjectNickname>;
+  /** Writes wpmanager.wpnickname into the existing sole .code-workspace file; fails when the file is absent. */
+  setProjectNickname(cwd: string, nickname: string): Promise<void>;
   /** Assembles the diff/status context used to generate a commit message. */
   getWorkspaceCommitContext(): Promise<string>;
   /** Stages all changes and commits them; returns the short commit hash. */

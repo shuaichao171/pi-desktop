@@ -1059,6 +1059,7 @@ const mainOnlyChannels = new Set<string>([
 	IPC_CHANNELS.workspaceGitSync, IPC_CHANNELS.workspaceGitCreateBranch,
 	IPC_CHANNELS.workspaceOpenPathInEditor, IPC_CHANNELS.workspaceRevealPath, IPC_CHANNELS.workspaceOpenInVsCode, IPC_CHANNELS.workspaceOpenWith,
 	IPC_CHANNELS.workspaceOpeners, IPC_CHANNELS.workspaceCommitContext, IPC_CHANNELS.workspaceCommit,
+	IPC_CHANNELS.workspaceProjectNickname, IPC_CHANNELS.workspaceSetProjectNickname,
 	IPC_CHANNELS.workspaceCommandStart, IPC_CHANNELS.workspaceCommandStop, IPC_CHANNELS.workspaceWatch,
 	WORKBENCH_FEATURE_CHANNELS.getWorkspaceCommitPreview, WORKBENCH_FEATURE_CHANNELS.commitWorkspacePreview,
 	WORKBENCH_FEATURE_CHANNELS.createTaskWorktree, WORKBENCH_FEATURE_CHANNELS.listTaskWorktrees, WORKBENCH_FEATURE_CHANNELS.bindTaskWorktree,

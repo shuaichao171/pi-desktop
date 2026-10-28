@@ -54,6 +54,14 @@ export function registerWorkbenchIpc(getWorkspace: () => string): WorkbenchServi
 		await service.revealPathInFolder(relativePath, (path) => shell.showItemInFolder(path));
 	});
 	handleRendererInvoke(IPC_CHANNELS.workspaceOpeners, () => service.listWorkspaceOpeners());
+	handleRendererInvoke(IPC_CHANNELS.workspaceProjectNickname, async (_event, cwd: unknown) => {
+		if (typeof cwd !== 'string') throw new Error('工作区路径无效');
+		return service.readProjectNickname(cwd);
+	});
+	handleRendererInvoke(IPC_CHANNELS.workspaceSetProjectNickname, async (_event, cwd: unknown, nickname: unknown) => {
+		if (typeof cwd !== 'string' || typeof nickname !== 'string') throw new Error('备注名参数无效');
+		await service.writeProjectNickname(cwd, nickname);
+	});
 	handleRendererInvoke(IPC_CHANNELS.workspaceCommitContext, () => service.gitCommitContext());
 	handleRendererInvoke(IPC_CHANNELS.workspaceCommit, (_event, message: string) => service.gitCommit(message));
 	handleRendererInvoke(IPC_CHANNELS.workspaceListEntries, (_event, relativePath?: string) => service.listEntries(relativePath));

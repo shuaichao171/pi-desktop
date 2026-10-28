@@ -3,12 +3,12 @@ import { execFile, spawn, type ChildProcessWithoutNullStreams, type ExecFileExce
 import { randomUUID } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { mkdtempSync, rmSync } from 'node:fs';
-import { lstat, mkdir, open, readFile, readdir, realpath, rename, stat } from 'node:fs/promises';
+import { lstat, mkdir, open, readFile, readdir, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
 import { detectEditors, launchEditor, type DetectedEditor } from './editorCatalog.ts';
-import type { WorkspaceBranches, WorkspaceCommandEvent, WorkspaceEntry, WorkspaceGitCheckoutIssue, WorkspaceGitCheckoutResult, WorkspaceGitGraphCommit, WorkspaceGitLogEntry, WorkspaceGitStatus, WorkspaceOpener } from '@pidesktop/shared';
+import type { WorkspaceBranches, WorkspaceCommandEvent, WorkspaceEntry, WorkspaceGitCheckoutIssue, WorkspaceGitCheckoutResult, WorkspaceGitGraphCommit, WorkspaceGitLogEntry, WorkspaceGitStatus, WorkspaceOpener, WorkspaceProjectNickname } from '@pidesktop/shared';
 
 const execFileAsync = promisify(execFile);
 const MAX_PREVIEW_BYTES = 1024 * 1024;
@@ -45,6 +45,21 @@ export async function soleCodeWorkspaceFile(root: string): Promise<string | null
 		const entries = await readdir(root, { withFileTypes: true });
 		const files = entries.filter((item) => item.isFile() && item.name.toLowerCase().endsWith('.code-workspace')).map((item) => item.name);
 		return files.length === 1 ? join(root, files[0]!) : null;
+	} catch {
+		return null;
+	}
+}
+
+/** .code-workspace files are small config JSON; anything larger is treated as unreadable. */
+const NICKNAME_FILE_LIMIT = 1024 * 1024;
+
+/** Reads wpmanager.wpnickname from a .code-workspace file; unreadable or invalid content yields null. */
+async function readWorkspaceNickname(file: string): Promise<string | null> {
+	try {
+		if ((await stat(file)).size > NICKNAME_FILE_LIMIT) return null;
+		const parsed = JSON.parse(await readFile(file, 'utf8')) as { wpmanager?: { wpnickname?: unknown } };
+		const nickname = parsed?.wpmanager?.wpnickname;
+		return typeof nickname === 'string' && nickname.trim() ? nickname.trim() : null;
 	} catch {
 		return null;
 	}
@@ -191,6 +206,63 @@ export class WorkbenchService {
 
 	async openWorkspaceInVsCode(cwd: string): Promise<void> {
 		await this.openWorkspaceWith(cwd, 'vscode');
+	}
+
+	/**
+	 * The project remark (备用名) lives in the root's sole .code-workspace file
+	 * under wpmanager.wpnickname. Absent or ambiguous workspace files report no
+	 * nickname; reading never creates or writes anything.
+	 */
+	async readProjectNickname(cwd: string): Promise<WorkspaceProjectNickname> {
+		const root = await this.workspaceRoot(cwd);
+		const file = await soleCodeWorkspaceFile(root);
+		if (!file) return { nickname: null, hasWorkspaceFile: false };
+		return { nickname: await readWorkspaceNickname(file), hasWorkspaceFile: true };
+	}
+
+	/**
+	 * Writes wpmanager.wpnickname into the existing sole .code-workspace file,
+	 * preserving every other field and the trailing newline. The file itself is
+	 * never created: without a workspace file there is nothing to persist.
+	 */
+	async writeProjectNickname(cwd: string, nickname: string): Promise<void> {
+		if (typeof nickname !== 'string' || nickname.includes('\0')) throw new Error('备注名无效');
+		const trimmed = nickname.trim();
+		if (trimmed.length > 80) throw new Error('备注名过长（最多 80 个字符）');
+		const root = await this.workspaceRoot(cwd);
+		const file = await soleCodeWorkspaceFile(root);
+		if (!file) throw new Error('项目根目录没有 .code-workspace 文件，无法保存备注名');
+		let original: string;
+		try {
+			original = (await stat(file)).size > NICKNAME_FILE_LIMIT ? '' : await readFile(file, 'utf8');
+		} catch (error) {
+			throw new Error(`读取 .code-workspace 文件失败：${error instanceof Error ? error.message : String(error)}`);
+		}
+		if (!original) throw new Error('.code-workspace 文件过大或不可读，无法保存备注名');
+		let parsed: Record<string, unknown>;
+		try {
+			parsed = JSON.parse(original) as Record<string, unknown>;
+		} catch {
+			throw new Error('.code-workspace 文件不是有效的 JSON，无法保存备注名');
+		}
+		if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('.code-workspace 文件不是 JSON 对象，无法保存备注名');
+		const manager = parsed.wpmanager && typeof parsed.wpmanager === 'object' && !Array.isArray(parsed.wpmanager)
+			? parsed.wpmanager as Record<string, unknown>
+			: {};
+		if (trimmed) manager.wpnickname = trimmed;
+		else delete manager.wpnickname;
+		if (Object.keys(manager).length > 0) parsed.wpmanager = manager;
+		else delete parsed.wpmanager;
+		const serialized = JSON.stringify(parsed, null, 2) + (original.endsWith('\n') ? '\n' : '');
+		// Same-directory temp file + rename keeps a crash from truncating the workspace file.
+		const staging = `${file}.pi-nickname-tmp`;
+		try {
+			await writeFile(staging, serialized, 'utf8');
+			await rename(staging, file);
+		} catch (error) {
+			await rm(staging, { force: true }).catch(() => {});
+			throw new Error(`保存备注名失败：${error instanceof Error ? error.message : String(error)}`);
+		}
 	}
 
 	/**
