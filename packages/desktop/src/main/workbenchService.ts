@@ -64,6 +64,13 @@ async function readWorkspaceNickname(file: string): Promise<string | null> {
 		return null;
 	}
 }
+
+/** App-side fallback store for project remarks when a root has no .code-workspace file. */
+export interface ProjectNicknameStore {
+	read(cwd: string): Promise<string | null>;
+	write(cwd: string, nickname: string): Promise<void>;
+	clear(cwd: string): Promise<void>;
+}
 /**
  * Runs the VS Code CLI from PATH. On Windows it is `code.cmd`, and Node refuses
  * to spawn batch files without a shell (CVE-2024-27980, EINVAL). Route it
@@ -114,13 +121,16 @@ export class WorkbenchService {
 	private readonly getWorkspace: () => string;
 	private readonly emit: (event: WorkspaceCommandEvent) => void;
 	private safeHooksPath: string | null = null;
+	private readonly nicknameStore: ProjectNicknameStore | null;
 
 	constructor(
 		getWorkspace: () => string,
 		emit: (event: WorkspaceCommandEvent) => void,
+		nicknameStore?: ProjectNicknameStore,
 	) {
 		this.getWorkspace = getWorkspace;
 		this.emit = emit;
+		this.nicknameStore = nicknameStore ?? null;
 	}
 
 	private async workspaceRoot(cwd = this.getWorkspace()): Promise<string> {
@@ -263,6 +273,39 @@ export class WorkbenchService {
 			await rm(staging, { force: true }).catch(() => {});
 			throw new Error(`保存备注名失败：${error instanceof Error ? error.message : String(error)}`);
 		}
+	}
+
+	/**
+	 * The visible remark: the .code-workspace file wins; without the file the
+	 * injected app-side store answers and nothing on disk is created. Unreadable
+	 * projects (deleted folders and the like) degrade to the app-side store.
+	 */
+	async getProjectNickname(cwd: string): Promise<WorkspaceProjectNickname> {
+		const file = await this.readProjectNickname(cwd).catch(() => ({ nickname: null, hasWorkspaceFile: false }));
+		if (file.nickname) return file;
+		const stored = this.nicknameStore ? await this.nicknameStore.read(cwd).catch(() => null) : null;
+		return { nickname: stored, hasWorkspaceFile: file.hasWorkspaceFile };
+	}
+
+	/**
+	 * Saves the remark into the sole .code-workspace file when one exists
+	 * (clearing any shadowed app-side copy), otherwise into the app-side store;
+	 * the file itself is never created. An empty remark clears everywhere.
+	 */
+	async setProjectNickname(cwd: string, nickname: string): Promise<void> {
+		if (typeof nickname !== 'string' || nickname.includes('\0')) throw new Error('备注名无效');
+		const trimmed = nickname.trim();
+		if (trimmed.length > 80) throw new Error('备注名过长（最多 80 个字符）');
+		const hasFile = (await this.readProjectNickname(cwd).catch(() => null))?.hasWorkspaceFile === true;
+		if (hasFile) {
+			await this.writeProjectNickname(cwd, trimmed);
+			// The file wins on read; a stale app-side copy would resurface after a later clear.
+			if (this.nicknameStore) await this.nicknameStore.clear(cwd).catch(() => {});
+			return;
+		}
+		if (!this.nicknameStore) throw new Error('项目根目录没有 .code-workspace 文件，无法保存备注名');
+		if (trimmed) await this.nicknameStore.write(cwd, trimmed);
+		else await this.nicknameStore.clear(cwd);
 	}
 
 	/**

@@ -1,12 +1,12 @@
 import { dialog, shell } from 'electron';
 import { IPC_CHANNELS } from '@pidesktop/shared';
 import { getAppLocale } from './appLocale';
-import { WorkbenchService } from './workbenchService';
+import { WorkbenchService, type ProjectNicknameStore } from './workbenchService';
 import { ResultFileService } from './resultFileService';
 import { createWorkspaceWatcher } from './workspaceWatcher.ts';
 import { broadcastToRenderers, handleRendererInvoke, requireRendererSender } from './rendererIpc';
 
-export function registerWorkbenchIpc(getWorkspace: () => string): WorkbenchService {
+export function registerWorkbenchIpc(getWorkspace: () => string, nicknameStore?: ProjectNicknameStore): WorkbenchService {
 	const resultFiles = new ResultFileService(getWorkspace);
 	handleRendererInvoke(IPC_CHANNELS.resultFileOpen, (event, target: unknown) => resultFiles.openResultFile(target, (path) => {
 		requireRendererSender(event);
@@ -22,7 +22,7 @@ export function registerWorkbenchIpc(getWorkspace: () => string): WorkbenchServi
 	}));
 	const service = new WorkbenchService(getWorkspace, (event) => {
 		broadcastToRenderers(IPC_CHANNELS.workspaceCommandEvent, event);
-	});
+	}, nicknameStore);
 	const watcher = createWorkspaceWatcher((event) => broadcastToRenderers(IPC_CHANNELS.workspaceChanged, event));
 	handleRendererInvoke(IPC_CHANNELS.workspaceWatch, (_event, cwd: unknown) => {
 		if (cwd === null) { watcher.watch(null); return; }
@@ -56,11 +56,11 @@ export function registerWorkbenchIpc(getWorkspace: () => string): WorkbenchServi
 	handleRendererInvoke(IPC_CHANNELS.workspaceOpeners, () => service.listWorkspaceOpeners());
 	handleRendererInvoke(IPC_CHANNELS.workspaceProjectNickname, async (_event, cwd: unknown) => {
 		if (typeof cwd !== 'string') throw new Error('工作区路径无效');
-		return service.readProjectNickname(cwd);
+		return service.getProjectNickname(cwd);
 	});
 	handleRendererInvoke(IPC_CHANNELS.workspaceSetProjectNickname, async (_event, cwd: unknown, nickname: unknown) => {
 		if (typeof cwd !== 'string' || typeof nickname !== 'string') throw new Error('备注名参数无效');
-		await service.writeProjectNickname(cwd, nickname);
+		await service.setProjectNickname(cwd, nickname);
 	});
 	handleRendererInvoke(IPC_CHANNELS.workspaceCommitContext, () => service.gitCommitContext());
 	handleRendererInvoke(IPC_CHANNELS.workspaceCommit, (_event, message: string) => service.gitCommit(message));

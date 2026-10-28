@@ -1102,7 +1102,7 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 				{menuItem({ icon: 'panelRight', label: t('sidebar.openIn'), shortcut: 'O', submenu: 'open' })}
 				<hr />
 				{menuItem({ icon: 'pin', label: t(pinnedWorkspaceSet.has(popup.workspace) ? 'sidebar.projectUnpin' : 'sidebar.projectPin'), shortcut: 'P', action: pinnedWorkspaceSet.has(popup.workspace) ? 'unpin-project' : 'pin-project', disabled: !bridge || !pinsReady || pinsLoading || pinSaving, onSelect: () => toggleProjectPin(popup.workspace, popup.trigger ?? popup.anchor) })}
-				{menuItem({ icon: 'pencil', label: t('sidebar.projectNickname'), shortcut: 'B', disabled: !bridge || projectNicknames[popup.workspace]?.hasWorkspaceFile === false, onSelect: () => openProjectNickname(popup.workspace, popup.trigger ?? popup.anchor) })}
+				{menuItem({ icon: 'pencil', label: t('sidebar.projectNickname'), shortcut: 'B', disabled: !bridge, onSelect: () => openProjectNickname(popup.workspace, popup.trigger ?? popup.anchor) })}
 				{menuItem({ icon: 'copy', label: t('sidebar.copyProjectPath'), shortcut: 'C', onSelect: () => { const workspace = popup.workspace; setPopup(null); void perform(() => navigator.clipboard.writeText(workspace)); } })}
 				<hr />
 				{menuItem({ icon: 'trash', label: t('sidebar.projectRemove'), shortcut: 'Delete', danger: true, disabled: pinSaving, onSelect: () => {
@@ -1127,7 +1127,7 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 				void (async () => {
 					try {
 						await bridge.setProjectNickname(target.workspace, nickname);
-						setProjectNicknames((current) => ({ ...current, [target.workspace]: { nickname: nickname || null, hasWorkspaceFile: true } }));
+									setProjectNicknames((current) => ({ ...current, [target.workspace]: { nickname: nickname || null, hasWorkspaceFile: current[target.workspace]?.hasWorkspaceFile ?? false } }));
 						if (popupRef.current === target) setPopup(null);
 					} catch (error) {
 						const message = error instanceof Error ? error.message : String(error);
@@ -1137,7 +1137,7 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 			}}>
 				<label htmlFor="pd-sidebar-project-nickname">{t('sidebar.projectNicknameEdit')}</label>
 				<input id="pd-sidebar-project-nickname" maxLength={80} value={nicknameDraft} placeholder={t('sidebar.projectNicknamePlaceholder')} disabled={pending} onChange={(event) => setNicknameDraft(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && event.nativeEvent.isComposing) event.preventDefault(); }} />
-				<p className="pd-sidebar-menu-note">{t('sidebar.projectNicknameHint')}</p>
+				<p className="pd-sidebar-menu-note">{t(projectNicknames[popup.workspace]?.hasWorkspaceFile ? 'sidebar.projectNicknameHintFile' : 'sidebar.projectNicknameHintApp')}</p>
 				{formError && <p role="alert">{formError}</p>}
 				<div className="pd-sidebar-form-actions"><button type="button" onClick={() => { setPopup(null); popup.anchor.focus(); }}>{t('sidebar.cancel')}</button><button type="submit" disabled={pending}>{t(pending ? 'sidebar.saving' : 'sidebar.save')}</button></div>
 			</form>}

@@ -879,11 +879,11 @@ export interface WorkspaceOpener {
   icon?: string;
 }
 
-/** The project remark (备用名) stored as wpmanager.wpnickname in the root's sole .code-workspace file. */
+/** The effective project remark (备用名): the root's sole .code-workspace file wins, app-side storage answers without one. */
 export interface WorkspaceProjectNickname {
-  /** The stored remark; null when the field is absent or the file is missing or ambiguous. */
+  /** The remark; null when unset (neither the file field nor app-side storage has one). */
   nickname: string | null;
-  /** True when the project root contains exactly one .code-workspace file. */
+  /** True when the project root contains exactly one .code-workspace file (writes then target the file). */
   hasWorkspaceFile: boolean;
 }
 export interface WorkspaceBranches {
@@ -1105,9 +1105,9 @@ export interface AgentBridge extends InputFeatureBridge, DataFeaturesBridge, Wor
   openWorkspaceWith(cwd: string, openerId: string): Promise<void>;
   /** Lists apps able to open the workspace for the open-with picker. */
   listWorkspaceOpeners(): Promise<WorkspaceOpener[]>;
-  /** Reads wpmanager.wpnickname from the project root's sole .code-workspace file; never creates the file. */
+  /** Reads the project remark: wpmanager.wpnickname from the root's sole .code-workspace file wins, falling back to app-side storage. */
   getProjectNickname(cwd: string): Promise<WorkspaceProjectNickname>;
-  /** Writes wpmanager.wpnickname into the existing sole .code-workspace file; fails when the file is absent. */
+  /** Saves the remark into the existing sole .code-workspace file when present, otherwise app-side; the file is never created. */
   setProjectNickname(cwd: string, nickname: string): Promise<void>;
   /** Assembles the diff/status context used to generate a commit message. */
   getWorkspaceCommitContext(): Promise<string>;
