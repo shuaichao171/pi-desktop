@@ -172,23 +172,47 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 	const [barCssDraft, setBarCssDraft] = useState<string | null>(null);
 	const [aiPromptCopied, setAiPromptCopied] = useState(false);
 	const barRequest = useRef(0);
+	// Serialized per-workspace appearance writes. The batch re-read awaits the
+	// queue and compares sequence numbers, so a read dispatched before an apply
+	// can never overwrite the fresher local value (the "flash then vanish" race).
+	const appearanceWrites = useRef(new Map<string, { seq: number; done: Promise<void> }>());
 	useEffect(() => {
-		if (!bridge || workspacePaths.length === 0) { setProjectBars({}); return; }
+		if (!bridge || workspacePaths.length === 0) return;
 		const request = ++barRequest.current;
 		void Promise.all(workspacePaths.map(async (workspace) => {
-			try { return [workspace, (await bridge.getProjectAppearance(workspace)).bar] as const; }
-			catch { return [workspace, null] as const; }
-		})).then((entries) => { if (barRequest.current === request) setProjectBars(Object.fromEntries(entries)); });
+			const pending = appearanceWrites.current.get(workspace);
+			if (pending) await pending.done.catch(() => {});
+			const seq = appearanceWrites.current.get(workspace)?.seq ?? 0;
+			try { return [workspace, (await bridge.getProjectAppearance(workspace)).bar, seq] as const; }
+			catch { return [workspace, null, seq] as const; }
+		})).then((entries) => {
+			if (barRequest.current !== request) return;
+			setProjectBars((current) => {
+				const next = { ...current };
+				for (const [workspace, bar, seq] of entries) {
+					if ((appearanceWrites.current.get(workspace)?.seq ?? 0) > seq) continue; // A newer local apply owns this row.
+					next[workspace] = bar;
+				}
+				return next;
+			});
+		});
 	}, [bridge, workspacePaths]);
 	/** Live-previews a background bar (newlines collapsed); a failed write re-reads the stored truth. */
 	const applyProjectBar = (workspace: string, bar: string | null) => {
 		const normalized = bar === null ? null : normalizeProjectBarValue(bar);
 		if (bar !== null && normalized === null) return; // Unrenderable CSS: nothing to preview or store.
-		setProjectBars((current) => ({ ...current, [workspace]: normalized }));
-		if (!bridge?.setProjectAppearance) return;
-		void bridge.setProjectAppearance(workspace, { bar: normalized }).catch(() => {
-			void bridge.getProjectAppearance(workspace).then((appearance) => setProjectBars((current) => ({ ...current, [workspace]: appearance.bar }))).catch(() => {});
-		});
+		const previous = appearanceWrites.current.get(workspace);
+		const entry = { seq: (previous?.seq ?? 0) + 1, done: Promise.resolve() };
+		appearanceWrites.current.set(workspace, entry);
+		entry.done = (async () => {
+			setProjectBars((current) => ({ ...current, [workspace]: normalized }));
+			if (!bridge?.setProjectAppearance) return;
+			try { await bridge.setProjectAppearance(workspace, { bar: normalized }); }
+			catch {
+				const truth = await bridge.getProjectAppearance(workspace).then((appearance) => appearance.bar).catch(() => null);
+				setProjectBars((current) => ({ ...current, [workspace]: truth }));
+			}
+		})();
 	};
 	/** The current bar when it is user-pasted CSS (neither a preset id nor a hex color). */
 	const customBarCss = (workspace: string) => {
