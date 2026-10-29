@@ -748,7 +748,7 @@ export const translations: Record<string, { 'zh-CN': string; 'en-US': string }> 
   'sidebar.appearance': { 'zh-CN': '外观', 'en-US': 'Appearance' },
   'sidebar.appearanceBar': { 'zh-CN': '背景条', 'en-US': 'Background bar' },
   'sidebar.appearanceCustom': { 'zh-CN': '自定义颜色', 'en-US': 'Custom color' },
-  'sidebar.appearancePresets': { 'zh-CN': '炫酷预设', 'en-US': 'Cool presets' },
+  'sidebar.appearancePresets': { 'zh-CN': '预设', 'en-US': 'Presets' },
   'sidebar.appearanceReset': { 'zh-CN': '恢复默认', 'en-US': 'Reset to default' },
   'sidebar.barAurora': { 'zh-CN': '极光', 'en-US': 'Aurora' },
   'sidebar.barSunset': { 'zh-CN': '暮色', 'en-US': 'Sunset' },

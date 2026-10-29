@@ -119,6 +119,7 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 	// Flyout of the open context menu ("打开方式 ›", "移动到分组 ›"); it closes with its menu.
 	const [submenu, setSubmenu] = useState<{ key: 'open' | 'move' | 'appearance'; anchor: HTMLElement; keyboard: boolean } | null>(null);
 	const [presetFlyout, setPresetFlyout] = useState<{ anchor: HTMLElement; keyboard: boolean } | null>(null);
+	const presetTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 	const submenuTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 	const [openers, setOpeners] = useState<WorkspaceOpener[] | null>(null);
 	const openersRequested = useRef(false);
@@ -126,7 +127,7 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 	// Closing the main menu or its flyout also dismisses the nested presets flyout;
 	// presetFlyout's own changes must not reset it (that would self-close it).
 	useEffect(() => { setPresetFlyout(null); }, [popup, submenu]);
-	useEffect(() => () => { if (submenuTimer.current) clearTimeout(submenuTimer.current); }, []);
+	useEffect(() => () => { if (submenuTimer.current) clearTimeout(submenuTimer.current); if (presetTimer.current) clearTimeout(presetTimer.current); }, []);
 	const [creatingProject, setCreatingProject] = useState(false);
 	const [trashTarget, setTrashTarget] = useState<{ session: SidebarSession; anchor: HTMLElement; nextPath?: string } | null>(null);
 	const [projectRemovalTarget, setProjectRemovalTarget] = useState<{ summary: ProjectRemovalSummary; anchor: HTMLElement } | null>(null);
@@ -917,6 +918,18 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 	function scheduleSubmenuClose() {
 		clearSubmenuTimer();
 		submenuTimer.current = setTimeout(() => setSubmenu(null), 220);
+	function clearPresetTimer() {
+		if (presetTimer.current) { clearTimeout(presetTimer.current); presetTimer.current = null; }
+	}
+	function openPresetFlyout(anchor: HTMLElement, keyboard: boolean) {
+		clearPresetTimer();
+		setPresetFlyout((current) => current?.anchor === anchor && current.keyboard === keyboard ? current : { anchor, keyboard });
+	}
+	/** Hovering another row of the appearance flyout closes the presets flyout after a short grace period. */
+	function schedulePresetClose() {
+		clearPresetTimer();
+		presetTimer.current = setTimeout(() => setPresetFlyout(null), 220);
+	}
 	}
 	/** A context-menu row: icon, label, then its single-key accelerator or a flyout chevron. */
 	function menuItem(options: { icon: IconName; label: string; shortcut?: string; onSelect?(button: HTMLButtonElement): void; disabled?: boolean; danger?: boolean; submenu?: 'open' | 'move' | 'appearance'; action?: string }) {
@@ -931,9 +944,9 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 		</button>;
 	}
 	/** A flyout row; the first nine rows answer to the digit keys shown beside them. */
-	function submenuItem(options: { key: string; label: string; index?: number; icon?: IconName; image?: string; checked?: boolean; disabled?: boolean; onSelect(): void }) {
+	function submenuItem(options: { key: string; label: string; index?: number; icon?: IconName; image?: string; checked?: boolean; disabled?: boolean; onHover?(): void; onSelect(): void }) {
 		const digit = options.index !== undefined && options.index >= 1 && options.index <= 9 ? String(options.index) : undefined;
-		return <button key={options.key} type="button" role={options.checked === undefined ? 'menuitem' : 'menuitemradio'} aria-checked={options.checked} className="pd-menu-item" data-shortcut={digit} data-shortcut-label={digit} disabled={options.disabled} onClick={options.onSelect}>
+		return <button key={options.key} type="button" role={options.checked === undefined ? 'menuitem' : 'menuitemradio'} aria-checked={options.checked} className="pd-menu-item" data-shortcut={digit} data-shortcut-label={digit} disabled={options.disabled} onMouseEnter={options.onHover} onClick={options.onSelect}>
 			{options.image ? <img className="pd-menu-app-icon" src={options.image} alt="" /> : <Icon name={options.icon ?? 'folder'} width="15" height="15" />}
 			<span>{options.label}</span>{options.checked && <Icon name="check" className="pd-menu-check" width="14" height="14" />}
 		</button>;
@@ -1213,19 +1226,20 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 				</>}
 				{submenu.key === 'appearance' && popup.kind === 'project' && <>
 					<p className="pd-sidebar-menu-note">{t('sidebar.appearanceBar')}</p>
-					<div className="pd-appearance-swatches" role="group" aria-label={t('sidebar.appearanceCustom')}>
+					<div className="pd-appearance-swatches" role="group" aria-label={t('sidebar.appearanceCustom')} onMouseEnter={schedulePresetClose}>
 						<label className={`pd-appearance-swatch pd-appearance-swatch-custom${projectBars[popup.workspace]?.startsWith('#') ? ' is-active' : ''}`} title={t('sidebar.appearanceCustom')}>
 							<input type="color" value={projectBars[popup.workspace]?.startsWith('#') ? projectBars[popup.workspace]! : '#667eea'} aria-label={t('sidebar.appearanceCustom')} onChange={(event) => applyProjectBar(popup.workspace, event.target.value)} />
 						</label>
 					</div>
 					<button type="button" role="menuitem" className="pd-menu-item" aria-haspopup="menu" aria-expanded={presetFlyout !== null}
-						onKeyDown={(event) => { if (event.key === 'ArrowRight') { event.preventDefault(); event.stopPropagation(); setPresetFlyout({ anchor: event.currentTarget, keyboard: true }); } }}
-						onClick={(event) => setPresetFlyout((current) => current?.anchor === event.currentTarget ? null : { anchor: event.currentTarget, keyboard: false })}>
+						onMouseEnter={(event) => openPresetFlyout(event.currentTarget, false)}
+						onKeyDown={(event) => { if (event.key === 'ArrowRight') { event.preventDefault(); event.stopPropagation(); openPresetFlyout(event.currentTarget, true); } }}
+						onClick={(event) => setPresetFlyout((current) => current?.anchor === event.currentTarget ? null : { anchor: event.currentTarget, keyboard: true })}>
 						<Icon name="spark" width="15" height="15" /><span>{t('sidebar.appearancePresets')}</span><Icon name="chevronRight" className="pd-menu-chevron" width="13" height="13" />
 					</button>
 					<hr />
-					{submenuItem({ key: 'bar-reset', label: t('sidebar.appearanceReset'), icon: 'rotateCcw', disabled: !projectBars[popup.workspace], onSelect: () => applyProjectBar(popup.workspace, null) })}
-					{presetFlyout && <SidebarSubmenu anchor={presetFlyout.anchor} label={t('sidebar.appearancePresets')} autoFocus={presetFlyout.keyboard}
+					{submenuItem({ key: 'bar-reset', label: t('sidebar.appearanceReset'), icon: 'rotateCcw', disabled: !projectBars[popup.workspace], onHover: schedulePresetClose, onSelect: () => applyProjectBar(popup.workspace, null) })}
+					{presetFlyout && <SidebarSubmenu anchor={presetFlyout.anchor} label={t('sidebar.appearancePresets')} autoFocus={presetFlyout.keyboard} onPointerEnter={clearPresetTimer}
 						onClose={(restore) => { const anchor = presetFlyout.anchor; setPresetFlyout(null); if (restore) anchor.focus(); }}>
 						<div className="pd-appearance-swatches" role="group" aria-label={t('sidebar.appearancePresets')}>
 							{PROJECT_BAR_PRESETS.map((preset) => {
