@@ -58,3 +58,13 @@ test('network references trip the leave-machine check; local bytes never do', as
   assert.equal(normalizeProjectBarValue('data:image/png;base64,!!!'), null, 'base64 junk is rejected');
   assert.equal(normalizeProjectBarValue('data:image/png;base64,' + 'A'.repeat(600_000)), null, 'oversized embeds are rejected');
 });
+
+test('animation tiers stay in sync with shared and only map to whitelisted keyframe names', async () => {
+  const { PROJECT_BAR_ANIM_IDS } = await import('../packages/shared/src/index.ts');
+  const { PROJECT_BAR_ANIMS } = await import('../packages/ui/src/sidebarAppearance.ts');
+  assert.deepEqual(PROJECT_BAR_ANIMS.map((anim) => anim.id), [...PROJECT_BAR_ANIM_IDS]);
+  for (const anim of PROJECT_BAR_ANIMS) {
+    assert.match(anim.animation, /^pd-bar-[a-z]+ [\d.]+s ease-in-out infinite$/, 'only app-owned keyframes may be referenced');
+    if (anim.size) assert.match(anim.size, /^\d+% 100%$/);
+  }
+});

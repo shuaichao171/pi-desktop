@@ -56,6 +56,12 @@
 .pd-sidebar-group.has-project-bar > .pd-sidebar-group-heading .pd-sidebar-group-toggle { color: var(--pd-project-bar-text, #fff); }
 .pd-sidebar-group.has-project-bar > .pd-sidebar-group-heading .pd-sidebar-group-toggle > span { color: var(--pd-project-bar-text, #fff); font-weight: 600; text-shadow: 0 1px 2px rgb(0 0 0 / 30%); }
 .pd-sidebar-group.has-project-bar > .pd-sidebar-group-heading .pd-sidebar-group-toggle > svg { color: var(--pd-project-bar-text, #fff); }
+/* 预置动效档位：关键帧在应用样式表里，用户输入永远不包含规则文本。 */
+.pd-sidebar-group.has-anim-bar > .pd-sidebar-group-heading { animation: var(--pd-bar-anim); background-size: var(--pd-bar-size, auto); background-repeat: no-repeat; }
+@keyframes pd-bar-flow { 0%, 100% { background-position: 0% 50%; } 50% { background-position: 100% 50%; } }
+@keyframes pd-bar-pulse { 0%, 100% { filter: brightness(1); } 50% { filter: brightness(1.28); } }
+@keyframes pd-bar-shimmer { 0%, 100% { background-position: 0% 50%; filter: brightness(1); } 50% { background-position: 100% 50%; filter: brightness(1.22); } }
+@media (prefers-reduced-motion: reduce) { .pd-sidebar-group.has-anim-bar > .pd-sidebar-group-heading { animation: none; } }
 .pd-appearance-swatches { display: flex; flex-wrap: wrap; gap: 6px; padding: 4px 12px 8px; }
 .pd-appearance-swatch { position: relative; flex: 0 0 auto; width: 34px; height: 22px; padding: 0; border: 1px solid color-mix(in srgb, var(--pd-text) 25%, transparent); border-radius: 6px; cursor: pointer; }
 .pd-appearance-swatch.is-active { border-color: var(--pd-text); box-shadow: inset 0 0 0 1.5px var(--pd-popover, #fff); }

@@ -756,11 +756,21 @@ export const translations: Record<string, { 'zh-CN': string; 'en-US': string }> 
   'sidebar.appearanceLocalImage': { 'zh-CN': '本地图片', 'en-US': 'Local image' },
   'sidebar.appearanceNetWarn': { 'zh-CN': '⚠ 此背景引用了网络图片：每次渲染都会向外部服务器发请求（暴露 IP 与使用时间，读不到本地内容）。确定允许渲染离开本机吗？', 'en-US': '⚠ This background references a network image: every render sends a request to an outside server (exposes your IP and usage timing; it cannot read local content). Allow rendering to leave this machine?' },
   'sidebar.appearanceNetApply': { 'zh-CN': '仍要应用', 'en-US': 'Apply anyway' },
+  'sidebar.appearanceAnim': { 'zh-CN': '动效', 'en-US': 'Animation' },
+  'sidebar.animNone': { 'zh-CN': '无', 'en-US': 'None' },
+  'sidebar.animFlow': { 'zh-CN': '流动', 'en-US': 'Flow' },
+  'sidebar.animPulse': { 'zh-CN': '呼吸', 'en-US': 'Breathing' },
+  'sidebar.animShimmer': { 'zh-CN': '流光', 'en-US': 'Shimmer' },
+  'sidebar.appearanceAiDynamic': { 'zh-CN': '复制 AI 提示词 · 动态', 'en-US': 'Copy AI prompt · animated' },
   'sidebar.appearanceAiCopy': { 'zh-CN': '复制 AI 提示词', 'en-US': 'Copy AI prompt' },
   'sidebar.appearanceAiCopied': { 'zh-CN': '已复制。粘贴到会话发给 AI，把它返回的值贴回上方输入框。', 'en-US': 'Copied. Paste it into the chat, then paste the value the AI returns back above.' },
   'sidebar.appearanceAiPrompt': {
     'zh-CN': '请为 pi-desktop 侧栏的项目标题条生成一条背景样式。要求：\n1. 只输出一个 CSS background 值（一行，结尾不带分号），不要解释、不要代码块。\n2. 优先用 linear-gradient / radial-gradient / conic-gradient / repeating-linear-gradient 等渐变，可多层叠加，风格酷炫但克制；标题条高约 24px、文字为白色，务必保证对比度。\n3. 硬性限制（违反会被拒绝）：长度不超过 300 字符；禁止 element(、attr(、@ 规则、分号、花括号、反斜杠；只能使用字母数字、空格和 #%.,():\'/+- 字符。\n4. url( 网络图片技术可用，但应用时会弹出「渲染是否允许离开本机」确认且每次渲染都向外部发请求，除非我明确要求，否则不要使用。\n5. 我想要的风格：在此描述，例如「赛博朋克霓虹、深色为主」。',
     'en-US': 'Generate one background style for the pi-desktop sidebar project heading bar. Rules:\n1. Output exactly one CSS background value on a single line (no trailing semicolon), no explanation, no code block.\n2. Prefer linear-gradient / radial-gradient / conic-gradient / repeating-linear-gradient, layering them freely; keep it cool but tasteful. The bar is about 24px tall with white text, so keep the contrast readable.\n3. Hard limits (the value is rejected otherwise): at most 300 characters; no element(, attr(, @ rules, semicolons, braces or backslashes; only letters, digits, spaces and the characters #%.,():\'/+-.\n4. url( network images technically work but applying them pops a "rendering leaves this machine" confirmation and every render calls an outside server — do not use one unless I explicitly ask.\n5. The style I want: describe it here, e.g. 「cyberpunk neon, mostly dark」。'
+  },
+  'sidebar.appearanceAiPromptDynamic': {
+    'zh-CN': '请为 pi-desktop 侧栏的项目标题条生成一条适合做流动动画的背景。要求：\n1. 只输出一个 CSS background 值（一行，结尾不带分号），不要解释、不要代码块。\n2. 用 linear-gradient 水平多段渐变（90deg）：4-6 个高饱和色标、色标间距拉开、首尾色标颜色呼应，这样配合应用的「流动」动效循环才顺滑；标题条高约 24px、文字为白色，保证对比度。\n3. 硬性限制（违反会被拒绝）：长度不超过 300 字符；禁止 url(、element(、attr(、@ 规则、分号、花括号、反斜杠；只能使用字母数字、空格和 #%.,():\'/+- 字符；不要自己写 animation，动效由应用里的「动效」档位控制。\n4. 我想要的风格：在此描述，例如「霓虹极光流动」。',
+    'en-US': 'Generate an animation-friendly background for the pi-desktop sidebar project heading bar. Rules:\n1. Output exactly one CSS background value on a single line (no trailing semicolon), no explanation, no code block.\n2. Use a horizontal multi-stop linear-gradient (90deg): 4-6 saturated stops, well spaced, with the last stop echoing the first so the app\'s Flow animation loops seamlessly; the bar is about 24px tall with white text, keep the contrast readable.\n3. Hard limits (the value is rejected otherwise): at most 300 characters; no url(, element(, attr(, @ rules, semicolons, braces or backslashes; only letters, digits, spaces and the characters #%.,():\'/+-. Do not write animation yourself — the app\'s Animation tier controls motion.\n4. The style I want: describe it here, e.g. 「flowing neon aurora」。'
   },
   'sidebar.barAurora': { 'zh-CN': '极光', 'en-US': 'Aurora' },
   'sidebar.barSunset': { 'zh-CN': '暮色', 'en-US': 'Sunset' },

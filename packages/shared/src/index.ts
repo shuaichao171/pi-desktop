@@ -893,6 +893,9 @@ export interface WorkspaceProjectNickname {
 /** Background-bar preset ids for the project appearance bar (rendered as CSS in the UI layer). */
 export const PROJECT_BAR_PRESET_IDS = ['aurora', 'sunset', 'neon', 'violet', 'mint', 'dawn'] as const;
 
+/** Background-bar animation tier ids (keyframes live in the app stylesheet, never in user input). */
+export const PROJECT_BAR_ANIM_IDS = ['flow', 'pulse', 'shimmer'] as const;
+
 /** Escape-proofing for a one-declaration custom bar: url()/image-set()/cross-fade() are
  * allowed through this list and gated in the UI by the leave-machine prompt instead. */
 const PROJECT_BAR_CSS_FORBIDDEN = /element\(|attr\(|expression\(|paint\(|@|;|\{|\}|\\/i;
@@ -940,6 +943,8 @@ export function isValidProjectBarValue(value: unknown): value is string {
 export interface WorkspaceProjectAppearance {
   /** The background bar: a preset id, a hex color, or safe custom CSS; null = default. */
   bar: string | null;
+  /** The background animation tier: a PROJECT_BAR_ANIM_IDS id; null = static. */
+  anim: string | null;
 }
 export interface WorkspaceBranches {
   isRepository: boolean;
@@ -1167,7 +1172,7 @@ export interface AgentBridge extends InputFeatureBridge, DataFeaturesBridge, Wor
   /** Reads the project's sidebar appearance (外观) record; unset fields are null. */
   getProjectAppearance(cwd: string): Promise<WorkspaceProjectAppearance>;
   /** Merges an appearance patch (null removes a field) into the app-side store. */
-  setProjectAppearance(cwd: string, patch: { bar?: string | null }): Promise<void>;
+  setProjectAppearance(cwd: string, patch: { bar?: string | null; anim?: string | null }): Promise<void>;
   /** Opens an image picker, downscale-embeds the pick as a data URL; null when canceled. */
   importProjectBackground(): Promise<string | null>;
   /** Assembles the diff/status context used to generate a commit message. */

@@ -8,6 +8,22 @@ export interface ProjectBarPreset {
   light: boolean;
 }
 
+/** An animation tier: the stored id maps to this fixed keyframe shorthand (keyframes live in the app stylesheet). */
+export interface ProjectBarAnim {
+  id: string;
+  /** The animation shorthand (name comes from the app's own @keyframes). */
+  animation: string;
+  /** Larger background-size makes position-based loops seamless; omitted for brightness-only tiers. */
+  size?: string;
+}
+
+/** 预置动效档位：id 与 shared 的 PROJECT_BAR_ANIM_IDS 一一对应。 */
+export const PROJECT_BAR_ANIMS: ProjectBarAnim[] = [
+  { id: 'flow', animation: 'pd-bar-flow 9s ease-in-out infinite', size: '260% 100%' },
+  { id: 'pulse', animation: 'pd-bar-pulse 3.2s ease-in-out infinite' },
+  { id: 'shimmer', animation: 'pd-bar-shimmer 6s ease-in-out infinite', size: '260% 100%' },
+];
+
 /** 预设背景条：id 与 shared 的 PROJECT_BAR_PRESET_IDS 一一对应，主进程按 id 校验。 */
 export const PROJECT_BAR_PRESETS: ProjectBarPreset[] = [
   { id: 'aurora', css: 'linear-gradient(90deg, #00c6ff, #0072ff)', light: false },

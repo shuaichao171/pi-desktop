@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import { normalizeProjectBarValue, projectBarLeavesMachine, type UiSessionGroup, type UiSidebarGroupChange, type WorkspaceOpener, type WorkspaceProjectNickname } from '@pidesktop/shared';
-import { PROJECT_BAR_PRESETS, projectBarStyle } from '../sidebarAppearance';
+import { PROJECT_BAR_ANIMS, PROJECT_BAR_PRESETS, projectBarStyle } from '../sidebarAppearance';
 import { useChatStore } from '../store';
 import { useT } from '../i18n';
 import { managementCopy } from '../managementCopy';
@@ -184,20 +184,24 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 			const pending = appearanceWrites.current.get(workspace);
 			if (pending) await pending.done.catch(() => {});
 			const seq = appearanceWrites.current.get(workspace)?.seq ?? 0;
-			try { return [workspace, (await bridge.getProjectAppearance(workspace)).bar, seq] as const; }
-			catch { return [workspace, null, seq] as const; }
+			try { const appearance = await bridge.getProjectAppearance(workspace); return [workspace, appearance.bar, appearance.anim, seq] as const; }
+			catch { return [workspace, null, null, seq] as const; }
 		})).then((entries) => {
 			if (barRequest.current !== request) return;
 			setProjectBars((current) => {
 				const next = { ...current };
-				for (const [workspace, bar, seq] of entries) {
+				const anims: Record<string, string | null> = {};
+				for (const [workspace, bar, anim, seq] of entries) {
 					if ((appearanceWrites.current.get(workspace)?.seq ?? 0) > seq) continue; // A newer local apply owns this row.
 					next[workspace] = bar;
+					anims[workspace] = anim;
 				}
+				setProjectAnims((current) => ({ ...current, ...anims }));
 				return next;
 			});
 		});
 	}, [bridge, workspacePaths]);
+	const [projectAnims, setProjectAnims] = useState<Record<string, string | null>>({});
 	/** Live-previews a background bar (newlines collapsed); a failed write re-reads the stored truth. */
 	const applyProjectBar = (workspace: string, bar: string | null) => {
 		const normalized = bar === null ? null : normalizeProjectBarValue(bar);
@@ -212,6 +216,21 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 			catch {
 				const truth = await bridge.getProjectAppearance(workspace).then((appearance) => appearance.bar).catch(() => null);
 				setProjectBars((current) => ({ ...current, [workspace]: truth }));
+			}
+		})();
+	};
+	/** Applies an animation tier through the same per-workspace queue as the bar itself. */
+	const applyProjectAnim = (workspace: string, anim: string | null) => {
+		const previous = appearanceWrites.current.get(workspace);
+		const entry = { seq: (previous?.seq ?? 0) + 1, done: Promise.resolve() };
+		appearanceWrites.current.set(workspace, entry);
+		entry.done = (async () => {
+			setProjectAnims((current) => ({ ...current, [workspace]: anim }));
+			if (!bridge?.setProjectAppearance) return;
+			try { await bridge.setProjectAppearance(workspace, { anim }); }
+			catch {
+				const truth = await bridge.getProjectAppearance(workspace).then((appearance) => appearance.anim).catch(() => null);
+				setProjectAnims((current) => ({ ...current, [workspace]: truth }));
 			}
 		})();
 	};
@@ -912,7 +931,8 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 			setPopup({ ...menuTarget, anchor, trigger, point });
 		}
 		const bar = options.workspace ? projectBarStyle(projectBars[options.workspace]) : null;
-		return <section className={`pd-sidebar-group${key === 'pinned' ? ' is-pinned' : ''}${options.group ? ' is-custom' : ''}${options.workspace === cwd ? ' is-current' : ''}${isDraggedProject ? ' is-project-drag-source' : ''}${bar ? ' has-project-bar' : ''}`} key={key} data-section-key={key} data-project-path={options.workspace} data-project-drop={projectDrop} style={{ '--pd-group-color': color, ...(bar ? { '--pd-project-bar': bar.background, '--pd-project-bar-text': bar.light ? '#1f2430' : '#ffffff' } : {}) } as CSSProperties}>
+		const anim = options.workspace ? PROJECT_BAR_ANIMS.find((item) => item.id === projectAnims[options.workspace!]) : undefined;
+		return <section className={`pd-sidebar-group${key === 'pinned' ? ' is-pinned' : ''}${options.group ? ' is-custom' : ''}${options.workspace === cwd ? ' is-current' : ''}${isDraggedProject ? ' is-project-drag-source' : ''}${bar ? ' has-project-bar' : ''}${anim ? ' has-anim-bar' : ''}`} key={key} data-section-key={key} data-project-path={options.workspace} data-project-drop={projectDrop} style={{ '--pd-group-color': color, ...(bar ? { '--pd-project-bar': bar.background, '--pd-project-bar-text': bar.light ? '#1f2430' : '#ffffff' } : {}), ...(anim ? { '--pd-bar-anim': anim.animation, '--pd-bar-size': anim.size } : {}) } as CSSProperties}>
 			<HoverTooltip title={name} description={options.workspace} side="right" align="start"><div className="pd-sidebar-group-heading" data-drag-heading={droppable ? key : undefined} data-drag-container={droppable ? key : undefined} onContextMenu={menuTarget ? (event) => {
 				event.preventDefault(); event.stopPropagation();
 				openSectionMenu(event.currentTarget, { x: event.clientX, y: event.clientY });
@@ -1288,6 +1308,10 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 					</>}
 					{submenuItem({ key: 'bar-ai', label: t('sidebar.appearanceAiCopy'), icon: 'brain', onHover: schedulePresetClose, onSelect: () => { void navigator.clipboard.writeText(t('sidebar.appearanceAiPrompt')).then(() => setAiPromptCopied(true), () => {}); } })}
 					{aiPromptCopied && <p className="pd-sidebar-menu-note">{t('sidebar.appearanceAiCopied')}</p>}
+					{submenuItem({ key: 'bar-ai-dynamic', label: t('sidebar.appearanceAiDynamic'), icon: 'refresh', onHover: schedulePresetClose, onSelect: () => { void navigator.clipboard.writeText(t('sidebar.appearanceAiPromptDynamic')).then(() => setAiPromptCopied(true), () => {}); } })}
+					<hr />
+					<p className="pd-sidebar-menu-note">{t('sidebar.appearanceAnim')}</p>
+					{(['', 'flow', 'pulse', 'shimmer'] as const).map((animId) => submenuItem({ key: `anim:${animId || 'none'}`, label: t(animId ? `sidebar.anim${animId[0]!.toUpperCase()}${animId.slice(1)}` : 'sidebar.animNone'), icon: animId ? 'spark' : 'close', checked: (projectAnims[popup.workspace] ?? null) === (animId || null), onHover: schedulePresetClose, onSelect: () => { const workspace = popup.workspace; applyProjectAnim(workspace, animId || null); } }))}
 					<hr />
 					{submenuItem({ key: 'bar-reset', label: t('sidebar.appearanceReset'), icon: 'rotateCcw', disabled: !projectBars[popup.workspace], onHover: schedulePresetClose, onSelect: () => { applyProjectBar(popup.workspace, null); setBarCssDraft(null); } })}
 					{presetFlyout && <SidebarSubmenu anchor={presetFlyout.anchor} label={t('sidebar.appearancePresets')} autoFocus={presetFlyout.keyboard} onPointerEnter={clearPresetTimer}
