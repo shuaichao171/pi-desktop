@@ -64,6 +64,7 @@
 .pd-appearance-css { display: block; width: calc(100% - 24px); margin: 2px 12px 6px; padding: 5px 7px; border: 1px solid var(--pd-sidebar-surface); border-radius: var(--pd-radius-sm); background: var(--pd-sidebar); color: var(--pd-text); font: inherit; font-size: var(--pd-font-caption); line-height: 1.4; resize: none; }
 .pd-appearance-css:focus { outline: none; border-color: var(--pd-brand); }
 .pd-appearance-css::placeholder { color: var(--pd-text-subtle); }
+.pd-appearance-net-warn { color: var(--pd-danger); }
 .pd-sidebar-group-content { margin-left: 9px; padding-left: 2px; border-left: 1px solid var(--pd-sidebar-surface); }
 .pd-sidebar-group.is-custom > .pd-sidebar-group-content { border-left-color: var(--pd-group-color); }
 /* Rows sit close to the guide line, but the leading indicator keeps a ~5px gap so it never covers the border. */

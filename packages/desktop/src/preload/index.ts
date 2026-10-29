@@ -215,6 +215,7 @@ const bridge: AgentBridge = {
 		setProjectNickname: (cwd, nickname) => invoke(IPC_CHANNELS.workspaceSetProjectNickname, cwd, nickname),
 		getProjectAppearance: (cwd) => invoke(IPC_CHANNELS.workspaceProjectAppearance, cwd),
 		setProjectAppearance: (cwd, patch) => invoke(IPC_CHANNELS.workspaceSetProjectAppearance, cwd, patch),
+		importProjectBackground: () => invoke(IPC_CHANNELS.workspaceImportProjectBackground),
 		getWorkspaceCommitContext: () => invoke(IPC_CHANNELS.workspaceCommitContext),
 		commitWorkspace: (message) => invoke(IPC_CHANNELS.workspaceCommit, message),
 	startWorkspaceCommand: (command) => invoke(IPC_CHANNELS.workspaceCommandStart, command),

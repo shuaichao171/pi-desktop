@@ -158,6 +158,7 @@ export const IPC_CHANNELS = {
   workspaceSetProjectNickname: 'workspace:set-project-nickname',
   workspaceProjectAppearance: 'workspace:project-appearance',
   workspaceSetProjectAppearance: 'workspace:set-project-appearance',
+  workspaceImportProjectBackground: 'workspace:import-project-background',
   workspaceCommitContext: 'workspace:commit-context',
   workspaceCommit: 'workspace:commit',
   workspaceCommandStart: 'workspace:command-start',
@@ -892,8 +893,9 @@ export interface WorkspaceProjectNickname {
 /** Background-bar preset ids for the project appearance bar (rendered as CSS in the UI layer). */
 export const PROJECT_BAR_PRESET_IDS = ['aurora', 'sunset', 'neon', 'violet', 'mint', 'dawn'] as const;
 
-/** A custom bar is one CSS background declaration: no remote/element sources, no escapes, no rule tricks. */
-const PROJECT_BAR_CSS_FORBIDDEN = /url\(|image-set\(|element\(|attr\(|expression\(|paint\(|cross-fade\(|@|;|\{|\}|\\/i;
+/** Escape-proofing for a one-declaration custom bar: url()/image-set()/cross-fade() are
+ * allowed through this list and gated in the UI by the leave-machine prompt instead. */
+const PROJECT_BAR_CSS_FORBIDDEN = /element\(|attr\(|expression\(|paint\(|@|;|\{|\}|\\/i;
 
 /**
  * Normalizes a stored background-bar value (whitespace incl. pasted newlines collapsed
@@ -902,13 +904,31 @@ const PROJECT_BAR_CSS_FORBIDDEN = /url\(|image-set\(|element\(|attr\(|expression
  */
 export function normalizeProjectBarValue(value: unknown): string | null {
 	const bar = typeof value === 'string' ? value.trim().replace(/\s+/g, ' ') : '';
-	if (!bar || bar.length > 300) return null;
+	if (!bar) return null;
+	// A picked local image arrives as an already-embedded data URL: bytes live in the
+	// value itself, so rendering stays fully local. Cap the stored size.
+	if (bar.startsWith('data:image/')) {
+		return bar.length <= 500_000 && /^data:image\/(png|jpeg);base64,[A-Za-z0-9+/=]+$/.test(bar) ? bar : null;
+	}
+	if (bar.length > 300) return null;
 	if (bar.startsWith('#')) return /^#[0-9a-fA-F]{3}$/.test(bar) || /^#[0-9a-fA-F]{6}$/.test(bar) ? bar : null;
 	if ((PROJECT_BAR_PRESET_IDS as readonly string[]).includes(bar)) return bar;
 	// Custom CSS: a conservative charset for gradients and colors (calc/rgba/repeats included),
 	// minus the constructs that could load content or break out of a single declaration.
 	// A function call is required so junk that no browser could render stays out too.
-	return bar.includes('(') && /^[a-zA-Z0-9 #%,.()'/+\-]+$/.test(bar) && !PROJECT_BAR_CSS_FORBIDDEN.test(bar) ? bar : null;
+	// url()/image-set() pass the charset but the renderer asks "渲染是否允许离开本机"
+	// (see projectBarLeavesMachine) before storing one.
+	return bar.includes('(') && /^[a-zA-Z0-9 #%,.()':"/+-]+$/.test(bar) && !PROJECT_BAR_CSS_FORBIDDEN.test(bar) ? bar : null;
+}
+
+/**
+ * True when the value references images over the network: rendering would then
+ * make requests to outside servers (leaking IP and usage timing). data: and
+ * file: references stay on this machine and never trip the prompt.
+ */
+export function projectBarLeavesMachine(value: string): boolean {
+	if (!/(?:url|image-set|cross-fade)\s*\(/i.test(value)) return false;
+	return /(?:https?:)?\/\//i.test(value.replace(/(?:data|file):[^)"']*/gi, ''));
 }
 
 /** Validates any stored background-bar value: preset id, hex color, or safe custom CSS. */
@@ -1148,6 +1168,8 @@ export interface AgentBridge extends InputFeatureBridge, DataFeaturesBridge, Wor
   getProjectAppearance(cwd: string): Promise<WorkspaceProjectAppearance>;
   /** Merges an appearance patch (null removes a field) into the app-side store. */
   setProjectAppearance(cwd: string, patch: { bar?: string | null }): Promise<void>;
+  /** Opens an image picker, downscale-embeds the pick as a data URL; null when canceled. */
+  importProjectBackground(): Promise<string | null>;
   /** Assembles the diff/status context used to generate a commit message. */
   getWorkspaceCommitContext(): Promise<string>;
   /** Stages all changes and commits them; returns the short commit hash. */

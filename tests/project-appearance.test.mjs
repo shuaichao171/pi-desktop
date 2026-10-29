@@ -18,7 +18,8 @@ test('hex bars pass through with luminance-chosen text; junk degrades to the def
   assert.equal(projectBarStyle('#12345'), null, '5-digit hex is not a color');
   // User-pasted CSS passes through after the shared validator strips dangerous constructs.
   assert.deepEqual(projectBarStyle('linear-gradient(45deg, #f66, #3cf)'), { background: 'linear-gradient(45deg, #f66, #3cf)', light: false });
-  assert.equal(projectBarStyle('url(https://evil/x.png)'), null, 'remote sources are rejected');
+  // url() now passes validation; the "渲染是否允许离开本机" prompt gates it in the UI.
+  assert.equal(projectBarStyle('url(https://evil/x.png)')?.background, 'url(https://evil/x.png)');
   assert.equal(projectBarStyle('linear-gradient(45deg,#f66,#3cf); color:red'), null, 'multiple declarations are rejected');
   assert.equal(projectBarStyle('radial-gradient(@import x)'), null, 'at-rules are rejected');
   assert.equal(projectBarStyle('repeating-linear-gradient(90deg, #fff 0 10%, #000 10% 20%)').background.startsWith('repeating-'), true, 'repeating gradients survive');
@@ -39,4 +40,21 @@ test('multi-line AI output still applies: newlines collapse to spaces before val
   const rendered = projectBarStyle(pasted);
   assert.equal(rendered?.background, oneLine, 'the renderer normalizes and renders it anyway');
   assert.equal(isValidProjectBarValue('  linear-gradient(45deg, #f66, #3cf)  '), true, 'outer whitespace is trimmed');
+});
+
+test('network references trip the leave-machine check; local bytes never do', async () => {
+  const { projectBarLeavesMachine, normalizeProjectBarValue } = await import('../packages/shared/src/index.ts');
+  assert.equal(projectBarLeavesMachine('url(https://evil/x.png)'), true);
+  assert.equal(projectBarLeavesMachine('url(//evil/x.png)'), true, 'protocol-relative is still the network');
+  assert.equal(projectBarLeavesMachine('image-set("https://a" 1x)'), true);
+  assert.equal(projectBarLeavesMachine('linear-gradient(90deg, #fff, #000)'), false);
+  assert.equal(projectBarLeavesMachine('url(data:image/png;base64,AAAA)'), false, 'embedded bytes stay local');
+  assert.equal(projectBarLeavesMachine('url(data:image/png;base64,AAA), url(https://evil)'), true, 'one remote ref is enough');
+  assert.equal(projectBarLeavesMachine('url(file:///C:/bg.png)'), false, 'local disk is not the network');
+
+  // The picked local image embeds itself as a data URL and survives storage.
+  const dataUrl = 'data:image/png;base64,' + 'A'.repeat(1000);
+  assert.equal(normalizeProjectBarValue(dataUrl), dataUrl);
+  assert.equal(normalizeProjectBarValue('data:image/png;base64,!!!'), null, 'base64 junk is rejected');
+  assert.equal(normalizeProjectBarValue('data:image/png;base64,' + 'A'.repeat(600_000)), null, 'oversized embeds are rejected');
 });

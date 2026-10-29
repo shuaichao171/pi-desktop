@@ -33,6 +33,8 @@ export function projectBarStyle(value: string | null | undefined): { background:
   // Normalize first so multi-line pastes (AI output copied out of the chat) still render.
   const bar = normalizeProjectBarValue(value);
   if (!bar) return null;
+  // A picked local image is an embedded data URL: white text over the scrim reads fine.
+  if (bar.startsWith('data:image/')) return { background: bar, light: false };
   if (bar.startsWith('#')) {
     const rgb = hexToRgb(bar);
     if (!rgb) return null;

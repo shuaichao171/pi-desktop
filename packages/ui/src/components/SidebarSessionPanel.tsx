@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
-import { normalizeProjectBarValue, type UiSessionGroup, type UiSidebarGroupChange, type WorkspaceOpener, type WorkspaceProjectNickname } from '@pidesktop/shared';
+import { normalizeProjectBarValue, projectBarLeavesMachine, type UiSessionGroup, type UiSidebarGroupChange, type WorkspaceOpener, type WorkspaceProjectNickname } from '@pidesktop/shared';
 import { PROJECT_BAR_PRESETS, projectBarStyle } from '../sidebarAppearance';
 import { useChatStore } from '../store';
 import { useT } from '../i18n';
@@ -123,7 +123,7 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 	const submenuTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 	const [openers, setOpeners] = useState<WorkspaceOpener[] | null>(null);
 	const openersRequested = useRef(false);
-	useEffect(() => { setSubmenu(null); setBarCssDraft(null); setAiPromptCopied(false); }, [popup]);
+	useEffect(() => { setSubmenu(null); setBarCssDraft(null); setAiPromptCopied(false); setBarConfirm(null); }, [popup]);
 	// Closing the main menu or its flyout also dismisses the nested presets flyout;
 	// presetFlyout's own changes must not reset it (that would self-close it).
 	useEffect(() => { setPresetFlyout(null); }, [popup, submenu]);
@@ -171,6 +171,7 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 	const [projectBars, setProjectBars] = useState<Record<string, string | null>>({});
 	const [barCssDraft, setBarCssDraft] = useState<string | null>(null);
 	const [aiPromptCopied, setAiPromptCopied] = useState(false);
+	const [barConfirm, setBarConfirm] = useState<string | null>(null);
 	const barRequest = useRef(0);
 	// Serialized per-workspace appearance writes. The batch re-read awaits the
 	// queue and compares sequence numbers, so a read dispatched before an apply
@@ -217,7 +218,7 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 	/** The current bar when it is user-pasted CSS (neither a preset id nor a hex color). */
 	const customBarCss = (workspace: string) => {
 		const bar = projectBars[workspace];
-		return bar && !bar.startsWith('#') && !PROJECT_BAR_PRESETS.some((preset) => preset.id === bar) ? bar : '';
+		return bar && !bar.startsWith('#') && !bar.startsWith('data:') && !PROJECT_BAR_PRESETS.some((preset) => preset.id === bar) ? bar : '';
 	};
 	const projectPaths = useMemo(() => sidebarProjectPaths(workspaces, null, conversationWorkspaces), [workspaces, conversationWorkspaces]);
 	const pinnedWorkspaceSet = useMemo(() => new Set(splitSidebarProjects(projectPaths, new Set(pinnedProjects)).pinned), [projectPaths, pinnedProjects]);
@@ -1263,6 +1264,9 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 						<label className={`pd-appearance-swatch pd-appearance-swatch-custom${projectBars[popup.workspace]?.startsWith('#') ? ' is-active' : ''}`} title={t('sidebar.appearanceCustom')}>
 							<input type="color" value={projectBars[popup.workspace]?.startsWith('#') ? projectBars[popup.workspace]! : '#667eea'} aria-label={t('sidebar.appearanceCustom')} onChange={(event) => applyProjectBar(popup.workspace, event.target.value)} />
 						</label>
+						<button type="button" role="menuitem" className="pd-menu-item" onMouseEnter={schedulePresetClose} disabled={!bridge?.importProjectBackground} onClick={() => { void bridge?.importProjectBackground().then((dataUrl) => { if (dataUrl) applyProjectBar(popup.workspace, dataUrl); }, () => {}); }}>
+							<Icon name="image" width="15" height="15" /><span>{t('sidebar.appearanceLocalImage')}</span>
+						</button>
 					</div>
 					<button type="button" role="menuitem" className="pd-menu-item" aria-haspopup="menu" aria-expanded={presetFlyout !== null}
 						onMouseEnter={(event) => openPresetFlyout(event.currentTarget, false)}
@@ -1277,7 +1281,11 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 						onKeyDown={(event) => { if (event.key !== 'Escape') event.stopPropagation(); }}
 						onMouseEnter={schedulePresetClose}
 						onChange={(event) => setBarCssDraft(event.target.value)} />
-					{submenuItem({ key: 'bar-apply', label: t('sidebar.appearanceCssApply'), icon: 'check', disabled: !(barCssDraft ?? customBarCss(popup.workspace)).trim(), onHover: schedulePresetClose, onSelect: () => { const workspace = popup.workspace; applyProjectBar(workspace, (barCssDraft ?? customBarCss(workspace)).trim()); } })}
+					{barConfirm === null ? submenuItem({ key: 'bar-apply', label: t('sidebar.appearanceCssApply'), icon: 'check', disabled: !(barCssDraft ?? customBarCss(popup.workspace)).trim(), onHover: schedulePresetClose, onSelect: () => { const workspace = popup.workspace; const value = (barCssDraft ?? customBarCss(workspace)).trim(); if (projectBarLeavesMachine(value)) { setBarConfirm(value); return; } applyProjectBar(workspace, value); } }) : <>
+						<p className="pd-sidebar-menu-note pd-appearance-net-warn">{t('sidebar.appearanceNetWarn')}</p>
+						{submenuItem({ key: 'bar-apply-net', label: t('sidebar.appearanceNetApply'), icon: 'alert', onHover: schedulePresetClose, onSelect: () => { const workspace = popup.workspace; applyProjectBar(workspace, barConfirm); setBarConfirm(null); } })}
+						{submenuItem({ key: 'bar-apply-cancel', label: t('sidebar.cancel'), icon: 'close', onHover: schedulePresetClose, onSelect: () => setBarConfirm(null) })}
+					</>}
 					{submenuItem({ key: 'bar-ai', label: t('sidebar.appearanceAiCopy'), icon: 'brain', onHover: schedulePresetClose, onSelect: () => { void navigator.clipboard.writeText(t('sidebar.appearanceAiPrompt')).then(() => setAiPromptCopied(true), () => {}); } })}
 					{aiPromptCopied && <p className="pd-sidebar-menu-note">{t('sidebar.appearanceAiCopied')}</p>}
 					<hr />

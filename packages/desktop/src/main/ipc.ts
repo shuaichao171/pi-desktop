@@ -8,7 +8,7 @@ import { registerDebugApiIpc } from './debugApiIpc';
  * call is a typed invoke against the contract in @pidesktop/shared. Hosted pai
  */
 
-import { app, BrowserWindow, dialog, shell, type IpcMainInvokeEvent } from 'electron';
+import { app, BrowserWindow, dialog, nativeImage, shell, type IpcMainInvokeEvent } from 'electron';
 import { mkdirSync, statSync } from 'node:fs';
 import { rm, stat } from 'node:fs/promises';
 import { basename, dirname, join, resolve } from 'node:path';
@@ -1067,6 +1067,7 @@ const mainOnlyChannels = new Set<string>([
 	IPC_CHANNELS.workspaceOpeners, IPC_CHANNELS.workspaceCommitContext, IPC_CHANNELS.workspaceCommit,
 	IPC_CHANNELS.workspaceProjectNickname, IPC_CHANNELS.workspaceSetProjectNickname,
 	IPC_CHANNELS.workspaceProjectAppearance, IPC_CHANNELS.workspaceSetProjectAppearance,
+	IPC_CHANNELS.workspaceImportProjectBackground,
 	IPC_CHANNELS.workspaceCommandStart, IPC_CHANNELS.workspaceCommandStop, IPC_CHANNELS.workspaceWatch,
 	WORKBENCH_FEATURE_CHANNELS.getWorkspaceCommitPreview, WORKBENCH_FEATURE_CHANNELS.commitWorkspacePreview,
 	WORKBENCH_FEATURE_CHANNELS.createTaskWorktree, WORKBENCH_FEATURE_CHANNELS.listTaskWorktrees, WORKBENCH_FEATURE_CHANNELS.bindTaskWorktree,
@@ -1142,6 +1143,24 @@ export function registerIpc(options: {
 			if (Object.keys(current).length > 0) workspaceAppearance[key] = current; else delete workspaceAppearance[key];
 			await writeStateFileAsync(workspaceSettingsPath(), { ...previous, workspaceAppearance });
 		});
+	});
+	// 本地图片入口：选图 → 压缩内嵌为 data URL。字节随值存储，渲染不离开本机。
+	handleRendererInvoke(IPC_CHANNELS.workspaceImportProjectBackground, async (event) => {
+		requireRendererSender(event);
+		const owner = BrowserWindow.fromWebContents(event.sender);
+		const options: import('electron').OpenDialogOptions = {
+			title: '选择背景图片',
+			properties: ['openFile'],
+			filters: [{ name: '图片', extensions: ['png', 'jpg', 'jpeg', 'webp'] }],
+		};
+		const picked = owner ? await dialog.showOpenDialog(owner, options) : await dialog.showOpenDialog(options);
+		if (picked.canceled || !picked.filePaths[0]) return null;
+		const image = nativeImage.createFromPath(picked.filePaths[0]);
+		if (image.isEmpty()) throw new Error('图片读取失败');
+		const resized = image.getSize().width > 640 ? image.resize({ width: 640 }) : image;
+		const jpeg = /\.jpe?g$/i.test(picked.filePaths[0]);
+		const bytes = jpeg ? resized.toJPEG(85) : resized.toPNG();
+		return `data:image/${jpeg ? 'jpeg' : 'png'};base64,${bytes.toString('base64')}`;
 	});
 	workbenchFeatures = registerWorkbenchFeatureIpc(() => activeWorkspace, app.getPath('userData'));
 	inputFeatures = registerInputAttachmentIpc(() => [
