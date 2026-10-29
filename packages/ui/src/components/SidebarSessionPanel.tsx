@@ -918,6 +918,7 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 	function scheduleSubmenuClose() {
 		clearSubmenuTimer();
 		submenuTimer.current = setTimeout(() => setSubmenu(null), 220);
+	}
 	function clearPresetTimer() {
 		if (presetTimer.current) { clearTimeout(presetTimer.current); presetTimer.current = null; }
 	}
@@ -929,7 +930,6 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 	function schedulePresetClose() {
 		clearPresetTimer();
 		presetTimer.current = setTimeout(() => setPresetFlyout(null), 220);
-	}
 	}
 	/** A context-menu row: icon, label, then its single-key accelerator or a flyout chevron. */
 	function menuItem(options: { icon: IconName; label: string; shortcut?: string; onSelect?(button: HTMLButtonElement): void; disabled?: boolean; danger?: boolean; submenu?: 'open' | 'move' | 'appearance'; action?: string }) {
