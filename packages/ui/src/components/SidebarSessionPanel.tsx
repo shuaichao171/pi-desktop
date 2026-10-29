@@ -118,10 +118,11 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 	const [popup, setPopup] = useState<Popup | null>(null);
 	// Flyout of the open context menu ("打开方式 ›", "移动到分组 ›"); it closes with its menu.
 	const [submenu, setSubmenu] = useState<{ key: 'open' | 'move' | 'appearance'; anchor: HTMLElement; keyboard: boolean } | null>(null);
+	const [presetFlyout, setPresetFlyout] = useState<{ anchor: HTMLElement; keyboard: boolean } | null>(null);
 	const submenuTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 	const [openers, setOpeners] = useState<WorkspaceOpener[] | null>(null);
 	const openersRequested = useRef(false);
-	useEffect(() => { setSubmenu(null); }, [popup]);
+	useEffect(() => { setSubmenu(null); setPresetFlyout(null); }, [popup, submenu]);
 	useEffect(() => () => { if (submenuTimer.current) clearTimeout(submenuTimer.current); }, []);
 	const [creatingProject, setCreatingProject] = useState(false);
 	const [trashTarget, setTrashTarget] = useState<{ session: SidebarSession; anchor: HTMLElement; nextPath?: string } | null>(null);
@@ -1209,16 +1210,27 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 				</>}
 				{submenu.key === 'appearance' && popup.kind === 'project' && <>
 					<p className="pd-sidebar-menu-note">{t('sidebar.appearanceBar')}</p>
-					<div className="pd-appearance-swatches" role="group" aria-label={t('sidebar.appearanceBar')}>
-						{PROJECT_BAR_PRESETS.map((preset) => {
-							const label = t(`sidebar.bar${preset.id[0]!.toUpperCase()}${preset.id.slice(1)}`);
-							return <button key={preset.id} type="button" role="menuitemradio" aria-checked={projectBars[popup.workspace] === preset.id} className={`pd-appearance-swatch${projectBars[popup.workspace] === preset.id ? ' is-active' : ''}`} style={{ background: preset.css }} title={label} aria-label={label} onClick={() => applyProjectBar(popup.workspace, preset.id)} />;
-						})}
+					<div className="pd-appearance-swatches" role="group" aria-label={t('sidebar.appearanceCustom')}>
 						<label className={`pd-appearance-swatch pd-appearance-swatch-custom${projectBars[popup.workspace]?.startsWith('#') ? ' is-active' : ''}`} title={t('sidebar.appearanceCustom')}>
 							<input type="color" value={projectBars[popup.workspace]?.startsWith('#') ? projectBars[popup.workspace]! : '#667eea'} aria-label={t('sidebar.appearanceCustom')} onChange={(event) => applyProjectBar(popup.workspace, event.target.value)} />
 						</label>
 					</div>
-					{submenuItem({ key: 'bar-reset', label: t('sidebar.appearanceReset'), icon: 'close', disabled: !projectBars[popup.workspace], onSelect: () => applyProjectBar(popup.workspace, null) })}
+					<button type="button" role="menuitem" className="pd-menu-item" aria-haspopup="menu" aria-expanded={presetFlyout !== null}
+						onKeyDown={(event) => { if (event.key === 'ArrowRight') { event.preventDefault(); event.stopPropagation(); setPresetFlyout({ anchor: event.currentTarget, keyboard: true }); } }}
+						onClick={(event) => setPresetFlyout((current) => current?.anchor === event.currentTarget ? null : { anchor: event.currentTarget, keyboard: false })}>
+						<Icon name="spark" width="15" height="15" /><span>{t('sidebar.appearancePresets')}</span><Icon name="chevronRight" className="pd-menu-chevron" width="13" height="13" />
+					</button>
+					<hr />
+					{submenuItem({ key: 'bar-reset', label: t('sidebar.appearanceReset'), icon: 'rotateCcw', disabled: !projectBars[popup.workspace], onSelect: () => applyProjectBar(popup.workspace, null) })}
+					{presetFlyout && <SidebarSubmenu anchor={presetFlyout.anchor} label={t('sidebar.appearancePresets')} autoFocus={presetFlyout.keyboard}
+						onClose={(restore) => { const anchor = presetFlyout.anchor; setPresetFlyout(null); if (restore) anchor.focus(); }}>
+						<div className="pd-appearance-swatches" role="group" aria-label={t('sidebar.appearancePresets')}>
+							{PROJECT_BAR_PRESETS.map((preset) => {
+								const label = t(`sidebar.bar${preset.id[0]!.toUpperCase()}${preset.id.slice(1)}`);
+								return <button key={preset.id} type="button" role="menuitemradio" aria-checked={projectBars[popup.workspace] === preset.id} className={`pd-appearance-swatch${projectBars[popup.workspace] === preset.id ? ' is-active' : ''}`} style={{ background: preset.css }} title={label} aria-label={label} onClick={() => applyProjectBar(popup.workspace, preset.id)} />;
+							})}
+						</div>
+					</SidebarSubmenu>}
 				</>}
 				{submenu.key === 'move' && popup.kind === 'session' && <>
 					{[null, ...groups].map((group, index) => submenuItem({
