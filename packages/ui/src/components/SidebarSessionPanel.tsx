@@ -123,7 +123,7 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 	const submenuTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 	const [openers, setOpeners] = useState<WorkspaceOpener[] | null>(null);
 	const openersRequested = useRef(false);
-	useEffect(() => { setSubmenu(null); setBarCssDraft(null); }, [popup]);
+	useEffect(() => { setSubmenu(null); setBarCssDraft(null); setAiPromptCopied(false); }, [popup]);
 	// Closing the main menu or its flyout also dismisses the nested presets flyout;
 	// presetFlyout's own changes must not reset it (that would self-close it).
 	useEffect(() => { setPresetFlyout(null); }, [popup, submenu]);
@@ -170,6 +170,7 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 	const projectDisplayName = (workspace: string) => projectNicknames[workspace]?.nickname || workspaceName(workspace);
 	const [projectBars, setProjectBars] = useState<Record<string, string | null>>({});
 	const [barCssDraft, setBarCssDraft] = useState<string | null>(null);
+	const [aiPromptCopied, setAiPromptCopied] = useState(false);
 	const barRequest = useRef(0);
 	useEffect(() => {
 		if (!bridge || workspacePaths.length === 0) { setProjectBars({}); return; }
@@ -1251,6 +1252,8 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 						onMouseEnter={schedulePresetClose}
 						onChange={(event) => setBarCssDraft(event.target.value)} />
 					{submenuItem({ key: 'bar-apply', label: t('sidebar.appearanceCssApply'), icon: 'check', disabled: !(barCssDraft ?? customBarCss(popup.workspace)).trim(), onHover: schedulePresetClose, onSelect: () => { const workspace = popup.workspace; applyProjectBar(workspace, (barCssDraft ?? customBarCss(workspace)).trim()); } })}
+					{submenuItem({ key: 'bar-ai', label: t('sidebar.appearanceAiCopy'), icon: 'brain', onHover: schedulePresetClose, onSelect: () => { void navigator.clipboard.writeText(t('sidebar.appearanceAiPrompt')).then(() => setAiPromptCopied(true), () => {}); } })}
+					{aiPromptCopied && <p className="pd-sidebar-menu-note">{t('sidebar.appearanceAiCopied')}</p>}
 					<hr />
 					{submenuItem({ key: 'bar-reset', label: t('sidebar.appearanceReset'), icon: 'rotateCcw', disabled: !projectBars[popup.workspace], onHover: schedulePresetClose, onSelect: () => { applyProjectBar(popup.workspace, null); setBarCssDraft(null); } })}
 					{presetFlyout && <SidebarSubmenu anchor={presetFlyout.anchor} label={t('sidebar.appearancePresets')} autoFocus={presetFlyout.keyboard} onPointerEnter={clearPresetTimer}

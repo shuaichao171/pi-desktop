@@ -753,6 +753,12 @@ export const translations: Record<string, { 'zh-CN': string; 'en-US': string }> 
   'sidebar.appearanceCss': { 'zh-CN': '自定义 CSS 背景', 'en-US': 'Custom CSS background' },
   'sidebar.appearanceCssPlaceholder': { 'zh-CN': 'linear-gradient(45deg, #f66, #3cf)', 'en-US': 'linear-gradient(45deg, #f66, #3cf)' },
   'sidebar.appearanceCssApply': { 'zh-CN': '应用', 'en-US': 'Apply' },
+  'sidebar.appearanceAiCopy': { 'zh-CN': '复制 AI 提示词', 'en-US': 'Copy AI prompt' },
+  'sidebar.appearanceAiCopied': { 'zh-CN': '已复制。粘贴到会话发给 AI，把它返回的值贴回上方输入框。', 'en-US': 'Copied. Paste it into the chat, then paste the value the AI returns back above.' },
+  'sidebar.appearanceAiPrompt': {
+    'zh-CN': '请为 pi-desktop 侧栏的项目标题条生成一条背景样式。要求：\n1. 只输出一个 CSS background 值（一行，结尾不带分号），不要解释、不要代码块。\n2. 优先用 linear-gradient / radial-gradient / conic-gradient / repeating-linear-gradient 等渐变，风格酷炫但克制；标题条高约 24px、文字为白色，务必保证对比度。\n3. 硬性限制（违反会被拒绝）：长度不超过 300 字符；禁止 url(、image-set(、element(、attr(、@ 规则、分号、花括号、反斜杠；只能使用字母数字、空格和 #%.,()/+- 字符。\n4. 我想要的风格：在此描述，例如「赛博朋克霓虹、深色为主」。',
+    'en-US': 'Generate one background style for the pi-desktop sidebar project heading bar. Rules:\n1. Output exactly one CSS background value on a single line (no trailing semicolon), no explanation, no code block.\n2. Prefer linear-gradient / radial-gradient / conic-gradient / repeating-linear-gradient; keep it cool but tasteful. The bar is about 24px tall with white text, so keep the contrast readable.\n3. Hard limits (the value is rejected otherwise): at most 300 characters; no url(, image-set(, element(, attr(, @ rules, semicolons, braces or backslashes; only letters, digits, spaces and the characters #%.,()/+-.\n4. The style I want: describe it here, e.g. 「cyberpunk neon, mostly dark」。'
+  },
   'sidebar.barAurora': { 'zh-CN': '极光', 'en-US': 'Aurora' },
   'sidebar.barSunset': { 'zh-CN': '暮色', 'en-US': 'Sunset' },
   'sidebar.barNeon': { 'zh-CN': '霓虹', 'en-US': 'Neon' },
