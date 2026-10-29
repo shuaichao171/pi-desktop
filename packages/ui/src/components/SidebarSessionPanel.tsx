@@ -118,16 +118,19 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 	const [popup, setPopup] = useState<Popup | null>(null);
 	// Flyout of the open context menu ("打开方式 ›", "移动到分组 ›"); it closes with its menu.
 	const [submenu, setSubmenu] = useState<{ key: 'open' | 'move' | 'appearance'; anchor: HTMLElement; keyboard: boolean } | null>(null);
-	const [presetFlyout, setPresetFlyout] = useState<{ anchor: HTMLElement; keyboard: boolean } | null>(null);
-	const presetTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+	const [barFlyout, setBarFlyout] = useState<{ anchor: HTMLElement; keyboard: boolean } | null>(null);
+	const barTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+	const [animFlyout, setAnimFlyout] = useState<{ anchor: HTMLElement; keyboard: boolean } | null>(null);
+	const animTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 	const submenuTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 	const [openers, setOpeners] = useState<WorkspaceOpener[] | null>(null);
 	const openersRequested = useRef(false);
-	useEffect(() => { setSubmenu(null); setBarCssDraft(null); setAiPromptCopied(false); setBarConfirm(null); }, [popup]);
-	// Closing the main menu or its flyout also dismisses the nested presets flyout;
-	// presetFlyout's own changes must not reset it (that would self-close it).
-	useEffect(() => { setPresetFlyout(null); }, [popup, submenu]);
-	useEffect(() => () => { if (submenuTimer.current) clearTimeout(submenuTimer.current); if (presetTimer.current) clearTimeout(presetTimer.current); }, []);
+	useEffect(() => { setSubmenu(null); setBarFlyout(null); setAnimFlyout(null); setBarCssDraft(null); setAiPromptCopied(false); setBarConfirm(null); }, [popup]);
+	// Closing the main menu or its flyout also dismisses the nested bar/anim flyouts;
+	// their own changes must not reset them (that would self-close them).
+	useEffect(() => { setBarFlyout(null); }, [popup, submenu]);
+	useEffect(() => { setAnimFlyout(null); }, [popup, submenu, barFlyout]);
+	useEffect(() => () => { if (submenuTimer.current) clearTimeout(submenuTimer.current); if (barTimer.current) clearTimeout(barTimer.current); if (animTimer.current) clearTimeout(animTimer.current); }, []);
 	const [creatingProject, setCreatingProject] = useState(false);
 	const [trashTarget, setTrashTarget] = useState<{ session: SidebarSession; anchor: HTMLElement; nextPath?: string } | null>(null);
 	const [projectRemovalTarget, setProjectRemovalTarget] = useState<{ summary: ProjectRemovalSummary; anchor: HTMLElement } | null>(null);
@@ -973,17 +976,29 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 		clearSubmenuTimer();
 		submenuTimer.current = setTimeout(() => setSubmenu(null), 220);
 	}
-	function clearPresetTimer() {
-		if (presetTimer.current) { clearTimeout(presetTimer.current); presetTimer.current = null; }
+	function clearBarTimer() {
+		if (barTimer.current) { clearTimeout(barTimer.current); barTimer.current = null; }
 	}
-	function openPresetFlyout(anchor: HTMLElement, keyboard: boolean) {
-		clearPresetTimer();
-		setPresetFlyout((current) => current?.anchor === anchor && current.keyboard === keyboard ? current : { anchor, keyboard });
+	function openBarFlyout(anchor: HTMLElement, keyboard: boolean) {
+		clearBarTimer();
+		setBarFlyout((current) => current?.anchor === anchor && current.keyboard === keyboard ? current : { anchor, keyboard });
 	}
-	/** Hovering another row of the appearance flyout closes the presets flyout after a short grace period. */
-	function schedulePresetClose() {
-		clearPresetTimer();
-		presetTimer.current = setTimeout(() => setPresetFlyout(null), 220);
+	/** Hovering another row of the appearance flyout closes the bar flyout after a short grace period. */
+	function scheduleBarClose() {
+		clearBarTimer();
+		barTimer.current = setTimeout(() => setBarFlyout(null), 220);
+	}
+	function clearAnimTimer() {
+		if (animTimer.current) { clearTimeout(animTimer.current); animTimer.current = null; }
+	}
+	function openAnimFlyout(anchor: HTMLElement, keyboard: boolean) {
+		clearAnimTimer();
+		setAnimFlyout((current) => current?.anchor === anchor && current.keyboard === keyboard ? current : { anchor, keyboard });
+	}
+	/** Hovering another row of the bar flyout closes the anim flyout after a short grace period. */
+	function scheduleAnimClose() {
+		clearAnimTimer();
+		animTimer.current = setTimeout(() => setAnimFlyout(null), 220);
 	}
 	/** A context-menu row: icon, label, then its single-key accelerator or a flyout chevron. */
 	function menuItem(options: { icon: IconName; label: string; shortcut?: string; onSelect?(button: HTMLButtonElement): void; disabled?: boolean; danger?: boolean; submenu?: 'open' | 'move' | 'appearance'; action?: string }) {
@@ -1279,49 +1294,57 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 					{submenuItem({ key: 'explorer', label: t('sidebar.projectReveal'), index: 2 + editorOpenerCount(), icon: 'folder', onSelect: () => { const workspace = popup.workspace; setPopup(null); void perform(() => bridge ? bridge.openWorkspaceFolder(workspace) : Promise.resolve()); } })}
 				</>}
 				{submenu.key === 'appearance' && popup.kind === 'project' && <>
-					<p className="pd-sidebar-menu-note">{t('sidebar.appearanceBar')}</p>
-					<div className="pd-appearance-swatches" role="group" aria-label={t('sidebar.appearanceCustom')} onMouseEnter={schedulePresetClose}>
-						<label className={`pd-appearance-swatch pd-appearance-swatch-custom${projectBars[popup.workspace]?.startsWith('#') ? ' is-active' : ''}`} title={t('sidebar.appearanceCustom')}>
-							<input type="color" value={projectBars[popup.workspace]?.startsWith('#') ? projectBars[popup.workspace]! : '#667eea'} aria-label={t('sidebar.appearanceCustom')} onChange={(event) => applyProjectBar(popup.workspace, event.target.value)} />
-						</label>
-						<button type="button" role="menuitem" className="pd-menu-item" onMouseEnter={schedulePresetClose} disabled={!bridge?.importProjectBackground} onClick={() => { void bridge?.importProjectBackground().then((dataUrl) => { if (dataUrl) applyProjectBar(popup.workspace, dataUrl); }, () => {}); }}>
-							<Icon name="image" width="15" height="15" /><span>{t('sidebar.appearanceLocalImage')}</span>
-						</button>
-					</div>
-					<button type="button" role="menuitem" className="pd-menu-item" aria-haspopup="menu" aria-expanded={presetFlyout !== null}
-						onMouseEnter={(event) => openPresetFlyout(event.currentTarget, false)}
-						onKeyDown={(event) => { if (event.key === 'ArrowRight') { event.preventDefault(); event.stopPropagation(); openPresetFlyout(event.currentTarget, true); } }}
-						onClick={(event) => setPresetFlyout((current) => current?.anchor === event.currentTarget ? null : { anchor: event.currentTarget, keyboard: true })}>
-						<Icon name="spark" width="15" height="15" /><span>{t('sidebar.appearancePresets')}</span><Icon name="chevronRight" className="pd-menu-chevron" width="13" height="13" />
+					<button type="button" role="menuitem" className="pd-menu-item" aria-haspopup="menu" aria-expanded={barFlyout !== null}
+						onMouseEnter={(event) => openBarFlyout(event.currentTarget, false)}
+						onKeyDown={(event) => { if (event.key === 'ArrowRight') { event.preventDefault(); event.stopPropagation(); openBarFlyout(event.currentTarget, true); } }}
+						onClick={(event) => setBarFlyout((current) => current?.anchor === event.currentTarget ? null : { anchor: event.currentTarget, keyboard: true })}>
+						<Icon name="palette" width="15" height="15" /><span>{t('sidebar.appearanceBar')}</span><Icon name="chevronRight" className="pd-menu-chevron" width="13" height="13" />
 					</button>
 					<hr />
-					<p className="pd-sidebar-menu-note">{t('sidebar.appearanceCss')}</p>
-					<textarea className="pd-appearance-css" rows={2} spellCheck={false} placeholder={t('sidebar.appearanceCssPlaceholder')}
-						value={barCssDraft ?? customBarCss(popup.workspace)}
-						onKeyDown={(event) => { if (event.key !== 'Escape') event.stopPropagation(); }}
-						onMouseEnter={schedulePresetClose}
-						onChange={(event) => setBarCssDraft(event.target.value)} />
-					{barConfirm === null ? submenuItem({ key: 'bar-apply', label: t('sidebar.appearanceCssApply'), icon: 'check', disabled: !(barCssDraft ?? customBarCss(popup.workspace)).trim(), onHover: schedulePresetClose, onSelect: () => { const workspace = popup.workspace; const value = (barCssDraft ?? customBarCss(workspace)).trim(); if (projectBarLeavesMachine(value)) { setBarConfirm(value); return; } applyProjectBar(workspace, value); } }) : <>
-						<p className="pd-sidebar-menu-note pd-appearance-net-warn">{t('sidebar.appearanceNetWarn')}</p>
-						{submenuItem({ key: 'bar-apply-net', label: t('sidebar.appearanceNetApply'), icon: 'alert', onHover: schedulePresetClose, onSelect: () => { const workspace = popup.workspace; applyProjectBar(workspace, barConfirm); setBarConfirm(null); } })}
-						{submenuItem({ key: 'bar-apply-cancel', label: t('sidebar.cancel'), icon: 'close', onHover: schedulePresetClose, onSelect: () => setBarConfirm(null) })}
-					</>}
-					{submenuItem({ key: 'bar-ai', label: t('sidebar.appearanceAiCopy'), icon: 'brain', onHover: schedulePresetClose, onSelect: () => { void navigator.clipboard.writeText(t('sidebar.appearanceAiPrompt')).then(() => setAiPromptCopied(true), () => {}); } })}
-					{aiPromptCopied && <p className="pd-sidebar-menu-note">{t('sidebar.appearanceAiCopied')}</p>}
-					{submenuItem({ key: 'bar-ai-dynamic', label: t('sidebar.appearanceAiDynamic'), icon: 'refresh', onHover: schedulePresetClose, onSelect: () => { void navigator.clipboard.writeText(t('sidebar.appearanceAiPromptDynamic')).then(() => setAiPromptCopied(true), () => {}); } })}
-					<hr />
-					<p className="pd-sidebar-menu-note">{t('sidebar.appearanceAnim')}</p>
-					{(['', 'flow', 'pulse', 'shimmer'] as const).map((animId) => submenuItem({ key: `anim:${animId || 'none'}`, label: t(animId ? `sidebar.anim${animId[0]!.toUpperCase()}${animId.slice(1)}` : 'sidebar.animNone'), icon: animId ? 'spark' : 'close', checked: (projectAnims[popup.workspace] ?? null) === (animId || null), onHover: schedulePresetClose, onSelect: () => { const workspace = popup.workspace; applyProjectAnim(workspace, animId || null); } }))}
-					<hr />
-					{submenuItem({ key: 'bar-reset', label: t('sidebar.appearanceReset'), icon: 'rotateCcw', disabled: !projectBars[popup.workspace], onHover: schedulePresetClose, onSelect: () => { applyProjectBar(popup.workspace, null); setBarCssDraft(null); } })}
-					{presetFlyout && <SidebarSubmenu anchor={presetFlyout.anchor} label={t('sidebar.appearancePresets')} autoFocus={presetFlyout.keyboard} onPointerEnter={clearPresetTimer}
-						onClose={(restore) => { const anchor = presetFlyout.anchor; setPresetFlyout(null); if (restore) anchor.focus(); }}>
-						<div className="pd-appearance-swatches" role="group" aria-label={t('sidebar.appearancePresets')}>
+					{submenuItem({ key: 'bar-reset', label: t('sidebar.appearanceReset'), icon: 'rotateCcw', disabled: !projectBars[popup.workspace] && !projectAnims[popup.workspace], onHover: scheduleBarClose, onSelect: () => { const workspace = popup.workspace; applyProjectBar(workspace, null); applyProjectAnim(workspace, null); setBarCssDraft(null); setBarConfirm(null); } })}
+					{barFlyout && <SidebarSubmenu anchor={barFlyout.anchor} label={t('sidebar.appearanceBar')} autoFocus={barFlyout.keyboard} onPointerEnter={clearBarTimer}
+						onClose={(restore) => { const anchor = barFlyout.anchor; setBarFlyout(null); if (restore) anchor.focus(); }}>
+						<p className="pd-sidebar-menu-note">{t('sidebar.appearancePresets')}</p>
+						<div className="pd-appearance-swatches" role="group" aria-label={t('sidebar.appearancePresets')} onMouseEnter={scheduleAnimClose}>
 							{PROJECT_BAR_PRESETS.map((preset) => {
 								const label = t(`sidebar.bar${preset.id[0]!.toUpperCase()}${preset.id.slice(1)}`);
 								return <button key={preset.id} type="button" role="menuitemradio" aria-checked={projectBars[popup.workspace] === preset.id} className={`pd-appearance-swatch${projectBars[popup.workspace] === preset.id ? ' is-active' : ''}`} style={{ background: preset.css }} title={label} aria-label={label} onClick={() => applyProjectBar(popup.workspace, preset.id)} />;
 							})}
 						</div>
+						<div className="pd-appearance-swatches" role="group" aria-label={t('sidebar.appearanceCustom')} onMouseEnter={scheduleAnimClose}>
+							<label className={`pd-appearance-swatch pd-appearance-swatch-custom${projectBars[popup.workspace]?.startsWith('#') ? ' is-active' : ''}`} title={t('sidebar.appearanceCustom')}>
+								<input type="color" value={projectBars[popup.workspace]?.startsWith('#') ? projectBars[popup.workspace]! : '#667eea'} aria-label={t('sidebar.appearanceCustom')} onChange={(event) => applyProjectBar(popup.workspace, event.target.value)} />
+							</label>
+							<button type="button" role="menuitem" className="pd-menu-item" onMouseEnter={scheduleAnimClose} disabled={!bridge?.importProjectBackground} onClick={() => { void bridge?.importProjectBackground().then((dataUrl) => { if (dataUrl) applyProjectBar(popup.workspace, dataUrl); }, () => {}); }}>
+								<Icon name="image" width="15" height="15" /><span>{t('sidebar.appearanceLocalImage')}</span>
+							</button>
+						</div>
+						<hr />
+						<p className="pd-sidebar-menu-note">{t('sidebar.appearanceCss')}</p>
+						<textarea className="pd-appearance-css" rows={2} spellCheck={false} placeholder={t('sidebar.appearanceCssPlaceholder')}
+							value={barCssDraft ?? customBarCss(popup.workspace)}
+							onKeyDown={(event) => { if (event.key !== 'Escape') event.stopPropagation(); }}
+							onMouseEnter={scheduleAnimClose}
+							onChange={(event) => setBarCssDraft(event.target.value)} />
+						{barConfirm === null ? submenuItem({ key: 'bar-apply', label: t('sidebar.appearanceCssApply'), icon: 'check', disabled: !(barCssDraft ?? customBarCss(popup.workspace)).trim(), onHover: scheduleAnimClose, onSelect: () => { const workspace = popup.workspace; const value = (barCssDraft ?? customBarCss(workspace)).trim(); if (projectBarLeavesMachine(value)) { setBarConfirm(value); return; } applyProjectBar(workspace, value); } }) : <>
+							<p className="pd-sidebar-menu-note pd-appearance-net-warn">{t('sidebar.appearanceNetWarn')}</p>
+							{submenuItem({ key: 'bar-apply-net', label: t('sidebar.appearanceNetApply'), icon: 'alert', onHover: scheduleAnimClose, onSelect: () => { const workspace = popup.workspace; applyProjectBar(workspace, barConfirm); setBarConfirm(null); } })}
+							{submenuItem({ key: 'bar-apply-cancel', label: t('sidebar.cancel'), icon: 'close', onHover: scheduleAnimClose, onSelect: () => setBarConfirm(null) })}
+						</>}
+						{submenuItem({ key: 'bar-ai', label: t('sidebar.appearanceAiCopy'), icon: 'brain', onHover: scheduleAnimClose, onSelect: () => { void navigator.clipboard.writeText(t('sidebar.appearanceAiPrompt')).then(() => setAiPromptCopied(true), () => {}); } })}
+						{submenuItem({ key: 'bar-ai-dynamic', label: t('sidebar.appearanceAiDynamic'), icon: 'refresh', onHover: scheduleAnimClose, onSelect: () => { void navigator.clipboard.writeText(t('sidebar.appearanceAiPromptDynamic')).then(() => setAiPromptCopied(true), () => {}); } })}
+						{aiPromptCopied && <p className="pd-sidebar-menu-note">{t('sidebar.appearanceAiCopied')}</p>}
+						<hr />
+						<button type="button" role="menuitem" className="pd-menu-item" aria-haspopup="menu" aria-expanded={animFlyout !== null}
+							onMouseEnter={(event) => openAnimFlyout(event.currentTarget, false)}
+							onKeyDown={(event) => { if (event.key === 'ArrowRight') { event.preventDefault(); event.stopPropagation(); openAnimFlyout(event.currentTarget, true); } }}
+							onClick={(event) => setAnimFlyout((current) => current?.anchor === event.currentTarget ? null : { anchor: event.currentTarget, keyboard: true })}>
+							<Icon name="spark" width="15" height="15" /><span>{t('sidebar.appearanceAnim')}</span><Icon name="chevronRight" className="pd-menu-chevron" width="13" height="13" />
+						</button>
+						{animFlyout && <SidebarSubmenu anchor={animFlyout.anchor} label={t('sidebar.appearanceAnim')} autoFocus={animFlyout.keyboard} onPointerEnter={clearAnimTimer}
+							onClose={(restore) => { const anchor = animFlyout.anchor; setAnimFlyout(null); if (restore) anchor.focus(); }}>
+							{(['', 'flow', 'pulse', 'shimmer'] as const).map((animId) => submenuItem({ key: `anim:${animId || 'none'}`, label: t(animId ? `sidebar.anim${animId[0]!.toUpperCase()}${animId.slice(1)}` : 'sidebar.animNone'), icon: animId ? 'spark' : 'close', checked: (projectAnims[popup.workspace] ?? null) === (animId || null), onSelect: () => { const workspace = popup.workspace; applyProjectAnim(workspace, animId || null); } }))}
+						</SidebarSubmenu>}
 					</SidebarSubmenu>}
 				</>}
 				{submenu.key === 'move' && popup.kind === 'session' && <>

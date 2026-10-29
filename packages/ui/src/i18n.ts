@@ -746,7 +746,7 @@ export const translations: Record<string, { 'zh-CN': string; 'en-US': string }> 
   'sidebar.projectNicknameHintFile': { 'zh-CN': '备注名将写入项目根目录 .code-workspace 文件的 wpmanager.wpnickname 字段，读取时以该字段为准。', 'en-US': 'The remark is written to wpmanager.wpnickname in the project root .code-workspace file, which wins when reading.' },
   'sidebar.projectNicknameHintApp': { 'zh-CN': '项目根目录没有 .code-workspace 文件，备注名将保存在应用数据中；不会创建该文件。', 'en-US': 'The project root has no .code-workspace file, so the remark is stored in app data; the file is never created.' },
   'sidebar.appearance': { 'zh-CN': '外观', 'en-US': 'Appearance' },
-  'sidebar.appearanceBar': { 'zh-CN': '背景条', 'en-US': 'Background bar' },
+  'sidebar.appearanceBar': { 'zh-CN': '项目背景条', 'en-US': 'Project background bar' },
   'sidebar.appearanceCustom': { 'zh-CN': '自定义颜色', 'en-US': 'Custom color' },
   'sidebar.appearancePresets': { 'zh-CN': '预设', 'en-US': 'Presets' },
   'sidebar.appearanceReset': { 'zh-CN': '恢复默认', 'en-US': 'Reset to default' },
