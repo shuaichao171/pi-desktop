@@ -12,7 +12,7 @@ import { app, BrowserWindow, dialog, shell, type IpcMainInvokeEvent } from 'elec
 import { mkdirSync, statSync } from 'node:fs';
 import { rm, stat } from 'node:fs/promises';
 import { basename, dirname, join, resolve } from 'node:path';
-import { IPC_CHANNELS, isValidProjectBarValue, type AgentEventEnvelope, type AppLocale, type UiAppCommand, type UiAttachment, type UiExtensionDialogRequest, type UiInputScope, type UiSessionMetaPatch, type UiSidebarGroupChange, type UiSlashCommandRequest, type UiThinkingLevel } from '@pidesktop/shared';
+import { IPC_CHANNELS, isValidProjectBarValue, normalizeProjectBarValue, type AgentEventEnvelope, type AppLocale, type UiAppCommand, type UiAttachment, type UiExtensionDialogRequest, type UiInputScope, type UiSessionMetaPatch, type UiSidebarGroupChange, type UiSlashCommandRequest, type UiThinkingLevel } from '@pidesktop/shared';
 import { createIsolatedAgentService } from './agentClient';
 import { isPaiSender, isPaiWindow, paiHeldSessionPaths, paiSlotForSender, paiWindowSlots, registerPaiWindowSlot, unregisterPaiWindowSlot } from './paiWindows';
 import { getAppLocale, setAppLocale } from './appLocale';
@@ -1131,8 +1131,9 @@ export function registerIpc(options: {
 	});
 	handleRendererInvoke(IPC_CHANNELS.workspaceSetProjectAppearance, (_event, cwd: unknown, patch: unknown) => {
 		if (typeof cwd !== 'string' || !cwd) throw new Error('工作区路径无效');
-		if (!isRecord(patch) || patch.bar === undefined || (patch.bar !== null && !isValidProjectBar(patch.bar))) throw new Error('外观参数无效');
-		const bar = patch.bar;
+		if (!isRecord(patch) || patch.bar === undefined) throw new Error('外观参数无效');
+		const bar = patch.bar === null ? null : normalizeProjectBarValue(patch.bar);
+		if (patch.bar !== null && bar === null) throw new Error('外观参数无效');
 		return withWorkspaceSettings(async (previous) => {
 			const key = workspaceKey(cwd);
 			const current = { ...(previous.workspaceAppearance?.[key] ?? {}) };

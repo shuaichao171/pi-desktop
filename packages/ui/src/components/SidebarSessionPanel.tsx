@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
-import type { UiSessionGroup, UiSidebarGroupChange, WorkspaceOpener, WorkspaceProjectNickname } from '@pidesktop/shared';
+import { normalizeProjectBarValue, type UiSessionGroup, type UiSidebarGroupChange, type WorkspaceOpener, type WorkspaceProjectNickname } from '@pidesktop/shared';
 import { PROJECT_BAR_PRESETS, projectBarStyle } from '../sidebarAppearance';
 import { useChatStore } from '../store';
 import { useT } from '../i18n';
@@ -180,11 +180,13 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 			catch { return [workspace, null] as const; }
 		})).then((entries) => { if (barRequest.current === request) setProjectBars(Object.fromEntries(entries)); });
 	}, [bridge, workspacePaths]);
-	/** Live-previews a background bar; a failed write re-reads the stored truth. */
+	/** Live-previews a background bar (newlines collapsed); a failed write re-reads the stored truth. */
 	const applyProjectBar = (workspace: string, bar: string | null) => {
-		setProjectBars((current) => ({ ...current, [workspace]: bar }));
+		const normalized = bar === null ? null : normalizeProjectBarValue(bar);
+		if (bar !== null && normalized === null) return; // Unrenderable CSS: nothing to preview or store.
+		setProjectBars((current) => ({ ...current, [workspace]: normalized }));
 		if (!bridge?.setProjectAppearance) return;
-		void bridge.setProjectAppearance(workspace, { bar }).catch(() => {
+		void bridge.setProjectAppearance(workspace, { bar: normalized }).catch(() => {
 			void bridge.getProjectAppearance(workspace).then((appearance) => setProjectBars((current) => ({ ...current, [workspace]: appearance.bar }))).catch(() => {});
 		});
 	};

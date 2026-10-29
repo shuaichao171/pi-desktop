@@ -1,4 +1,4 @@
-import { isValidProjectBarValue, type WorkspaceProjectAppearance } from '@pidesktop/shared';
+import { isValidProjectBarValue, normalizeProjectBarValue, type WorkspaceProjectAppearance } from '@pidesktop/shared';
 
 /** A background-bar preset: the stored id maps to this fixed CSS gradient. */
 export interface ProjectBarPreset {
@@ -29,7 +29,9 @@ function hexToRgb(hex: string): [number, number, number] | null {
  * Maps a stored bar value (preset id or hex color) to the heading background
  * and a readable text color; unknown values degrade to the default bar.
  */
-export function projectBarStyle(bar: string | null | undefined): { background: string; light: boolean } | null {
+export function projectBarStyle(value: string | null | undefined): { background: string; light: boolean } | null {
+  // Normalize first so multi-line pastes (AI output copied out of the chat) still render.
+  const bar = normalizeProjectBarValue(value);
   if (!bar) return null;
   if (bar.startsWith('#')) {
     const rgb = hexToRgb(bar);

@@ -895,16 +895,25 @@ export const PROJECT_BAR_PRESET_IDS = ['aurora', 'sunset', 'neon', 'violet', 'mi
 /** A custom bar is one CSS background declaration: no remote/element sources, no escapes, no rule tricks. */
 const PROJECT_BAR_CSS_FORBIDDEN = /url\(|image-set\(|element\(|attr\(|expression\(|paint\(|cross-fade\(|@|;|\{|\}|\\/i;
 
-/** Validates any stored background-bar value: preset id, hex color, or safe custom CSS. */
-export function isValidProjectBarValue(value: unknown): value is string {
-	const bar = typeof value === 'string' ? value.trim() : '';
-	if (!bar || bar.length > 300) return false;
-	if (bar.startsWith('#')) return /^#[0-9a-fA-F]{3}$/.test(bar) || /^#[0-9a-fA-F]{6}$/.test(bar);
-	if ((PROJECT_BAR_PRESET_IDS as readonly string[]).includes(bar)) return true;
+/**
+ * Normalizes a stored background-bar value (whitespace incl. pasted newlines collapsed
+ * to single spaces); null when the value is invalid: not a preset id, hex color, or
+ * safe custom CSS.
+ */
+export function normalizeProjectBarValue(value: unknown): string | null {
+	const bar = typeof value === 'string' ? value.trim().replace(/\s+/g, ' ') : '';
+	if (!bar || bar.length > 300) return null;
+	if (bar.startsWith('#')) return /^#[0-9a-fA-F]{3}$/.test(bar) || /^#[0-9a-fA-F]{6}$/.test(bar) ? bar : null;
+	if ((PROJECT_BAR_PRESET_IDS as readonly string[]).includes(bar)) return bar;
 	// Custom CSS: a conservative charset for gradients and colors (calc/rgba/repeats included),
 	// minus the constructs that could load content or break out of a single declaration.
 	// A function call is required so junk that no browser could render stays out too.
-	return bar.includes('(') && /^[a-zA-Z0-9 #%,.()'/+\-]+$/.test(bar) && !PROJECT_BAR_CSS_FORBIDDEN.test(bar);
+	return bar.includes('(') && /^[a-zA-Z0-9 #%,.()'/+\-]+$/.test(bar) && !PROJECT_BAR_CSS_FORBIDDEN.test(bar) ? bar : null;
+}
+
+/** Validates any stored background-bar value: preset id, hex color, or safe custom CSS. */
+export function isValidProjectBarValue(value: unknown): value is string {
+	return normalizeProjectBarValue(value) !== null;
 }
 
 /** Per-project sidebar cosmetics (外观), stored app-side; cosmetics never touch project files. */
