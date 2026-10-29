@@ -448,7 +448,6 @@ export const translations: Record<string, { 'zh-CN': string; 'en-US': string }> 
   'composer.fileTypes': { 'zh-CN': '{name}：仅支持图片或文本文件', 'en-US': '{name}: Only image or text files are supported' },
   'composer.textSize': { 'zh-CN': '{name}：文本文件不能超过 200 KB', 'en-US': '{name}: Text file must be 200 KB or smaller' },
   'composer.maxAttachments': { 'zh-CN': '最多添加 {count} 项上下文和附件', 'en-US': 'You can add up to {count} context items and attachments' },
-  'composer.draftWarning': { 'zh-CN': '草稿无法保存到本机；离开此会话后可能丢失。', 'en-US': 'Could not save the draft locally. It may be lost when you leave this session.' },
   'composer.pickerLabel': { 'zh-CN': '选择模型', 'en-US': 'Choose a model' },
   'composer.pickerTitle': { 'zh-CN': '选择模型', 'en-US': 'Choose a model' },
   'composer.pickerClose': { 'zh-CN': '关闭模型选择', 'en-US': 'Close model picker' },
