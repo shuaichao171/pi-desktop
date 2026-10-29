@@ -122,7 +122,10 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 	const submenuTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 	const [openers, setOpeners] = useState<WorkspaceOpener[] | null>(null);
 	const openersRequested = useRef(false);
-	useEffect(() => { setSubmenu(null); setPresetFlyout(null); }, [popup, submenu]);
+	useEffect(() => { setSubmenu(null); }, [popup]);
+	// Closing the main menu or its flyout also dismisses the nested presets flyout;
+	// presetFlyout's own changes must not reset it (that would self-close it).
+	useEffect(() => { setPresetFlyout(null); }, [popup, submenu]);
 	useEffect(() => () => { if (submenuTimer.current) clearTimeout(submenuTimer.current); }, []);
 	const [creatingProject, setCreatingProject] = useState(false);
 	const [trashTarget, setTrashTarget] = useState<{ session: SidebarSession; anchor: HTMLElement; nextPath?: string } | null>(null);
