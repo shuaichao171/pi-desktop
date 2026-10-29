@@ -54,13 +54,16 @@
 .pd-sidebar-group.has-project-bar > .pd-sidebar-group-heading { background: var(--pd-project-bar); }
 .pd-sidebar-group.has-project-bar > .pd-sidebar-group-heading:hover { filter: brightness(1.07); }
 .pd-sidebar-group.has-project-bar > .pd-sidebar-group-heading .pd-sidebar-group-toggle { color: var(--pd-project-bar-text, #fff); }
-.pd-sidebar-group.has-project-bar > .pd-sidebar-group-heading .pd-sidebar-group-toggle > span { color: var(--pd-project-bar-text, #fff); font-weight: 600; }
+.pd-sidebar-group.has-project-bar > .pd-sidebar-group-heading .pd-sidebar-group-toggle > span { color: var(--pd-project-bar-text, #fff); font-weight: 600; text-shadow: 0 1px 2px rgb(0 0 0 / 30%); }
 .pd-sidebar-group.has-project-bar > .pd-sidebar-group-heading .pd-sidebar-group-toggle > svg { color: var(--pd-project-bar-text, #fff); }
 .pd-appearance-swatches { display: flex; flex-wrap: wrap; gap: 6px; padding: 4px 12px 8px; }
 .pd-appearance-swatch { position: relative; flex: 0 0 auto; width: 34px; height: 22px; padding: 0; border: 1px solid color-mix(in srgb, var(--pd-text) 25%, transparent); border-radius: 6px; cursor: pointer; }
 .pd-appearance-swatch.is-active { border-color: var(--pd-text); box-shadow: inset 0 0 0 1.5px var(--pd-popover, #fff); }
 .pd-appearance-swatch-custom { background: conic-gradient(#f66, #fc3, #6c6, #6cf, #96f, #f66); }
 .pd-appearance-swatch-custom input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; }
+.pd-appearance-css { display: block; width: calc(100% - 24px); margin: 2px 12px 6px; padding: 5px 7px; border: 1px solid var(--pd-sidebar-surface); border-radius: var(--pd-radius-sm); background: var(--pd-sidebar); color: var(--pd-text); font: inherit; font-size: var(--pd-font-caption); line-height: 1.4; resize: none; }
+.pd-appearance-css:focus { outline: none; border-color: var(--pd-brand); }
+.pd-appearance-css::placeholder { color: var(--pd-text-subtle); }
 .pd-sidebar-group-content { margin-left: 9px; padding-left: 2px; border-left: 1px solid var(--pd-sidebar-surface); }
 .pd-sidebar-group.is-custom > .pd-sidebar-group-content { border-left-color: var(--pd-group-color); }
 /* Rows sit close to the guide line, but the leading indicator keeps a ~5px gap so it never covers the border. */

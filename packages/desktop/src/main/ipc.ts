@@ -12,7 +12,7 @@ import { app, BrowserWindow, dialog, shell, type IpcMainInvokeEvent } from 'elec
 import { mkdirSync, statSync } from 'node:fs';
 import { rm, stat } from 'node:fs/promises';
 import { basename, dirname, join, resolve } from 'node:path';
-import { IPC_CHANNELS, PROJECT_BAR_PRESET_IDS, type AgentEventEnvelope, type AppLocale, type UiAppCommand, type UiAttachment, type UiExtensionDialogRequest, type UiInputScope, type UiSessionMetaPatch, type UiSidebarGroupChange, type UiSlashCommandRequest, type UiThinkingLevel } from '@pidesktop/shared';
+import { IPC_CHANNELS, isValidProjectBarValue, type AgentEventEnvelope, type AppLocale, type UiAppCommand, type UiAttachment, type UiExtensionDialogRequest, type UiInputScope, type UiSessionMetaPatch, type UiSidebarGroupChange, type UiSlashCommandRequest, type UiThinkingLevel } from '@pidesktop/shared';
 import { createIsolatedAgentService } from './agentClient';
 import { isPaiSender, isPaiWindow, paiHeldSessionPaths, paiSlotForSender, paiWindowSlots, registerPaiWindowSlot, unregisterPaiWindowSlot } from './paiWindows';
 import { getAppLocale, setAppLocale } from './appLocale';
@@ -554,8 +554,7 @@ function workspaceKey(cwd: string): string {
 	return process.platform === 'win32' ? key.toLowerCase() : key;
 }
 
-/** Background-bar values are preset ids or hex colors; anything else is rejected at the IPC boundary. */
-const PROJECT_BAR_VALUE = new RegExp(`^(?:${PROJECT_BAR_PRESET_IDS.join('|')}|#[0-9a-fA-F]{3}|#[0-9a-fA-F]{6})$`);
+const isValidProjectBar = isValidProjectBarValue;
 let activeWorkspace = '';
 const pickedWorkspaces = new Set<string>();
 const sessionOwnerByPath = new Map<string, string>();
@@ -574,7 +573,7 @@ function isWorkspaceSettings(value: unknown): value is WorkspaceSettings {
 		&& (value.conversationStorageDirectories === undefined || (Array.isArray(value.conversationStorageDirectories) && value.conversationStorageDirectories.every((cwd) => typeof cwd === 'string')))
 		&& (value.explicitWorkspaces === undefined || (Array.isArray(value.explicitWorkspaces) && value.explicitWorkspaces.every((cwd) => typeof cwd === 'string')))
 		&& (value.workspaceNicknames === undefined || (isRecord(value.workspaceNicknames) && Object.values(value.workspaceNicknames).every((nickname) => typeof nickname === 'string' && nickname.length <= 80)))
-		&& (value.workspaceAppearance === undefined || (isRecord(value.workspaceAppearance) && Object.values(value.workspaceAppearance).every((appearance) => isRecord(appearance) && (appearance.bar === undefined || appearance.bar === null || (typeof appearance.bar === 'string' && PROJECT_BAR_VALUE.test(appearance.bar))))))
+		&& (value.workspaceAppearance === undefined || (isRecord(value.workspaceAppearance) && Object.values(value.workspaceAppearance).every((appearance) => isRecord(appearance) && (appearance.bar === undefined || appearance.bar === null || isValidProjectBar(appearance.bar)))))
 		&& (value.pinnedWorkspaces === undefined || (Array.isArray(value.pinnedWorkspaces) && value.pinnedWorkspaces.every((cwd) => typeof cwd === 'string')));
 }
 
@@ -1132,7 +1131,7 @@ export function registerIpc(options: {
 	});
 	handleRendererInvoke(IPC_CHANNELS.workspaceSetProjectAppearance, (_event, cwd: unknown, patch: unknown) => {
 		if (typeof cwd !== 'string' || !cwd) throw new Error('工作区路径无效');
-		if (!isRecord(patch) || patch.bar === undefined || (patch.bar !== null && !(typeof patch.bar === 'string' && PROJECT_BAR_VALUE.test(patch.bar)))) throw new Error('外观参数无效');
+		if (!isRecord(patch) || patch.bar === undefined || (patch.bar !== null && !isValidProjectBar(patch.bar))) throw new Error('外观参数无效');
 		const bar = patch.bar;
 		return withWorkspaceSettings(async (previous) => {
 			const key = workspaceKey(cwd);

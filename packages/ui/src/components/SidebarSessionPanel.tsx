@@ -123,7 +123,7 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 	const submenuTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 	const [openers, setOpeners] = useState<WorkspaceOpener[] | null>(null);
 	const openersRequested = useRef(false);
-	useEffect(() => { setSubmenu(null); }, [popup]);
+	useEffect(() => { setSubmenu(null); setBarCssDraft(null); }, [popup]);
 	// Closing the main menu or its flyout also dismisses the nested presets flyout;
 	// presetFlyout's own changes must not reset it (that would self-close it).
 	useEffect(() => { setPresetFlyout(null); }, [popup, submenu]);
@@ -169,6 +169,7 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 	}, [bridge, workspacePaths]);
 	const projectDisplayName = (workspace: string) => projectNicknames[workspace]?.nickname || workspaceName(workspace);
 	const [projectBars, setProjectBars] = useState<Record<string, string | null>>({});
+	const [barCssDraft, setBarCssDraft] = useState<string | null>(null);
 	const barRequest = useRef(0);
 	useEffect(() => {
 		if (!bridge || workspacePaths.length === 0) { setProjectBars({}); return; }
@@ -185,6 +186,11 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 		void bridge.setProjectAppearance(workspace, { bar }).catch(() => {
 			void bridge.getProjectAppearance(workspace).then((appearance) => setProjectBars((current) => ({ ...current, [workspace]: appearance.bar }))).catch(() => {});
 		});
+	};
+	/** The current bar when it is user-pasted CSS (neither a preset id nor a hex color). */
+	const customBarCss = (workspace: string) => {
+		const bar = projectBars[workspace];
+		return bar && !bar.startsWith('#') && !PROJECT_BAR_PRESETS.some((preset) => preset.id === bar) ? bar : '';
 	};
 	const projectPaths = useMemo(() => sidebarProjectPaths(workspaces, null, conversationWorkspaces), [workspaces, conversationWorkspaces]);
 	const pinnedWorkspaceSet = useMemo(() => new Set(splitSidebarProjects(projectPaths, new Set(pinnedProjects)).pinned), [projectPaths, pinnedProjects]);
@@ -1238,7 +1244,15 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 						<Icon name="spark" width="15" height="15" /><span>{t('sidebar.appearancePresets')}</span><Icon name="chevronRight" className="pd-menu-chevron" width="13" height="13" />
 					</button>
 					<hr />
-					{submenuItem({ key: 'bar-reset', label: t('sidebar.appearanceReset'), icon: 'rotateCcw', disabled: !projectBars[popup.workspace], onHover: schedulePresetClose, onSelect: () => applyProjectBar(popup.workspace, null) })}
+					<p className="pd-sidebar-menu-note">{t('sidebar.appearanceCss')}</p>
+					<textarea className="pd-appearance-css" rows={2} spellCheck={false} placeholder={t('sidebar.appearanceCssPlaceholder')}
+						value={barCssDraft ?? customBarCss(popup.workspace)}
+						onKeyDown={(event) => { if (event.key !== 'Escape') event.stopPropagation(); }}
+						onMouseEnter={schedulePresetClose}
+						onChange={(event) => setBarCssDraft(event.target.value)} />
+					{submenuItem({ key: 'bar-apply', label: t('sidebar.appearanceCssApply'), icon: 'check', disabled: !(barCssDraft ?? customBarCss(popup.workspace)).trim(), onHover: schedulePresetClose, onSelect: () => { const workspace = popup.workspace; applyProjectBar(workspace, (barCssDraft ?? customBarCss(workspace)).trim()); } })}
+					<hr />
+					{submenuItem({ key: 'bar-reset', label: t('sidebar.appearanceReset'), icon: 'rotateCcw', disabled: !projectBars[popup.workspace], onHover: schedulePresetClose, onSelect: () => { applyProjectBar(popup.workspace, null); setBarCssDraft(null); } })}
 					{presetFlyout && <SidebarSubmenu anchor={presetFlyout.anchor} label={t('sidebar.appearancePresets')} autoFocus={presetFlyout.keyboard} onPointerEnter={clearPresetTimer}
 						onClose={(restore) => { const anchor = presetFlyout.anchor; setPresetFlyout(null); if (restore) anchor.focus(); }}>
 						<div className="pd-appearance-swatches" role="group" aria-label={t('sidebar.appearancePresets')}>

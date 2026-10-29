@@ -892,9 +892,24 @@ export interface WorkspaceProjectNickname {
 /** Background-bar preset ids for the project appearance bar (rendered as CSS in the UI layer). */
 export const PROJECT_BAR_PRESET_IDS = ['aurora', 'sunset', 'neon', 'violet', 'mint', 'dawn'] as const;
 
+/** A custom bar is one CSS background declaration: no remote/element sources, no escapes, no rule tricks. */
+const PROJECT_BAR_CSS_FORBIDDEN = /url\(|image-set\(|element\(|attr\(|expression\(|paint\(|cross-fade\(|@|;|\{|\}|\\/i;
+
+/** Validates any stored background-bar value: preset id, hex color, or safe custom CSS. */
+export function isValidProjectBarValue(value: unknown): value is string {
+	const bar = typeof value === 'string' ? value.trim() : '';
+	if (!bar || bar.length > 300) return false;
+	if (bar.startsWith('#')) return /^#[0-9a-fA-F]{3}$/.test(bar) || /^#[0-9a-fA-F]{6}$/.test(bar);
+	if ((PROJECT_BAR_PRESET_IDS as readonly string[]).includes(bar)) return true;
+	// Custom CSS: a conservative charset for gradients and colors (calc/rgba/repeats included),
+	// minus the constructs that could load content or break out of a single declaration.
+	// A function call is required so junk that no browser could render stays out too.
+	return bar.includes('(') && /^[a-zA-Z0-9 #%,.()'/+\-]+$/.test(bar) && !PROJECT_BAR_CSS_FORBIDDEN.test(bar);
+}
+
 /** Per-project sidebar cosmetics (外观), stored app-side; cosmetics never touch project files. */
 export interface WorkspaceProjectAppearance {
-  /** The background bar: a preset id from PROJECT_BAR_PRESET_IDS or a hex color; null = default. */
+  /** The background bar: a preset id, a hex color, or safe custom CSS; null = default. */
   bar: string | null;
 }
 export interface WorkspaceBranches {

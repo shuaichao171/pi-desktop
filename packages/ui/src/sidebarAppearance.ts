@@ -1,4 +1,4 @@
-import type { WorkspaceProjectAppearance } from '@pidesktop/shared';
+import { isValidProjectBarValue, type WorkspaceProjectAppearance } from '@pidesktop/shared';
 
 /** A background-bar preset: the stored id maps to this fixed CSS gradient. */
 export interface ProjectBarPreset {
@@ -39,7 +39,11 @@ export function projectBarStyle(bar: string | null | undefined): { background: s
     return { background: bar, light: luminance > 0.62 };
   }
   const preset = PROJECT_BAR_PRESETS.find((item) => item.id === bar);
-  return preset ? { background: preset.css, light: preset.light } : null;
+  if (preset) return { background: preset.css, light: preset.light };
+  // Custom CSS (user-pasted gradient and the like): the shared validator already
+  // stripped remote sources; text stays white over a subtle dark scrim in CSS.
+  if (!isValidProjectBarValue(bar)) return null;
+  return { background: bar, light: false };
 }
 
 export type { WorkspaceProjectAppearance };
