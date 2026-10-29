@@ -35,7 +35,7 @@ test('multi-line AI output still applies: newlines collapse to spaces before val
   const { isValidProjectBarValue } = await import('../packages/shared/src/index.ts');
   const oneLine = 'radial-gradient(200% 340% at 0% 50%, #ff2ec433 0%, transparent 55%), radial-gradient(200% 340% at 100% 50%, #00e5ff2b 0%, transparent 55%), repeating-linear-gradient(115deg, transparent 0 9px, #ffffff07 9px 10px), linear-gradient(90deg, #080112 0%, #170b31 50%, #080112 100%)';
   const pasted = oneLine.slice(0, 60) + '\n' + oneLine.slice(60) + '\n';
-  assert.equal(isValidProjectBarValue(pasted), false, 'raw newline paste is not valid as-is');
+  assert.equal(isValidProjectBarValue(pasted), true, 'the validator normalizes pasted newlines instead of rejecting');
   const rendered = projectBarStyle(pasted);
   assert.equal(rendered?.background, oneLine, 'the renderer normalizes and renders it anyway');
   assert.equal(isValidProjectBarValue('  linear-gradient(45deg, #f66, #3cf)  '), true, 'outer whitespace is trimmed');
