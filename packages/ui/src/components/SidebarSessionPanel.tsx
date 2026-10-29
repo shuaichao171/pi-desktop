@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import type { UiSessionGroup, UiSidebarGroupChange, WorkspaceOpener, WorkspaceProjectNickname } from '@pidesktop/shared';
+import { PROJECT_BAR_PRESETS, projectBarStyle } from '../sidebarAppearance';
 import { useChatStore } from '../store';
 import { useT } from '../i18n';
 import { managementCopy } from '../managementCopy';
@@ -116,7 +117,7 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 	const [sectionLimits, setSectionLimits] = useState<Record<string, number>>({});
 	const [popup, setPopup] = useState<Popup | null>(null);
 	// Flyout of the open context menu ("打开方式 ›", "移动到分组 ›"); it closes with its menu.
-	const [submenu, setSubmenu] = useState<{ key: 'open' | 'move'; anchor: HTMLElement; keyboard: boolean } | null>(null);
+	const [submenu, setSubmenu] = useState<{ key: 'open' | 'move' | 'appearance'; anchor: HTMLElement; keyboard: boolean } | null>(null);
 	const submenuTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 	const [openers, setOpeners] = useState<WorkspaceOpener[] | null>(null);
 	const openersRequested = useRef(false);
@@ -162,6 +163,24 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 		})).then((entries) => { if (nicknameRequest.current === request) setProjectNicknames(Object.fromEntries(entries)); });
 	}, [bridge, workspacePaths]);
 	const projectDisplayName = (workspace: string) => projectNicknames[workspace]?.nickname || workspaceName(workspace);
+	const [projectBars, setProjectBars] = useState<Record<string, string | null>>({});
+	const barRequest = useRef(0);
+	useEffect(() => {
+		if (!bridge || workspacePaths.length === 0) { setProjectBars({}); return; }
+		const request = ++barRequest.current;
+		void Promise.all(workspacePaths.map(async (workspace) => {
+			try { return [workspace, (await bridge.getProjectAppearance(workspace)).bar] as const; }
+			catch { return [workspace, null] as const; }
+		})).then((entries) => { if (barRequest.current === request) setProjectBars(Object.fromEntries(entries)); });
+	}, [bridge, workspacePaths]);
+	/** Live-previews a background bar; a failed write re-reads the stored truth. */
+	const applyProjectBar = (workspace: string, bar: string | null) => {
+		setProjectBars((current) => ({ ...current, [workspace]: bar }));
+		if (!bridge?.setProjectAppearance) return;
+		void bridge.setProjectAppearance(workspace, { bar }).catch(() => {
+			void bridge.getProjectAppearance(workspace).then((appearance) => setProjectBars((current) => ({ ...current, [workspace]: appearance.bar }))).catch(() => {});
+		});
+	};
 	const projectPaths = useMemo(() => sidebarProjectPaths(workspaces, null, conversationWorkspaces), [workspaces, conversationWorkspaces]);
 	const pinnedWorkspaceSet = useMemo(() => new Set(splitSidebarProjects(projectPaths, new Set(pinnedProjects)).pinned), [projectPaths, pinnedProjects]);
 	const pinnedWorkspaceKeys = useMemo(() => new Set([...pinnedWorkspaceSet].map(sidebarWorkspaceKey)), [pinnedWorkspaceSet]);
@@ -853,7 +872,8 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 			const trigger = anchor.querySelector<HTMLButtonElement>('[aria-haspopup="menu"]') ?? anchor;
 			setPopup({ ...menuTarget, anchor, trigger, point });
 		}
-		return <section className={`pd-sidebar-group${key === 'pinned' ? ' is-pinned' : ''}${options.group ? ' is-custom' : ''}${options.workspace === cwd ? ' is-current' : ''}${isDraggedProject ? ' is-project-drag-source' : ''}`} key={key} data-section-key={key} data-project-path={options.workspace} data-project-drop={projectDrop} style={{ '--pd-group-color': color } as CSSProperties}>
+		const bar = options.workspace ? projectBarStyle(projectBars[options.workspace]) : null;
+		return <section className={`pd-sidebar-group${key === 'pinned' ? ' is-pinned' : ''}${options.group ? ' is-custom' : ''}${options.workspace === cwd ? ' is-current' : ''}${isDraggedProject ? ' is-project-drag-source' : ''}${bar ? ' has-project-bar' : ''}`} key={key} data-section-key={key} data-project-path={options.workspace} data-project-drop={projectDrop} style={{ '--pd-group-color': color, ...(bar ? { '--pd-project-bar': bar.background, '--pd-project-bar-text': bar.light ? '#1f2430' : '#ffffff' } : {}) } as CSSProperties}>
 			<HoverTooltip title={name} description={options.workspace} side="right" align="start"><div className="pd-sidebar-group-heading" data-drag-heading={droppable ? key : undefined} data-drag-container={droppable ? key : undefined} onContextMenu={menuTarget ? (event) => {
 				event.preventDefault(); event.stopPropagation();
 				openSectionMenu(event.currentTarget, { x: event.clientX, y: event.clientY });
@@ -884,7 +904,7 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 		openersRequested.current = true;
 		void bridge.listWorkspaceOpeners().then(setOpeners, () => { openersRequested.current = false; setOpeners([]); });
 	}
-	function openSubmenu(key: 'open' | 'move', anchor: HTMLElement, keyboard: boolean) {
+	function openSubmenu(key: 'open' | 'move' | 'appearance', anchor: HTMLElement, keyboard: boolean) {
 		clearSubmenuTimer();
 		if (key === 'open') loadOpeners();
 		setSubmenu((current) => current?.key === key && current.anchor === anchor && current.keyboard === keyboard ? current : { key, anchor, keyboard });
@@ -895,7 +915,7 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 		submenuTimer.current = setTimeout(() => setSubmenu(null), 220);
 	}
 	/** A context-menu row: icon, label, then its single-key accelerator or a flyout chevron. */
-	function menuItem(options: { icon: IconName; label: string; shortcut?: string; onSelect?(button: HTMLButtonElement): void; disabled?: boolean; danger?: boolean; submenu?: 'open' | 'move'; action?: string }) {
+	function menuItem(options: { icon: IconName; label: string; shortcut?: string; onSelect?(button: HTMLButtonElement): void; disabled?: boolean; danger?: boolean; submenu?: 'open' | 'move' | 'appearance'; action?: string }) {
 		const flyout = options.submenu;
 		return <button type="button" role="menuitem" className={`pd-menu-item${options.danger ? ' pd-sidebar-menu-danger' : ''}`} data-action={options.action}
 			data-shortcut={options.shortcut} data-shortcut-label={flyout || !options.shortcut ? undefined : options.shortcut === 'Delete' ? 'Del' : options.shortcut}
@@ -1100,6 +1120,7 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 			{popup.kind === 'project' && <>
 				{menuItem({ icon: 'plus', label: t('sidebar.projectNewChat'), shortcut: 'N', disabled: navigating, onSelect: () => newChatInProject(popup.workspace) })}
 				{menuItem({ icon: 'panelRight', label: t('sidebar.openIn'), shortcut: 'O', submenu: 'open' })}
+				{menuItem({ icon: 'palette', label: t('sidebar.appearance'), submenu: 'appearance' })}
 				<hr />
 				{menuItem({ icon: 'pin', label: t(pinnedWorkspaceSet.has(popup.workspace) ? 'sidebar.projectUnpin' : 'sidebar.projectPin'), shortcut: 'P', action: pinnedWorkspaceSet.has(popup.workspace) ? 'unpin-project' : 'pin-project', disabled: !bridge || !pinsReady || pinsLoading || pinSaving, onSelect: () => toggleProjectPin(popup.workspace, popup.trigger ?? popup.anchor) })}
 				{menuItem({ icon: 'pencil', label: t('sidebar.projectNickname'), shortcut: 'B', disabled: !bridge, onSelect: () => openProjectNickname(popup.workspace, popup.trigger ?? popup.anchor) })}
@@ -1165,7 +1186,7 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 					setPopup(null);
 				} })}
 			</>}
-			{submenu && (popup.kind === 'session' || popup.kind === 'project') && <SidebarSubmenu anchor={submenu.anchor} label={t(submenu.key === 'open' ? 'sidebar.openIn' : 'sidebar.moveToGroup')} autoFocus={submenu.keyboard}
+			{submenu && (popup.kind === 'session' || popup.kind === 'project') && <SidebarSubmenu anchor={submenu.anchor} label={t(submenu.key === 'open' ? 'sidebar.openIn' : submenu.key === 'appearance' ? 'sidebar.appearance' : 'sidebar.moveToGroup')} autoFocus={submenu.keyboard}
 				onPointerEnter={clearSubmenuTimer} onClose={(restore) => { const anchor = submenu.anchor; setSubmenu(null); if (restore) anchor.focus(); }}>
 				{submenu.key === 'open' && popup.kind === 'session' && <>
 					{submenuItem({ key: 'new-window', label: t('sidebar.openInNewWindow'), index: 1, icon: 'maximize', disabled: !bridge?.openSessionInNewWindow || sessionBusy(popup.session), onSelect: () => openInNewWindow(popup.session) })}
@@ -1185,6 +1206,19 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 					<hr />
 					{openerItems(popup.workspace, 2)}
 					{submenuItem({ key: 'explorer', label: t('sidebar.projectReveal'), index: 2 + editorOpenerCount(), icon: 'folder', onSelect: () => { const workspace = popup.workspace; setPopup(null); void perform(() => bridge ? bridge.openWorkspaceFolder(workspace) : Promise.resolve()); } })}
+				</>}
+				{submenu.key === 'appearance' && popup.kind === 'project' && <>
+					<p className="pd-sidebar-menu-note">{t('sidebar.appearanceBar')}</p>
+					<div className="pd-appearance-swatches" role="group" aria-label={t('sidebar.appearanceBar')}>
+						{PROJECT_BAR_PRESETS.map((preset) => {
+							const label = t(`sidebar.bar${preset.id[0]!.toUpperCase()}${preset.id.slice(1)}`);
+							return <button key={preset.id} type="button" role="menuitemradio" aria-checked={projectBars[popup.workspace] === preset.id} className={`pd-appearance-swatch${projectBars[popup.workspace] === preset.id ? ' is-active' : ''}`} style={{ background: preset.css }} title={label} aria-label={label} onClick={() => applyProjectBar(popup.workspace, preset.id)} />;
+						})}
+						<label className={`pd-appearance-swatch pd-appearance-swatch-custom${projectBars[popup.workspace]?.startsWith('#') ? ' is-active' : ''}`} title={t('sidebar.appearanceCustom')}>
+							<input type="color" value={projectBars[popup.workspace]?.startsWith('#') ? projectBars[popup.workspace]! : '#667eea'} aria-label={t('sidebar.appearanceCustom')} onChange={(event) => applyProjectBar(popup.workspace, event.target.value)} />
+						</label>
+					</div>
+					{submenuItem({ key: 'bar-reset', label: t('sidebar.appearanceReset'), icon: 'close', disabled: !projectBars[popup.workspace], onSelect: () => applyProjectBar(popup.workspace, null) })}
 				</>}
 				{submenu.key === 'move' && popup.kind === 'session' && <>
 					{[null, ...groups].map((group, index) => submenuItem({

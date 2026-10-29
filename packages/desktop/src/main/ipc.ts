@@ -12,7 +12,7 @@ import { app, BrowserWindow, dialog, shell, type IpcMainInvokeEvent } from 'elec
 import { mkdirSync, statSync } from 'node:fs';
 import { rm, stat } from 'node:fs/promises';
 import { basename, dirname, join, resolve } from 'node:path';
-import { IPC_CHANNELS, type AgentEventEnvelope, type AppLocale, type UiAppCommand, type UiAttachment, type UiExtensionDialogRequest, type UiInputScope, type UiSessionMetaPatch, type UiSidebarGroupChange, type UiSlashCommandRequest, type UiThinkingLevel } from '@pidesktop/shared';
+import { IPC_CHANNELS, PROJECT_BAR_PRESET_IDS, type AgentEventEnvelope, type AppLocale, type UiAppCommand, type UiAttachment, type UiExtensionDialogRequest, type UiInputScope, type UiSessionMetaPatch, type UiSidebarGroupChange, type UiSlashCommandRequest, type UiThinkingLevel } from '@pidesktop/shared';
 import { createIsolatedAgentService } from './agentClient';
 import { isPaiSender, isPaiWindow, paiHeldSessionPaths, paiSlotForSender, paiWindowSlots, registerPaiWindowSlot, unregisterPaiWindowSlot } from './paiWindows';
 import { getAppLocale, setAppLocale } from './appLocale';
@@ -547,11 +547,15 @@ interface WorkspaceSettings {
 	conversationStorageDirectories?: string[];
 	explicitWorkspaces?: string[];
 	workspaceNicknames?: Record<string, string>;
+	workspaceAppearance?: Record<string, { bar?: string | null }>;
 }
 function workspaceKey(cwd: string): string {
 	const key = resolve(cwd);
 	return process.platform === 'win32' ? key.toLowerCase() : key;
 }
+
+/** Background-bar values are preset ids or hex colors; anything else is rejected at the IPC boundary. */
+const PROJECT_BAR_VALUE = new RegExp(`^(?:${PROJECT_BAR_PRESET_IDS.join('|')}|#[0-9a-fA-F]{3}|#[0-9a-fA-F]{6})$`);
 let activeWorkspace = '';
 const pickedWorkspaces = new Set<string>();
 const sessionOwnerByPath = new Map<string, string>();
@@ -570,6 +574,7 @@ function isWorkspaceSettings(value: unknown): value is WorkspaceSettings {
 		&& (value.conversationStorageDirectories === undefined || (Array.isArray(value.conversationStorageDirectories) && value.conversationStorageDirectories.every((cwd) => typeof cwd === 'string')))
 		&& (value.explicitWorkspaces === undefined || (Array.isArray(value.explicitWorkspaces) && value.explicitWorkspaces.every((cwd) => typeof cwd === 'string')))
 		&& (value.workspaceNicknames === undefined || (isRecord(value.workspaceNicknames) && Object.values(value.workspaceNicknames).every((nickname) => typeof nickname === 'string' && nickname.length <= 80)))
+		&& (value.workspaceAppearance === undefined || (isRecord(value.workspaceAppearance) && Object.values(value.workspaceAppearance).every((appearance) => isRecord(appearance) && (appearance.bar === undefined || appearance.bar === null || (typeof appearance.bar === 'string' && PROJECT_BAR_VALUE.test(appearance.bar))))))
 		&& (value.pinnedWorkspaces === undefined || (Array.isArray(value.pinnedWorkspaces) && value.pinnedWorkspaces.every((cwd) => typeof cwd === 'string')));
 }
 
@@ -1062,6 +1067,7 @@ const mainOnlyChannels = new Set<string>([
 	IPC_CHANNELS.workspaceOpenPathInEditor, IPC_CHANNELS.workspaceRevealPath, IPC_CHANNELS.workspaceOpenInVsCode, IPC_CHANNELS.workspaceOpenWith,
 	IPC_CHANNELS.workspaceOpeners, IPC_CHANNELS.workspaceCommitContext, IPC_CHANNELS.workspaceCommit,
 	IPC_CHANNELS.workspaceProjectNickname, IPC_CHANNELS.workspaceSetProjectNickname,
+	IPC_CHANNELS.workspaceProjectAppearance, IPC_CHANNELS.workspaceSetProjectAppearance,
 	IPC_CHANNELS.workspaceCommandStart, IPC_CHANNELS.workspaceCommandStop, IPC_CHANNELS.workspaceWatch,
 	WORKBENCH_FEATURE_CHANNELS.getWorkspaceCommitPreview, WORKBENCH_FEATURE_CHANNELS.commitWorkspacePreview,
 	WORKBENCH_FEATURE_CHANNELS.createTaskWorktree, WORKBENCH_FEATURE_CHANNELS.listTaskWorktrees, WORKBENCH_FEATURE_CHANNELS.bindTaskWorktree,
@@ -1119,6 +1125,23 @@ export function registerIpc(options: {
 				await writeStateFileAsync(workspaceSettingsPath(), { ...previous, workspaceNicknames });
 			});
 		},
+	});
+	handleRendererInvoke(IPC_CHANNELS.workspaceProjectAppearance, (_event, cwd: unknown) => {
+		if (typeof cwd !== 'string' || !cwd) throw new Error('工作区路径无效');
+		return withWorkspaceSettings((saved) => saved.workspaceAppearance?.[workspaceKey(cwd)] ?? { bar: null });
+	});
+	handleRendererInvoke(IPC_CHANNELS.workspaceSetProjectAppearance, (_event, cwd: unknown, patch: unknown) => {
+		if (typeof cwd !== 'string' || !cwd) throw new Error('工作区路径无效');
+		if (!isRecord(patch) || patch.bar === undefined || (patch.bar !== null && !(typeof patch.bar === 'string' && PROJECT_BAR_VALUE.test(patch.bar)))) throw new Error('外观参数无效');
+		const bar = patch.bar;
+		return withWorkspaceSettings(async (previous) => {
+			const key = workspaceKey(cwd);
+			const current = { ...(previous.workspaceAppearance?.[key] ?? {}) };
+			if (bar === null) delete current.bar; else current.bar = bar;
+			const workspaceAppearance = { ...(previous.workspaceAppearance ?? {}) };
+			if (Object.keys(current).length > 0) workspaceAppearance[key] = current; else delete workspaceAppearance[key];
+			await writeStateFileAsync(workspaceSettingsPath(), { ...previous, workspaceAppearance });
+		});
 	});
 	workbenchFeatures = registerWorkbenchFeatureIpc(() => activeWorkspace, app.getPath('userData'));
 	inputFeatures = registerInputAttachmentIpc(() => [

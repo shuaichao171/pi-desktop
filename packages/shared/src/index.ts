@@ -156,6 +156,8 @@ export const IPC_CHANNELS = {
   workspaceOpeners: 'workspace:openers',
   workspaceProjectNickname: 'workspace:project-nickname',
   workspaceSetProjectNickname: 'workspace:set-project-nickname',
+  workspaceProjectAppearance: 'workspace:project-appearance',
+  workspaceSetProjectAppearance: 'workspace:set-project-appearance',
   workspaceCommitContext: 'workspace:commit-context',
   workspaceCommit: 'workspace:commit',
   workspaceCommandStart: 'workspace:command-start',
@@ -886,6 +888,15 @@ export interface WorkspaceProjectNickname {
   /** True when the project root contains exactly one .code-workspace file (writes then target the file). */
   hasWorkspaceFile: boolean;
 }
+
+/** Background-bar preset ids for the project appearance bar (rendered as CSS in the UI layer). */
+export const PROJECT_BAR_PRESET_IDS = ['aurora', 'sunset', 'neon', 'violet', 'mint', 'dawn'] as const;
+
+/** Per-project sidebar cosmetics (外观), stored app-side; cosmetics never touch project files. */
+export interface WorkspaceProjectAppearance {
+  /** The background bar: a preset id from PROJECT_BAR_PRESET_IDS or a hex color; null = default. */
+  bar: string | null;
+}
 export interface WorkspaceBranches {
   isRepository: boolean;
   current: string | null;
@@ -1109,6 +1120,10 @@ export interface AgentBridge extends InputFeatureBridge, DataFeaturesBridge, Wor
   getProjectNickname(cwd: string): Promise<WorkspaceProjectNickname>;
   /** Saves the remark into the existing sole .code-workspace file when present, otherwise app-side; the file is never created. */
   setProjectNickname(cwd: string, nickname: string): Promise<void>;
+  /** Reads the project's sidebar appearance (外观) record; unset fields are null. */
+  getProjectAppearance(cwd: string): Promise<WorkspaceProjectAppearance>;
+  /** Merges an appearance patch (null removes a field) into the app-side store. */
+  setProjectAppearance(cwd: string, patch: { bar?: string | null }): Promise<void>;
   /** Assembles the diff/status context used to generate a commit message. */
   getWorkspaceCommitContext(): Promise<string>;
   /** Stages all changes and commits them; returns the short commit hash. */
