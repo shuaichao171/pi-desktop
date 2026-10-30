@@ -50,9 +50,52 @@
 .pd-sidebar-group.is-current > .pd-sidebar-group-heading .pd-sidebar-group-toggle > span { color: var(--pd-text); }
 .pd-sidebar-group-heading .pd-group-more { width: 20px; height: 22px; margin-right: 2px; opacity: 0; }
 .pd-sidebar-group-heading:hover .pd-group-more, .pd-sidebar-group-heading:focus-within .pd-group-more, .pd-group-more[aria-expanded='true'] { opacity: 1; }
-.pd-sidebar-group-content { margin-left: 9px; padding-left: 4px; border-left: 1px solid var(--pd-sidebar-surface); }
+/* Project appearance bar: the heading row paints the user-chosen preset or color. */
+.pd-sidebar-group.has-project-bar > .pd-sidebar-group-heading { background: var(--pd-project-bar); }
+.pd-sidebar-group.has-project-bar > .pd-sidebar-group-heading:hover { filter: brightness(1.07); }
+.pd-sidebar-group.has-project-bar > .pd-sidebar-group-heading .pd-sidebar-group-toggle { color: var(--pd-project-bar-text, #fff); }
+.pd-sidebar-group.has-project-bar > .pd-sidebar-group-heading .pd-sidebar-group-toggle > span { color: var(--pd-project-bar-text, #fff); font-weight: 600; text-shadow: 0 1px 2px rgb(0 0 0 / 30%); }
+.pd-sidebar-group.has-project-bar > .pd-sidebar-group-heading .pd-sidebar-group-toggle > svg { color: var(--pd-project-bar-text, #fff); }
+/* 预置动效档位：关键帧在应用样式表里，用户输入永远不包含规则文本。 */
+.pd-sidebar-group.has-anim-bar > .pd-sidebar-group-heading { animation: var(--pd-bar-anim); background-size: var(--pd-bar-size, auto); background-repeat: no-repeat; }
+@keyframes pd-bar-flow { 0%, 100% { background-position: 0% 50%; } 50% { background-position: 100% 50%; } }
+@keyframes pd-bar-pulse { 0%, 100% { filter: brightness(1); } 50% { filter: brightness(1.28); } }
+@keyframes pd-bar-shimmer { 0%, 100% { background-position: 0% 50%; filter: brightness(1); } 50% { background-position: 100% 50%; filter: brightness(1.22); } }
+@keyframes pd-bar-hue { from { filter: hue-rotate(0deg); } to { filter: hue-rotate(360deg); } }
+@keyframes pd-bar-flicker { 0%, 91%, 94%, 98%, 100% { opacity: 1; } 92% { opacity: 0.4; } 96% { opacity: 0.6; } }
+/* 滑动：向右滑出 → 瞬间接到左侧外 → 从左滑回，全程单向运动无跳变感 */
+@keyframes pd-bar-slide {
+	0%, 8% { background-position: 0% 50%; }
+	45% { background-position: -100% 50%; }
+	45.01% { background-position: 200% 50%; }
+	92%, 100% { background-position: 0% 50%; }
+}
+/* 龙卷风：背景位置绕圆旋涡轨迹（x/y 长手分别插值） */
+@keyframes pd-bar-tornado {
+	0% { background-position-x: 0%; background-position-y: 50%; }
+	12.5% { background-position-x: 50%; background-position-y: 100%; }
+	25% { background-position-x: 100%; background-position-y: 50%; }
+	37.5% { background-position-x: 50%; background-position-y: 0%; }
+	50% { background-position-x: 0%; background-position-y: 50%; }
+	62.5% { background-position-x: 50%; background-position-y: 100%; }
+	75% { background-position-x: 100%; background-position-y: 50%; }
+	87.5% { background-position-x: 50%; background-position-y: 0%; }
+	100% { background-position-x: 0%; background-position-y: 50%; }
+}
+@media (prefers-reduced-motion: reduce) { .pd-sidebar-group.has-anim-bar > .pd-sidebar-group-heading { animation: none; } }
+.pd-appearance-swatches { display: flex; flex-wrap: wrap; gap: 6px; padding: 4px 12px 8px; }
+.pd-appearance-swatch { position: relative; flex: 0 0 auto; width: 34px; height: 22px; padding: 0; border: 1px solid color-mix(in srgb, var(--pd-text) 25%, transparent); border-radius: 6px; cursor: pointer; }
+.pd-appearance-swatch.is-active { border-color: var(--pd-text); box-shadow: inset 0 0 0 1.5px var(--pd-popover, #fff); }
+.pd-appearance-swatch-custom { background: conic-gradient(#f66, #fc3, #6c6, #6cf, #96f, #f66); }
+.pd-appearance-swatch-custom input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; }
+.pd-appearance-css { display: block; width: calc(100% - 24px); margin: 2px 12px 6px; padding: 5px 7px; border: 1px solid var(--pd-sidebar-surface); border-radius: var(--pd-radius-sm); background: var(--pd-sidebar); color: var(--pd-text); font: inherit; font-size: var(--pd-font-caption); line-height: 1.4; resize: none; }
+.pd-appearance-css:focus { outline: none; border-color: var(--pd-brand); }
+.pd-appearance-css::placeholder { color: var(--pd-text-subtle); }
+.pd-appearance-net-warn { color: var(--pd-danger); }
+.pd-sidebar-group-content { margin-left: 9px; padding-left: 2px; border-left: 1px solid var(--pd-sidebar-surface); }
 .pd-sidebar-group.is-custom > .pd-sidebar-group-content { border-left-color: var(--pd-group-color); }
-.pd-organized-list .pd-session-item .pd-session-row { min-height: 22px; padding: 0 6px; gap: 5px; }
+/* Rows sit close to the guide line, but the leading indicator keeps a ~5px gap so it never covers the border. */
+.pd-organized-list .pd-session-item .pd-session-row { min-height: 22px; padding: 0 6px 0 3px; gap: 5px; }
 .pd-organized-list .pd-session-item { --pd-session-actions-width: 26px; }
 /* Draft dashed frame (see styles.css): keep organized draft rows 22px tall too. */
 .pd-organized-list .pd-session-item.is-unsaved .pd-session-row { min-height: 20px; }

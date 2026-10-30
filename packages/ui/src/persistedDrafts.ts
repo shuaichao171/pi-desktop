@@ -27,12 +27,24 @@ export class PersistedComposerDrafts {
 				while (entry.requested) {
 					const next = entry.requested; entry.requested = undefined;
 					const attachmentIds: string[] = [];
+					let storedNewAttachment = false;
 					for (const attachment of next.attachments) {
 						let id = entry.refs.get(attachment);
-						if (!id) { const ref = await this.bridge.putInputAttachment(scope, attachment); id = ref.id; entry.refs.set(attachment, id); }
+						if (!id) { const ref = await this.bridge.putInputAttachment(scope, attachment); id = ref.id; entry.refs.set(attachment, id); storedNewAttachment = true; }
 						attachmentIds.push(id);
 					}
-					const saved = await this.bridge.saveInputDraft({ ...scope, text: next.text, attachmentIds, expectedVersion: entry.version }); entry.version = saved.version;
+					// Storing a new attachment advances the stored version behind our back;
+					// re-sync before saving or the write would always conflict.
+					if (storedNewAttachment) entry.version = (await this.bridge.getInputDraft(scope)).version;
+					try {
+						const saved = await this.bridge.saveInputDraft({ ...scope, text: next.text, attachmentIds, expectedVersion: entry.version }); entry.version = saved.version;
+					} catch (error) {
+						// Another window may have advanced the draft meanwhile. Re-sync once
+						// and retry as the last writer: this window owns the text being typed.
+						if (!(error instanceof Error) || !error.message.includes('已被其他窗口修改')) throw error;
+						entry.version = (await this.bridge.getInputDraft(scope)).version;
+						const saved = await this.bridge.saveInputDraft({ ...scope, text: next.text, attachmentIds, expectedVersion: entry.version }); entry.version = saved.version;
+					}
 				}
 			} finally {
 				// Release ownership in the same continuation as the empty-queue check.

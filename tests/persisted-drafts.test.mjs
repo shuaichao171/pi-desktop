@@ -72,3 +72,38 @@ test('a failed draft save releases its worker and lets a later edit retry', asyn
   await drafts.save(scope, { text: 'retry', attachments: [] });
   assert.deepEqual(writes.map(write => [write.text, write.expectedVersion]), [['first', 0], ['retry', 0]]);
 });
+
+test('attachment storage and other windows advancing the version no longer wedge saves into permanent conflicts', async () => {
+  const scope = { cwd: 'A', sessionPath: 'one' }, picture = { kind: 'image', name: 'x.png', mimeType: 'image/png', data: 'YQ==' };
+  const writes = [], puts = [];
+  let version = 0; // Mirrors AttachmentStore: every write and every attachment put bumps the version.
+  const drafts = new PersistedComposerDrafts({
+    getInputDraft: async () => ({ version, text: '', attachments: [], missing: [] }),
+    putInputAttachment: async () => { puts.push(1); version += 1; return { id: 'image-' + puts.length }; },
+    saveInputDraft: async request => {
+      writes.push(request);
+      if (request.expectedVersion !== version) throw new Error('草稿已被其他窗口修改，请重新读取后合并');
+      return { version: ++version };
+    },
+  });
+  await drafts.load(scope);
+
+  // Regression: storing a new attachment advanced the version behind the cache,
+  // so the very first save conflicted and every retry kept failing forever.
+  await drafts.save(scope, { text: 'with picture', attachments: [picture] });
+  assert.deepEqual(writes.map(write => write.text), ['with picture']);
+
+  // A second window's save between ours recovers through the one-shot resync
+  // retry: the failed attempt is logged, then the retry lands with the fresh version.
+  version += 5;
+  await drafts.save(scope, { text: 'after other window', attachments: [picture] });
+  assert.equal(writes.length, 3, 'exactly one failed attempt plus the successful retry');
+  assert.equal(writes[1].expectedVersion, 2, 'the failed attempt used the version from our own previous save');
+  assert.equal(writes[2].text, 'after other window');
+  assert.equal(writes[2].expectedVersion, 7, 'the retry re-synced to the stored version');
+
+  // Later saves stay healthy on the re-synced version.
+  await drafts.save(scope, { text: 'stable', attachments: [] });
+  assert.equal(writes.length, 4);
+  assert.equal(writes[3].text, 'stable');
+});

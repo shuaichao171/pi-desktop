@@ -162,6 +162,8 @@ export const IPC_CHANNELS = {
   workspaceOpeners: 'workspace:openers',
   workspaceProjectNickname: 'workspace:project-nickname',
   workspaceSetProjectNickname: 'workspace:set-project-nickname',
+  workspaceProjectAppearance: 'workspace:project-appearance',
+  workspaceSetProjectAppearance: 'workspace:set-project-appearance',
   workspaceCommitContext: 'workspace:commit-context',
   workspaceCommit: 'workspace:commit',
   workspaceCommandStart: 'workspace:command-start',
@@ -896,6 +898,58 @@ export interface WorkspaceProjectNickname {
   /** True when the project root contains exactly one .code-workspace file (writes then target the file). */
   hasWorkspaceFile: boolean;
 }
+
+/** Background-bar preset ids for the project appearance bar (rendered as CSS in the UI layer). */
+export const PROJECT_BAR_PRESET_IDS = ['aurora', 'sunset', 'neon', 'violet', 'mint', 'dawn'] as const;
+
+/** Background-bar animation tier ids (keyframes live in the app stylesheet, never in user input). */
+export const PROJECT_BAR_ANIM_IDS = ['flow', 'pulse', 'shimmer', 'hue', 'flicker', 'slide', 'tornado'] as const;
+
+/** Escape-proofing for a one-declaration custom bar: url()/image-set()/cross-fade() are
+ * allowed through this list and gated in the UI by the leave-machine prompt instead. */
+const PROJECT_BAR_CSS_FORBIDDEN = /element\(|attr\(|expression\(|paint\(|@|;|\{|\}|\\/i;
+
+/**
+ * Normalizes a stored background-bar value (whitespace incl. pasted newlines collapsed
+ * to single spaces); null when the value is invalid: not a preset id, hex color, or
+ * safe custom CSS.
+ */
+export function normalizeProjectBarValue(value: unknown): string | null {
+	const bar = typeof value === 'string' ? value.trim().replace(/\s+/g, ' ') : '';
+	if (!bar) return null;
+	if (bar.length > 300) return null;
+	if (bar.startsWith('#')) return /^#[0-9a-fA-F]{3}$/.test(bar) || /^#[0-9a-fA-F]{6}$/.test(bar) ? bar : null;
+	if ((PROJECT_BAR_PRESET_IDS as readonly string[]).includes(bar)) return bar;
+	// Custom CSS: a conservative charset for gradients and colors (calc/rgba/repeats included),
+	// minus the constructs that could load content or break out of a single declaration.
+	// A function call is required so junk that no browser could render stays out too.
+	// url()/image-set() pass the charset but the renderer asks "渲染是否允许离开本机"
+	// (see projectBarLeavesMachine) before storing one.
+	return bar.includes('(') && /^[a-zA-Z0-9 #%,.()':"/+-]+$/.test(bar) && !PROJECT_BAR_CSS_FORBIDDEN.test(bar) ? bar : null;
+}
+
+/**
+ * True when the value references images over the network: rendering would then
+ * make requests to outside servers (leaking IP and usage timing). data: and
+ * file: references stay on this machine and never trip the prompt.
+ */
+export function projectBarLeavesMachine(value: string): boolean {
+	if (!/(?:url|image-set|cross-fade)\s*\(/i.test(value)) return false;
+	return /(?:https?:)?\/\//i.test(value.replace(/(?:data|file):[^)"']*/gi, ''));
+}
+
+/** Validates any stored background-bar value: preset id, hex color, or safe custom CSS. */
+export function isValidProjectBarValue(value: unknown): value is string {
+	return normalizeProjectBarValue(value) !== null;
+}
+
+/** Per-project sidebar cosmetics (外观), stored app-side; cosmetics never touch project files. */
+export interface WorkspaceProjectAppearance {
+  /** The background bar: a preset id, a hex color, or safe custom CSS; null = default. */
+  bar: string | null;
+  /** The background animation tier: a PROJECT_BAR_ANIM_IDS id; null = static. */
+  anim: string | null;
+}
 export interface WorkspaceBranches {
   isRepository: boolean;
   current: string | null;
@@ -1119,6 +1173,10 @@ export interface AgentBridge extends InputFeatureBridge, DataFeaturesBridge, Wor
   getProjectNickname(cwd: string): Promise<WorkspaceProjectNickname>;
   /** Saves the remark into the existing sole .code-workspace file when present, otherwise app-side; the file is never created. */
   setProjectNickname(cwd: string, nickname: string): Promise<void>;
+  /** Reads the project's sidebar appearance (外观) record; unset fields are null. */
+  getProjectAppearance(cwd: string): Promise<WorkspaceProjectAppearance>;
+  /** Merges an appearance patch (null removes a field) into the app-side store. */
+  setProjectAppearance(cwd: string, patch: { bar?: string | null; anim?: string | null }): Promise<void>;
   /** Assembles the diff/status context used to generate a commit message. */
   getWorkspaceCommitContext(): Promise<string>;
   /** Stages all changes and commits them; returns the short commit hash. */

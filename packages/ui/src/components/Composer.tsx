@@ -107,7 +107,6 @@ export function Composer({ header, onOpenModelManagement, changesSlotRef }: { he
 	const attaching = attachmentJobs.some((job) => job.state === 'reading');
 	const [restoringDraft, setRestoringDraft] = useState(false);
 	const [submissionError, setSubmissionError] = useState<string | null>(null);
-	const [draftWarning, setDraftWarning] = useState(false);
 	const [missingAttachments, setMissingAttachments] = useState<UiStoredAttachment[]>([]);
 	const [queueEditorTarget, setQueueEditorTarget] = useState<HTMLDivElement | null>(null);
 	const [queueEditing, setQueueEditing] = useState(false);
@@ -170,7 +169,7 @@ export function Composer({ header, onOpenModelManagement, changesSlotRef }: { he
 		const scope = transferredScopes.current.get(key), draft = draftsRef.current.get(key);
 		if (scope && draft && useChatStore.getState().bridge === bridge) {
 			writeDraft(key, draft.text);
-			void durable.current?.drafts.save(scope, draft).catch(() => setDraftWarning(true));
+			void durable.current?.drafts.save(scope, draft).catch(() => { /* Best effort: the text itself lives in localStorage. */ });
 		}
 	}
 	function applyDraftTransfer(transfer: typeof draftTransfer, background = false) {
@@ -260,7 +259,7 @@ export function Composer({ header, onOpenModelManagement, changesSlotRef }: { he
 	}, [bridge, draftKey, canPersistDraft]);
 	useEffect(() => {
 		if (!canPersistDraft || !loadedDrafts.current.has(draftKey) || missingAttachments.length || text !== textRef.current || attachments !== attachmentsRef.current) return;
-		void durable.current?.drafts.save({ cwd, sessionPath }, { text, attachments }).catch(() => { if (currentKeyRef.current === draftKey) setDraftWarning(true); });
+		void durable.current?.drafts.save({ cwd, sessionPath }, { text, attachments }).catch(() => { /* Best effort: the text itself lives in localStorage. */ });
 	}, [text, attachments, draftKey, missingAttachments, canPersistDraft, restoredDraftKey]);
 
 	useEffect(() => {
@@ -362,8 +361,7 @@ export function Composer({ header, onOpenModelManagement, changesSlotRef }: { he
 		textRef.current = value;
 		setText(value);
 		draftsRef.current.set(currentKeyRef.current, { text: value, attachments: attachmentsRef.current });
-		if (!writeDraft(currentKeyRef.current, value)) setDraftWarning(true);
-		else setDraftWarning(false);
+		writeDraft(currentKeyRef.current, value);
 	}
 
 	function changeAttachments(next: UiAttachment[], key = currentKeyRef.current) {
@@ -593,7 +591,7 @@ export function Composer({ header, onOpenModelManagement, changesSlotRef }: { he
 				if (currentKeyRef.current === request.key) {
 					changeText('');
 					changeAttachments([]);
-				} else { writeDraft(request.key, ''); void durable.current?.drafts.save(request.scope, { text: '', attachments: [] }).catch(() => setDraftWarning(true)); }
+				} else { writeDraft(request.key, ''); void durable.current?.drafts.save(request.scope, { text: '', attachments: [] }).catch(() => { /* A background session's stale draft is invisible to the session being viewed. */ }); }
 			}
 		} catch (error) {
 			applyDraftTransfer(useChatStore.getState().draftTransfer);
@@ -678,7 +676,6 @@ export function Composer({ header, onOpenModelManagement, changesSlotRef }: { he
 			<div className="pd-composer-wrap">
 				<ExtensionDialogSlot />
 				{submissionError && <div className="pd-composer-error" role="alert">{submissionError}</div>}
-				{draftWarning && <div className="pd-composer-error" role="status">{t('composer.draftWarning')}</div>}
 				{missingAttachments.map((attachment) => <div className="pd-composer-error" role="alert" key={attachment.id}>{t('composer.draftAttachmentMissing')}{attachment.name}<button type="button" onClick={() => { const next = missingAttachments.filter((item) => item.id !== attachment.id); missingByKey.current.set(draftKey, next); setMissingAttachments(next); }}>{t('composer.removeMissingAttachment')}</button></div>)}
 				<div ref={changesSlotRef} className="pd-composer-changes-slot" />
 				<ComposerQueue key={`queue:${cwd}\0${sessionPath}\0${sessionId}`} scopeKey={`${cwd}\0${sessionPath}\0${sessionId}`} items={queuedMessages} editorTarget={queueEditorTarget} onEditingChange={onQueueEditingChange} defaultBehavior={defaultBusyBehavior} onToggleDefault={() => { const next = defaultBusyBehavior === 'followUp' ? 'steer' : 'followUp'; if (!setDefaultBusyBehavior(next)) setSubmissionError(t('composer.sendPreferenceSaveFailed')); }} />
