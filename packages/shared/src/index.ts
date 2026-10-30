@@ -12,6 +12,10 @@ import type { ResultFilesBridge } from './resultFiles';
 export * from './resultFiles.ts';
 export * from './pluginUpdates.ts';
 export * from './mcpFeatures.ts';
+export * from './goalFeatures.ts';
+import type { GoalFeaturesBridge } from './goalFeatures';
+export * from './subagentFeatures.ts';
+import type { UiSubagentFleetSnapshot, UiSubagentInspectReply } from './subagentFeatures';
 export * from './managementFeatures.ts';
 export * from './usageTemplates.ts';
 import type { InputFeatureBridge, UiInputScope } from './inputFeatures';
@@ -45,6 +49,8 @@ export const IPC_CHANNELS = {
   pluginPickDirectory: 'plugins:pick-directory',
   pluginDiscover: 'plugins:discover',
   automationSnapshot: 'automation:snapshot',
+  goalSnapshot: 'goal:snapshot',
+  goalChanged: 'goal:changed',
   automationSave: 'automation:save',
   automationSetEnabled: 'automation:set-enabled',
   automationDelete: 'automation:delete',
@@ -444,7 +450,7 @@ export interface UiMessage {
   order: number;
   role: 'user' | 'assistant' | 'system';
   /** System-row flavor: compaction/branch summaries and extension notices (role 'system' only). */
-  systemKind?: 'compaction' | 'branch-summary' | 'custom' | 'extension-notice' | 'subagent-notify';
+  systemKind?: 'compaction' | 'branch-summary' | 'custom' | 'extension-notice' | 'subagent-notify' | 'goal-audit';
   /** Extension-notice flavor: info/warning/error styling (systemKind 'extension-notice' only). */
   notificationType?: 'info' | 'warning' | 'error';
   /** Accumulated text (grows while streaming). */
@@ -633,7 +639,7 @@ export type AgentUiEvent =
   | { type: 'context-usage'; contextUsage: UiContextUsage | null }
   | { type: 'thinking-level'; level: UiThinkingLevel }
   | { type: 'user-message'; id: string; order: number; text: string; attachments?: UiAttachment[]; attachmentsOmitted?: number; attachmentReferences?: UiAttachmentReference[]; runId?: string }
-  | { type: 'system-message'; id: string; order: number; text: string; systemKind?: 'compaction' | 'branch-summary' | 'custom' | 'extension-notice' | 'subagent-notify'; runId?: string }
+  | { type: 'system-message'; id: string; order: number; text: string; systemKind?: 'compaction' | 'branch-summary' | 'custom' | 'extension-notice' | 'subagent-notify' | 'goal-audit'; runId?: string }
   | { type: 'assistant-start'; id: string; order: number; runId?: string }
   | { type: 'run'; run: UiConversationRun }
   | { type: 'assistant-delta'; id: string; delta: string }
@@ -644,7 +650,9 @@ export type AgentUiEvent =
   | { type: 'file-changes'; items: UiFileChange[]; turns: UiFileChangeTurn[]; activeRunId: string | null }
   | { type: 'sessions-changed'; cwd: string }
   | { type: 'session-runtime'; cwd: string; path: string; runtime: UiSessionRuntimeState }
-  | { type: 'error'; message: string; error?: UiAgentError };
+  | { type: 'error'; message: string; error?: UiAgentError }
+  | { type: 'subagent-fleet'; fleet: UiSubagentFleetSnapshot | null }
+  | { type: 'subagent-inspect'; reply: UiSubagentInspectReply }
 
 export interface AgentEventEnvelope {
   sequence: number;
@@ -655,6 +663,8 @@ export interface AgentSnapshot {
   sequence: number;
   /** Independent runtime states, including conversations running in the background. */
   sessionRuntimes?: UiSessionRuntimeSummary[];
+  /** Live pi-subagents async fleet snapshot (null when the plugin is absent or idle). */
+  subagentFleet?: UiSubagentFleetSnapshot | null;
   status: AgentStatus;
   statusMessage?: string;
   /** Auto-retry progress while the agent retries a failed model call (4.4). */
@@ -1011,7 +1021,7 @@ export interface UiAppearanceState {
 /** Main → renderer commands (tray menu, notification clicks). */
 export type UiAppCommand = { type: 'new-session' } | { type: 'switch-session'; path: string; cwd?: string } | { type: 'open-settings' } | { type: 'appearance-changed'; appearance: UiAppearanceState };
 
-export interface AgentBridge extends InputFeatureBridge, DataFeaturesBridge, WorkbenchFeaturesBridge, ManagementFeaturesBridge, PluginUpdatesBridge, McpFeaturesBridge, ResultFilesBridge, CloudSyncFeaturesBridge {
+export interface AgentBridge extends InputFeatureBridge, DataFeaturesBridge, WorkbenchFeaturesBridge, ManagementFeaturesBridge, PluginUpdatesBridge, McpFeaturesBridge, ResultFilesBridge, CloudSyncFeaturesBridge, GoalFeaturesBridge {
   getPersonalization(): Promise<UiInstructionDocument[]>;
   saveInstruction(request: UiSaveInstructionRequest): Promise<UiSaveInstructionResult>;
   getPluginCatalog(cwd: string): Promise<UiPluginCatalog>;

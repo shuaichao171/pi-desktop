@@ -155,6 +155,12 @@ const bridge: AgentBridge = {
 		ipcRenderer.on(IPC_CHANNELS.automationChanged, wrapped);
 		return () => ipcRenderer.removeListener(IPC_CHANNELS.automationChanged, wrapped);
 	},
+	getGoalSnapshot: (cwd) => invoke(IPC_CHANNELS.goalSnapshot, cwd),
+	onGoalChanged: (listener) => {
+		const wrapped = (_event: Electron.IpcRendererEvent, payload: { cwd: string }) => listener(payload.cwd);
+		ipcRenderer.on(IPC_CHANNELS.goalChanged, wrapped);
+		return () => ipcRenderer.removeListener(IPC_CHANNELS.goalChanged, wrapped);
+	},
 	notifyRendererReady: () => invoke(IPC_CHANNELS.rendererReady),
 	getAppInfo: () => invoke(IPC_CHANNELS.appInfo),
 	setAppLocale: (locale) => invoke(IPC_CHANNELS.appSetLocale, locale),

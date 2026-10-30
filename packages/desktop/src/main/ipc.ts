@@ -39,6 +39,7 @@ import { readDesktopSettings, writeDesktopSettings, type DesktopSettings } from 
 import { appearanceStatePath, isValidAppearanceState, readAppearanceState, watchAppearanceState, writeAppearanceState } from './appearance';
 import { readWorkspaceContext, validateContextRequest } from './contextService';
 import { createAutomationService } from './automationService';
+import { createGoalWatchService } from './goalWatchService';
 import { createAutomationExecutor } from './automationExecutor';
 import { probePiEngine, readBuiltinEngineInfo, isValidPiEngineSelection } from './piEngine';
 import type { AgentHostEngineOptions } from './agentClient';
@@ -89,6 +90,7 @@ let sessionSearchRequest = 0;
 let lastSessionMetaPrune = 0;
 let sessionGroupService: SessionGroupService | null = null;
 let automationService: ReturnType<typeof createAutomationService> | null = null;
+let goalWatchService: ReturnType<typeof createGoalWatchService> | null = null;
 let pluginMutationActive = false;
 const discoverPlugins = createPluginDiscovery();
 /** Resolved each time an agent host process is forked; custom engines apply after an app restart. */
@@ -1292,6 +1294,16 @@ export function registerIpc(options: {
 		return true;
 	});
 	automationService = automations;
+	goalWatchService = createGoalWatchService({
+		onChanged: (cwd) => broadcastToRenderers(IPC_CHANNELS.goalChanged, { cwd }),
+		onError: (error) => console.warn('Goal watch failed:', error),
+	});
+	handleRendererInvoke(IPC_CHANNELS.goalSnapshot, async (_event, cwd: unknown) => {
+		if (typeof cwd !== 'string' || !cwd) throw new Error('目标快照请求无效');
+		// Only registered workspaces: the snapshot must not become a directory probe for arbitrary paths.
+		if (!(await listWorkspaces()).includes(cwd)) throw new Error('未知工作区，请先在侧栏打开项目');
+		return goalWatchService!.snapshot(cwd);
+	});
 	handleRendererInvoke(IPC_CHANNELS.pluginCatalog, (event, cwd: unknown) => {
 		requirePluginSender(event); requirePluginWorkspace(cwd);
 		return agentService.getPluginCatalog(cwd);
@@ -1835,6 +1847,8 @@ export function disposeServices(): Promise<void> {
 	keepAwake?.dispose();
 	stopAppearanceWatch = null;
 	destroyAppTray();
+	goalWatchService?.dispose();
+	goalWatchService = null;
 	for (const queue of startupNotifications.values()) queue.cleanup();
 	for (const pending of pendingDialogs.values()) pending.resolve(null);
 	if (automaticRecoveryTimer) clearTimeout(automaticRecoveryTimer);

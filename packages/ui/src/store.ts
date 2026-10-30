@@ -38,6 +38,8 @@ import type {
 	UiSessionMetaPatch,
 	UiThinkingLevel,
 	UiToolActivity,
+	UiSubagentFleetSnapshot,
+	UiSubagentInspectReply,
 } from '@pidesktop/shared';
 
 interface ChatState {
@@ -75,6 +77,10 @@ interface ChatState {
 	messages: UiMessage[];
 	activities: UiToolActivity[];
 	runs: UiConversationRun[];
+	/** Live pi-subagents fleet snapshot; null when the plugin is absent or idle. */
+	subagentFleet: UiSubagentFleetSnapshot | null;
+	/** Latest /subagents-inspect-rpc reply; correlated by requestId in FleetCard. */
+	subagentInspect: UiSubagentInspectReply | null;
 	timelineRevision: number;
 	/** Changes when ready/reset replaces the branch, but not on live appends. */
 	historyGeneration: number;
@@ -275,7 +281,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
 	queuedMessages: [],
 	fileChanges: [],
 	fileChangeTurns: [],
-	fileChangeActiveRunId: null,
+		fileChangeActiveRunId: null,
+		subagentFleet: null,
+		subagentInspect: null,
 	error: null,
 	errorInfo: null,
 	appInfo: null,
@@ -341,6 +349,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 				set({
 					status: snapshot.status,
 					sessionRuntimes: Object.fromEntries((snapshot.sessionRuntimes ?? []).map((entry) => [sessionRuntimeKey(entry.cwd, entry.path), entry.runtime])),
+					subagentFleet: snapshot.subagentFleet ?? null,
 					statusMessage: snapshot.statusMessage,
 					retryAttempt: snapshot.retryAttempt,
 					retryMaxAttempts: snapshot.retryMaxAttempts,
@@ -668,6 +677,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
 				if (!get().sessionsByWorkspace[event.cwd]?.some((session) => session.path === event.path)) void get().refreshWorkspaceSessions(event.cwd);
 				return;
 			}
+			case 'subagent-fleet':
+				set({ subagentFleet: event.fleet });
+				return;
+			case 'subagent-inspect':
+				set({ subagentInspect: event.reply });
+				return;
 			case 'error':
 				set({ error: event.message, errorInfo: event.error ?? null });
 				return;
@@ -1356,6 +1371,7 @@ function prepareConversation(kind: SessionPreparation['kind'], options?: { cwd?:
 	useChatStore.setState(state => ({ sessionPreparation: { requestId: request, draftScope }, cwd: options?.cwd ?? '', sessionId: null, sessionPath: null,
 		status: 'idle', statusMessage: undefined, retryAttempt: undefined, retryMaxAttempts: undefined,
 		messages: [], activities: [], runs: [], fileChanges: [], fileChangeTurns: [], fileChangeActiveRunId: null, contextUsage: null,
+		subagentFleet: null, subagentInspect: null,
 		queuedMessages: [], queuedCount: 0, historyTotal: 0, loadingOlder: false, sessionLoading: false,
 		timelineRevision: state.timelineRevision + 1, historyGeneration: state.historyGeneration + 1 }));
 	return preparing.promise;
@@ -1687,6 +1703,7 @@ function beginOptimisticSessionSwitch(set: (partial: Partial<ChatState>) => void
 			// loading placeholder — not the previous transcript — marks the wait.
 			messages: [], activities: [], runs: [],
 			fileChanges: [], fileChangeTurns: [], fileChangeActiveRunId: null,
+			subagentFleet: null, subagentInspect: null,
 			queuedCount: 0, queuedMessages: [],
 			historyTotal: 0, loadingOlder: false,
 			timelineRevision: state.timelineRevision + 1,

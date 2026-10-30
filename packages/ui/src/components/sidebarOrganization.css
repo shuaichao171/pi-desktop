@@ -134,3 +134,6 @@ body.pd-sidebar-dragging * { cursor: grabbing !important; }
 .pd-sidebar-popover button.pd-sidebar-menu-danger:hover:not(:disabled), .pd-sidebar-popover button.pd-sidebar-menu-danger:focus-visible { background: var(--pd-danger-surface); color: var(--pd-danger); }
 .pd-sidebar-popover button.pd-sidebar-menu-danger[data-shortcut-label]::after { color: color-mix(in srgb, var(--pd-danger) 70%, transparent); }
 .pd-sidebar-popover.pd-context-menu hr, .pd-sidebar-popover.pd-sidebar-submenu hr { margin: 4px 6px; }
+
+/* pi-subagents child-session badge (builtin agents derive "agent: task" names). */
+.pd-session-child-badge { flex: 0 0 auto; margin-left: 6px; padding: 0 6px; border: 1px solid var(--pd-border-soft); border-radius: 999px; color: var(--pd-text-subtle); font-size: var(--pd-font-xs); line-height: 16px; white-space: nowrap; }

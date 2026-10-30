@@ -77,7 +77,7 @@ export const ConversationTurn = memo(function ConversationTurn({ entry, messages
     <Icon name={running ? 'clock' : status === 'completed' ? 'check' : status === 'failed' ? 'close' : 'square'} width="14" height="14" />
     <ActivityLabel active={running}>{label}</ActivityLabel>
     {run && entry.lastForRun && <RunDuration run={run} />}
-    {ownTools.length > 0 && <span className="pd-turn-count" title={t(ownTools.length === 1 ? 'turn.toolCall' : 'turn.toolCalls', { count: ownTools.length })}>{toolSummary || (t(ownTools.length === 1 ? 'turn.toolCall' : 'turn.toolCalls', { count: ownTools.length }))}</span>}
+    {ownTools.length > 0 && <span className="pd-turn-count">{toolSummary || (t(ownTools.length === 1 ? 'turn.toolCall' : 'turn.toolCalls', { count: ownTools.length }))}</span>}
     {failureCount > 0 && <span className="pd-turn-failures">{t('turn.failureCount', { count: failureCount })}</span>}
     {hasProcess && <Icon name="chevronDown" className={`pd-chevron${expanded ? ' is-open' : ''}`} width="14" height="14" />}
   </>;

@@ -11,6 +11,8 @@ import { ConversationDisclosureProvider } from '../conversationDisclosure';
 import { ConversationRail } from './ConversationRail';
 import { useExtensionRequestPending } from './ExtensionDialogHost';
 import { Composer } from './Composer';
+import { GoalBeacon } from './GoalBeacon';
+import { FleetCard } from './FleetCard';
 import { ChangesCard, LiveChangesSummary } from './ComposerChanges';
 import { ChangesDialog } from './ChangesDialog';
 import { useFileChangeDiffs } from '../fileChangeDiffs';
@@ -734,6 +736,8 @@ export function ChatView({ onOpenModelManagement, searchTarget, historyControls,
 					</button>
 				</div>
 				{!isEmpty && !sessionLoading && <ConversationRail messages={messages} getScrollElement={getScrollElement} markedIds={railMarkedIds ?? undefined} onJumpToMessage={jumpToMessage} />}
+				<GoalBeacon />
+				<FleetCard />
 				<Composer header={settledEmpty ? <ComposerContextBar /> : undefined} onOpenModelManagement={onOpenModelManagement} changesSlotRef={setChangesDock} />
 			</div>
 			{changesReview !== null && reviewItems.length > 0 && <ChangesDialog

@@ -85,6 +85,10 @@ import type {
 	UiSaveInstructionRequest,
 	UiToolActivity,
 	UiSubagentActivity,
+	UiSubagentFleetSnapshot,
+	UiSubagentFleetNode,
+	UiSubagentInspectReply,
+	UiSubagentInspectMessage,
 } from '@pidesktop/shared';
 import { createAgentError, normalizeAgentError } from '../../shared/src/agentErrors.ts';
 import { BUILTIN_SLASH_COMMANDS, expandSlashPrompt, validateSlashCommandRequest, validSlashCommandName } from './slashCommands.ts';
@@ -146,6 +150,141 @@ const MAX_LOADED_CONTEXTS = 12;
 const TEXT_ATTACHMENT_MARKER = '\n\n<!-- pi-desktop:attachments-v1 -->\n';
 /** Custom-entry type carrying plugin ui.notify notices as inline system rows. */
 export const EXTENSION_NOTICE_CUSTOM_TYPE = 'extension-notice';
+
+/** pi-subagents rpc-mode widget payloads (public seams; ignore unknown shapes). */
+const SUBAGENT_ASYNC_WIDGET_KEY = 'subagent-async';
+const SUBAGENT_ASYNC_WIDGET_PREFIX = 'PI_SUBAGENT_ASYNC_JSON:';
+const SUBAGENT_ASYNC_SNAPSHOT_KIND = 'pi-subagents.async-status-snapshot';
+const SUBAGENT_ASYNC_SNAPSHOT_VERSION = 1;
+const SUBAGENT_INSPECT_WIDGET_KEY = 'subagent-inspect';
+const SUBAGENT_INSPECT_WIDGET_PREFIX = 'PI_SUBAGENT_INSPECT_JSON:';
+/** The plugin bounds snapshots to 32 KB and inspect replies to 64 KB; reject anything larger. */
+const SUBAGENT_WIDGET_MAX_BYTES = 96 * 1024;
+const SUBAGENT_FLEET_MAX_DEPTH = 4;
+const SUBAGENT_FLEET_MAX_CHILDREN = 12;
+
+const SUBAGENT_FLEET_STATES = new Set(['queued', 'running', 'complete', 'failed', 'partial', 'paused', 'stopped', 'rejected']);
+const SUBAGENT_FLEET_KINDS = new Set(['subagent', 'workflow', 'step', 'host-step']);
+
+function fleetText(value: unknown): string | undefined {
+	return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+}
+
+function fleetCount(value: unknown): number | undefined {
+	return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : undefined;
+}
+
+function projectFleetActivity(raw: unknown): UiSubagentFleetNode['activity'] {
+	if (typeof raw !== 'object' || raw === null) return undefined;
+	const source = raw as Record<string, unknown>;
+	const activity = {
+		state: fleetText(source.state),
+		currentTool: fleetText(source.currentTool),
+		lastActivityAt: fleetCount(source.lastActivityAt),
+		currentToolStartedAt: fleetCount(source.currentToolStartedAt),
+		turnCount: fleetCount(source.turnCount),
+		toolCount: fleetCount(source.toolCount),
+	};
+	return Object.values(activity).some((value) => value !== undefined) ? activity : undefined;
+}
+
+/** Defensive projection of one snapshot node; children capped for renderer safety. */
+function projectFleetNode(raw: unknown, depth: number): UiSubagentFleetNode | null {
+	if (typeof raw !== 'object' || raw === null) return null;
+	const source = raw as Record<string, unknown>;
+	const id = fleetText(source.id);
+	const label = fleetText(source.label);
+	if (!id || !label) return null;
+	const kindRaw = fleetText(source.kind);
+	if (!kindRaw || !SUBAGENT_FLEET_KINDS.has(kindRaw)) return null;
+	const stateRaw = fleetText(source.state);
+	if (!stateRaw || !SUBAGENT_FLEET_STATES.has(stateRaw)) return null;
+	const hostStepRaw = typeof source.hostStep === 'object' && source.hostStep !== null ? source.hostStep as Record<string, unknown> : null;
+	const node: UiSubagentFleetNode = {
+		id,
+		kind: kindRaw as UiSubagentFleetNode['kind'],
+		label,
+		state: stateRaw as UiSubagentFleetNode['state'],
+		startedAt: fleetCount(source.startedAt),
+		updatedAt: fleetCount(source.updatedAt),
+		endedAt: fleetCount(source.endedAt),
+		activity: projectFleetActivity(source.activity),
+		hostStep: hostStepRaw
+			? {
+				kind: fleetText(hostStepRaw.kind) ?? 'monitor',
+				state: fleetText(hostStepRaw.state) ?? 'unknown',
+				provider: fleetText(hostStepRaw.provider),
+				role: fleetText(hostStepRaw.role),
+				verdict: fleetText(hostStepRaw.verdict),
+				reasonCode: fleetText(hostStepRaw.reasonCode),
+				detail: fleetText(hostStepRaw.detail),
+				target: fleetText(hostStepRaw.target),
+				stale: hostStepRaw.stale === true ? true : undefined,
+				report: fleetText(hostStepRaw.report),
+			}
+			: undefined,
+	};
+	if (depth < SUBAGENT_FLEET_MAX_DEPTH && Array.isArray(source.children)) {
+		const children: UiSubagentFleetNode[] = [];
+		for (const child of source.children.slice(0, SUBAGENT_FLEET_MAX_CHILDREN)) {
+			const projected = projectFleetNode(child, depth + 1);
+			if (projected) children.push(projected);
+		}
+		if (children.length) node.children = children;
+	}
+	return node;
+}
+
+/** Validate the plugin's widget snapshot envelope before projecting nodes. */
+function projectSubagentFleetSnapshot(raw: unknown): UiSubagentFleetSnapshot | null {
+	if (typeof raw !== 'object' || raw === null) return null;
+	const source = raw as Record<string, unknown>;
+	if (source.kind !== SUBAGENT_ASYNC_SNAPSHOT_KIND || source.version !== SUBAGENT_ASYNC_SNAPSHOT_VERSION) return null;
+	if (!Array.isArray(source.runs)) return null;
+	const runs: UiSubagentFleetNode[] = [];
+	for (const run of source.runs.slice(0, 24)) {
+		const projected = projectFleetNode(run, 0);
+		if (projected) runs.push(projected);
+	}
+	const omitted = typeof source.omitted === 'object' && source.omitted !== null ? source.omitted as Record<string, unknown> : {};
+	return {
+		generatedAt: fleetCount(source.generatedAt) ?? 0,
+		omittedRuns: fleetCount(omitted.runs) ?? Math.max(0, (source.runs as unknown[]).length - runs.length),
+		omittedChildren: fleetCount(omitted.children) ?? 0,
+		runs,
+	};
+}
+
+/** Defensive projection of an inspect reply; the requestId correlation is required. */
+function projectSubagentInspectReply(raw: unknown): UiSubagentInspectReply | null {
+	if (typeof raw !== 'object' || raw === null) return null;
+	const source = raw as Record<string, unknown>;
+	const requestId = fleetText(source.requestId);
+	if (!requestId) return null;
+	const messages: UiSubagentInspectMessage[] = [];
+	if (Array.isArray(source.messages)) {
+		for (const message of source.messages.slice(0, 200)) {
+			if (typeof message !== 'object' || message === null) continue;
+			const record = message as Record<string, unknown>;
+			const text = typeof record.text === 'string' ? record.text : '';
+			if (!text.trim()) continue;
+			messages.push({ role: fleetText(record.role), text: text.slice(0, 4000) });
+		}
+	}
+	const error = typeof source.error === 'object' && source.error !== null ? source.error as Record<string, unknown> : null;
+	return {
+		requestId,
+		asyncId: fleetText(source.asyncId),
+		childId: fleetText(source.childId),
+		status: fleetText(source.status),
+		label: fleetText(source.label),
+		task: typeof source.task === 'string' ? source.task.slice(0, 4000) : undefined,
+		messages: messages.length ? messages : undefined,
+		finalOutput: typeof source.finalOutput === 'string' ? source.finalOutput.slice(0, 12000) : undefined,
+		truncated: source.truncated === true ? true : undefined,
+	error: error ? { code: fleetText(error.code) ?? 'error', message: fleetText(error.message) ?? 'Unknown error' } : undefined,
+	};
+}
 
 async function listWorkspaceSessions(cwd: string) {
 	const sessions = await SessionManager.list(cwd);
@@ -309,6 +448,8 @@ class SingleAgentService {
 	private mcpOwnerId: string | null = null;
 	private readonly fileChangeTrackers = new WeakMap<PiRuntime['session'], SessionFileChanges>();
 	private conversationRuns: ConversationRunTracker | null = null;
+	/** Latest pi-subagents fleet snapshot from the subagent-async widget; null when idle/absent. */
+	private subagentFleet: UiSubagentFleetSnapshot | null = null;
 	private state: Omit<AgentSnapshot, 'sequence'> = {
 		status: 'uninitialized',
 		model: '',
@@ -388,6 +529,40 @@ class SingleAgentService {
 		return this.cwd === scope.cwd && this.state.sessionId === scope.sessionId && this.state.sessionPath === scope.sessionPath;
 	}
 
+	/** Consume a pi-subagents rpc-mode widget payload; unknown shapes never throw. */
+	private consumeSubagentWidget(key: string, content: unknown): void {
+		const line = Array.isArray(content) && content.length > 0 && typeof content[0] === 'string'
+			&& content[0].length <= SUBAGENT_WIDGET_MAX_BYTES ? content[0] : null;
+		if (key === SUBAGENT_ASYNC_WIDGET_KEY) {
+			if (!line?.startsWith(SUBAGENT_ASYNC_WIDGET_PREFIX)) {
+				// Undefined content means the widget was cleared: no active runs.
+				if (this.subagentFleet) {
+					this.subagentFleet = null;
+					this.fire({ type: 'subagent-fleet', fleet: null });
+				}
+				return;
+			}
+			try {
+				const fleet = projectSubagentFleetSnapshot(JSON.parse(line.slice(SUBAGENT_ASYNC_WIDGET_PREFIX.length)));
+				if (fleet) {
+					this.subagentFleet = fleet;
+					this.fire({ type: 'subagent-fleet', fleet });
+				}
+			} catch {
+				// Malformed payload — keep the last known snapshot.
+			}
+			return;
+		}
+		if (key === SUBAGENT_INSPECT_WIDGET_KEY && line?.startsWith(SUBAGENT_INSPECT_WIDGET_PREFIX)) {
+			try {
+				const reply = projectSubagentInspectReply(JSON.parse(line.slice(SUBAGENT_INSPECT_WIDGET_PREFIX.length)));
+				if (reply) this.fire({ type: 'subagent-inspect', reply });
+			} catch {
+				// Unmatched replies are dropped by design.
+			}
+		}
+	}
+
 	getSnapshot(): AgentSnapshot {
 		return {
 			...this.state,
@@ -401,6 +576,7 @@ class SingleAgentService {
 			fileChanges: this.state.fileChanges.map((file) => ({ ...file })),
 			fileChangeTurns: this.state.fileChangeTurns.map((turn) => ({ runId: turn.runId, items: turn.items.map((file) => ({ ...file })) })),
 			fileChangeActiveRunId: this.state.fileChangeActiveRunId,
+			subagentFleet: this.subagentFleet,
 		};
 	}
 	getSessionBranchHead(): { path: string; leafId: string | null } | null { const manager = this.runtime?.session.sessionManager; const path = this.runtime?.session.sessionFile; return manager && path ? { path, leafId: manager.getLeafId() } : null; }
@@ -1375,6 +1551,9 @@ class SingleAgentService {
 		this.mcpOwnerId = runtime.session.sessionId;
 		this.unsubscribe?.();
 		this.unsubscribe = null;
+		// The fleet widget belongs to the previous session; its runs may outlive the switch
+		// in the plugin, but the new session's widget state starts empty.
+		this.subagentFleet = null;
 		await runtime.session.bindExtensions({
 			uiContext: this.createExtensionUiContext(),
 			mode: 'rpc',
@@ -1503,7 +1682,9 @@ class SingleAgentService {
 			setWorkingVisible: () => {},
 			setWorkingIndicator: () => {},
 			setHiddenThinkingLabel: () => {},
-			setWidget: () => {},
+			// pi-subagents rpc mode sends bounded JSON snapshots here instead of TUI
+			// components (PI_SUBAGENT_ASYNC_JSON:/PI_SUBAGENT_INSPECT_JSON:); other keys stay no-ops.
+			setWidget: (key, content) => this.consumeSubagentWidget(key, content),
 			setFooter: () => {},
 			setHeader: () => {},
 			setTitle: () => {},
@@ -1919,10 +2100,13 @@ class SingleAgentService {
 				}
 				// pi-subagents completion notices (custom_message, display:false) are invisible
 				// without a TUI renderer; project them live so the wake is visible in the UI.
-				if (event.entry.type === 'custom_message' && event.entry.customType === 'subagent-notify'
+				// pi-goal-x audit messages (display:true) would otherwise only surface after
+				// the settle resync; project them live so audits are visible mid-run.
+				if (event.entry.type === 'custom_message'
+					&& (event.entry.customType === 'subagent-notify' || event.entry.customType === 'pi-goal-audit-event')
 					&& typeof event.entry.content === 'string' && event.entry.content.trim()) {
 					this.fire({ type: 'system-message', id: event.entry.id, order: this.timelineOrder++,
-						text: event.entry.content, systemKind: 'subagent-notify', runId: this.conversationRuns?.active?.id });
+						text: event.entry.content, systemKind: event.entry.customType === 'pi-goal-audit-event' ? 'goal-audit' : 'subagent-notify', runId: this.conversationRuns?.active?.id });
 				}
 				return;
 			}
@@ -3259,8 +3443,10 @@ function historyTimeline(entries: SessionEntry[], liveRun?: UiConversationRun | 
 	for (const entry of entries) {
 		const runId = entryRuns.get(entry.id);
 		// Project compaction/branch summaries and visible extension notices into system rows (3.6).
+		// pi-goal-x audit streams arrive as display:true custom messages; give them their own
+		// system-row flavor so the timeline labels them as goal audits.
 		if (entry.type === 'compaction' || entry.type === 'branch_summary'
-			|| (entry.type === 'custom_message' && (entry.display || entry.customType === 'subagent-notify'))) {
+			|| (entry.type === 'custom_message' && (entry.display || entry.customType === 'subagent-notify' || entry.customType === 'pi-goal-audit-event'))) {
 			const text = entry.type === 'custom_message'
 				? (typeof entry.content === 'string' ? entry.content : '')
 				: entry.summary;
@@ -3269,7 +3455,7 @@ function historyTimeline(entries: SessionEntry[], liveRun?: UiConversationRun | 
 				runId,
 				order: nextOrder++,
 				role: 'system',
-				systemKind: entry.type === 'compaction' ? 'compaction' : entry.type === 'branch_summary' ? 'branch-summary' : (entry.type === 'custom_message' && entry.customType === 'subagent-notify') ? 'subagent-notify' : 'custom',
+				systemKind: entry.type === 'compaction' ? 'compaction' : entry.type === 'branch_summary' ? 'branch-summary' : (entry.type === 'custom_message' && entry.customType === 'subagent-notify') ? 'subagent-notify' : (entry.type === 'custom_message' && entry.customType === 'pi-goal-audit-event') ? 'goal-audit' : 'custom',
 				text,
 				status: 'done',
 			});

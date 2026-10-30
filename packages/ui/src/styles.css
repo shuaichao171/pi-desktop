@@ -313,6 +313,8 @@ button:focus-visible, textarea:focus-visible, input:focus-visible { outline: 2px
 .pd-conversation-body.is-empty .pd-transcript { overflow: visible; scrollbar-gutter: auto; }
 .pd-conversation-body.is-empty .pd-composer-dock { position: relative; padding: 12px 16px 0; background: transparent; }
 .pd-conversation-body.is-empty .pd-composer-wrap { width: min(100%, 672px); }
+/* Goal/subagent cards align with the conversation column (composer box width). */
+.pd-conversation-body.is-empty .pd-goal-beacon, .pd-conversation-body.is-empty .pd-fleet-card { width: min(calc(100% - 32px), 672px); }
 
 /* --- Draft composer context chips (project + branch pickers) --- */
 /* Chips + editor share one card (zcode): the header row pads itself inside the shell. */
@@ -559,6 +561,7 @@ button:focus-visible, textarea:focus-visible, input:focus-visible { outline: 2px
   .pd-message-list { gap: 16px; padding: 22px 14px 8px; }
   .pd-transcript-end { padding: 8px 14px 24px; }
   .pd-composer-dock { padding: 8px 10px 12px; }
+  .pd-goal-beacon, .pd-fleet-card { width: min(calc(100% - 20px), 780px); }
   .pd-user-bubble { max-width: 96%; }
   .pd-model-chip { max-width: 110px; }
 }

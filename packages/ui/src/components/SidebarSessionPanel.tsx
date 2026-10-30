@@ -22,6 +22,8 @@ import { SessionTime } from './SessionTime';
 import { SidebarSessionTitle } from './SidebarSessionTitle';
 import './sidebarOrganization.css';
 
+/** pi-subagents builtin child sessions follow "<agent>: <task excerpt>" (deriveChildSessionName). */
+const SUBAGENT_CHILD_TITLE_PATTERN = /^(?:scout|researcher|evidence-auditor|worker|reviewer|oracle|delegate):\s/;
 type Popup = { anchor: HTMLElement; trigger?: HTMLElement; point?: ContextMenuPoint } & (
 	| { kind: 'filter' }
 	| { kind: 'session'; session: SidebarSession }
@@ -810,6 +812,8 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 						{indicator && indicator.kind !== 'running' && <span className={`pd-session-indicator is-${indicator.kind}`} />}
 					</span>}
 					<span className="pd-session-copy"><SidebarSessionTitle title={title} /></span>
+					{/* pi-subagents child sessions derive names as "<agent>: <task excerpt>". */}
+					{SUBAGENT_CHILD_TITLE_PATTERN.test(title) && <span className="pd-session-child-badge">{t('sidebar.subagentChild')}</span>}
 					{!archived && <SessionTime modified={session.modified} locale={locale} />}
 				</button>
 				{!archived && pinButton('pd-session-pin')}
