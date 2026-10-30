@@ -200,7 +200,6 @@ test('automation IPC accepts only its current main renderer and starts schedulin
     export const powerSaveBlocker = { start: () => 1, stop: () => {} };
       export const BrowserWindow={getAllWindows:()=>[env.owner],fromWebContents:sender=>sender===env.owner.webContents?env.owner:undefined};
       export const dialog={showErrorBox(){}};
-      export const nativeImage={createFromPath:()=>{throw new Error('not used in this test');}};
       export const ipcMain={handle:(channel,handler)=>env.handlers.set(channel,handler)};
     `,
     './appLocale': `export const getAppLocale=()=>'en-US';export const setAppLocale=()=>{};`,

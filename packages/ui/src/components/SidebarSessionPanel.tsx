@@ -1309,9 +1309,6 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 							<label className={`pd-appearance-swatch pd-appearance-swatch-custom${projectBars[popup.workspace]?.startsWith('#') ? ' is-active' : ''}`} title={t('sidebar.appearanceCustom')}>
 								<input type="color" value={projectBars[popup.workspace]?.startsWith('#') ? projectBars[popup.workspace]! : '#667eea'} aria-label={t('sidebar.appearanceCustom')} onChange={(event) => applyProjectBar(popup.workspace, event.target.value)} />
 							</label>
-							<button type="button" role="menuitem" className="pd-menu-item" onMouseEnter={scheduleBarSubClose} disabled={!bridge?.importProjectBackground} onClick={() => { void bridge?.importProjectBackground().then((dataUrl) => { if (dataUrl) applyProjectBar(popup.workspace, dataUrl); }, () => {}); }}>
-								<Icon name="image" width="15" height="15" /><span>{t('sidebar.appearanceLocalImage')}</span>
-							</button>
 						</div>
 						<button type="button" role="menuitem" className="pd-menu-item" aria-haspopup="menu" aria-expanded={barSubFlyout?.kind === 'presets'}
 							onMouseEnter={(event) => openBarSubFlyout('presets', event.currentTarget, false)}
@@ -1358,7 +1355,7 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 						</SidebarSubmenu>}
 						{barSubFlyout?.kind === 'anim' && <SidebarSubmenu anchor={barSubFlyout.anchor} label={t('sidebar.appearanceAnim')} autoFocus={barSubFlyout.keyboard} onPointerEnter={clearBarSubTimer}
 							onClose={(restore) => { const anchor = barSubFlyout.anchor; setBarSubFlyout(null); if (restore) anchor.focus(); }}>
-							{(['', 'flow', 'pulse', 'shimmer'] as const).map((animId) => submenuItem({ key: `anim:${animId || 'none'}`, label: t(animId ? `sidebar.anim${animId[0]!.toUpperCase()}${animId.slice(1)}` : 'sidebar.animNone'), icon: animId ? 'spark' : 'close', checked: (projectAnims[popup.workspace] ?? null) === (animId || null), onSelect: () => { const workspace = popup.workspace; applyProjectAnim(workspace, animId || null); } }))}
+							{(['', 'flow', 'pulse', 'shimmer', 'hue', 'flicker', 'slide'] as const).map((animId) => submenuItem({ key: `anim:${animId || 'none'}`, label: t(animId ? `sidebar.anim${animId[0]!.toUpperCase()}${animId.slice(1)}` : 'sidebar.animNone'), icon: animId ? 'spark' : 'close', checked: (projectAnims[popup.workspace] ?? null) === (animId || null), onSelect: () => { const workspace = popup.workspace; applyProjectAnim(workspace, animId || null); } }))}
 						</SidebarSubmenu>}
 					</SidebarSubmenu>}
 				</>}

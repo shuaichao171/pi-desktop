@@ -22,6 +22,9 @@ export const PROJECT_BAR_ANIMS: ProjectBarAnim[] = [
   { id: 'flow', animation: 'pd-bar-flow 9s ease-in-out infinite', size: '260% 100%' },
   { id: 'pulse', animation: 'pd-bar-pulse 3.2s ease-in-out infinite' },
   { id: 'shimmer', animation: 'pd-bar-shimmer 6s ease-in-out infinite', size: '260% 100%' },
+  { id: 'hue', animation: 'pd-bar-hue 5s linear infinite' },
+  { id: 'flicker', animation: 'pd-bar-flicker 4.5s linear infinite' },
+  { id: 'slide', animation: 'pd-bar-slide 3.5s linear infinite', size: '200% 100%' },
 ];
 
 /** 预设背景条：id 与 shared 的 PROJECT_BAR_PRESET_IDS 一一对应，主进程按 id 校验。 */
@@ -49,8 +52,6 @@ export function projectBarStyle(value: string | null | undefined): { background:
   // Normalize first so multi-line pastes (AI output copied out of the chat) still render.
   const bar = normalizeProjectBarValue(value);
   if (!bar) return null;
-  // A picked local image is an embedded data URL: white text over the scrim reads fine.
-  if (bar.startsWith('data:image/')) return { background: bar, light: false };
   if (bar.startsWith('#')) {
     const rgb = hexToRgb(bar);
     if (!rgb) return null;

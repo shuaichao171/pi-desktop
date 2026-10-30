@@ -61,6 +61,9 @@
 @keyframes pd-bar-flow { 0%, 100% { background-position: 0% 50%; } 50% { background-position: 100% 50%; } }
 @keyframes pd-bar-pulse { 0%, 100% { filter: brightness(1); } 50% { filter: brightness(1.28); } }
 @keyframes pd-bar-shimmer { 0%, 100% { background-position: 0% 50%; filter: brightness(1); } 50% { background-position: 100% 50%; filter: brightness(1.22); } }
+@keyframes pd-bar-hue { from { filter: hue-rotate(0deg); } to { filter: hue-rotate(360deg); } }
+@keyframes pd-bar-flicker { 0%, 91%, 94%, 98%, 100% { opacity: 1; } 92% { opacity: 0.4; } 96% { opacity: 0.6; } }
+@keyframes pd-bar-slide { from { background-position: 0% 50%; } to { background-position: 200% 50%; } }
 @media (prefers-reduced-motion: reduce) { .pd-sidebar-group.has-anim-bar > .pd-sidebar-group-heading { animation: none; } }
 .pd-appearance-swatches { display: flex; flex-wrap: wrap; gap: 6px; padding: 4px 12px 8px; }
 .pd-appearance-swatch { position: relative; flex: 0 0 auto; width: 34px; height: 22px; padding: 0; border: 1px solid color-mix(in srgb, var(--pd-text) 25%, transparent); border-radius: 6px; cursor: pointer; }

@@ -42,8 +42,8 @@ test('multi-line AI output still applies: newlines collapse to spaces before val
   assert.equal(isValidProjectBarValue('  linear-gradient(45deg, #f66, #3cf)  '), true, 'outer whitespace is trimmed');
 });
 
-test('network references trip the leave-machine check; local bytes never do', async () => {
-  const { projectBarLeavesMachine, normalizeProjectBarValue } = await import('../packages/shared/src/index.ts');
+test('network references trip the leave-machine check', async () => {
+  const { projectBarLeavesMachine } = await import('../packages/shared/src/index.ts');
   assert.equal(projectBarLeavesMachine('url(https://evil/x.png)'), true);
   assert.equal(projectBarLeavesMachine('url(//evil/x.png)'), true, 'protocol-relative is still the network');
   assert.equal(projectBarLeavesMachine('image-set("https://a" 1x)'), true);
@@ -51,12 +51,10 @@ test('network references trip the leave-machine check; local bytes never do', as
   assert.equal(projectBarLeavesMachine('url(data:image/png;base64,AAAA)'), false, 'embedded bytes stay local');
   assert.equal(projectBarLeavesMachine('url(data:image/png;base64,AAA), url(https://evil)'), true, 'one remote ref is enough');
   assert.equal(projectBarLeavesMachine('url(file:///C:/bg.png)'), false, 'local disk is not the network');
-
-  // The picked local image embeds itself as a data URL and survives storage.
-  const dataUrl = 'data:image/png;base64,' + 'A'.repeat(1000);
-  assert.equal(normalizeProjectBarValue(dataUrl), dataUrl);
-  assert.equal(normalizeProjectBarValue('data:image/png;base64,!!!'), null, 'base64 junk is rejected');
-  assert.equal(normalizeProjectBarValue('data:image/png;base64,' + 'A'.repeat(600_000)), null, 'oversized embeds are rejected');
+  // data:/file: URLs can never pass storage validation (semicolons are banned),
+  // so the leave-machine prompt only ever sees genuine network references.
+  const { normalizeProjectBarValue } = await import('../packages/shared/src/index.ts');
+  assert.equal(normalizeProjectBarValue('data:image/png;base64,AAAA'), null);
 });
 
 test('animation tiers stay in sync with shared and only map to whitelisted keyframe names', async () => {
@@ -64,7 +62,7 @@ test('animation tiers stay in sync with shared and only map to whitelisted keyfr
   const { PROJECT_BAR_ANIMS } = await import('../packages/ui/src/sidebarAppearance.ts');
   assert.deepEqual(PROJECT_BAR_ANIMS.map((anim) => anim.id), [...PROJECT_BAR_ANIM_IDS]);
   for (const anim of PROJECT_BAR_ANIMS) {
-    assert.match(anim.animation, /^pd-bar-[a-z]+ [\d.]+s ease-in-out infinite$/, 'only app-owned keyframes may be referenced');
+    assert.match(anim.animation, /^pd-bar-[a-z]+ [\d.]+s (ease-in-out|linear) infinite$/, 'only app-owned keyframes may be referenced');
     if (anim.size) assert.match(anim.size, /^\d+% 100%$/);
   }
 });

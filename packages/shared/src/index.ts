@@ -158,7 +158,6 @@ export const IPC_CHANNELS = {
   workspaceSetProjectNickname: 'workspace:set-project-nickname',
   workspaceProjectAppearance: 'workspace:project-appearance',
   workspaceSetProjectAppearance: 'workspace:set-project-appearance',
-  workspaceImportProjectBackground: 'workspace:import-project-background',
   workspaceCommitContext: 'workspace:commit-context',
   workspaceCommit: 'workspace:commit',
   workspaceCommandStart: 'workspace:command-start',
@@ -894,7 +893,7 @@ export interface WorkspaceProjectNickname {
 export const PROJECT_BAR_PRESET_IDS = ['aurora', 'sunset', 'neon', 'violet', 'mint', 'dawn'] as const;
 
 /** Background-bar animation tier ids (keyframes live in the app stylesheet, never in user input). */
-export const PROJECT_BAR_ANIM_IDS = ['flow', 'pulse', 'shimmer'] as const;
+export const PROJECT_BAR_ANIM_IDS = ['flow', 'pulse', 'shimmer', 'hue', 'flicker', 'slide'] as const;
 
 /** Escape-proofing for a one-declaration custom bar: url()/image-set()/cross-fade() are
  * allowed through this list and gated in the UI by the leave-machine prompt instead. */
@@ -908,11 +907,6 @@ const PROJECT_BAR_CSS_FORBIDDEN = /element\(|attr\(|expression\(|paint\(|@|;|\{|
 export function normalizeProjectBarValue(value: unknown): string | null {
 	const bar = typeof value === 'string' ? value.trim().replace(/\s+/g, ' ') : '';
 	if (!bar) return null;
-	// A picked local image arrives as an already-embedded data URL: bytes live in the
-	// value itself, so rendering stays fully local. Cap the stored size.
-	if (bar.startsWith('data:image/')) {
-		return bar.length <= 500_000 && /^data:image\/(png|jpeg);base64,[A-Za-z0-9+/=]+$/.test(bar) ? bar : null;
-	}
 	if (bar.length > 300) return null;
 	if (bar.startsWith('#')) return /^#[0-9a-fA-F]{3}$/.test(bar) || /^#[0-9a-fA-F]{6}$/.test(bar) ? bar : null;
 	if ((PROJECT_BAR_PRESET_IDS as readonly string[]).includes(bar)) return bar;
@@ -1173,8 +1167,6 @@ export interface AgentBridge extends InputFeatureBridge, DataFeaturesBridge, Wor
   getProjectAppearance(cwd: string): Promise<WorkspaceProjectAppearance>;
   /** Merges an appearance patch (null removes a field) into the app-side store. */
   setProjectAppearance(cwd: string, patch: { bar?: string | null; anim?: string | null }): Promise<void>;
-  /** Opens an image picker, downscale-embeds the pick as a data URL; null when canceled. */
-  importProjectBackground(): Promise<string | null>;
   /** Assembles the diff/status context used to generate a commit message. */
   getWorkspaceCommitContext(): Promise<string>;
   /** Stages all changes and commits them; returns the short commit hash. */
