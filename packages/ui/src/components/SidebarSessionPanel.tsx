@@ -1298,7 +1298,7 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 					<button type="button" role="menuitem" className="pd-menu-item" aria-haspopup="menu" aria-expanded={barFlyout !== null}
 						onMouseEnter={(event) => openBarFlyout(event.currentTarget, false)}
 						onKeyDown={(event) => { if (event.key === 'ArrowRight') { event.preventDefault(); event.stopPropagation(); openBarFlyout(event.currentTarget, true); } }}
-						onClick={(event) => setBarFlyout((current) => current?.anchor === event.currentTarget ? null : { anchor: event.currentTarget, keyboard: true })}>
+						onClick={(event) => { const anchor = event.currentTarget; setBarFlyout((current) => current?.anchor === anchor ? null : { anchor, keyboard: true }); }}>
 						<Icon name="palette" width="15" height="15" /><span>{t('sidebar.appearanceBar')}</span><Icon name="chevronRight" className="pd-menu-chevron" width="13" height="13" />
 					</button>
 					<hr />
@@ -1313,20 +1313,20 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 						<button type="button" role="menuitem" className="pd-menu-item" aria-haspopup="menu" aria-expanded={barSubFlyout?.kind === 'presets'}
 							onMouseEnter={(event) => openBarSubFlyout('presets', event.currentTarget, false)}
 							onKeyDown={(event) => { if (event.key === 'ArrowRight') { event.preventDefault(); event.stopPropagation(); openBarSubFlyout('presets', event.currentTarget, true); } }}
-							onClick={(event) => setBarSubFlyout((current) => current?.kind === 'presets' && current.anchor === event.currentTarget ? null : { kind: 'presets', anchor: event.currentTarget, keyboard: true })}>
+							onClick={(event) => { const anchor = event.currentTarget; setBarSubFlyout((current) => current?.kind === 'presets' && current.anchor === anchor ? null : { kind: 'presets', anchor, keyboard: true }); }}>
 							<Icon name="spark" width="15" height="15" /><span>{t('sidebar.appearancePresets')}</span><Icon name="chevronRight" className="pd-menu-chevron" width="13" height="13" />
 						</button>
 						<button type="button" role="menuitem" className="pd-menu-item" aria-haspopup="menu" aria-expanded={barSubFlyout?.kind === 'css'}
 							onMouseEnter={(event) => openBarSubFlyout('css', event.currentTarget, false)}
 							onKeyDown={(event) => { if (event.key === 'ArrowRight') { event.preventDefault(); event.stopPropagation(); openBarSubFlyout('css', event.currentTarget, true); } }}
-							onClick={(event) => setBarSubFlyout((current) => current?.kind === 'css' && current.anchor === event.currentTarget ? null : { kind: 'css', anchor: event.currentTarget, keyboard: true })}>
+							onClick={(event) => { const anchor = event.currentTarget; setBarSubFlyout((current) => current?.kind === 'css' && current.anchor === anchor ? null : { kind: 'css', anchor, keyboard: true }); }}>
 							<Icon name="code" width="15" height="15" /><span>{t('sidebar.appearanceCss')}</span><Icon name="chevronRight" className="pd-menu-chevron" width="13" height="13" />
 						</button>
 						<hr />
 						<button type="button" role="menuitem" className="pd-menu-item" aria-haspopup="menu" aria-expanded={barSubFlyout?.kind === 'anim'}
 							onMouseEnter={(event) => openBarSubFlyout('anim', event.currentTarget, false)}
 							onKeyDown={(event) => { if (event.key === 'ArrowRight') { event.preventDefault(); event.stopPropagation(); openBarSubFlyout('anim', event.currentTarget, true); } }}
-							onClick={(event) => setBarSubFlyout((current) => current?.kind === 'anim' && current.anchor === event.currentTarget ? null : { kind: 'anim', anchor: event.currentTarget, keyboard: true })}>
+							onClick={(event) => { const anchor = event.currentTarget; setBarSubFlyout((current) => current?.kind === 'anim' && current.anchor === anchor ? null : { kind: 'anim', anchor, keyboard: true }); }}>
 							<Icon name="spark" width="15" height="15" /><span>{t('sidebar.appearanceAnim')}</span><Icon name="chevronRight" className="pd-menu-chevron" width="13" height="13" />
 						</button>
 						{barSubFlyout?.kind === 'presets' && <SidebarSubmenu anchor={barSubFlyout.anchor} label={t('sidebar.appearancePresets')} autoFocus={barSubFlyout.keyboard} onPointerEnter={clearBarSubTimer}

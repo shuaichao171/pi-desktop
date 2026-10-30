@@ -21,7 +21,7 @@ export function SidebarSubmenu({ anchor, label, autoFocus, children, onClose, on
 	const [position, setPosition] = useState<{ left: number; top: number } | null>(null);
 	useLayoutEffect(() => {
 		const menu = ref.current;
-		if (!menu) return;
+		if (!menu || !anchor) return; // A null anchor (stale event.currentTarget) must never take the app down.
 		const row = anchor.getBoundingClientRect();
 		const parent = (anchor.closest('.pd-sidebar-popover') ?? anchor).getBoundingClientRect();
 		const box = menu.getBoundingClientRect();
