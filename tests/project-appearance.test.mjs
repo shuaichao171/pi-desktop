@@ -55,6 +55,13 @@ test('network references trip the leave-machine check', async () => {
   // so the leave-machine prompt only ever sees genuine network references.
   const { normalizeProjectBarValue } = await import('../packages/shared/src/index.ts');
   assert.equal(normalizeProjectBarValue('data:image/png;base64,AAAA'), null);
+  assert.equal(normalizeProjectBarValue('data:image/png;base64,AAAA'), null);
+
+  // The sanity cap leaves room for rich multi-layer AI output (was 300, squeezed real results).
+  const layered = Array.from({ length: 5 }, (_, i) => `linear-gradient(115deg, #ff2ec433 0%, #00e5ff2b 55%, transparent ${60 + i}%)`).join(', ');
+  assert.equal(layered.length > 300 && layered.length <= 1000, true, 'the fixture itself spans the old cap');
+  assert.equal(normalizeProjectBarValue(layered), layered);
+  assert.equal(normalizeProjectBarValue('linear-gradient(90deg, ' + '#f00, '.repeat(300) + '#00f)'), null, 'over 1000 is rejected');
 });
 
 test('animation tiers stay in sync with shared and only map to whitelisted keyframe names', async () => {
