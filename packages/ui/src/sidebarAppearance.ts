@@ -24,7 +24,8 @@ export const PROJECT_BAR_ANIMS: ProjectBarAnim[] = [
   { id: 'shimmer', animation: 'pd-bar-shimmer 6s ease-in-out infinite', size: '260% 100%' },
   { id: 'hue', animation: 'pd-bar-hue 5s linear infinite' },
   { id: 'flicker', animation: 'pd-bar-flicker 4.5s linear infinite' },
-  { id: 'slide', animation: 'pd-bar-slide 3.5s linear infinite', size: '200% 100%' },
+  { id: 'slide', animation: 'pd-bar-slide 6.5s ease-in-out infinite', size: '200% 100%' },
+  { id: 'tornado', animation: 'pd-bar-tornado 3.5s linear infinite', size: '300% 300%' },
 ];
 
 /** 预设背景条：id 与 shared 的 PROJECT_BAR_PRESET_IDS 一一对应，主进程按 id 校验。 */

@@ -1355,7 +1355,7 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 						</SidebarSubmenu>}
 						{barSubFlyout?.kind === 'anim' && <SidebarSubmenu anchor={barSubFlyout.anchor} label={t('sidebar.appearanceAnim')} autoFocus={barSubFlyout.keyboard} onPointerEnter={clearBarSubTimer}
 							onClose={(restore) => { const anchor = barSubFlyout.anchor; setBarSubFlyout(null); if (restore) anchor.focus(); }}>
-							{(['', 'flow', 'pulse', 'shimmer', 'hue', 'flicker', 'slide'] as const).map((animId) => submenuItem({ key: `anim:${animId || 'none'}`, label: t(animId ? `sidebar.anim${animId[0]!.toUpperCase()}${animId.slice(1)}` : 'sidebar.animNone'), icon: animId ? 'spark' : 'close', checked: (projectAnims[popup.workspace] ?? null) === (animId || null), onSelect: () => { const workspace = popup.workspace; applyProjectAnim(workspace, animId || null); } }))}
+							{(['', 'flow', 'pulse', 'shimmer', 'hue', 'flicker', 'slide', 'tornado'] as const).map((animId) => submenuItem({ key: `anim:${animId || 'none'}`, label: t(animId ? `sidebar.anim${animId[0]!.toUpperCase()}${animId.slice(1)}` : 'sidebar.animNone'), icon: animId ? 'spark' : 'close', checked: (projectAnims[popup.workspace] ?? null) === (animId || null), onSelect: () => { const workspace = popup.workspace; applyProjectAnim(workspace, animId || null); } }))}
 						</SidebarSubmenu>}
 					</SidebarSubmenu>}
 				</>}

@@ -63,7 +63,25 @@
 @keyframes pd-bar-shimmer { 0%, 100% { background-position: 0% 50%; filter: brightness(1); } 50% { background-position: 100% 50%; filter: brightness(1.22); } }
 @keyframes pd-bar-hue { from { filter: hue-rotate(0deg); } to { filter: hue-rotate(360deg); } }
 @keyframes pd-bar-flicker { 0%, 91%, 94%, 98%, 100% { opacity: 1; } 92% { opacity: 0.4; } 96% { opacity: 0.6; } }
-@keyframes pd-bar-slide { from { background-position: 0% 50%; } to { background-position: 200% 50%; } }
+/* 滑动：向右滑出 → 瞬间接到左侧外 → 从左滑回，全程单向运动无跳变感 */
+@keyframes pd-bar-slide {
+	0%, 8% { background-position: 0% 50%; }
+	45% { background-position: -100% 50%; }
+	45.01% { background-position: 200% 50%; }
+	92%, 100% { background-position: 0% 50%; }
+}
+/* 龙卷风：背景位置绕圆旋涡轨迹（x/y 长手分别插值） */
+@keyframes pd-bar-tornado {
+	0% { background-position-x: 0%; background-position-y: 50%; }
+	12.5% { background-position-x: 50%; background-position-y: 100%; }
+	25% { background-position-x: 100%; background-position-y: 50%; }
+	37.5% { background-position-x: 50%; background-position-y: 0%; }
+	50% { background-position-x: 0%; background-position-y: 50%; }
+	62.5% { background-position-x: 50%; background-position-y: 100%; }
+	75% { background-position-x: 100%; background-position-y: 50%; }
+	87.5% { background-position-x: 50%; background-position-y: 0%; }
+	100% { background-position-x: 0%; background-position-y: 50%; }
+}
 @media (prefers-reduced-motion: reduce) { .pd-sidebar-group.has-anim-bar > .pd-sidebar-group-heading { animation: none; } }
 .pd-appearance-swatches { display: flex; flex-wrap: wrap; gap: 6px; padding: 4px 12px 8px; }
 .pd-appearance-swatch { position: relative; flex: 0 0 auto; width: 34px; height: 22px; padding: 0; border: 1px solid color-mix(in srgb, var(--pd-text) 25%, transparent); border-radius: 6px; cursor: pointer; }

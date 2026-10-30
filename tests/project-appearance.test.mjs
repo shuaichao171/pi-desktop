@@ -63,6 +63,6 @@ test('animation tiers stay in sync with shared and only map to whitelisted keyfr
   assert.deepEqual(PROJECT_BAR_ANIMS.map((anim) => anim.id), [...PROJECT_BAR_ANIM_IDS]);
   for (const anim of PROJECT_BAR_ANIMS) {
     assert.match(anim.animation, /^pd-bar-[a-z]+ [\d.]+s (ease-in-out|linear) infinite$/, 'only app-owned keyframes may be referenced');
-    if (anim.size) assert.match(anim.size, /^\d+% 100%$/);
+    if (anim.size) assert.match(anim.size, /^\d+% \d+%$/);
   }
 });

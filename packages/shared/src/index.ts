@@ -893,7 +893,7 @@ export interface WorkspaceProjectNickname {
 export const PROJECT_BAR_PRESET_IDS = ['aurora', 'sunset', 'neon', 'violet', 'mint', 'dawn'] as const;
 
 /** Background-bar animation tier ids (keyframes live in the app stylesheet, never in user input). */
-export const PROJECT_BAR_ANIM_IDS = ['flow', 'pulse', 'shimmer', 'hue', 'flicker', 'slide'] as const;
+export const PROJECT_BAR_ANIM_IDS = ['flow', 'pulse', 'shimmer', 'hue', 'flicker', 'slide', 'tornado'] as const;
 
 /** Escape-proofing for a one-declaration custom bar: url()/image-set()/cross-fade() are
  * allowed through this list and gated in the UI by the leave-machine prompt instead. */

@@ -764,6 +764,7 @@ export const translations: Record<string, { 'zh-CN': string; 'en-US': string }> 
   'sidebar.animHue': { 'zh-CN': '色相流转', 'en-US': 'Hue cycle' },
   'sidebar.animFlicker': { 'zh-CN': '霓虹闪烁', 'en-US': 'Flicker' },
   'sidebar.animSlide': { 'zh-CN': '滑动', 'en-US': 'Slide' },
+  'sidebar.animTornado': { 'zh-CN': '龙卷风', 'en-US': 'Tornado' },
   'sidebar.appearanceAiDynamic': { 'zh-CN': '复制 AI 提示词 · 动态', 'en-US': 'Copy AI prompt · animated' },
   'sidebar.appearanceAiCopy': { 'zh-CN': '复制 AI 提示词', 'en-US': 'Copy AI prompt' },
   'sidebar.appearanceAiCopied': { 'zh-CN': '已复制。粘贴到会话发给 AI，把它返回的值贴回上方输入框。', 'en-US': 'Copied. Paste it into the chat, then paste the value the AI returns back above.' },
