@@ -4,7 +4,7 @@
 .pd-extension-request-head > svg { flex-shrink: 0; color: var(--pd-text-subtle); }
 .pd-extension-request-heading { flex: 1; min-width: 0; }
 .pd-extension-request-heading > span { display: block; margin-bottom: 3px; color: var(--pd-text-subtle); font-size: var(--pd-font-xs); line-height: 1.3; }
-.pd-extension-request-heading h2 { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; margin: 0; font-size: var(--pd-font-caption); font-weight: 600; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
+.pd-extension-request-heading h2 { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; margin: 0; font-size: var(--pd-font-caption); font-weight: var(--pd-weight-semibold); line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
 /* Expanded, a long question or folded preview stays readable instead of being clipped. */
 .pd-extension-request:not(.is-collapsed) .pd-extension-request-heading h2 { display: block; max-height: min(126px, 26vh); overflow: hidden auto; overscroll-behavior: contain; scrollbar-width: thin; }
 .pd-extension-request-count { flex-shrink: 0; color: var(--pd-text-subtle); font-size: var(--pd-font-xs); }

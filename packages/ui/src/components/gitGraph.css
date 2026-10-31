@@ -9,10 +9,10 @@
 .pd-git-graph-rows li code { flex: none; font-size: var(--pd-font-xs); color: var(--pd-text-weak); }
 .pd-git-graph-subject { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pd-git-graph-rows li small { flex: none; color: var(--pd-text-weak); font-size: var(--pd-font-xs); }
-.pd-git-graph-rows li.is-head .pd-git-graph-subject { font-weight: 600; }
+.pd-git-graph-rows li.is-head .pd-git-graph-subject { font-weight: var(--pd-weight-semibold); }
 .pd-git-graph-refs { flex: none; display: inline-flex; gap: 4px; }
 .pd-git-ref { padding: 0 5px; border-radius: var(--pd-radius-pill); font-size: var(--pd-font-xs); line-height: 16px; background: color-mix(in srgb, var(--pd-brand) 16%, transparent); color: var(--pd-brand); max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.pd-git-ref.is-head { background: color-mix(in srgb, var(--pd-brand) 30%, transparent); font-weight: 600; }
+.pd-git-ref.is-head { background: color-mix(in srgb, var(--pd-brand) 30%, transparent); font-weight: var(--pd-weight-semibold); }
 
 /* Lane palette shared by edges and dots. */
 .pd-git-edge.lane-0, .pd-git-dot.lane-0 { stroke: var(--pd-graph-1); fill: var(--pd-graph-1); }

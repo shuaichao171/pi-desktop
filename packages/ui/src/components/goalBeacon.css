@@ -5,7 +5,7 @@
 
 .pd-goal-strip { display: flex; align-items: center; gap: 8px; width: 100%; padding: 5px 10px; border: 0; background: none; color: var(--pd-text-subtle); font: inherit; font-size: var(--pd-font-sm); text-align: start; cursor: pointer; }
 .pd-goal-strip:hover { background: var(--pd-surface-hover); color: var(--pd-text); }
-.pd-goal-strip-title { flex: 0 0 auto; font-weight: 600; color: var(--pd-text); }
+.pd-goal-strip-title { flex: 0 0 auto; font-weight: var(--pd-weight-semibold); color: var(--pd-text); }
 .pd-goal-strip-objective { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pd-goal-strip-tasks { flex: 0 0 auto; font-variant-numeric: tabular-nums; }
 .pd-goal-chevron { flex: 0 0 auto; color: var(--pd-text-subtle); }
@@ -54,13 +54,13 @@
 .pd-goal-actions button:hover:not(:disabled) { background: var(--pd-surface-hover); }
 .pd-goal-actions button:disabled { opacity: 0.45; cursor: default; }
 
-.pd-goal-activity h4, .pd-goal-other-workspaces h4 { margin: 2px 0 4px; color: var(--pd-text-subtle); font-size: var(--pd-font-xs); font-weight: 600; }
+.pd-goal-activity h4, .pd-goal-other-workspaces h4 { margin: 2px 0 4px; color: var(--pd-text-subtle); font-size: var(--pd-font-xs); font-weight: var(--pd-weight-semibold); }
 .pd-goal-activity ul { display: flex; flex-direction: column; gap: 2px; margin: 0; padding: 0; list-style: none; }
 .pd-goal-activity li { display: flex; align-items: baseline; gap: 8px; font-size: var(--pd-font-xs); color: var(--pd-text-subtle); font-variant-numeric: tabular-nums; }
 .pd-goal-activity code { font-family: var(--pd-font-mono, ui-monospace, SFMono-Regular, Consolas, monospace); font-size: var(--pd-font-xs); color: var(--pd-text); }
 
 .pd-goal-other-workspaces { display: flex; flex-direction: column; gap: 6px; }
 .pd-goal-other-workspace { display: flex; flex-direction: column; gap: 3px; }
-.pd-goal-other-name { color: var(--pd-text); font-size: var(--pd-font-xs); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pd-goal-other-name { color: var(--pd-text); font-size: var(--pd-font-xs); font-weight: var(--pd-weight-semibold); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pd-goal-other-workspace ul { display: flex; flex-direction: column; gap: 2px; margin: 0; padding: 0 0 0 4px; list-style: none; }
 .pd-goal-other-workspace li { display: flex; align-items: center; gap: 7px; font-size: var(--pd-font-xs); color: var(--pd-text-subtle); }

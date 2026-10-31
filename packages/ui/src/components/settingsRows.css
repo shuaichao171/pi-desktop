@@ -1,7 +1,7 @@
 /* Grouped settings rows shared by the 常规 / 外观 pages. */
 .pd-settings-group { display: flex; flex-direction: column; gap: 8px; min-width: 0; margin-top: 22px; }
 .pd-settings-group-head { padding-left: 2px; }
-.pd-settings-group-head h3 { margin: 0; color: var(--pd-text-subtle); font-size: var(--pd-font-sm); font-weight: 600; }
+.pd-settings-group-head h3 { margin: 0; color: var(--pd-text-subtle); font-size: var(--pd-font-sm); font-weight: var(--pd-weight-semibold); }
 .pd-settings-group-head p { margin: 4px 0 0; color: var(--pd-text-weak); font-size: var(--pd-font-sm); line-height: 1.55; }
 .pd-settings-group-body { min-width: 0; overflow: hidden; border: 1px solid var(--pd-border); border-radius: var(--pd-radius-md); background: var(--pd-surface); }
 .pd-settings-group-body > .pd-settings-group-pad { padding: 14px; }
@@ -10,7 +10,7 @@
 .pd-settings-row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 20px; min-width: 0; padding: 13px 14px; }
 .pd-settings-group-body > * + * { border-top: 1px solid var(--pd-border-soft); }
 .pd-settings-row-copy { display: flex; flex: 1 1 260px; flex-direction: column; gap: 3px; min-width: 0; }
-.pd-settings-row-copy > :is(strong, label) { color: var(--pd-text); font-size: var(--pd-font-caption); font-weight: 500; }
+.pd-settings-row-copy > :is(strong, label) { color: var(--pd-text); font-size: var(--pd-font-caption); font-weight: var(--pd-weight-medium); }
 .pd-settings-row-copy > p { margin: 0; color: var(--pd-text-subtle); font-size: var(--pd-font-sm); line-height: 1.55; overflow-wrap: anywhere; }
 .pd-settings-row-control { display: flex; flex: 0 0 auto; align-items: center; gap: 8px; min-width: 0; }
 .pd-settings-row.is-stacked { align-items: stretch; flex-direction: column; }
@@ -36,7 +36,7 @@
 .pd-settings-content .pd-language-options { display: inline-flex; gap: 2px; padding: 3px; border: 1px solid var(--pd-border); border-radius: var(--pd-radius-sm); background: var(--pd-surface-muted, var(--pd-bg)); }
 .pd-settings-content .pd-language-options button { min-width: 0; min-height: 28px; padding: 0 14px; border: 0; border-radius: calc(var(--pd-radius-sm) - 2px); background: transparent; color: var(--pd-text-subtle); font-size: var(--pd-font-sm); white-space: nowrap; transition: background var(--pd-motion-fast, 120ms) ease, color var(--pd-motion-fast, 120ms) ease; }
 .pd-settings-content .pd-language-options button:hover:not(:disabled) { border-color: transparent; background: transparent; color: var(--pd-text); }
-.pd-settings-content .pd-language-options button.is-selected { background: var(--pd-surface-raised, var(--pd-surface)); color: var(--pd-text); font-weight: 600; box-shadow: var(--pd-shadow-low, 0 1px 2px rgb(0 0 0 / 14%)); }
+.pd-settings-content .pd-language-options button.is-selected { background: var(--pd-surface-raised, var(--pd-surface)); color: var(--pd-text); font-weight: var(--pd-weight-semibold); box-shadow: var(--pd-shadow-low, 0 1px 2px rgb(0 0 0 / 14%)); }
 .pd-settings-content .pd-language-options button:focus-visible { outline: 2px solid var(--pd-focus-border, var(--pd-brand)); outline-offset: 1px; }
 .pd-settings-content .pd-language-options button:disabled { opacity: .5; }
 
@@ -74,6 +74,6 @@
 .pd-update-card.is-error .pd-update-icon { background: var(--pd-danger-surface); color: var(--pd-danger); }
 .pd-update-card .pd-update-actions { width: 100%; margin-top: 0; padding-top: 14px; border-top: 1px solid var(--pd-border-soft); }
 .pd-update-actions .pd-extension-refresh { display: inline-flex; align-items: center; gap: 6px; }
-.pd-update-actions .pd-extension-refresh.is-primary:not(:disabled) { border-color: var(--pd-brand); background: var(--pd-brand); color: var(--pd-brand-ink, #fff); font-weight: 600; }
+.pd-update-actions .pd-extension-refresh.is-primary:not(:disabled) { border-color: var(--pd-brand); background: var(--pd-brand); color: var(--pd-brand-ink, #fff); font-weight: var(--pd-weight-semibold); }
 .pd-update-actions .pd-extension-refresh.is-quiet { margin-left: auto; border-color: transparent; background: transparent; color: var(--pd-text-subtle); }
 .pd-update-actions .pd-extension-refresh.is-quiet:hover { color: var(--pd-text); }

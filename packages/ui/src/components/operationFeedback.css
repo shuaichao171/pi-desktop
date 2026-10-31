@@ -7,7 +7,7 @@
 .pd-operation-notice-icon { flex: 0 0 auto; color: var(--pd-brand); }
 .pd-operation-notice.is-error .pd-operation-notice-icon { color: var(--pd-danger); }
 .pd-operation-notice.is-success .pd-operation-notice-icon { color: var(--pd-success); }
-.pd-operation-notice-heading strong { flex: 1; min-width: 0; font-weight: 600; }
+.pd-operation-notice-heading strong { flex: 1; min-width: 0; font-weight: var(--pd-weight-semibold); }
 .pd-operation-notice-close { display: grid; flex: 0 0 auto; place-items: center; width: 22px; height: 22px; padding: 0; border: 0; border-radius: var(--pd-radius-xs); background: transparent; color: var(--pd-text-subtle); }
 .pd-operation-notice-close:hover { background: var(--pd-surface-hover); color: var(--pd-text); }
 .pd-operation-notice-body { display: flex; align-items: center; gap: 10px; margin: 4px 0 0 23px; }

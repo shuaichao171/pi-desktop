@@ -4,7 +4,7 @@ import type { OfficeParagraph, OfficePreview } from '../officePreviewTypes';
 import './officeFilePreview.css';
 
 function Paragraph({ value }: { value: OfficeParagraph }) {
-  return <p className={value.heading ? `is-heading level-${value.heading}` : undefined} role={value.heading ? 'heading' : undefined} aria-level={value.heading}>{value.runs.map((run, index) => <span key={index} style={{ fontWeight: run.bold ? 700 : undefined, fontStyle: run.italic ? 'italic' : undefined, textDecoration: run.underline ? 'underline' : undefined }}>{run.text}</span>)}</p>;
+  return <p className={value.heading ? `is-heading level-${value.heading}` : undefined} role={value.heading ? 'heading' : undefined} aria-level={value.heading}>{value.runs.map((run, index) => <span key={index} style={{ fontWeight: run.bold ? 'var(--pd-weight-bold)' : undefined, fontStyle: run.italic ? 'italic' : undefined, textDecoration: run.underline ? 'underline' : undefined }}>{run.text}</span>)}</p>;
 }
 function columnName(index: number): string { let name = ''; for (let n = index + 1; n > 0; n = Math.floor((n - 1) / 26)) name = String.fromCharCode(65 + (n - 1) % 26) + name; return name; }
 

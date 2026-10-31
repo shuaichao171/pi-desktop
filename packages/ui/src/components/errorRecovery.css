@@ -10,10 +10,10 @@
 .pd-scoped-error { display: grid; grid-template-columns: auto minmax(0, 1fr); align-content: start; align-items: start; gap: 12px 14px; width: min(560px, calc(100% - 36px)); min-width: 0; margin: 18px; padding: 18px 20px; border: 1px solid var(--pd-border); border-radius: var(--pd-radius-lg); background: var(--pd-surface); color: var(--pd-text); overflow: auto; }
 .pd-scoped-error-icon { display: grid; place-items: center; width: 34px; height: 34px; border-radius: var(--pd-radius-md); background: color-mix(in srgb, var(--pd-warning) 14%, transparent); color: var(--pd-warning); }
 .pd-scoped-error-copy { display: grid; gap: 4px; min-width: 0; padding-top: 1px; }
-.pd-scoped-error-copy strong { font-size: var(--pd-font-base); font-weight: 600; }
+.pd-scoped-error-copy strong { font-size: var(--pd-font-base); font-weight: var(--pd-weight-semibold); }
 .pd-scoped-error-copy p { margin: 0; color: var(--pd-text-subtle); font-size: var(--pd-font-sm); line-height: 1.6; }
 .pd-scoped-error > button, .pd-scoped-error > .pd-error-details { grid-column: 2; justify-self: start; }
-.pd-scoped-error > button { border-color: transparent; background: var(--pd-brand); color: var(--pd-brand-ink); font-weight: 600; }
+.pd-scoped-error > button { border-color: transparent; background: var(--pd-brand); color: var(--pd-brand-ink); font-weight: var(--pd-weight-semibold); }
 .pd-scoped-error > button:hover { background: var(--pd-brand-hover); }
 /* Full-page views (automation, plugins) keep the failure centered in the page. */
 .pd-main-view > .pd-scoped-error { width: min(560px, calc(100% - 48px)); margin: auto; }

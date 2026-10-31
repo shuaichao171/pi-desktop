@@ -22,7 +22,7 @@
 .pd-result-file-preview-header { display: flex; flex: 0 0 auto; align-items: center; gap: 12px; padding: 18px 20px 14px; }
 .pd-result-file-preview-header > svg { flex-shrink: 0; color: var(--pd-text-subtle); }
 .pd-result-file-preview-heading { flex: 1; min-width: 0; }
-.pd-result-file-preview-heading h2 { margin: 0; overflow: hidden; color: var(--pd-text); font-size: var(--pd-font-lg); font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.pd-result-file-preview-heading h2 { margin: 0; overflow: hidden; color: var(--pd-text); font-size: var(--pd-font-lg); font-weight: var(--pd-weight-semibold); text-overflow: ellipsis; white-space: nowrap; }
 .pd-result-file-preview-heading p { max-height: 3.2em; margin: 4px 0 0; overflow: auto; color: var(--pd-text-subtle); font-size: var(--pd-font-sm); line-height: 1.6; overflow-wrap: anywhere; }
 .pd-result-file-preview button { font-family: inherit; cursor: pointer; }
 .pd-result-file-preview-close { display: grid; flex: 0 0 32px; align-self: flex-start; place-items: center; width: 32px; height: 32px; padding: 0; border: 0; border-radius: var(--pd-radius-md); background: transparent; color: var(--pd-text-subtle); }
@@ -40,7 +40,7 @@
 .pd-result-file-preview-body { display: flex; flex: 1; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; background: var(--pd-bg); }
 .pd-result-file-preview-state { display: flex; flex: 1; flex-direction: column; align-items: center; justify-content: center; gap: 12px; min-height: 0; padding: 24px; overflow: auto; text-align: center; }
 .pd-result-file-preview-state > svg { flex-shrink: 0; color: var(--pd-text-subtle); }
-.pd-result-file-preview-state > strong { font-size: var(--pd-font-lg); font-weight: 600; }
+.pd-result-file-preview-state > strong { font-size: var(--pd-font-lg); font-weight: var(--pd-weight-semibold); }
 .pd-result-file-preview-state > p { max-width: 560px; margin: 0; color: var(--pd-text-subtle); font-size: var(--pd-font-caption); line-height: 1.7; white-space: pre-wrap; overflow-wrap: anywhere; }
 .pd-result-file-preview-state[role='alert'] > p { color: var(--pd-danger); }
 .pd-result-file-preview-zoom { display: flex; flex: 0 0 auto; align-items: center; justify-content: center; flex-wrap: wrap; gap: 6px; padding: 8px 12px; border-bottom: 1px solid var(--pd-border-soft); background: var(--pd-surface); }

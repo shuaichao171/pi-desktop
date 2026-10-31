@@ -4,13 +4,13 @@
 .pd-memory-panel::backdrop { background: var(--pd-overlay); }
 
 .pd-memory-header { display: flex; align-items: center; gap: 12px; padding: 14px 16px 10px; flex: none; }
-.pd-memory-header h2 { margin: 0; font-size: 15px; font-weight: 600; }
+.pd-memory-header h2 { margin: 0; font-size: 15px; font-weight: var(--pd-weight-semibold); }
 .pd-memory-scope-tabs { display: flex; gap: 2px; margin-left: auto; padding: 2px; border-radius: 8px; background: var(--pd-surface-muted, rgba(127, 127, 127, 0.12)); }
 .pd-memory-scope-tabs button { border: none; background: transparent; color: var(--pd-text-muted, inherit); padding: 4px 10px; border-radius: 6px; font-size: 12px; cursor: pointer; }
-.pd-memory-scope-tabs button.is-active { background: var(--pd-surface-raised, var(--pd-dialog)); color: var(--pd-text); font-weight: 600; }
+.pd-memory-scope-tabs button.is-active { background: var(--pd-surface-raised, var(--pd-dialog)); color: var(--pd-text); font-weight: var(--pd-weight-semibold); }
 
 .pd-memory-state { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; padding: 24px; text-align: center; }
-.pd-memory-state-title { margin: 0; font-size: 13px; font-weight: 600; }
+.pd-memory-state-title { margin: 0; font-size: 13px; font-weight: var(--pd-weight-semibold); }
 .pd-memory-state-hint { margin: 0; font-size: 12px; color: var(--pd-text-muted, rgba(127, 127, 127, 0.9)); max-width: 420px; }
 
 .pd-memory-toolbar { display: flex; align-items: center; gap: 8px; padding: 0 16px 10px; flex: none; flex-wrap: wrap; }
@@ -32,7 +32,7 @@
 .pd-memory-row-main { display: flex; align-items: center; gap: 8px; width: 100%; padding: 8px 10px; background: transparent; border: none; text-align: left; cursor: pointer; font-size: 12px; }
 .pd-memory-row-main:hover { background: var(--pd-surface-muted, rgba(127, 127, 127, 0.08)); }
 .pd-memory-chevron { flex: none; color: var(--pd-text-muted, rgba(127, 127, 127, 0.9)); display: inline-flex; }
-.pd-memory-badge { flex: none; font-size: 11px; font-weight: 600; padding: 1px 7px; border-radius: 9px; background: var(--pd-surface-muted, rgba(127, 127, 127, 0.15)); white-space: nowrap; }
+.pd-memory-badge { flex: none; font-size: 11px; font-weight: var(--pd-weight-semibold); padding: 1px 7px; border-radius: 9px; background: var(--pd-surface-muted, rgba(127, 127, 127, 0.15)); white-space: nowrap; }
 .pd-memory-badge.is-user { font-style: italic; }
 .pd-memory-content-preview { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pd-memory-importance { flex: none; color: var(--pd-accent, #8a5cf6); font-size: 11px; letter-spacing: 1px; }
@@ -45,13 +45,13 @@
 .pd-memory-actions { display: flex; gap: 8px; }
 .pd-memory-actions button { cursor: pointer; font-size: 12px; }
 .pd-memory-actions button.is-danger { color: var(--pd-danger, #d13438); }
-.pd-memory-actions button.is-primary { font-weight: 600; }
+.pd-memory-actions button.is-primary { font-weight: var(--pd-weight-semibold); }
 
 .pd-memory-footer { display: flex; align-items: center; justify-content: space-between; padding: 10px 16px; font-size: 12px; color: var(--pd-text-muted, rgba(127, 127, 127, 0.9)); flex: none; border-top: 1px solid var(--pd-dialog-border); }
 
 .pd-memory-dialog-layer { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: var(--pd-overlay); z-index: 2; }
 .pd-memory-dialog { display: flex; flex-direction: column; gap: 10px; width: min(480px, calc(100% - 48px)); padding: 16px; border: 1px solid var(--pd-dialog-border); border-radius: var(--pd-radius-dialog); background: var(--pd-dialog); color: var(--pd-text); box-shadow: var(--pd-shadow-dialog); }
-.pd-memory-dialog h3 { margin: 0; font-size: 13px; font-weight: 600; }
+.pd-memory-dialog h3 { margin: 0; font-size: 13px; font-weight: var(--pd-weight-semibold); }
 .pd-memory-dialog p { margin: 0; font-size: 12px; }
 .pd-memory-dialog textarea { resize: vertical; min-height: 120px; font-size: 12px; }
 .pd-memory-dialog-preview { max-height: 120px; overflow-y: auto; white-space: pre-wrap; word-break: break-word; color: var(--pd-text-muted, rgba(127, 127, 127, 0.9)); border: 1px solid var(--pd-dialog-border); border-radius: 6px; padding: 8px; }
