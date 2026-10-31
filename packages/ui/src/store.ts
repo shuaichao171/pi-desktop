@@ -523,6 +523,42 @@ modelProviders: [...get().modelProviders],
 				const pending = currentPreparedInput();
 				if (pending?.dispatched && event.messages.some(message => message.role === 'user')) pending.echoed = true;
 				const messages = pending && !pending.echoed ? [...event.messages, pending.message] : event.messages;
+				// Warm short-circuit (zcode no-flash): a ready that lands on the exact session
+				// the painted preview already shows, with matching content, describes the same
+				// conversation the reader is looking at. Re-applying its messages would rebuild
+				// the timeline, re-measure rows and re-run reading restore — the visible flash
+				// on every seamless switch. Only runtime metadata is re-scoped; content refs
+				// stay untouched so the transcript does not re-render at all. Any drift fails
+				// readyMatchesPaintedPreview and the authoritative replacement below runs.
+				if (!completedPreparation && !pending && previous.cwd === event.cwd
+					&& previous.conversationPreviewPath === event.sessionPath
+					&& readyMatchesPaintedPreview(previous, event)) {
+					historyLoadRequest += 1;
+					set({
+						model: event.model,
+						modelName: event.modelName ?? null,
+						modelProvider: event.modelProvider,
+						thinkingLevel: event.thinkingLevel,
+						availableThinkingLevels: event.availableThinkingLevels,
+						contextUsage: event.contextUsage ? { ...event.contextUsage } : null,
+						cwd: event.cwd,
+						sessions: get().sessionsByWorkspace[event.cwd] ?? [],
+						sessionId: event.sessionId,
+						sessionPath: event.sessionPath,
+						// The painted preview proved identical, so it is now authoritative: the
+						// transcript's session is again the identity sessionPath itself.
+						conversationPreviewPath: null,
+						queuedCount: 0,
+						queuedMessages: [],
+						fileChanges: event.fileChanges ?? [],
+						fileChangeTurns: event.fileChangeTurns ?? [],
+						fileChangeActiveRunId: event.fileChangeActiveRunId ?? null,
+						error: null,
+					});
+					captureSettledConversation();
+					if (!get().modelProviders.length) void get().refreshModelProviders().catch(() => {});
+					return;
+				}
 				// A fresh session context clears the view; a same-session resync keeps older pages coming.
 				const sameSession = previous.cwd === event.cwd && previous.sessionId === event.sessionId && previous.sessionPath === event.sessionPath;
 				if (!sameSession) historyLoadRequest += 1;
@@ -1631,10 +1667,14 @@ const SESSION_PREVIEW_LIMIT = 8;
 
 /** Capture the conversation being left so a quick switch back paints instantly. */
 function stashSessionConversationPreview(): void {
-	const { sessionPath, messages, activities, runs, fileChanges, fileChangeTurns, fileChangeActiveRunId, historyTotal } = useChatStore.getState();
-	if (!sessionPath || messages.length + activities.length === 0) return;
-	sessionConversationPreviews.delete(sessionPath);
-	sessionConversationPreviews.set(sessionPath, { at: Date.now(), messages, activities, runs, fileChanges, fileChangeTurns, fileChangeActiveRunId, historyTotal });
+	const { conversationPreviewPath, sessionPath, messages, activities, runs, fileChanges, fileChangeTurns, fileChangeActiveRunId, historyTotal } = useChatStore.getState();
+	// During a keep-over switch the identity already points at the target while
+	// the painted transcript still belongs to the session being left; stash under
+	// the painted owner so a cached preview always matches the content it holds.
+	const owner = conversationPreviewPath ?? sessionPath;
+	if (!owner || messages.length + activities.length === 0) return;
+	sessionConversationPreviews.delete(owner);
+	sessionConversationPreviews.set(owner, { at: Date.now(), messages, activities, runs, fileChanges, fileChangeTurns, fileChangeActiveRunId, historyTotal });
 	while (sessionConversationPreviews.size > SESSION_PREVIEW_LIMIT) {
 		const oldest = sessionConversationPreviews.keys().next();
 		if (oldest.done) break;
@@ -1695,6 +1735,32 @@ function captureSettledConversation(): void {
 		fileChangeActiveRunId: state.fileChangeActiveRunId, historyTotal: state.historyTotal,
 	};
 }
+
+/**
+ * Fingerprint equality between the painted keep-warm preview and the ready
+ * payload: identical window sizes, tail ids/statuses and run counts mean the
+ * session did not move while it was cached, so the ready is a no-op for the
+ * visible transcript. Any drift (a background turn settled, a branch swap)
+ * fails the check and the wholesale replacement below stays authoritative.
+ */
+function readyMatchesPaintedPreview(previous: ChatState, event: ReadyEvent): boolean {
+	const messages = event.messages, activities = event.activities;
+	if (previous.messages.length !== messages.length || previous.activities.length !== activities.length) return false;
+	if (previous.historyTotal !== (event.historyTotal ?? messages.length + activities.length)) return false;
+	const lastPrevious = previous.messages[previous.messages.length - 1];
+	const lastNext = messages[messages.length - 1];
+	if ((lastPrevious?.id ?? null) !== (lastNext?.id ?? null) || (lastPrevious?.status ?? null) !== (lastNext?.status ?? null)) return false;
+	const activityPrevious = previous.activities[previous.activities.length - 1];
+	const activityNext = activities[activities.length - 1];
+	if ((activityPrevious?.id ?? null) !== (activityNext?.id ?? null) || (activityPrevious?.status ?? null) !== (activityNext?.status ?? null)) return false;
+	const runs = event.runs ?? [];
+	if (previous.runs.length !== runs.length) return false;
+	for (let index = 0; index < runs.length; index += 1) {
+		const painted = previous.runs[index]!, run = runs[index]!;
+		if (painted.id !== run.id || painted.status !== run.status || painted.finishedAt !== run.finishedAt) return false;
+	}
+	return previous.fileChanges.length === (event.fileChanges ?? []).length;
+}
 function restoreSettledConversation(set: (partial: Partial<ChatState>) => void): void {
 	const state = useChatStore.getState();
 	const settled = settledConversation;
@@ -1719,9 +1785,11 @@ function restoreSettledConversation(set: (partial: Partial<ChatState>) => void):
  * zcode instant selection: commit the clicked conversation's identity the
  * moment navigation begins, so the sidebar selection and header move
  * immediately instead of waiting for the host to load the session. The
- * transcript paints from the keep-warm cache when one is fresh; otherwise it
- * clears so the chat area swaps to its loading placeholder. The paired ready
- * event stays authoritative and replaces whatever was painted.
+ * transcript paints from the keep-warm cache when one is fresh; otherwise the
+ * conversation being left stays on screen (keep-over) with the slim switching
+ * bar marking the wait — the full-screen placeholder only ever covers a view
+ * that has nothing to keep. The paired ready event stays authoritative and
+ * replaces whatever was painted.
  */
 function beginOptimisticSessionSwitch(set: (partial: Partial<ChatState>) => void, target: { cwd?: string; sessionPath: string | null; sessionId?: string | null }): void {
 	const state = useChatStore.getState();
@@ -1738,15 +1806,15 @@ function beginOptimisticSessionSwitch(set: (partial: Partial<ChatState>) => void
 		sessionPath: target.sessionPath,
 		sessions: state.sessionsByWorkspace[nextCwd] ?? [],
 		...(painted ? {} : {
-			// Cold switch: clear the conversation being left so the chat area's
-			// loading placeholder — not the previous transcript — marks the wait.
-			messages: [], activities: [], runs: [],
-			fileChanges: [], fileChangeTurns: [], fileChangeActiveRunId: null,
+			// Cold switch: keep the conversation being left on screen so the wait
+			// never blanks the view. The painted transcript still belongs to the
+			// session being left, so the renderer attributes reading memory,
+			// disclosure state and layout scope to that owner — not to the
+			// optimistically selected target — until the paired ready replaces it.
+			conversationPreviewPath: state.conversationPreviewPath ?? state.sessionPath,
 			subagentFleet: null, subagentInspect: null,
 			queuedCount: 0, queuedMessages: [],
-			historyTotal: 0, loadingOlder: false,
-			timelineRevision: state.timelineRevision + 1,
-			conversationPreviewPath: null,
+			loadingOlder: false,
 		}),
 	});
 }

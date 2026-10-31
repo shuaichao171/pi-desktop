@@ -129,13 +129,19 @@ export function ChatView({ onOpenModelManagement, searchTarget, historyControls,
 		const first = requestAnimationFrame(() => { second = requestAnimationFrame(() => sessionOpenMetrics.painted(request)); });
 		return () => { cancelAnimationFrame(first); cancelAnimationFrame(second); };
 	}, [layoutPending, cwd, sessionPath, sessionId]);
-	const disclosureScope = `${cwd}\0${sessionPath}\0${sessionId}`;
+	const conversationPreviewPath = useChatStore((s) => s.conversationPreviewPath);
+	// Layout scope follows the session the painted transcript belongs to: during a
+	// pending switch the identity already names the target, but the visible rows are
+	// still the previous conversation's (store keep-over) or a painted preview's, so
+	// disclosure choices must stay keyed to that owner until the paired ready replaces it.
+	const contentSessionPath = conversationPreviewPath ?? sessionPath;
+	const disclosureScope = `${cwd}\0${contentSessionPath}\0${sessionId}`;
 	// Layout memory is scoped to a conversation. While the same session stays
 	// pending (resync/restart), the settled layout is preserved so an existing
-	// chat never flashes its blank draft. A pending switch to a different
-	// session follows the live timeline instead: the store clears it on a cold
-	// switch so the loading placeholder marks the wait (zcode instant switch),
-	// and a warm keep-warm preview renders immediately.
+	// chat never flashes its blank draft. A pending switch keeps the previous
+	// conversation on screen (store keep-over) or paints a keep-warm preview
+	// immediately; the full-screen placeholder only ever covers a view that has
+	// nothing to keep.
 	const settledLayout = useRef<{ scope: string; empty: boolean } | null>(null);
 	const isNewConversation = layoutPending
 		? settledLayout.current && settledLayout.current.scope === disclosureScope ? settledLayout.current.empty : emptyTimeline
@@ -192,11 +198,6 @@ export function ChatView({ onOpenModelManagement, searchTarget, historyControls,
 		pendingJumpRef.current = null;
 	}, []);
 	const readingAnchor = useRef<ReadingPosition | null>(null);
-	const conversationPreviewPath = useChatStore((s) => s.conversationPreviewPath);
-	// Reading memory keys off the session the painted transcript belongs to: a
-	// keep-warm preview paints the target's content while the identity fields
-	// still name the source session (zcode warm-store scope key).
-	const contentSessionPath = conversationPreviewPath ?? sessionPath;
 	const memoryKey = readingKey(cwd, contentSessionPath, messages.at(-1)?.id ?? 'empty');
 	const memoryKeyRef = useRef(memoryKey);
 	const memoryIdentity = useRef({ cwd, sessionPath: contentSessionPath, historyGeneration });
@@ -497,6 +498,13 @@ export function ChatView({ onOpenModelManagement, searchTarget, historyControls,
 		// it. Writing scroll offsets against stale content — or deriving follow state
 		// from a garbage memory key — is what made switches visibly lurch.
 		if (!contentSessionPath) return;
+		// Keep-over freeze: while the target loads, the painted transcript still
+		// belongs to the session being left (the identity already names the target).
+		// Restore writes against it would jump the reader mid-conversation, so the
+		// view stays frozen wherever they left it; the paired ready runs its own
+		// restore against the replaced content. A painted keep-warm preview of the
+		// target itself (preview path equals identity) still restores eagerly.
+		if (conversationPreviewPath !== null && conversationPreviewPath !== sessionPath) return;
 		if (searchTarget?.sessionPath === sessionPath && handledSearchRequest.current !== searchTarget.requestId) return;
 		const exact = readReading(memoryKey);
 		const saved = exact ?? recentReading(cwd, contentSessionPath)?.position;
