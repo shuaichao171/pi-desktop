@@ -1,0 +1,24 @@
+diff --git a/dist/utils/child-process.js b/dist/utils/child-process.js
+index 48e5724c50f719449e4ef4e20f3497eed779ae35..d3a945e10a3173c0157c40caba0c663a15323c0d 100644
+--- a/dist/utils/child-process.js
++++ b/dist/utils/child-process.js
+@@ -2,12 +2,16 @@ import { spawn as nodeSpawn, spawnSync as nodeSpawnSync, } from "node:child_proc
+ import crossSpawn from "cross-spawn";
+ const EXIT_STDIO_GRACE_MS = 100;
+ export function spawnProcess(command, args, options) {
+-    return process.platform === "win32" ? crossSpawn(command, args, options) : nodeSpawn(command, args, options);
++    // pi-desktop patch: hide child console windows on Windows (npm/git spawns
++    // must run silently in the Electron utility process, not pop a black box).
++    const spawnOptions = { windowsHide: true, ...options };
++    return process.platform === "win32" ? crossSpawn(command, args, spawnOptions) : nodeSpawn(command, args, spawnOptions);
+ }
+ export function spawnProcessSync(command, args, options) {
++    const spawnOptions = { windowsHide: true, ...options };
+     return process.platform === "win32"
+-        ? crossSpawn.sync(command, args, options)
+-        : nodeSpawnSync(command, args, options);
++        ? crossSpawn.sync(command, args, spawnOptions)
++        : nodeSpawnSync(command, args, spawnOptions);
+ }
+ /**
+  * Wait for a child process to terminate without hanging on inherited stdio handles.
