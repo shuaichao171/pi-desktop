@@ -36,7 +36,7 @@ const CLOSE_DELAY = 180;
 const interactivePopoverOpen = () => [...document.querySelectorAll<HTMLElement>('.pd-sidebar-popover, .pd-composer-config-popover, .pd-search-dialog')].some(element => element.getClientRects().length > 0 && getComputedStyle(element).visibility !== 'hidden');
 
 /** A layout-neutral hint for a native button, including aria-disabled buttons. */
-export function HoverTooltip({ children, title, description, shortcut, disabled = false, align = 'center', side: preferredSide = 'top', interactive = true }: HoverTooltipProps) {
+export function HoverTooltip({ children, title, description, shortcut, disabled = false, align = 'center', side: preferredSide = 'top', interactive = false }: HoverTooltipProps) {
 	const trigger = children as ReactElement<TriggerProps>;
 	const triggerRef = useRef<HTMLButtonElement | null>(null);
 	const tooltipRef = useRef<HTMLDivElement | null>(null);

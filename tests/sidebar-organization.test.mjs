@@ -2,24 +2,31 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { test } from 'node:test';
 import {
+  assignProjectToGroup,
   buildSidebarGroups,
   buildSidebarProjectGroups,
-  collectSidebarSessions,
   clearPinnedProjects,
+  collectSidebarSessions,
+  createSidebarSectionRegistry,
+  groupSidebarProjects,
   groupSessionsByDate,
   mergeSidebarProjectOrder,
+  normalizeSidebarProjectGroups,
   orderSidebarProjects,
   readSidebarPreferences,
+  readSidebarProjectGroups,
+  readSidebarSectionLayout,
   readPinnedProjects,
   reorderSidebarProjectPositions,
   saveSidebarPreferences,
+  saveSidebarProjectGroups,
+  saveSidebarSectionLayout,
   savePinnedProjects,
   selectSidebarSessions,
   sidebarProjectPaths,
   sidebarWorkspaceKey,
   splitSidebarProjects,
 } from '../packages/ui/src/sidebarOrganization.ts';
-
 const defaults = { mode: 'grouped', projectView: 'project', sort: 'newest', filter: 'all', collapsed: [], projectOrder: [] };
 const session = (path, overrides = {}) => ({
   path, id: path, firstMessage: path, modified: '2026-09-24T08:00:00Z', messageCount: 1,
@@ -28,6 +35,33 @@ const session = (path, overrides = {}) => ({
 const paths = (sessions) => sessions.map((entry) => entry.path);
 const selectActive = (sessions, overrides = {}) => selectSidebarSessions(sessions, {
   archived: false, filter: 'all', sort: 'newest', ...overrides,
+});
+
+test('project groups persist independently, preserve empty groups, and normalize path aliases', () => {
+  let stored;
+  const storage = { getItem: key => { assert.equal(key, 'pi-desktop.project-groups.v1'); return stored; }, setItem: (key, value) => { assert.equal(key, 'pi-desktop.project-groups.v1'); stored = value; } };
+  const groups = [{ id: 'work', name: ' Work ', projects: ['D:/One', 'D:/One'] }, { id: 'empty', name: 'Empty', projects: [] }];
+  saveSidebarProjectGroups(groups, storage);
+  assert.deepEqual(readSidebarProjectGroups(storage), [{ id: 'work', name: 'Work', projects: ['D:/One'] }, { id: 'empty', name: 'Empty', projects: [] }]);
+  assert.deepEqual(normalizeSidebarProjectGroups([{ id: 'work', name: 'duplicate', projects: [] }, { id: 'bad/id', name: 'invalid', projects: [] }, null]), [{ id: 'work', name: 'duplicate', projects: [] }]);
+  assert.deepEqual(groupSidebarProjects(['d:/one/', 'D:/Two'], readSidebarProjectGroups(storage)), {
+    groups: [{ id: 'work', name: 'Work', projects: ['d:/one/'] }, { id: 'empty', name: 'Empty', projects: [] }], ungrouped: ['D:/Two'],
+  });
+  const moved = assignProjectToGroup(readSidebarProjectGroups(storage), 'd:/ONE', 'empty');
+  assert.deepEqual(moved.map(group => group.projects), [[], ['d:/ONE']]);
+  assert.deepEqual(assignProjectToGroup(moved, 'D:/one', null).map(group => group.projects), [[], []]);
+  assert.deepEqual(readSidebarSectionLayout({ getItem: key => { assert.equal(key, 'pi-desktop.sidebar-sections.v1'); return JSON.stringify({ collapsed: ['project-groups'], heights: { 'project-groups': 240, bad: -1 }, hidden: ['ungrouped-projects', 'bogus', 42] }); } }), { collapsed: ['project-groups'], heights: { 'project-groups': 240 }, hidden: ['ungrouped-projects'] });
+  assert.doesNotThrow(() => saveSidebarSectionLayout({ collapsed: [], heights: {} }, { setItem() { throw new Error('blocked'); } }));
+});
+
+test('plugin sidebar section registry namespaces IDs, sorts contributions, and unregisters cleanly', () => {
+  const registry = createSidebarSectionRegistry();
+  const remove = registry.register({ id: 'issues', pluginId: 'example.plugin', title: 'Issues', viewId: 'issues-view', order: 10 });
+  registry.register({ id: 'tools', pluginId: 'other', title: 'Tools', viewId: 'tools-view' });
+  assert.deepEqual(registry.list().map(section => section.id), ['example.plugin:issues', 'other:tools']);
+  remove();
+  assert.deepEqual(registry.list().map(section => section.id), ['other:tools']);
+  assert.throws(() => registry.register({ id: 'bad', pluginId: 'has space', title: 'Bad', viewId: 'bad' }), /区域贡献无效/);
 });
 
 test('sidebar preferences survive storage and tolerate corrupt or unavailable storage', () => {

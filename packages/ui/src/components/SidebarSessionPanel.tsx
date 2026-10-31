@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
-import { normalizeProjectBarValue, projectBarLeavesMachine, type UiSessionGroup, type UiSidebarGroupChange, type WorkspaceOpener, type WorkspaceProjectNickname } from '@pidesktop/shared';
-import { PROJECT_BAR_ANIMS, PROJECT_BAR_PRESETS, projectBarStyle } from '../sidebarAppearance';
+import { isValidProjectBarValue, normalizeProjectBarValue, projectBarLeavesMachine, type UiSessionGroup, type UiSidebarGroupChange, type WorkspaceOpener, type WorkspaceProjectNickname } from '@pidesktop/shared';
+import { PROJECT_BAR_ANIMS, PROJECT_BAR_PRESETS, readUserBarPresets, saveUserBarPresets, USER_BAR_PRESET_LIMIT, projectBarStyle, type UserBarPreset } from '../sidebarAppearance';
 import { useChatStore } from '../store';
 import { useT } from '../i18n';
 import { managementCopy } from '../managementCopy';
@@ -13,7 +13,7 @@ import { SessionDeleteDialog } from './SessionDeleteDialog';
 import { SessionBulkDeleteDialog, type SessionDeleteTarget } from './SessionBulkDeleteDialog';
 import { ProjectCreationDialog } from './ProjectCreationDialog';
 import { ProjectRemovalDialog, type ProjectRemovalSummary } from './ProjectRemovalDialog';
-import { buildSidebarGroups, buildSidebarProjectGroups, clearPinnedProjects, collectSidebarSessions, groupSessionsByDate, mergeSidebarProjectOrder, orderSidebarProjects, readPinnedProjects, readSidebarPreferences, reorderSidebarProjectPositions, saveSidebarPreferences, selectSidebarSessions, sidebarProjectPaths, sidebarWorkspaceKey, splitSidebarProjects, type SidebarPreferences, type SidebarSession } from '../sidebarOrganization';
+import { assignProjectToGroup, buildSidebarGroups, buildSidebarProjectGroups, clearPinnedProjects, collectSidebarSessions, groupSidebarProjects, groupSessionsByDate, mergeSidebarProjectOrder, orderSidebarProjects, readPinnedProjects, readSidebarPreferences, readSidebarProjectGroups, readSidebarSectionLayout, reorderSidebarProjectPositions, saveSidebarPreferences, saveSidebarProjectGroups, saveSidebarSectionLayout, selectSidebarSessions, sidebarProjectPaths, sidebarWorkspaceKey, splitSidebarProjects, type SidebarPreferences, type SidebarSession } from '../sidebarOrganization';
 import { HoverTooltip } from './HoverTooltip';
 import { Icon, type IconName } from './Icons';
 import { SidebarPopover } from './SidebarPopover';
@@ -28,7 +28,7 @@ const SUBAGENT_CHILD_TITLE_PATTERN = /^(?:scout|researcher|evidence-auditor|work
 type Popup = { anchor: HTMLElement; trigger?: HTMLElement; point?: ContextMenuPoint } & (
 	| { kind: 'filter' }
 	| { kind: 'session'; session: SidebarSession }
-	| { kind: 'group'; group: UiSessionGroup }
+	| { kind: 'project-group'; groupId: string; name: string }
 	| { kind: 'project'; workspace: string }
 	| { kind: 'edit-group'; group?: UiSessionGroup }
 	| { kind: 'rename-project'; workspace: string }
@@ -97,13 +97,14 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 	const switchWorkspace = useChatStore((s) => s.switchWorkspace);
 	const removeWorkspace = useChatStore((s) => s.removeWorkspace);
 	const newSession = useChatStore((s) => s.newSession);
-	const refreshWorkspaces = useChatStore((s) => s.refreshWorkspaces);
 	const refreshWorkspaceSessions = useChatStore((s) => s.refreshWorkspaceSessions);
 	const selectSession = useChatStore((s) => s.selectSession);
 	const updateSessionMeta = useChatStore((s) => s.updateSessionMeta);
 	const updateSessionOrders = useChatStore((s) => s.updateSessionOrders);
 	const [preferences, setPreferences] = useState(readSidebarPreferences);
 	const [groups, setGroups] = useState<UiSessionGroup[]>([]);
+	const [projectGroupItems, setProjectGroupItems] = useState(() => readSidebarProjectGroups());
+	const [sectionLayout, setSectionLayout] = useState(() => readSidebarSectionLayout());
 	const [groupsLoading, setGroupsLoading] = useState(true);
 	const [groupsError, setGroupsError] = useState(false);
 	const [archived, setArchived] = useState(false);
@@ -115,7 +116,6 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 	const [archiveSelection, setArchiveSelection] = useState(() => new Set<string>());
 	const [bulkTrashTarget, setBulkTrashTarget] = useState<SessionDeleteTarget[] | null>(null);
 	const archiveSelectAllRef = useRef<HTMLInputElement>(null);
-	const [refreshing, setRefreshing] = useState(false);
 	const [sectionLimits, setSectionLimits] = useState<Record<string, number>>({});
 	const [popup, setPopup] = useState<Popup | null>(null);
 	// Flyout of the open context menu ("打开方式 ›", "移动到分组 ›"); it closes with its menu.
@@ -123,7 +123,8 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 	const [barFlyout, setBarFlyout] = useState<{ anchor: HTMLElement; keyboard: boolean } | null>(null);
 	const barTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 	/** The fourth-level flyout opened from a 项目背景条 row: presets swatches, custom CSS, or animation tiers. */
-	const [barSubFlyout, setBarSubFlyout] = useState<{ kind: 'presets' | 'css' | 'anim'; anchor: HTMLElement; keyboard: boolean } | null>(null);
+	const [barSubFlyout, setBarSubFlyout] = useState<{ kind: 'presets' | 'user' | 'css' | 'anim'; anchor: HTMLElement; keyboard: boolean } | null>(null);
+	const [userDeleteFlyout, setUserDeleteFlyout] = useState<{ presetId: string; presetName: string; anchor: HTMLElement; keyboard: boolean } | null>(null);
 	const barSubTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 	const submenuTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 	const [openers, setOpeners] = useState<WorkspaceOpener[] | null>(null);
@@ -135,6 +136,7 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 	useEffect(() => { setBarSubFlyout(null); }, [popup, submenu, barFlyout]);
 	useEffect(() => () => { if (submenuTimer.current) clearTimeout(submenuTimer.current); if (barTimer.current) clearTimeout(barTimer.current); if (barSubTimer.current) clearTimeout(barSubTimer.current); }, []);
 	const [creatingProject, setCreatingProject] = useState(false);
+	const [newProjectGroup, setNewProjectGroup] = useState<string | null>(null);
 	const [trashTarget, setTrashTarget] = useState<{ session: SidebarSession; anchor: HTMLElement; nextPath?: string } | null>(null);
 	const [projectRemovalTarget, setProjectRemovalTarget] = useState<{ summary: ProjectRemovalSummary; anchor: HTMLElement } | null>(null);
 	const trashFocus = useRef<{ path?: string; anchor?: HTMLElement } | null>(null);
@@ -142,6 +144,7 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 	popupRef.current = popup;
 	const [navigating, setNavigating] = useState(false);
 	const [groupDraft, setGroupDraft] = useState('');
+	const [creatingProjectGroup, setCreatingProjectGroup] = useState(false);
 	const [formError, setFormError] = useState<string | null>(null);
 	const [pending, setPending] = useState(false);
 	const pendingRef = useRef(false);
@@ -208,6 +211,15 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 		});
 	}, [bridge, workspacePaths]);
 	const [projectAnims, setProjectAnims] = useState<Record<string, string | null>>({});
+	const [userBarPresets, setUserBarPresets] = useState<UserBarPreset[]>(() => readUserBarPresets());
+	function addUserBarPreset(workspace: string, draft: string | null) {
+		const value = (draft ?? customBarCss(workspace)).trim();
+		if (!isValidProjectBarValue(value)) return;
+		setUserBarPresets((current) => current.length >= USER_BAR_PRESET_LIMIT || current.some((preset) => preset.css === value) ? current : [...current, { id: crypto.randomUUID(), name: t('sidebar.appearanceUserPresetName', { n: current.length + 1 }), css: value }]);
+	}
+	function removeUserBarPreset(id: string) {
+		setUserBarPresets((current) => current.filter((preset) => preset.id !== id));
+	}
 	/** Live-previews a background bar (newlines collapsed); a failed write re-reads the stored truth. */
 	const applyProjectBar = (workspace: string, bar: string | null) => {
 		const normalized = bar === null ? null : normalizeProjectBarValue(bar);
@@ -249,7 +261,7 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 	const pinnedWorkspaceSet = useMemo(() => new Set(splitSidebarProjects(projectPaths, new Set(pinnedProjects)).pinned), [projectPaths, pinnedProjects]);
 	const pinnedWorkspaceKeys = useMemo(() => new Set([...pinnedWorkspaceSet].map(sidebarWorkspaceKey)), [pinnedWorkspaceSet]);
 	const orderedWorkspaces = useMemo(() => orderSidebarProjects(projectPaths, preferences.projectOrder, pinnedWorkspaceSet), [projectPaths, preferences.projectOrder, pinnedWorkspaceSet]);
-	const projectPartitions = useMemo(() => splitSidebarProjects(orderedWorkspaces, pinnedWorkspaceSet), [orderedWorkspaces, pinnedWorkspaceSet]);
+	const projectOrganization = useMemo(() => groupSidebarProjects(orderedWorkspaces, projectGroupItems), [orderedWorkspaces, projectGroupItems]);
 	const allSessions = useMemo(() => collectSidebarSessions(workspacePaths, sessionsByWorkspace), [workspacePaths, sessionsByWorkspace]);
 	const sessions = useMemo(() => selectSidebarSessions(allSessions, { archived, filter: preferences.filter, sort: preferences.sort }), [allSessions, archived, preferences.filter, preferences.sort]);
 	const selectedArchiveSessions = archived ? sessions.filter(session => archiveSelection.has(session.path)) : [];
@@ -268,8 +280,8 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 	const projectGroups = useMemo(() => buildSidebarProjectGroups(sessions, orderedWorkspaces), [sessions, orderedWorkspaces]);
 	const projectByWorkspace = useMemo(() => new Map(projectGroups.projects.map(project => [project.workspace, project])), [projectGroups]);
 	const sessionByPath = useMemo(() => new Map(sessions.map((session) => [session.path, session])), [sessions]);
-	const dragMode = !archived && preferences.mode === 'grouped';
-	const projectDragMode = !archived && ((preferences.mode === 'project' && preferences.projectView === 'project') || projectPartitions.pinned.length > 0);
+	const dragMode = false;
+	const projectDragMode = !archived;
 	const dragSections = useMemo<DragSection[]>(() => {
 		if (!dragMode) return [];
 		return [...grouped.groups.map((group) => ({ key: groupKey(group.id), sessions: group.sessions })),
@@ -285,18 +297,12 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 	// message lands; only then does the row (saved or still-saving) appear.
 	const showUnsaved = !archived && preferences.filter === 'all' && hasUserMessage && Boolean(cwd && sessionId && !allSessions.some((s) => s.path === sessionPath));
 	const unsavedProject = projectPaths.find(path => sidebarWorkspaceKey(path) === sidebarWorkspaceKey(cwd));
-	const showBodyUnsaved = showUnsaved && !pinnedWorkspaceKeys.has(sidebarWorkspaceKey(cwd));
-	const hasPinned = !archived && (grouped.pinned.length > 0 || projectPartitions.pinned.length > 0);
-	const bodySectionKeys = archived || (preferences.mode === 'project' && preferences.projectView === 'timeline')
-		? dates.map((date) => `${archived ? 'archive' : 'date'}:${date.id}`)
-		: preferences.mode === 'project' ? [...projectPartitions.unpinned.map(projectKey), UNASSIGNED_KEY]
-			: [...groups.map((group) => groupKey(group.id)), UNGROUPED_KEY];
-	const sectionKeys = hasPinned ? ['pinned', ...projectPartitions.pinned.map(projectKey), ...bodySectionKeys] : bodySectionKeys;
-	const allExpanded = sectionKeys.length > 0 && sectionKeys.every((key) => !collapsed.has(key));
+	const sectionKeys = ['project-groups', 'ungrouped-projects', 'unassigned-sessions'];
+	const regionVisible = (id: string) => !sectionLayout.hidden.includes(id);
+	const allExpanded = sectionKeys.every(key => !sectionLayout.collapsed.includes(key));
 
 	// --- Drag state (zcode-style live reordering) -------------------------------
 	const [drag, setDrag] = useState<DragState | null>(null);
-	const [savingDrag, setSavingDrag] = useState<Pick<DragState, 'orders' | 'groupOrder'> | null>(null);
 	const savingDragRef = useRef(false);
 	const suppressDragClick = useRef(false);
 	const dragRef = useRef<DragState | null>(null);
@@ -417,6 +423,9 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 		}).finally(() => { if (request === groupRequest.current) setGroupsLoading(false); });
 		return () => { groupRequest.current += 1; };
 	}, [bridge, onError]);
+	useEffect(() => { saveSidebarProjectGroups(projectGroupItems); }, [projectGroupItems]);
+	useEffect(() => { saveSidebarSectionLayout(sectionLayout); }, [sectionLayout]);
+	useEffect(() => { saveUserBarPresets(userBarPresets); }, [userBarPresets]);
 	useEffect(() => {
 		if (!bridge) return;
 		for (const path of workspacePaths) {
@@ -438,11 +447,6 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 		return dragSnapshot.current?.get(key) ?? dragSections.find((section) => section.key === key)?.sessions.map((session) => session.path) ?? [];
 	}
 
-	/** Preview orders for a container: drag overrides, else the frozen snapshot. */
-	function previewOrder(key: string): string[] {
-		const paths = dragRef.current?.orders.get(key) ?? savingDrag?.orders.get(key) ?? snapshotOrder(key);
-		return paths.filter((path) => { const session = sessionByPath.get(path); return session && !session.pinned; });
-	}
 
 	/**
 	 * Resolve the drop target under the pointer: a session row (insert
@@ -594,6 +598,8 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 		if (!state || !commit || !snapshot) return;
 		const item = state.item;
 		if (item.kind === 'project') {
+			const groupTarget = document.elementFromPoint(pointerRef.current.x, pointerRef.current.y)?.closest<HTMLElement>('[data-project-group-target]')?.dataset.projectGroupTarget;
+			if (groupTarget !== undefined) setProjectGroupItems(current => assignProjectToGroup(current, item.workspace, groupTarget || null));
 			if (state.projectDrop && state.projectOrder) {
 				const reordered = state.projectOrder.filter(path => pinnedWorkspaceSet.has(path) === pinnedWorkspaceSet.has(item.workspace));
 				setPreferences(current => ({ ...current, projectOrder: reorderSidebarProjectPositions(current.projectOrder, reordered) }));
@@ -602,7 +608,7 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 		}
 		if (item.kind === 'group') {
 			if (!state.groupOrder || state.groupOrder.join(',') === groups.map((group) => group.id).join(',')) return;
-			saveDragPreview(state, async () => { await changeGroups({ type: 'reorder-groups', ids: state.groupOrder! }); });
+			saveDragPreview(async () => { await changeGroups({ type: 'reorder-groups', ids: state.groupOrder! }); });
 			return;
 		}
 		const changes = changedSidebarOrders(snapshot, state.orders);
@@ -624,23 +630,22 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 		if (targetKey !== undefined && targetKey !== item.from) {
 			const groupId = targetKey === UNGROUPED_KEY ? null : targetKey.slice(groupKey('').length);
 			const index = Math.max(0, (state.orders.get(targetKey) ?? []).indexOf(item.path));
-			saveDragPreview(state, async () => {
+			saveDragPreview(async () => {
 				if (!await changeGroups({ type: 'move-session', sessionPath: item.path, groupId, index })) return;
 				if (entries.length) await updateSessionOrders(entries);
 			});
 			return;
 		}
-		if (entries.length) saveDragPreview(state, () => updateSessionOrders(entries));
+		if (entries.length) saveDragPreview(() => updateSessionOrders(entries));
 	}
 
-	function saveDragPreview(state: DragState, action: () => Promise<void>): void {
+	function saveDragPreview(action: () => Promise<void>): void {
 		// Keep the final position visible until persistence completes; failures
 		// reveal the last confirmed arrangement and are reported by perform().
 		savingDragRef.current = true;
-		setSavingDrag(state);
 		void perform(async () => {
 			try { await action(); }
-			finally { savingDragRef.current = false; setSavingDrag(null); }
+			finally { savingDragRef.current = false; }
 		});
 	}
 
@@ -700,7 +705,6 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 	const projectPins = JSON.stringify([...pinnedProjects].sort());
 	useEffect(() => {
 		finishDrag(false);
-		setSavingDrag(null);
 		setArchiveConfirm(null);
 	}, [visible, preferences.mode, preferences.projectView, preferences.filter, preferences.sort, archived, projectMembership, projectPins]);
 
@@ -710,6 +714,25 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 		// remembered "show more" extent; a stored limit never shrinks on its own.
 		if (!collapsed.has(key)) setSectionLimits((limits) => { if (!(key in limits)) return limits; const next = { ...limits }; delete next[key]; return next; });
 		setPreferences((current) => ({ ...current, collapsed: current.collapsed.includes(key) ? current.collapsed.filter((id) => id !== key) : [...current.collapsed, key] }));
+	}
+	function toggleRegionVisibility(id: string) {
+		setSectionLayout(current => ({ ...current, hidden: current.hidden.includes(id) ? current.hidden.filter(item => item !== id) : [...current.hidden, id] }));
+	}
+	function toggleRegion(key: string) {
+		setSectionLayout(current => ({ ...current, collapsed: current.collapsed.includes(key) ? current.collapsed.filter(id => id !== key) : [...current.collapsed, key] }));
+	}
+	function resizeRegionPair(upper: string, lower: string, startY: number, event: ReactPointerEvent) {
+		const start = { y: startY, upper: sectionLayout.heights[upper] ?? 200, lower: sectionLayout.heights[lower] ?? 200 };
+		const move = (pointer: PointerEvent) => {
+			const delta = pointer.clientY - start.y;
+			const nextUpper = Math.max(96, Math.min(700, start.upper + delta));
+			const nextLower = Math.max(96, Math.min(700, start.lower - delta));
+			setSectionLayout(current => ({ ...current, heights: { ...current.heights, [upper]: nextUpper, [lower]: nextLower } }));
+		};
+		const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); };
+		window.addEventListener('pointermove', move);
+		window.addEventListener('pointerup', up, { once: true });
+		event.currentTarget.setPointerCapture?.(event.pointerId);
 	}
 	const limitOf = (key: string) => sectionLimits[key] ?? SECTION_PAGE_SIZE;
 	function showMoreSessions(key: string) {
@@ -721,7 +744,7 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 		return <button type="button" className="pd-session-more" onClick={() => showMoreSessions(key)}>{t('sidebar.showMore', { count: String(total - limit) })}</button>;
 	}
 	function toggleAll() {
-		setPreferences((current) => ({ ...current, collapsed: allExpanded ? [...new Set([...current.collapsed, ...sectionKeys])] : current.collapsed.filter((key) => !sectionKeys.includes(key)) }));
+		setSectionLayout(current => ({ ...current, collapsed: allExpanded ? [...new Set([...current.collapsed, ...sectionKeys])] : current.collapsed.filter(key => !sectionKeys.includes(key)) }));
 	}
 	async function perform(action: () => Promise<void>, navigate = false) {
 		onError(null);
@@ -759,18 +782,6 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 			} finally { pinWritePending.current = false; setPinSaving(false); }
 		});
 	}
-	async function refresh() {
-		setRefreshing(true);
-		try {
-			await refreshWorkspaces();
-			await Promise.all(useChatStore.getState().workspaces.map(refreshWorkspaceSessions));
-			if (bridge && !pendingRef.current) {
-				const request = ++groupRequest.current;
-				const value = await bridge.listSessionGroups();
-				if (request === groupRequest.current) { setGroups(value); setGroupsError(false); setGroupsLoading(false); }
-			}
-		} finally { setRefreshing(false); }
-	}
 	async function changeGroups(change: UiSidebarGroupChange): Promise<boolean> {
 		if (!bridge || pendingRef.current) return false;
 		pendingRef.current = true;
@@ -781,9 +792,6 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 			if (request === groupRequest.current) { setGroups(value); setGroupsError(false); setGroupsLoading(false); }
 			return true;
 		} finally { pendingRef.current = false; setPending(false); }
-	}
-	function editGroup(anchor: HTMLElement, group?: UiSessionGroup) {
-		setGroupDraft(group?.name ?? ''); setFormError(null); setPopup({ kind: 'edit-group', anchor, group });
 	}
 	function openSession(session: SidebarSession) {
 		setPopup(null);
@@ -905,10 +913,6 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 			</>}
 		</div>;
 	}
-	function renderOrdered(key: string) {
-		const ordered = previewOrder(key).map((path) => sessionByPath.get(path)).filter((session): session is SidebarSession => Boolean(session));
-		return <>{ordered.slice(0, limitOf(key)).map((session) => renderSession(session, key))}{moreButton(key, ordered.length)}</>;
-	}
 	function unsaved() {
 		return <div className={`pd-session-item${alternateViewOpen ? '' : ' is-active'} is-unsaved`}><button type="button" className="pd-session-row" onClick={onNavigate} aria-current={alternateViewOpen ? undefined : 'page'}><span className="pd-session-leading" aria-hidden="true" /><span className="pd-session-copy">{unsavedTitle ? <SidebarSessionTitle title={unsavedTitle} /> : <strong className="pd-session-unsaved-title">{t('sidebar.unnamed')}</strong>}</span></button></div>;
 	}
@@ -919,9 +923,9 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 			{items.slice(0, limitOf(projectKey(workspace))).map(session => renderSession(session, null))}
 			{moreButton(projectKey(workspace), items.length)}
 			{!items.length && !(showUnsaved && workspace === unsavedProject) && workspaceRequests[workspace]?.phase !== 'error' && <div className="pd-session-empty">{t(!workspaceRequests[workspace] || workspaceRequests[workspace]?.phase === 'loading' ? 'sidebar.loading' : filtered ? 'sidebar.noMatches' : 'sidebar.noSessions')}</div>}
-		</>, { icon: 'folder', workspace });
+		</>, { icon: 'box', workspace });
 	}
-	function section(key: string, name: string, content: ReactNode, options: { icon?: 'hash' | 'folder' | 'pin' | 'clock'; group?: UiSessionGroup; workspace?: string } = {}) {
+	function section(key: string, name: string, content: ReactNode, options: { icon?: 'hash' | 'folder' | 'pin' | 'clock' | 'box' | 'layers'; group?: UiSessionGroup; workspace?: string } = {}) {
 		const aggregate = summarizeSessionStates(options.workspace ? allSessions.filter((session) => session.workspace === options.workspace && !session.archived) : options.group ? allSessions.filter((session) => options.group!.sessionPaths.includes(session.path) && !session.archived) : []);
 		const aggregateLabel = (Object.entries(aggregate) as [keyof typeof aggregate, number][]).filter(([, value]) => value > 0).map(([kind, value]) => `${copy[kind]} ${value}`).join(' · ');
 		const dragItem = drag?.item;
@@ -932,7 +936,7 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 		const expanded = !collapsed.has(key) && !isDraggedGroup;
 		const color = options.group ? ['#9290d2', '#72a699', '#bc9683', '#749cbe'][[...options.group.id].reduce((hash, character) => (hash * 31 + character.charCodeAt(0)) >>> 0, 0) % 4] : undefined;
 		const droppable = (options.group !== undefined || key === UNGROUPED_KEY) && dragMode;
-		const menuTarget = options.workspace ? { kind: 'project' as const, workspace: options.workspace } : options.group ? { kind: 'group' as const, group: options.group } : undefined;
+		const menuTarget = options.workspace ? { kind: 'project' as const, workspace: options.workspace } : undefined;
 		function openSectionMenu(anchor: HTMLElement, point?: ContextMenuPoint) {
 			if (!menuTarget) return;
 			const trigger = anchor.querySelector<HTMLButtonElement>('[aria-haspopup="menu"]') ?? anchor;
@@ -941,7 +945,7 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 		const bar = options.workspace ? projectBarStyle(projectBars[options.workspace]) : null;
 		const anim = options.workspace ? PROJECT_BAR_ANIMS.find((item) => item.id === projectAnims[options.workspace!]) : undefined;
 		return <section className={`pd-sidebar-group${key === 'pinned' ? ' is-pinned' : ''}${options.group ? ' is-custom' : ''}${options.workspace === cwd ? ' is-current' : ''}${isDraggedProject ? ' is-project-drag-source' : ''}${bar ? ' has-project-bar' : ''}${anim ? ' has-anim-bar' : ''}`} key={key} data-section-key={key} data-project-path={options.workspace} data-project-drop={projectDrop} style={{ '--pd-group-color': color, ...(bar ? { '--pd-project-bar': bar.background, '--pd-project-bar-text': bar.light ? '#1f2430' : '#ffffff' } : {}), ...(anim ? { '--pd-bar-anim': anim.animation, '--pd-bar-size': anim.size } : {}) } as CSSProperties}>
-			<HoverTooltip title={name} description={options.workspace} side="right" align="start"><div className="pd-sidebar-group-heading" data-drag-heading={droppable ? key : undefined} data-drag-container={droppable ? key : undefined} onContextMenu={menuTarget ? (event) => {
+			<div className="pd-sidebar-group-heading" data-drag-heading={droppable ? key : undefined} data-drag-container={droppable ? key : undefined} onContextMenu={menuTarget ? (event) => {
 				event.preventDefault(); event.stopPropagation();
 				openSectionMenu(event.currentTarget, { x: event.clientX, y: event.clientY });
 			} : undefined} onKeyDown={menuTarget ? (event) => {
@@ -949,16 +953,17 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 				event.preventDefault(); event.stopPropagation();
 				openSectionMenu(event.currentTarget);
 			} : undefined}>
+				<HoverTooltip title={name} description={options.workspace} side="right" align="start">
 				<button type="button" className={`pd-sidebar-group-toggle${options.workspace && projectDragMode ? ' is-project-draggable' : ''}`} aria-expanded={expanded} onPointerDown={options.workspace && projectDragMode ? (event) => beginDrag({ kind: 'project', workspace: options.workspace! }, event) : options.group && dragMode && !draggingGroup ? (event) => beginDrag({ kind: 'group', id: options.group!.id }, event) : undefined} onClick={() => toggleSection(key)}>
 					<Icon name={options.icon ?? 'hash'} width="14" height="14" /><span>{name}</span><Icon name="chevronRight" width="12" height="12" className={expanded ? 'is-expanded' : ''} />{aggregateLabel && <span className="pd-session-state-counts" title={aggregateLabel} aria-label={aggregateLabel}>{aggregate.waiting > 0 && <b className="is-waiting" />}{aggregate.running > 0 && <b className="is-running" />}{aggregate.failed > 0 && <b className="is-failed" />}{aggregate.unread > 0 && <b className="is-unread" />}</span>}
 				</button>
-				{options.group && <HoverTooltip title={t('sidebar.groupActions')} side="right"><button type="button" className="pd-icon-button pd-group-more" aria-label={t('sidebar.groupMenuLabel', { name })} aria-haspopup="menu" aria-expanded={popup?.kind === 'group' && popup.group.id === options.group.id} onClick={(event) => { const current = popupRef.current; setPopup(current?.kind === 'group' && current.group.id === options.group!.id ? null : { kind: 'group', anchor: event.currentTarget, trigger: event.currentTarget, group: options.group! }); }}><Icon name="more" width="15" height="15" /></button></HoverTooltip>}
+				</HoverTooltip>
 				{options.workspace && <HoverTooltip title={t('sidebar.projectNewChat')} side="right"><button type="button" className="pd-icon-button pd-group-more" aria-label={t('sidebar.projectNewChat')} onClick={() => {
 					setNavigating(true);
 					void perform(async () => { try { const preparation = newSession({ cwd: options.workspace! }); onNavigate(); await preparation; } finally { setNavigating(false); } });
 				}}><Icon name="plus" width="14" height="14" /></button></HoverTooltip>}
 				{options.workspace && <HoverTooltip title={t('sidebar.projectActions')} side="right"><button type="button" className="pd-icon-button pd-group-more" aria-label={t('sidebar.projectMenuLabel', { name })} aria-haspopup="menu" aria-expanded={popup?.kind === 'project' && popup.workspace === options.workspace} onClick={(event) => { const current = popupRef.current; setPopup(current?.kind === 'project' && current.workspace === options.workspace ? null : { kind: 'project', anchor: event.currentTarget, trigger: event.currentTarget, workspace: options.workspace! }); }}><Icon name="more" width="15" height="15" /></button></HoverTooltip>}
-			</div></HoverTooltip>
+			</div>
 			{expanded && <div className="pd-sidebar-group-content" data-drag-container={droppable ? key : undefined}>{content}{droppable && drag && <div className="pd-session-drop-zone" data-drag-footer />}</div>}
 		</section>;
 	}
@@ -996,7 +1001,8 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 	function clearBarSubTimer() {
 		if (barSubTimer.current) { clearTimeout(barSubTimer.current); barSubTimer.current = null; }
 	}
-	function openBarSubFlyout(kind: 'presets' | 'css' | 'anim', anchor: HTMLElement, keyboard: boolean) {
+	function openBarSubFlyout(kind: 'presets' | 'user' | 'css' | 'anim', anchor: HTMLElement, keyboard: boolean) {
+		setUserDeleteFlyout(null);
 		clearBarSubTimer();
 		setBarSubFlyout((current) => current?.kind === kind && current.anchor === anchor && current.keyboard === keyboard ? current : { kind, anchor, keyboard });
 	}
@@ -1069,85 +1075,98 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 		setNavigating(true);
 		void perform(async () => { try { const preparation = newSession({ cwd: workspace }); onNavigate(); await preparation; } finally { setNavigating(false); } });
 	}
+	function checkbox(label: string, checked: boolean, action: () => void) {
+		return <button type="button" role="menuitemcheckbox" className="pd-menu-check-item" aria-checked={checked} onClick={action}><span>{label}</span>{checked && <Icon name="check" width="14" height="14" />}</button>;
+	}
 	function radio(label: string, selected: boolean, action: () => void) {
 		return <button type="button" role="menuitemradio" aria-checked={selected} onClick={action}><span>{label}</span>{selected && <Icon name="check" width="14" height="14" />}</button>;
 	}
+	function openProjectCreation(groupId: string | null) {
+		setPopup(null);
+		setNewProjectGroup(groupId);
+		setCreatingProject(true);
+	}
+	function newTempSession() {
+		if (defaultWorkspace) newChatInProject(defaultWorkspace);
+	}
 	const filtered = preferences.filter !== 'all';
-	const orderedGroupIds = drag?.groupOrder ?? savingDrag?.groupOrder ?? groups.map((group) => group.id);
+	function region(id: string, title: string, content: ReactNode, options?: { hint?: string; hintDetail?: string; actions?: ReactNode }) {
+		const isCollapsed = sectionLayout.collapsed.includes(id);
+		const height = sectionLayout.heights[id] ?? (id === 'unassigned-sessions' ? 170 : 240);
+		const heading = <button type="button" className="pd-sidebar-region-heading" aria-expanded={!isCollapsed} onClick={() => toggleRegion(id)}><Icon name="chevronRight" width="13" height="13" className={!isCollapsed ? 'is-expanded' : ''} /><span>{title}</span></button>;
+		return <section className={`pd-sidebar-region${isCollapsed ? ' is-collapsed' : ''}`} key={id} data-region-id={id} data-project-group-target={id === 'ungrouped-projects' ? '' : undefined} style={{ flex: isCollapsed ? '0 0 30px' : `1 1 ${height}px` }}>
+			<div className="pd-sidebar-region-heading-row">
+				{options?.hint ? <HoverTooltip title={options.hint} description={options.hintDetail} side="top" interactive={false}>{heading}</HoverTooltip> : heading}
+				{options?.actions && <div className="pd-sidebar-region-heading-actions">{options.actions}</div>}
+			</div>
+			{!isCollapsed && <div className="pd-sidebar-region-content">{content}</div>}
+		</section>;
+	}
+	function resizer(upper: string, lower: string) {
+		return <div className="pd-sidebar-region-resizer" role="separator" aria-orientation="horizontal" aria-label={`${t('sidebar.resizeSection')}: ${upper}, ${lower}`} onPointerDown={event => resizeRegionPair(upper, lower, event.clientY, event)} />;
+	}
 	const dragItem = drag?.item;
 	const ghostSession = dragItem?.kind === 'session' ? sessionByPath.get(dragItem.path) : null;
 	const ghostGroup = dragItem?.kind === 'group' ? groups.find((group) => group.id === dragItem.id) : null;
 	const ghostProject = dragItem?.kind === 'project' ? dragItem.workspace : null;
 	return <div className="pd-sidebar-detail pd-project-section pd-organized-sessions" onDragStart={(event) => event.preventDefault()}>
-		{/* One quiet row: view switch, "new", and a menu holding every low-frequency
-		    control. The archive is a sub-page with its own header and a way back. */}
 		{archived ? <div className="pd-sidebar-organize-toolbar is-archive">
 			{iconButton(t('sidebar.closeArchive'), 'arrowLeft', () => { setArchived(false); setPopup(null); })}
-			<strong className="pd-sidebar-archive-title">{t('sidebar.archived')}</strong>
-			<span className="pd-sidebar-archive-count">{sessions.length}</span>
-			<div className="pd-sidebar-organize-actions">
-				{iconButton(t('sidebar.viewOptions'), 'more', (anchor) => setPopup(popup?.kind === 'filter' ? null : { kind: 'filter', anchor }), { dot: filtered, expanded: popup?.kind === 'filter' })}
-			</div>
+			<strong className="pd-sidebar-archive-title">{t('sidebar.archived')}</strong><span className="pd-sidebar-archive-count">{sessions.length}</span>
+			<div className="pd-sidebar-organize-actions">{iconButton(t('sidebar.viewOptions'), 'more', (anchor) => setPopup(popup?.kind === 'filter' ? null : { kind: 'filter', anchor }), { dot: filtered, expanded: popup?.kind === 'filter' })}</div>
 		</div> : <div className="pd-sidebar-organize-toolbar">
-			<div className="pd-sidebar-mode" role="tablist" aria-label={t('sidebar.organize')}>
-				{(['grouped', 'project'] as const).map((mode) => <button key={mode} type="button" role="tab" aria-selected={preferences.mode === mode} onClick={() => { preference({ mode }); setArchived(false); setPopup(null); }} onKeyDown={(event) => {
-					if (['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) { event.preventDefault(); const next = event.key === 'Home' ? 'grouped' : event.key === 'End' ? 'project' : mode === 'grouped' ? 'project' : 'grouped'; preference({ mode: next }); setArchived(false); event.currentTarget.parentElement?.querySelector<HTMLButtonElement>(`[data-mode="${next}"]`)?.focus(); }
-				}} tabIndex={preferences.mode === mode ? 0 : -1} data-mode={mode}>{t(mode === 'grouped' ? 'sidebar.groups' : 'sidebar.projects')}</button>)}
-			</div>
+			<strong className="pd-sidebar-archive-title">{t('sidebar.projects')}</strong>
 			<div className="pd-sidebar-organize-actions">
-				{preferences.mode === 'grouped'
-					? iconButton(t('sidebar.newGroup'), 'plus', (anchor) => editGroup(anchor), { disabled: !bridge || groupsLoading || pending })
-					: iconButton(t('sidebar.newProject'), 'plus', () => { setPopup(null); setCreatingProject(true); }, { disabled: !bridge || status === 'starting' || workspaceNavigationPending || navigating })}
 				{iconButton(t('sidebar.viewOptions'), 'more', (anchor) => setPopup(popup?.kind === 'filter' ? null : { kind: 'filter', anchor }), { dot: filtered, expanded: popup?.kind === 'filter' })}
 			</div>
 		</div>}
+		{creatingProjectGroup && !archived && <form className="pd-sidebar-inline-group-form" onSubmit={event => { event.preventDefault(); const name = groupDraft.trim(); if (!name) return; setProjectGroupItems(current => [...current, { id: crypto.randomUUID(), name, projects: [] }]); setGroupDraft(''); setCreatingProjectGroup(false); }}>
+			<input aria-label={t('sidebar.groupName')} maxLength={80} autoFocus value={groupDraft} placeholder={t('sidebar.groupName')} onChange={event => setGroupDraft(event.target.value)} />
+			<button type="submit" disabled={!groupDraft.trim()} aria-label={t('sidebar.save')}><Icon name="check" width="14" height="14" /></button>
+			<button type="button" aria-label={t('sidebar.cancel')} onClick={() => { setCreatingProjectGroup(false); setGroupDraft(''); }}><Icon name="close" width="14" height="14" /></button>
+		</form>}
 		{filtered && <button type="button" className="pd-sidebar-filter-chip" aria-label={`${t(preferences.filter === 'unread' ? 'sidebar.onlyUnread' : 'sidebar.onlyPinned')} · ${t('sidebar.clearFilter')}`} onClick={() => preference({ filter: 'all' })}>{t(preferences.filter === 'unread' ? 'sidebar.onlyUnread' : 'sidebar.onlyPinned')}<Icon name="close" width="11" height="11" /></button>}
-		{archived && <div className="pd-archive-selection-toolbar">
-			<label><input ref={archiveSelectAllRef} type="checkbox" aria-label={t('sidebar.selectAllArchived')} checked={allArchiveSelected} disabled={!sessions.length} onChange={event => setArchiveSelection(new Set(event.currentTarget.checked ? sessions.map(session => session.path) : []))} />{t('sidebar.selectAll')}</label>
-			<span role="status">{t('sidebar.archiveSelectionCount', { count: selectedArchiveSessions.length })}</span>
-			<button type="button" data-action="delete-selected-archived" disabled={!selectedArchiveSessions.length || !bridge || navigating || workspaceNavigationPending} onClick={() => { setPopup(null); setBulkTrashTarget(selectedArchiveSessions.map(session => ({ path: session.path, title: titleOf(session) }))); }}>{t('sidebar.deleteSelected')}</button>
-		</div>}
-		<div className="pd-project-list pd-organized-list" ref={scrollRef} tabIndex={-1} aria-label={t('sidebar.sessions')} style={scrollMaskStyle} onScroll={() => { setPopup(null); updateScrollFade(); }}>
-			{(refreshing || loadingSessions) && sessions.length > 0 && <div className="pd-session-loading-hint" role="status"><Icon name="loader" className="pd-session-spinner" width="14" height="14" />{t('sidebar.refreshing')}</div>}
-			{hasPinned && section('pinned', t('sidebar.pinned'), <>
-				{grouped.pinned.map(session => renderSession(session, null))}
-				{projectPartitions.pinned.map(renderProject)}
-			</>, { icon: 'pin' })}
-			{archived || (preferences.mode === 'project' && preferences.projectView === 'timeline') ? <>
-				{showBodyUnsaved && unsaved()}
-				{dates.map((date) => { const key = `${archived ? 'archive' : 'date'}:${date.id}`; return section(key, t(`sidebar.${date.id}`), <>{date.sessions.slice(0, limitOf(key)).map((s) => renderSession(s, null))}{moreButton(key, date.sessions.length)}</>, { icon: 'clock' }); })}
-				{!dates.length && !showBodyUnsaved && !hasPinned && <div className="pd-session-empty">{t(loadingSessions ? 'sidebar.loading' : filtered ? 'sidebar.noMatches' : archived ? 'sidebar.noArchived' : 'sidebar.noSessions')}</div>}
-			</> : preferences.mode === 'grouped' ? groupsLoading ? <div className="pd-session-empty">{t('sidebar.loading')}</div> : groupsError ? <button type="button" className="pd-sidebar-retry" disabled={refreshing} onClick={() => void perform(refresh)}>{t('sidebar.retryGroups')}</button> : <>
-				{orderedGroupIds.map((id) => {
-					const group = grouped.groups.find((entry) => entry.id === id);
-					if (!group) return null;
-					const count = previewOrder(groupKey(group.id)).length;
-					return section(groupKey(group.id), group.name, <>
-						{renderOrdered(groupKey(group.id))}
-						{!count && <div className="pd-session-empty pd-group-empty">{t(filtered ? 'sidebar.noMatches' : 'sidebar.emptyGroup')}</div>}
-					</>, { group: groups.find((g) => g.id === group.id) });
+		{archived ? <div className="pd-project-list pd-organized-list" ref={scrollRef} tabIndex={-1} aria-label={t('sidebar.sessions')} style={scrollMaskStyle}>
+			{dates.map(date => section(`archive:${date.id}`, t(`sidebar.${date.id}`), date.sessions.slice(0, limitOf(`archive:${date.id}`)).map(session => renderSession(session, null)), { icon: 'clock' }))}
+			{!dates.length && <div className="pd-session-empty">{t(loadingSessions ? 'sidebar.loading' : 'sidebar.noArchived')}</div>}
+		</div> : <div className="pd-sidebar-regions" ref={scrollRef}>
+			{(loadingSessions) && sessions.length > 0 && <div className="pd-session-loading-hint" role="status"><Icon name="loader" className="pd-session-spinner" width="14" height="14" />{t('sidebar.refreshing')}</div>}
+			{regionVisible('project-groups') && region('project-groups', t('sidebar.groups'), <>
+				{projectOrganization.groups.map(group => {
+					const groupKey = `pgroup:${group.id}`;
+					const groupExpanded = !collapsed.has(groupKey);
+					return <div key={group.id} className="pd-sidebar-project-subgroup">
+						<div className="pd-sidebar-group-heading" data-project-group-target={group.id} onContextMenu={event => { event.preventDefault(); event.stopPropagation(); setPopup({ kind: 'project-group', groupId: group.id, name: group.name, anchor: event.currentTarget, trigger: event.currentTarget, point: { x: event.clientX, y: event.clientY } }); }}>
+							<button type="button" className="pd-sidebar-group-toggle" aria-expanded={groupExpanded} onClick={() => toggleSection(groupKey)}>
+								<Icon name="layers" width="14" height="14" /><span>{group.name}</span><Icon name="chevronRight" width="12" height="12" className={groupExpanded ? 'is-expanded' : ''} /><small>{group.projects.length}</small>
+							</button>
+							<HoverTooltip title={t('sidebar.addProjectToGroup')}><button type="button" className="pd-icon-button pd-group-add" aria-label={t('sidebar.addProjectToGroup')} onClick={event => { event.stopPropagation(); openProjectCreation(group.id); }}><Icon name="plus" width="13" height="13" /></button></HoverTooltip>
+						<HoverTooltip title={t('sidebar.groupMenuLabel', { name: group.name })}><button type="button" className="pd-icon-button pd-group-more" aria-haspopup="menu" aria-expanded={popup?.kind === 'project-group' && popup.groupId === group.id} aria-label={t('sidebar.groupMenuLabel', { name: group.name })} onClick={event => { event.stopPropagation(); const current = popupRef.current; setPopup(current?.kind === 'project-group' && current.groupId === group.id ? null : { kind: 'project-group', groupId: group.id, name: group.name, anchor: event.currentTarget, trigger: event.currentTarget }); }}><Icon name="more" width="13" height="13" /></button></HoverTooltip>
+						</div>
+						{groupExpanded && group.projects.map(path => <div key={path} data-project-path={path} data-project-group={group.id}>{renderProject(path)}</div>)}
+					</div>;
 				})}
-				{section(UNGROUPED_KEY, t('sidebar.ungrouped'), <>
-					{showBodyUnsaved && unsaved()}
-					{renderOrdered(UNGROUPED_KEY)}
-					{!previewOrder(UNGROUPED_KEY).length && !showBodyUnsaved && <div className="pd-session-empty pd-group-empty">{t(loadingSessions ? 'sidebar.loading' : filtered ? 'sidebar.noMatches' : 'sidebar.noSessions')}</div>}
-				</>)}
-			</> : <>
-				{projectPartitions.unpinned.map(renderProject)}
-				{section(UNASSIGNED_KEY, t('sidebar.unassigned'), <>
-					{showUnsaved && !unsavedProject && unsaved()}
-					{projectGroups.unassigned.slice(0, limitOf(UNASSIGNED_KEY)).map(session => renderSession(session, null))}
-					{moreButton(UNASSIGNED_KEY, projectGroups.unassigned.length)}
-					{!projectGroups.unassigned.length && !(showUnsaved && !unsavedProject) && <div className="pd-session-empty">{t(loadingSessions ? 'sidebar.loading' : filtered ? 'sidebar.noMatches' : 'sidebar.noSessions')}</div>}
-				</>)}
-			</>}
-			{!projectPaths.length && !archived && <div className="pd-project-empty"><Icon name="folder" width="18" height="18" aria-hidden="true" /><p>{t('sidebar.noProjects')}</p><button type="button" disabled={!bridge || status === 'starting' || workspaceNavigationPending || navigating} onClick={() => { setPopup(null); setCreatingProject(true); }}><Icon name="plus" width="13" height="13" aria-hidden="true" />{t('sidebar.newProject')}</button></div>}
-			{workspacePaths.map((workspace) => workspaceRequests[workspace]?.phase === 'error' ? <div key={workspace} className="pd-workspace-list-error" role="alert"><strong>{!isConversationWorkspace(workspace, conversationWorkspaces) && `${projectDisplayName(workspace)} · `}{copy.loadFailed}</strong><p>{workspaceRequests[workspace]?.error}</p><button type="button" onClick={() => void refreshWorkspaceSessions(workspace)}>{copy.retry}</button></div> : null)}
-		</div>
+				{projectOrganization.groups.length === 0 && <div className="pd-session-empty pd-group-empty">{t('sidebar.emptyGroup')}</div>}
+			</>, { hint: t('sidebar.sectionGroupsHint'), actions: iconButton(t('sidebar.newGroup'), 'plus', () => setCreatingProjectGroup(value => !value), { disabled: pending }) })}
+			{regionVisible('project-groups') && regionVisible('ungrouped-projects') && resizer('project-groups', 'ungrouped-projects')}
+			{regionVisible('ungrouped-projects') && region('ungrouped-projects', t('sidebar.ungrouped'), <>
+				{projectOrganization.ungrouped.map(path => <div key={path} data-project-path={path}>{renderProject(path)}</div>)}
+				{!projectOrganization.ungrouped.length && <div className="pd-session-empty pd-group-empty">{t('sidebar.noProjects')}</div>}
+			</>, { hint: t('sidebar.sectionProjectsHint'), actions: iconButton(t('sidebar.newProject'), 'plus', () => openProjectCreation(null), { disabled: !bridge || status === 'starting' || workspaceNavigationPending || navigating }) })}
+			{regionVisible('ungrouped-projects') && regionVisible('unassigned-sessions') && resizer('ungrouped-projects', 'unassigned-sessions')}
+			{regionVisible('unassigned-sessions') && region('unassigned-sessions', t('sidebar.unassigned'), <>
+				{showUnsaved && !unsavedProject && unsaved()}
+				{projectGroups.unassigned.slice(0, limitOf(UNASSIGNED_KEY)).map(session => renderSession(session, null))}
+				{moreButton(UNASSIGNED_KEY, projectGroups.unassigned.length)}
+				{!projectGroups.unassigned.length && !(showUnsaved && !unsavedProject) && <div className="pd-session-empty">{t(loadingSessions ? 'sidebar.loading' : filtered ? 'sidebar.noMatches' : 'sidebar.noSessions')}</div>}
+			</>, { hint: t('sidebar.sectionUnassignedHint'), hintDetail: t('sidebar.sectionUnassignedTip'), actions: iconButton(t('sidebar.newTempSession'), 'plus', newTempSession, { disabled: !defaultWorkspace || navigating || status === 'starting' }) })}
+			{workspacePaths.map(workspace => workspaceRequests[workspace]?.phase === 'error' ? <div key={workspace} className="pd-workspace-list-error" role="alert"><strong>{!isConversationWorkspace(workspace, conversationWorkspaces) && `${projectDisplayName(workspace)} · `}{copy.loadFailed}</strong><p>{workspaceRequests[workspace]?.error}</p><button type="button" onClick={() => void refreshWorkspaceSessions(workspace)}>{copy.retry}</button></div> : null)}
+		</div>}
 		{/* A failing dialog shows a local error card instead of blanking the whole window. */}
 		<ScopedErrorBoundary scope="dialog" resetKeys={[creatingProject, projectRemovalTarget, trashTarget, bulkTrashTarget]}>
-		{creatingProject && <ProjectCreationDialog onClose={(opened) => {
+		{creatingProject && <ProjectCreationDialog onCreated={workspace => { if (newProjectGroup) setProjectGroupItems(current => assignProjectToGroup(current, workspace, newProjectGroup)); setNewProjectGroup(null); }} onClose={(opened) => {
 			setCreatingProject(false);
+			setNewProjectGroup(null);
 			if (opened) { preference({ mode: 'project', projectView: 'project' }); setArchived(false); onNavigate(); }
 		}} />}
 		{projectRemovalTarget && <ProjectRemovalDialog summary={projectRemovalTarget.summary} onRemove={async () => {
@@ -1173,9 +1192,13 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 		{drag && (ghostSession || ghostGroup || ghostProject) && <div className="pd-sidebar-drag-ghost" style={{ left: drag.ghost.x, top: drag.ghost.y, width: drag.ghost.width }} aria-hidden>
 			{ghostProject ? <><Icon name={pinnedWorkspaceSet.has(ghostProject) ? 'pin' : 'folder'} width="14" height="14" /><span>{projectDisplayName(ghostProject)}</span></> : ghostGroup ? <><Icon name="hash" width="14" height="14" /><span>{ghostGroup.name}</span></> : <span>{titleOf(ghostSession!)}</span>}
 		</div>}
-		{popup && <SidebarPopover key={popup.kind} anchor={popup.anchor} trigger={popup.trigger} point={popup.point} label={t(popup.kind === 'filter' ? 'sidebar.viewOptions' : popup.kind === 'rename-project' ? 'sidebar.projectNicknameEdit' : popup.kind === 'edit-group' ? popup.group ? 'sidebar.renameGroup' : 'sidebar.newGroup' : popup.kind === 'group' ? 'sidebar.groupActions' : popup.kind === 'project' ? 'sidebar.projectActions' : 'sidebar.menuTitle')} dialog={popup.kind === 'edit-group' || popup.kind === 'rename-project'} className={popup.kind === 'session' || popup.kind === 'project' || popup.kind === 'group' ? 'pd-context-menu' : undefined} onClose={() => setPopup(null)}>
+		{popup && <SidebarPopover key={popup.kind} anchor={popup.anchor} trigger={popup.trigger} point={popup.point} label={t(popup.kind === 'filter' ? 'sidebar.viewOptions' : popup.kind === 'rename-project' ? 'sidebar.projectNicknameEdit' : popup.kind === 'edit-group' ? popup.group ? 'sidebar.renameGroup' : 'sidebar.newGroup' : popup.kind === 'project-group' ? 'sidebar.groupActions' : popup.kind === 'project' ? 'sidebar.projectActions' : 'sidebar.menuTitle')} dialog={popup.kind === 'edit-group' || popup.kind === 'rename-project'} className={popup.kind === 'session' || popup.kind === 'project' || popup.kind === 'project-group' ? 'pd-context-menu' : undefined} onClose={() => setPopup(null)}>
 			{popup.kind === 'filter' && <>
-				{preferences.mode === 'project' && !archived && <><div className="pd-sidebar-menu-label">{t('sidebar.organize')}</div>{radio(t('sidebar.byProject'), preferences.projectView === 'project', () => preference({ projectView: 'project' }))}{radio(t('sidebar.byTime'), preferences.projectView === 'timeline', () => preference({ projectView: 'timeline' }))}<hr /></>}
+				<div className="pd-sidebar-menu-label">{t('sidebar.showRegions')}</div>
+				{checkbox(t('sidebar.groups'), regionVisible('project-groups'), () => toggleRegionVisibility('project-groups'))}
+				{checkbox(t('sidebar.ungrouped'), regionVisible('ungrouped-projects'), () => toggleRegionVisibility('ungrouped-projects'))}
+				{checkbox(t('sidebar.unassigned'), regionVisible('unassigned-sessions'), () => toggleRegionVisibility('unassigned-sessions'))}
+				<hr />
 				<div className="pd-sidebar-menu-label">{t('sidebar.filterHeading')}</div>
 				{(['all', 'unread', 'pinned'] as const).map((filter) => <div key={filter}>{radio(t(filter === 'all' ? 'sidebar.allSessions' : filter === 'unread' ? 'sidebar.onlyUnread' : 'sidebar.onlyPinned'), preferences.filter === filter, () => preference({ filter }))}</div>)}
 				<hr /><div className="pd-sidebar-menu-label">{t('sidebar.sortOrder')}</div>
@@ -1210,6 +1233,8 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 			</form>}
 			{popup.kind === 'project' && <>
 				{menuItem({ icon: 'plus', label: t('sidebar.projectNewChat'), shortcut: 'N', disabled: navigating, onSelect: () => newChatInProject(popup.workspace) })}
+				<hr />
+				{menuItem({ icon: 'hash', label: t('sidebar.moveToGroup'), submenu: 'move' })}
 				{menuItem({ icon: 'panelRight', label: t('sidebar.openIn'), shortcut: 'O', submenu: 'open' })}
 				{menuItem({ icon: 'palette', label: t('sidebar.appearance'), submenu: 'appearance' })}
 				<hr />
@@ -1253,10 +1278,9 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 				{formError && <p role="alert">{formError}</p>}
 				<div className="pd-sidebar-form-actions"><button type="button" onClick={() => { setPopup(null); popup.anchor.focus(); }}>{t('sidebar.cancel')}</button><button type="submit" disabled={pending}>{t(pending ? 'sidebar.saving' : 'sidebar.save')}</button></div>
 			</form>}
-			{popup.kind === 'group' && <>
-				{menuItem({ icon: 'pencil', label: t('sidebar.renameGroup'), shortcut: 'R', onSelect: () => editGroup(popup.trigger ?? popup.anchor, popup.group) })}
-				{menuItem({ icon: 'close', label: t('sidebar.dissolveGroup'), shortcut: 'D', disabled: pending, onSelect: () => { const group = popup.group; setPopup(null); void perform(async () => { await changeGroups({ type: 'delete', id: group.id }); }); } })}
-				<p className="pd-sidebar-menu-note">{t('sidebar.dissolveGroupHint')}</p>
+			{popup.kind === 'project-group' && <>
+				{menuItem({ icon: 'trash', label: t('sidebar.dissolveGroup'), shortcut: 'D', disabled: pending, onSelect: () => { const groupId = popup.groupId; setPopup(null); setProjectGroupItems(current => current.filter(group => group.id !== groupId)); } })}
+				<p className="pd-sidebar-menu-note">{t('sidebar.dissolveProjectGroupHint')}</p>
 			</>}
 			{popup.kind === 'session' && <>
 				{menuItem({ icon: 'panelRight', label: t('sidebar.openIn'), shortcut: 'O', submenu: 'open' })}
@@ -1265,8 +1289,6 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 				{menuItem({ icon: 'message', label: t(popup.session.unread ? 'sidebar.markRead' : 'sidebar.markUnread'), shortcut: 'U', onSelect: () => { const s = popup.session; sessionAction(s, popup.anchor, () => updateSessionMeta(s.path, s.unread ? { unread: false, expectedUnreadAt: s.unreadAt } : { unread: true })); } })}
 				{menuItem({ icon: 'pencil', label: t('sidebar.rename'), shortcut: 'R', onSelect: () => { renameCancelled.current = false; setRenaming(popup.session.path); setRenameDraft(titleOf(popup.session)); setPopup(null); } })}
 				{menuItem({ icon: 'gitBranch', label: t('sidebar.fork'), shortcut: 'F', disabled: !bridge?.forkSession || navigating || sessionBusy(popup.session), onSelect: () => forkFromMenu(popup.session) })}
-				<hr />
-				{menuItem({ icon: 'hash', label: t('sidebar.moveToGroup'), shortcut: 'M', submenu: 'move', disabled: groupsLoading || groupsError || pending })}
 				{menuItem({ icon: 'archive', label: t(popup.session.archived ? 'sidebar.unarchive' : 'sidebar.archive'), shortcut: 'A', onSelect: () => { const s = popup.session; sessionAction(s, popup.anchor, () => updateSessionMeta(s.path, { archived: !s.archived })); } })}
 				<hr />
 				{menuItem({ icon: 'trash', label: t('sidebar.deleteSession'), shortcut: 'Delete', danger: true, onSelect: () => {
@@ -1298,6 +1320,14 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 					{openerItems(popup.workspace, 2)}
 					{submenuItem({ key: 'explorer', label: t('sidebar.projectReveal'), index: 2 + editorOpenerCount(), icon: 'folder', onSelect: () => { const workspace = popup.workspace; setPopup(null); void perform(() => bridge ? bridge.openWorkspaceFolder(workspace) : Promise.resolve()); } })}
 				</>}
+				{submenu.key === 'move' && popup.kind === 'project' && <>
+					{[null, ...projectGroupItems].map((group, index) => submenuItem({
+						key: group?.id ?? 'ungrouped', label: group?.name ?? t('sidebar.ungrouped'), index: index + 1, icon: group ? 'layers' : 'box',
+						checked: group ? group.projects.includes(popup.workspace) : !projectGroupItems.some(item => item.projects.includes(popup.workspace)),
+						onSelect: () => { const workspace = popup.workspace; setPopup(null); setProjectGroupItems(current => assignProjectToGroup(current, workspace, group?.id ?? null)); },
+					}))}
+					{projectGroupItems.length === 0 && <p className="pd-sidebar-menu-note">{t('sidebar.createGroupFirst')}</p>}
+				</>}
 				{submenu.key === 'appearance' && popup.kind === 'project' && <>
 					<button type="button" role="menuitem" className="pd-menu-item" aria-haspopup="menu" aria-expanded={barFlyout !== null}
 						onMouseEnter={(event) => openBarFlyout(event.currentTarget, false)}
@@ -1319,6 +1349,12 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 							onKeyDown={(event) => { if (event.key === 'ArrowRight') { event.preventDefault(); event.stopPropagation(); openBarSubFlyout('presets', event.currentTarget, true); } }}
 							onClick={(event) => { const anchor = event.currentTarget; setBarSubFlyout((current) => current?.kind === 'presets' && current.anchor === anchor ? null : { kind: 'presets', anchor, keyboard: true }); }}>
 							<Icon name="spark" width="15" height="15" /><span>{t('sidebar.appearancePresets')}</span><Icon name="chevronRight" className="pd-menu-chevron" width="13" height="13" />
+						</button>
+						<button type="button" role="menuitem" className="pd-menu-item" aria-haspopup="menu" aria-expanded={barSubFlyout?.kind === 'user'}
+							onMouseEnter={(event) => openBarSubFlyout('user', event.currentTarget, false)}
+							onKeyDown={(event) => { if (event.key === 'ArrowRight') { event.preventDefault(); event.stopPropagation(); openBarSubFlyout('user', event.currentTarget, true); } }}
+							onClick={(event) => { const anchor = event.currentTarget; setBarSubFlyout((current) => current?.kind === 'user' && current.anchor === anchor ? null : { kind: 'user', anchor, keyboard: true }); }}>
+							<Icon name="user" width="15" height="15" /><span>{t('sidebar.appearanceUserPresets')}</span><Icon name="chevronRight" className="pd-menu-chevron" width="13" height="13" />
 						</button>
 						<button type="button" role="menuitem" className="pd-menu-item" aria-haspopup="menu" aria-expanded={barSubFlyout?.kind === 'css'}
 							onMouseEnter={(event) => openBarSubFlyout('css', event.currentTarget, false)}
@@ -1342,6 +1378,18 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 								})}
 							</div>
 						</SidebarSubmenu>}
+						{barSubFlyout?.kind === 'user' && <SidebarSubmenu anchor={barSubFlyout.anchor} label={t('sidebar.appearanceUserPresets')} autoFocus={barSubFlyout.keyboard} onPointerEnter={clearBarSubTimer}
+							onClose={(restore) => { const anchor = barSubFlyout.anchor; setBarSubFlyout(null); setUserDeleteFlyout(null); if (restore) anchor.focus(); }}>
+							{userBarPresets.length === 0 && <p className="pd-sidebar-menu-note">{t('sidebar.appearanceUserPresetsEmpty')}</p>}
+							{userBarPresets.length > 0 && <div className="pd-appearance-swatches" role="group" aria-label={t('sidebar.appearanceUserPresets')}>
+								{userBarPresets.map((preset) => <button key={preset.id} type="button" role="menuitemradio" aria-checked={projectBars[popup.workspace] === preset.css} className={`pd-appearance-swatch${projectBars[popup.workspace] === preset.css ? ' is-active' : ''}`} style={{ background: preset.css }} title={preset.name} aria-label={preset.name} onClick={() => applyProjectBar(popup.workspace, preset.css)} onContextMenu={(event) => { event.preventDefault(); event.stopPropagation(); setUserDeleteFlyout({ presetId: preset.id, presetName: preset.name, anchor: event.currentTarget, keyboard: false }); }} />)}
+							</div>}
+							{userBarPresets.length > 0 && <p className="pd-sidebar-menu-note">{t('sidebar.appearanceUserPresetHint')}</p>}
+							{userDeleteFlyout && <SidebarSubmenu anchor={userDeleteFlyout.anchor} label={userDeleteFlyout.presetName} autoFocus={userDeleteFlyout.keyboard} onPointerEnter={clearBarSubTimer}
+								onClose={() => setUserDeleteFlyout(null)}>
+								{submenuItem({ key: 'confirm-delete', label: t('sidebar.appearanceDeletePreset'), icon: 'trash', onSelect: () => { removeUserBarPreset(userDeleteFlyout.presetId); setUserDeleteFlyout(null); } })}
+							</SidebarSubmenu>}
+						</SidebarSubmenu>}
 						{barSubFlyout?.kind === 'css' && <SidebarSubmenu anchor={barSubFlyout.anchor} label={t('sidebar.appearanceCss')} autoFocus={barSubFlyout.keyboard} onPointerEnter={clearBarSubTimer}
 							onClose={(restore) => { const anchor = barSubFlyout.anchor; setBarSubFlyout(null); if (restore) anchor.focus(); }}>
 							<textarea className="pd-appearance-css" rows={2} spellCheck={false} placeholder={t('sidebar.appearanceCssPlaceholder')}
@@ -1353,8 +1401,8 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 								{submenuItem({ key: 'bar-apply-net', label: t('sidebar.appearanceNetApply'), icon: 'alert', onSelect: () => { const workspace = popup.workspace; applyProjectBar(workspace, barConfirm); setBarConfirm(null); } })}
 								{submenuItem({ key: 'bar-apply-cancel', label: t('sidebar.cancel'), icon: 'close', onSelect: () => setBarConfirm(null) })}
 							</>}
+							{submenuItem({ key: 'bar-save-user', label: t('sidebar.appearanceAddUserPreset'), icon: 'plus', disabled: !isValidProjectBarValue((barCssDraft ?? customBarCss(popup.workspace)).trim()), onSelect: () => addUserBarPreset(popup.workspace, barCssDraft ?? customBarCss(popup.workspace)) })}
 							{submenuItem({ key: 'bar-ai', label: t('sidebar.appearanceAiCopy'), icon: 'brain', onSelect: () => { void navigator.clipboard.writeText(t('sidebar.appearanceAiPrompt')).then(() => setAiPromptCopied(true), () => {}); } })}
-							{submenuItem({ key: 'bar-ai-dynamic', label: t('sidebar.appearanceAiDynamic'), icon: 'refresh', onSelect: () => { void navigator.clipboard.writeText(t('sidebar.appearanceAiPromptDynamic')).then(() => setAiPromptCopied(true), () => {}); } })}
 							{aiPromptCopied && <p className="pd-sidebar-menu-note">{t('sidebar.appearanceAiCopied')}</p>}
 						</SidebarSubmenu>}
 						{barSubFlyout?.kind === 'anim' && <SidebarSubmenu anchor={barSubFlyout.anchor} label={t('sidebar.appearanceAnim')} autoFocus={barSubFlyout.keyboard} onPointerEnter={clearBarSubTimer}
@@ -1362,20 +1410,6 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 							{(['', 'flow', 'pulse', 'shimmer', 'hue', 'flicker', 'slide', 'tornado'] as const).map((animId) => submenuItem({ key: `anim:${animId || 'none'}`, label: t(animId ? `sidebar.anim${animId[0]!.toUpperCase()}${animId.slice(1)}` : 'sidebar.animNone'), icon: animId ? 'spark' : 'close', checked: (projectAnims[popup.workspace] ?? null) === (animId || null), onSelect: () => { const workspace = popup.workspace; applyProjectAnim(workspace, animId || null); } }))}
 						</SidebarSubmenu>}
 					</SidebarSubmenu>}
-				</>}
-				{submenu.key === 'move' && popup.kind === 'session' && <>
-					{[null, ...groups].map((group, index) => submenuItem({
-						key: group?.id ?? 'ungrouped', label: group?.name ?? t('sidebar.ungrouped'), index: index + 1, icon: group ? 'hash' : 'folder',
-						checked: group ? group.sessionPaths.includes(popup.session.path) : !groups.some((g) => g.sessionPaths.includes(popup.session.path)),
-						onSelect: () => {
-							const session = popup.session;
-							sessionAction(session, popup.anchor, async () => {
-								await changeGroups({ type: 'move-session', sessionPath: session.path, groupId: group?.id ?? null });
-								await updateSessionOrders([{ path: session.path, order: null }]);
-							});
-						},
-					}))}
-					{groups.length === 0 && <p className="pd-sidebar-menu-note">{t('sidebar.createGroupFirst')}</p>}
 				</>}
 			</SidebarSubmenu>}
 		</SidebarPopover>}
