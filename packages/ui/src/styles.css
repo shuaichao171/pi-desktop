@@ -511,11 +511,15 @@ button:focus-visible, textarea:focus-visible, input:focus-visible { outline: 2px
 .pd-session-switching-fill { display: block; height: 100%; width: 40%; border-radius: inherit; background: var(--pd-brand); animation: pd-session-switching-slide 1.1s ease-in-out infinite; }
 @keyframes pd-session-switching-slide { 0% { transform: translateX(-110%); } 100% { transform: translateX(285%); } }
 
-/* Keep-over dim (seamless switch): the transcript being left fades back while its
-   replacement loads, so the stale content reads as departing without a blank flash.
-   A painted preview of the target is already the incoming content and stays fully lit. */
-.pd-transcript { transition: opacity 140ms ease; }
-.pd-transcript.is-keep-over { opacity: .55; }
+/* Keep-over handoff (seamless switch): the transcript being left dims while its
+   replacement loads, and the incoming content lands at the same dim floor before
+   brightening — old and new meet at equal opacity, so the content swap reads as one
+   canvas resolving instead of one conversation vanishing and another popping in.
+   Dim-in is quick (class added, 140ms); brighten is slower (class removed, 180ms) so
+   arrival feels weightier. A painted preview of the target is already the incoming
+   content and never dims. */
+.pd-transcript { transition: opacity 180ms ease; }
+.pd-transcript.is-keep-over { opacity: .5; transition: opacity 140ms ease; }
 @media (prefers-reduced-motion: reduce) { .pd-transcript { transition: none; } }
 @media (prefers-reduced-motion: reduce) { .pd-session-switching-fill { animation: none; width: 100%; opacity: .6; } }
 
