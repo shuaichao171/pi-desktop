@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { mkdtempSync, mkdirSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve, sep } from 'node:path';
@@ -239,4 +240,58 @@ test('peekSession reads a session from disk with the exact content window ready 
     }
     rmSync(resolvedTemp, { recursive: true, force: true });
   }
+});
+
+test('returning to a loaded session re-publishes its file changes on the warm ready', async () => {
+	const tempRoot = mkdtempSync(join(tmpdir(), 'pi-desktop-test-'));
+	const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+	process.env.PI_CODING_AGENT_DIR = join(tempRoot, 'agent');
+	const workspace = join(tempRoot, 'workspace');
+	mkdirSync(workspace);
+
+	let service;
+	try {
+		const [{ AgentService }, { SessionManager }] = await Promise.all([
+			import('../packages/agent/src/index.ts'),
+			import('@earendil-works/pi-coding-agent'),
+		]);
+		// Session A carries one persisted file-change record; the service must
+		// re-publish it on the warm ready when the user navigates back.
+		const managerA = SessionManager.create(workspace);
+		managerA.appendMessage({ role: 'user', content: 'change something', timestamp: Date.now() });
+		managerA.appendCustomEntry('pi-desktop:file-changes-v1', { files: [{
+			path: 'notes/todo.txt',
+			before: { exists: false, fingerprint: 'missing', text: '' },
+			after: { exists: true, fingerprint: createHash('sha256').update('hello').digest('hex'), text: 'hello' },
+		}] });
+
+		service = new AgentService();
+		const events = [];
+		service.onEvent((envelope) => events.push(envelope));
+		const lastReady = () => events.findLast(({ event }) => event.type === 'ready')?.event;
+
+		await service.init({ cwd: workspace });
+		const pathA = service.getSnapshot().sessionPath;
+		assert.ok(pathA, 'init loads the fabricated session');
+		// The snapshot itself must carry the restored change view (state sync fix):
+		// warm re-activations rebuild their ready from this snapshot.
+		assert.equal(service.getSnapshot().fileChanges.length, 1);
+		assert.equal(lastReady().fileChanges.length, 1);
+
+		await service.newSession();
+		assert.notEqual(service.getSnapshot().sessionPath, pathA);
+		assert.equal(lastReady().fileChanges.length, 0);
+
+		await service.switchSession(pathA);
+		const warm = lastReady();
+		assert.equal(warm.resumeKind, 'warm', 'returning to a kept-warm session takes the warm path');
+		assert.equal(warm.fileChanges.length, 1, 'the warm ready must re-publish the session file changes');
+		assert.ok(warm.fileChangeTurns && warm.fileChangeTurns.length > 0, 'the warm ready must re-publish per-turn change groups');
+	} finally {
+		process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+		if (service) await service.dispose?.();
+		const resolvedTemp = resolve(tempRoot);
+		if (!resolvedTemp.startsWith(realpathSync(tmpdir()) + sep)) throw new Error('Refusing to remove a test directory outside the temporary folder');
+		rmSync(resolvedTemp, { recursive: true, force: true });
+	}
 });
