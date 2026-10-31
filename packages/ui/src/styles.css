@@ -1027,11 +1027,16 @@ html.pd-popover-open :is(.pd-sidebar-toolbar, .pd-chat-header, .pd-chat-heading,
 /* The scrim also dims the title strip; the dialog sits below the strip,
    clear of the window controls. */
 .is-frameless .pd-settings-overlay { padding-top: 56px; }
-/* [喵喵喵]: 受控简化 — 设置打开时顶部不保留任何透明 drag 带：它吞 hover/点击、
-   单击拖窗、双击还会 toggle 最大化，且右端让位边界完全不可见，与"点右上角关设置"
-   的直觉冲突。顶部与遮罩同权，单击即走离开流程（脏草稿弹确认）。
+/* [喵喵喵]: 设置遮罩必须显式 no-drag。Electron 的 drag 区是窗口级非客户区：Chromium
+   收集「声明过 app-region 的元素」交给系统，后画的遮罩若不声明 no-drag 就扣不掉下面
+   那条区——顶栏（.is-frameless .pd-top-bar，drag）在设置打开时依然是拖拽区，顶部条
+   的 hover/点击被系统截走，单击变拖窗、双击 toggle 最大化。此前删掉 overlay 自己的
+   透明 drag 带无效，正是因为真正的来源在遮罩之下。这里把遮罩及其子树整片扣掉
+   （与 .pd-search-overlay 同一约定），顶部与遮罩同权：单击即走离开流程（脏草稿弹确认）。
    边界：设置打开期间窗口不可拖动，关掉设置即恢复；
    升级：若需在设置内移动窗口 → 把可见的 dialog header 做成 drag 区。 */
+.is-frameless .pd-settings-overlay,
+.is-frameless .pd-settings-overlay * { -webkit-app-region: no-drag; }
 .is-frameless .pd-settings-dialog { max-height: min(960px, calc(100vh - 104px)); }
 @media (max-width: 650px) {
   .is-frameless .pd-settings-dialog { max-height: calc(100vh - 76px); }
