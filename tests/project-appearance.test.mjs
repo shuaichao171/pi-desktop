@@ -64,11 +64,13 @@ test('network references trip the leave-machine check', async () => {
   assert.equal(normalizeProjectBarValue('data:image/png;base64,AAAA'), null);
   assert.equal(normalizeProjectBarValue('data:image/png;base64,AAAA'), null);
 
-  // The sanity cap leaves room for rich multi-layer AI output (was 300, squeezed real results).
+  // Length is uncapped now (the 1000 sanity cap was dropped by request): rich multi-layer AI output passes.
   const layered = Array.from({ length: 5 }, (_, i) => `linear-gradient(115deg, #ff2ec433 0%, #00e5ff2b 55%, transparent ${60 + i}%)`).join(', ');
-  assert.equal(layered.length > 300 && layered.length <= 1000, true, 'the fixture itself spans the old cap');
+  assert.equal(layered.length > 300, true, 'the fixture itself spans the old cap');
   assert.equal(normalizeProjectBarValue(layered), layered);
-  assert.equal(normalizeProjectBarValue('linear-gradient(90deg, ' + '#f00, '.repeat(300) + '#00f)'), null, 'over 1000 is rejected');
+  const huge = 'linear-gradient(90deg, ' + '#f00, '.repeat(300) + '#00f)';
+  assert.equal(huge.length > 1000, true, 'sanity: the fixture exceeds the old 1000-char cap');
+  assert.equal(normalizeProjectBarValue(huge), huge, 'length is uncapped');
 });
 
 test('user bar presets persist through storage and drop entries with unrenderable css', async () => {
