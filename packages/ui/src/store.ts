@@ -102,6 +102,8 @@ interface ChatState {
 	/** 压缩失败横线文案；成功后清空，失败保留至用户关闭或下次压缩。 */
 	compactionError: string | null;
 	appInfo: AppInfo | null;
+	/** True in a hosted pai chat window: the main-window lists must never be requested there. */
+	hostedChatWindow: boolean;
 	/** Latest explicit project/session navigation intent; stale requests cannot overwrite it. */
 	navigationRequestId: number;
 	navigationPending: boolean;
@@ -111,7 +113,7 @@ interface ChatState {
 	/** Completed creations whose local draft was left before the backend receipt arrived. */
 	backgroundDraftTransfers: Array<{ requestId: number; from: UiInputScope; to: UiInputScope }>;
 
-	setBridge(bridge: AgentBridge): void;
+	setBridge(bridge: AgentBridge, options?: { hostedChatWindow?: boolean }): void;
 	retryAgent(): Promise<void>;
 	handleEvent(event: AgentUiEvent): void;
 	/** 关闭压缩失败横线提示。 */
@@ -295,13 +297,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
 	error: null,
 	errorInfo: null,
 	appInfo: null,
+	hostedChatWindow: false,
 	navigationRequestId: 0,
 	navigationPending: false,
 	sessionPreparation: null,
 	draftTransfer: null,
 	backgroundDraftTransfers: [],
 
-	setBridge(bridge) {
+	setBridge(bridge, options) {
 		if (get().bridge === bridge) return;
 		sessionOpenMetrics.cancel();
 		cancelPreparedInput();
@@ -321,6 +324,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 		set({
 			...useChatStore.getInitialState(),
 			bridge,
+			hostedChatWindow: options?.hostedChatWindow ?? false,
 			timelineRevision: get().timelineRevision + 1,
 		});
 		let bootstrapping = true;
@@ -405,6 +409,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 					if (get().status === 'idle' || get().status === 'busy') {
 						void get().refreshSessions();
 						void get().refreshWorkspaces();
+void get().refreshModelProviders().catch(() => {});
 						return;
 					}
 				}
@@ -472,7 +477,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 					availableThinkingLevels: [],
 					contextUsage: null,
 					models: [],
-					modelProviders: [],
+modelProviders: [...get().modelProviders],
 					providerAuth: [],
 					settingsLoading: false,
 					settingsError: null,
@@ -565,6 +570,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
 				// later failed navigation can put the renderer back on the session the
 				// host still shows.
 				captureSettledConversation();
+// The balance segment reads usage-query config from the provider list; the
+// picker only loads it on open, so eager-load it once the session is live.
+if (!get().modelProviders.length) void get().refreshModelProviders().catch(() => {});
 				return;
 			}
 			case 'model':
@@ -773,7 +781,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
 	async refreshWorkspaces() {
 		const bridge = get().bridge;
-		if (!bridge) return;
+		// A hosted pai chat window has no sidebar: the workspace registry is a
+		// main-window-only surface and requesting it there would surface an error banner.
+		if (!bridge || get().hostedChatWindow) return;
 		const request = ++workspacesRequest;
 		const navigationRequest = get().navigationRequestId;
 		try {
@@ -1518,8 +1528,10 @@ async function updateCustomProvider(action: (bridge: AgentBridge) => Promise<voi
 }
 
 async function refreshSessionCache(cwd: string, reportError = true): Promise<void> {
-	const { bridge, navigationRequestId } = useChatStore.getState();
-	if (!bridge || !cwd) return;
+	const { bridge, hostedChatWindow, navigationRequestId } = useChatStore.getState();
+	// Session lists only feed the sidebar and the @-mention picker; a hosted pai
+	// window must not reach the main-window-only listing channel.
+	if (!bridge || !cwd || hostedChatWindow) return;
 	const request = (sessionListRequests.get(cwd) ?? 0) + 1;
 	sessionListRequests.set(cwd, request);
 	useChatStore.setState((state) => ({ workspaceSessionRequests: { ...state.workspaceSessionRequests,

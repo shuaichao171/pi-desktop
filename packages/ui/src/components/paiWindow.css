@@ -1,4 +1,6 @@
-.pd-pai-controls { display: flex; flex: 0 0 auto; align-items: center; gap: 2px; -webkit-app-region: no-drag; }
-.pd-app-shell.is-pai .pd-chat-header { padding-left: 12px; }
-.pd-app-shell.is-pai.is-frameless .pd-chat-header { padding-right: 116px; }
-.pd-app-shell.is-pai .pd-chat-header-actions { min-width: 0; }
+.pd-pai-controls { display: flex; flex: 0 0 auto; align-items: center; gap: 2px; width: max-content; -webkit-app-region: no-drag; }
+/* The full window drags by its top bar; the pai window has no top bar, so its
+   compact controls row is the drag handle. The controls must hug their buttons
+   (width: max-content), otherwise their no-drag box would cover the whole row. */
+.pd-app-shell.is-pai.is-frameless .pd-compact-controls { -webkit-app-region: drag; user-select: none; }
+.pd-app-shell.is-pai.is-frameless .pd-pai-controls button { -webkit-app-region: no-drag; }

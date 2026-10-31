@@ -138,6 +138,8 @@ export const IPC_CHANNELS = {
   workspaceListPinned: 'workspace:list-pinned',
   workspaceSetPinned: 'workspace:set-pinned',
   workspaceOpenFolder: 'workspace:open-folder',
+  workspaceOpenPath: 'workspace:open-path',
+  workspacePickPath: 'workspace:pick-path',
   workspaceListEntries: 'workspace:list-entries',
   workspaceSearchFiles: 'workspace:search-files',
   workspaceReadFile: 'workspace:read-file',
@@ -1146,6 +1148,10 @@ export interface AgentBridge extends InputFeatureBridge, DataFeaturesBridge, Wor
   /** Accepts native File objects; registers their directories without switching conversations. Regular files are ignored. */
   addDroppedWorkspaces(files: unknown[]): Promise<string[]>;
   openWorkspaceFolder(cwd: string): Promise<void>;
+  /** 打开项目内（或绝对）路径：文件用默认程序，文件夹用资源管理器。 */
+  openPath(path: string, cwd: string): Promise<void>;
+  /** 弹出原生选择器挑选文件或文件夹；取消返回 null。 */
+  pickPath(mode: 'file' | 'folder', cwd: string): Promise<string | null>;
   listWorkspaceEntries(relativePath?: string): Promise<WorkspaceEntry[]>;
   searchWorkspaceFiles(query: string, options?: { includeDirectories?: boolean }): Promise<{ files: WorkspaceEntry[]; truncated: boolean; skipped?: number; ignoredDirectories?: string[] }>;
   readWorkspaceFile(relativePath: string): Promise<string>;

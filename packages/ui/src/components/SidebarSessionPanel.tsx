@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import { isValidProjectBarValue, normalizeProjectBarValue, projectBarLeavesMachine, type UiSessionGroup, type UiSidebarGroupChange, type WorkspaceOpener, type WorkspaceProjectNickname } from '@pidesktop/shared';
 import { PROJECT_BAR_ANIMS, PROJECT_BAR_PRESETS, readUserBarPresets, saveUserBarPresets, suggestBarLight, USER_BAR_PRESET_LIMIT, projectBarStyle, type UserBarPreset } from '../sidebarAppearance';
+import { projectCustomEntryDisplayName, readProjectCustomEntries, saveProjectCustomEntries, PROJECT_CUSTOM_ENTRY_LIMIT, type ProjectCustomEntry } from '../projectCustomEntries';
+import type { WorkbenchFeaturesBridge } from '@pidesktop/shared/workbenchFeatures';
 import { useChatStore } from '../store';
 import { useT } from '../i18n';
 import { managementCopy } from '../managementCopy';
@@ -32,6 +34,9 @@ type Popup = { anchor: HTMLElement; trigger?: HTMLElement; point?: ContextMenuPo
 	| { kind: 'project'; workspace: string }
 	| { kind: 'edit-group'; group?: UiSessionGroup }
 	| { kind: 'rename-project'; workspace: string }
+	| { kind: 'add-custom-command'; workspace: string }
+	| { kind: 'add-custom-open'; workspace: string }
+	| { kind: 'rename-custom-entry'; workspace: string; entryId: string }
 );
 
 /** A sidebar list that participates in drag reordering. */
@@ -76,7 +81,7 @@ const PROJECT_DRAG_THRESHOLD = 6;
 const EDGE_SCROLL_MARGIN = 28;
 const EDGE_SCROLL_STEP = 9;
 
-export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alternateViewOpen = false, onNavigate, onError }: { visible: boolean; projectRevealRequest?: number; alternateViewOpen?: boolean; onNavigate(): void; onError(value: string | null): void }) {
+export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alternateViewOpen = false, onNavigate, onError, onOpenTerminal }: { visible: boolean; projectRevealRequest?: number; alternateViewOpen?: boolean; onNavigate(): void; onError(value: string | null): void; onOpenTerminal?: () => void }) {
 	const { t, locale } = useT();
 	const copy = managementCopy(locale);
 	const bridge = useChatStore((s) => s.bridge);
@@ -119,7 +124,7 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 	const [sectionLimits, setSectionLimits] = useState<Record<string, number>>({});
 	const [popup, setPopup] = useState<Popup | null>(null);
 	// Flyout of the open context menu ("打开方式 ›", "移动到分组 ›"); it closes with its menu.
-	const [submenu, setSubmenu] = useState<{ key: 'open' | 'move' | 'appearance'; anchor: HTMLElement; keyboard: boolean } | null>(null);
+	const [submenu, setSubmenu] = useState<{ key: 'open' | 'custom' | 'move' | 'appearance'; anchor: HTMLElement; keyboard: boolean } | null>(null);
 	const [barFlyout, setBarFlyout] = useState<{ anchor: HTMLElement; keyboard: boolean } | null>(null);
 	const barTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 	/** The fourth-level flyout opened from a 项目背景条 row: presets swatches, custom CSS, or animation tiers. */
@@ -223,6 +228,46 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 	}
 	function toggleUserBarPresetText(id: string) {
 		setUserBarPresets((current) => current.map((preset) => preset.id === id ? { ...preset, light: !preset.light } : preset));
+	}
+	const [customEntries, setCustomEntries] = useState<Record<string, ProjectCustomEntry[]>>(() => readProjectCustomEntries());
+	const [customEntryFlyout, setCustomEntryFlyout] = useState<{ entryId: string; anchor: HTMLElement } | null>(null);
+	const [customDraft, setCustomDraft] = useState('');
+	const [customPathDraft, setCustomPathDraft] = useState('');
+	const [customRenameDraft, setCustomRenameDraft] = useState('');
+	useEffect(() => { saveProjectCustomEntries(customEntries); }, [customEntries]);
+	function addCustomEntry(workspace: string, kind: 'command' | 'open', value: string, target?: 'file' | 'folder') {
+		const trimmed = value.trim();
+		if (!trimmed) return;
+		const key = sidebarWorkspaceKey(workspace);
+		setCustomEntries((current) => {
+			const list = current[key] ?? [];
+			if (list.length >= PROJECT_CUSTOM_ENTRY_LIMIT || list.some((entry) => entry.kind === kind && entry.value === trimmed)) return current;
+			return { ...current, [key]: [...list, { id: crypto.randomUUID(), kind, value: trimmed, target }] };
+		});
+	}
+	function renameCustomEntry(workspace: string, entryId: string, label: string) {
+		const key = sidebarWorkspaceKey(workspace);
+		setCustomEntries((current) => ({ ...current, [key]: (current[key] ?? []).map((entry) => entry.id === entryId ? { ...entry, label: label.trim() || undefined } : entry) }));
+	}
+	function removeCustomEntry(workspace: string, entryId: string) {
+		const key = sidebarWorkspaceKey(workspace);
+		setCustomEntries((current) => {
+			const next = { ...current, [key]: (current[key] ?? []).filter((entry) => entry.id !== entryId) };
+			if (!next[key]?.length) delete next[key];
+			return next;
+		});
+	}
+	async function runCustomCommand(workspace: string, command: string) {
+		if (!bridge) return;
+		// 终端绑定当前工作区：右键其他项目时提示先切换，避免命令跑错目录。
+		if (sidebarWorkspaceKey(workspace) !== sidebarWorkspaceKey(cwd)) throw new Error(t('sidebar.customTerminalBusy'));
+		const api = bridge as typeof bridge & WorkbenchFeaturesBridge;
+		const snapshot = await api.openWorkspaceTerminal({ cwd: workspace, cols: 80, rows: 24 });
+		await api.writeWorkspaceTerminal({ id: snapshot.id, data: `${command}\r` });
+		onOpenTerminal?.();
+	}
+	async function openCustomPath(workspace: string, path: string) {
+		await bridge?.openPath(path, workspace);
 	}
 	/** Live-previews a background bar (newlines collapsed); a failed write re-reads the stored truth. */
 	const applyProjectBar = (workspace: string, bar: string | null) => {
@@ -980,7 +1025,7 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 		openersRequested.current = true;
 		void bridge.listWorkspaceOpeners().then(setOpeners, () => { openersRequested.current = false; setOpeners([]); });
 	}
-	function openSubmenu(key: 'open' | 'move' | 'appearance', anchor: HTMLElement, keyboard: boolean) {
+	function openSubmenu(key: 'open' | 'custom' | 'move' | 'appearance', anchor: HTMLElement, keyboard: boolean) {
 		clearSubmenuTimer();
 		if (key === 'open') loadOpeners();
 		setSubmenu((current) => current?.key === key && current.anchor === anchor && current.keyboard === keyboard ? current : { key, anchor, keyboard });
@@ -1016,7 +1061,7 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 		barSubTimer.current = setTimeout(() => setBarSubFlyout(null), 220);
 	}
 	/** A context-menu row: icon, label, then its single-key accelerator or a flyout chevron. */
-	function menuItem(options: { icon: IconName; label: string; shortcut?: string; onSelect?(button: HTMLButtonElement): void; disabled?: boolean; danger?: boolean; submenu?: 'open' | 'move' | 'appearance'; action?: string }) {
+	function menuItem(options: { icon: IconName; label: string; shortcut?: string; onSelect?(button: HTMLButtonElement): void; disabled?: boolean; danger?: boolean; submenu?: 'open' | 'custom' | 'move' | 'appearance'; action?: string }) {
 		const flyout = options.submenu;
 		return <button type="button" role="menuitem" className={`pd-menu-item${options.danger ? ' pd-sidebar-menu-danger' : ''}`} data-action={options.action}
 			data-shortcut={options.shortcut} data-shortcut-label={flyout || !options.shortcut ? undefined : options.shortcut === 'Delete' ? 'Del' : options.shortcut}
@@ -1196,7 +1241,7 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 		{drag && (ghostSession || ghostGroup || ghostProject) && <div className="pd-sidebar-drag-ghost" style={{ left: drag.ghost.x, top: drag.ghost.y, width: drag.ghost.width }} aria-hidden>
 			{ghostProject ? <><Icon name={pinnedWorkspaceSet.has(ghostProject) ? 'pin' : 'folder'} width="14" height="14" /><span>{projectDisplayName(ghostProject)}</span></> : ghostGroup ? <><Icon name="hash" width="14" height="14" /><span>{ghostGroup.name}</span></> : <span>{titleOf(ghostSession!)}</span>}
 		</div>}
-		{popup && <SidebarPopover key={popup.kind} anchor={popup.anchor} trigger={popup.trigger} point={popup.point} label={t(popup.kind === 'filter' ? 'sidebar.viewOptions' : popup.kind === 'rename-project' ? 'sidebar.projectNicknameEdit' : popup.kind === 'edit-group' ? popup.group ? 'sidebar.renameGroup' : 'sidebar.newGroup' : popup.kind === 'project-group' ? 'sidebar.groupActions' : popup.kind === 'project' ? 'sidebar.projectActions' : 'sidebar.menuTitle')} dialog={popup.kind === 'edit-group' || popup.kind === 'rename-project'} className={popup.kind === 'session' || popup.kind === 'project' || popup.kind === 'project-group' ? 'pd-context-menu' : undefined} onClose={() => setPopup(null)}>
+		{popup && <SidebarPopover key={popup.kind} anchor={popup.anchor} trigger={popup.trigger} point={popup.point} label={t(popup.kind === 'filter' ? 'sidebar.viewOptions' : popup.kind === 'rename-project' ? 'sidebar.projectNicknameEdit' : popup.kind === 'add-custom-command' ? 'sidebar.customCommandAdd' : popup.kind === 'add-custom-open' ? 'sidebar.customOpenAdd' : popup.kind === 'rename-custom-entry' ? 'sidebar.customRename' : popup.kind === 'edit-group' ? popup.group ? 'sidebar.renameGroup' : 'sidebar.newGroup' : popup.kind === 'project-group' ? 'sidebar.groupActions' : popup.kind === 'project' ? 'sidebar.projectActions' : 'sidebar.menuTitle')} dialog={popup.kind === 'edit-group' || popup.kind === 'rename-project' || popup.kind === 'add-custom-command' || popup.kind === 'add-custom-open' || popup.kind === 'rename-custom-entry'} className={popup.kind === 'session' || popup.kind === 'project' || popup.kind === 'project-group' ? 'pd-context-menu' : undefined} onClose={() => setPopup(null)}>
 			{popup.kind === 'filter' && <>
 				<div className="pd-sidebar-menu-label">{t('sidebar.showRegions')}</div>
 				{checkbox(t('sidebar.groups'), regionVisible('project-groups'), () => toggleRegionVisibility('project-groups'))}
@@ -1241,6 +1286,7 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 				{menuItem({ icon: 'hash', label: t('sidebar.moveToGroup'), submenu: 'move' })}
 				{menuItem({ icon: 'panelRight', label: t('sidebar.openIn'), shortcut: 'O', submenu: 'open' })}
 				{menuItem({ icon: 'palette', label: t('sidebar.appearance'), submenu: 'appearance' })}
+				{menuItem({ icon: 'terminal', label: t('sidebar.customCommand'), submenu: 'custom' })}
 				<hr />
 				{menuItem({ icon: 'pin', label: t(pinnedWorkspaceSet.has(popup.workspace) ? 'sidebar.projectUnpin' : 'sidebar.projectPin'), shortcut: 'P', action: pinnedWorkspaceSet.has(popup.workspace) ? 'unpin-project' : 'pin-project', disabled: !bridge || !pinsReady || pinsLoading || pinSaving, onSelect: () => toggleProjectPin(popup.workspace, popup.trigger ?? popup.anchor) })}
 				{menuItem({ icon: 'pencil', label: t('sidebar.projectNickname'), shortcut: 'B', disabled: !bridge, onSelect: () => openProjectNickname(popup.workspace, popup.trigger ?? popup.anchor) })}
@@ -1282,6 +1328,22 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 				{formError && <p role="alert">{formError}</p>}
 				<div className="pd-sidebar-form-actions"><button type="button" onClick={() => { setPopup(null); popup.anchor.focus(); }}>{t('sidebar.cancel')}</button><button type="submit" disabled={pending}>{t(pending ? 'sidebar.saving' : 'sidebar.save')}</button></div>
 			</form>}
+			{popup.kind === 'add-custom-command' && <form onSubmit={(event) => { event.preventDefault(); const workspace = popup.workspace; const value = customDraft.trim(); if (!value) return; addCustomEntry(workspace, 'command', value); setPopup(null); popup.anchor.focus(); }}>
+				<label htmlFor="pd-custom-command">{t('sidebar.customCommandAdd')}</label>
+				<input id="pd-custom-command" autoFocus value={customDraft} placeholder={t('sidebar.customCommandPlaceholder')} onChange={(event) => setCustomDraft(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && event.nativeEvent.isComposing) event.preventDefault(); }} />
+				<div className="pd-sidebar-form-actions"><button type="button" onClick={() => { setPopup(null); popup.anchor.focus(); }}>{t('sidebar.cancel')}</button><button type="submit" disabled={!customDraft.trim()}>{t('sidebar.save')}</button></div>
+			</form>}
+			{popup.kind === 'add-custom-open' && <form onSubmit={(event) => { event.preventDefault(); const workspace = popup.workspace; const value = customPathDraft.trim(); if (!value) return; addCustomEntry(workspace, 'open', value); setPopup(null); popup.anchor.focus(); }}>
+				<label htmlFor="pd-custom-open">{t('sidebar.customOpenAdd')}</label>
+				<input id="pd-custom-open" autoFocus value={customPathDraft} placeholder={t('sidebar.customPathPlaceholder')} onChange={(event) => setCustomPathDraft(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && event.nativeEvent.isComposing) event.preventDefault(); }} />
+				<div className="pd-custom-browse-row"><button type="button" onClick={() => { void bridge?.pickPath('file', popup.workspace).then((picked) => { if (picked) setCustomPathDraft(picked); }); }}>{t('sidebar.customBrowseFile')}</button><button type="button" onClick={() => { void bridge?.pickPath('folder', popup.workspace).then((picked) => { if (picked) setCustomPathDraft(picked); }); }}>{t('sidebar.customBrowseFolder')}</button></div>
+				<div className="pd-sidebar-form-actions"><button type="button" onClick={() => { setPopup(null); popup.anchor.focus(); }}>{t('sidebar.cancel')}</button><button type="submit" disabled={!customPathDraft.trim()}>{t('sidebar.customOpen')}</button></div>
+			</form>}
+			{popup.kind === 'rename-custom-entry' && <form onSubmit={(event) => { event.preventDefault(); renameCustomEntry(popup.workspace, popup.entryId, customRenameDraft); setPopup(null); popup.anchor.focus(); }}>
+				<label htmlFor="pd-custom-rename">{t('sidebar.customRename')}</label>
+				<input id="pd-custom-rename" autoFocus value={customRenameDraft} maxLength={80} onChange={(event) => setCustomRenameDraft(event.target.value)} />
+				<div className="pd-sidebar-form-actions"><button type="button" onClick={() => { setPopup(null); popup.anchor.focus(); }}>{t('sidebar.cancel')}</button><button type="submit">{t('sidebar.save')}</button></div>
+			</form>}
 			{popup.kind === 'project-group' && <>
 				{menuItem({ icon: 'trash', label: t('sidebar.dissolveGroup'), shortcut: 'D', disabled: pending, onSelect: () => { const groupId = popup.groupId; setPopup(null); setProjectGroupItems(current => current.filter(group => group.id !== groupId)); } })}
 				<p className="pd-sidebar-menu-note">{t('sidebar.dissolveProjectGroupHint')}</p>
@@ -1303,7 +1365,7 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 					setPopup(null);
 				} })}
 			</>}
-			{submenu && (popup.kind === 'session' || popup.kind === 'project') && <SidebarSubmenu anchor={submenu.anchor} label={t(submenu.key === 'open' ? 'sidebar.openIn' : submenu.key === 'appearance' ? 'sidebar.appearance' : 'sidebar.moveToGroup')} autoFocus={submenu.keyboard}
+			{submenu && (popup.kind === 'session' || popup.kind === 'project') && <SidebarSubmenu anchor={submenu.anchor} label={t(submenu.key === 'open' ? 'sidebar.openIn' : submenu.key === 'appearance' ? 'sidebar.appearance' : submenu.key === 'custom' ? 'sidebar.customCommand' : 'sidebar.moveToGroup')} autoFocus={submenu.keyboard}
 				onPointerEnter={clearSubmenuTimer} onClose={(restore) => { const anchor = submenu.anchor; setSubmenu(null); if (restore) anchor.focus(); }}>
 				{submenu.key === 'open' && popup.kind === 'session' && <>
 					{submenuItem({ key: 'new-window', label: t('sidebar.openInNewWindow'), index: 1, icon: 'maximize', disabled: !bridge?.openSessionInNewWindow || sessionBusy(popup.session), onSelect: () => openInNewWindow(popup.session) })}
@@ -1331,6 +1393,21 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 						onSelect: () => { const workspace = popup.workspace; setPopup(null); setProjectGroupItems(current => assignProjectToGroup(current, workspace, group?.id ?? null)); },
 					}))}
 					{projectGroupItems.length === 0 && <p className="pd-sidebar-menu-note">{t('sidebar.createGroupFirst')}</p>}
+				</>}
+				{submenu.key === 'custom' && popup.kind === 'project' && <>
+					{(customEntries[sidebarWorkspaceKey(popup.workspace)] ?? []).map((entry) => {
+						const workspace = popup.workspace;
+						return <div key={entry.id} onContextMenu={(event) => { event.preventDefault(); event.stopPropagation(); setCustomEntryFlyout({ entryId: entry.id, anchor: event.currentTarget }); }}>
+							{submenuItem({ key: entry.id, label: projectCustomEntryDisplayName(entry), icon: entry.kind === 'command' ? 'terminal' : entry.target === 'folder' ? 'folder' : 'file', onSelect: () => { setPopup(null); if (entry.kind === 'command') void runCustomCommand(workspace, entry.value).catch((error) => onError(error instanceof Error ? error.message : String(error))); else void openCustomPath(workspace, entry.value).catch((error) => onError(error instanceof Error ? error.message : String(error))); } })}
+						</div>;
+					})}
+					{(customEntries[sidebarWorkspaceKey(popup.workspace)]?.length ?? 0) > 0 && <p className="pd-sidebar-menu-note">{t('sidebar.customEntryHint')}</p>}
+					{submenuItem({ key: 'add-command', label: t('sidebar.customCommandAdd'), icon: 'plus', onSelect: () => { const workspace = popup.workspace; setCustomDraft(''); setPopup({ kind: 'add-custom-command', workspace, anchor: popup.anchor, trigger: popup.trigger }); } })}
+					{submenuItem({ key: 'add-open', label: t('sidebar.customOpenAdd'), icon: 'plus', onSelect: () => { const workspace = popup.workspace; setCustomPathDraft(''); setPopup({ kind: 'add-custom-open', workspace, anchor: popup.anchor, trigger: popup.trigger }); } })}
+					{customEntryFlyout && <SidebarSubmenu anchor={customEntryFlyout.anchor} label={t('sidebar.customRename')} autoFocus onPointerEnter={clearBarSubTimer} onClose={() => setCustomEntryFlyout(null)}>
+						{submenuItem({ key: 'rename', label: t('sidebar.customRename'), icon: 'pencil', onSelect: () => { const workspace = popup.workspace; const entryId = customEntryFlyout.entryId; setCustomRenameDraft((customEntries[sidebarWorkspaceKey(workspace)] ?? []).find((entry) => entry.id === entryId)?.label ?? ''); setCustomEntryFlyout(null); setPopup({ kind: 'rename-custom-entry', workspace, entryId, anchor: popup.anchor, trigger: popup.trigger }); } })}
+						{submenuItem({ key: 'delete', label: t('sidebar.customDelete'), icon: 'trash', onSelect: () => { removeCustomEntry(popup.workspace, customEntryFlyout.entryId); setCustomEntryFlyout(null); } })}
+					</SidebarSubmenu>}
 				</>}
 				{submenu.key === 'appearance' && popup.kind === 'project' && <>
 					<button type="button" role="menuitem" className="pd-menu-item" aria-haspopup="menu" aria-expanded={barFlyout !== null}

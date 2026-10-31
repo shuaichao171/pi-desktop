@@ -18,11 +18,22 @@ export function requireRendererSender(event: IpcMainInvokeEvent): BrowserWindow 
 interface RendererSenderRestriction {
 	isPaiSender(event: IpcMainInvokeEvent): boolean;
 	mainOnlyChannels: ReadonlySet<string>;
+	/** Folder a hosted pai window was opened for; undefined for other windows. */
+	hostedWorkspace(event: IpcMainInvokeEvent): string | undefined;
 }
 let senderRestriction: RendererSenderRestriction | null = null;
 
 export function setRendererSenderRestriction(restriction: RendererSenderRestriction | null): void {
 	senderRestriction = restriction;
+}
+
+/**
+ * Folder a hosted pai chat window is bound to; undefined for every other window.
+ * Read-only handlers a pai window may also reach use it to stay inside the folder
+ * the window was opened for instead of the main window's active workspace.
+ */
+export function hostedSenderWorkspace(event: IpcMainInvokeEvent): string | undefined {
+	return senderRestriction?.hostedWorkspace(event);
 }
 
 export function handleRendererInvoke<Args extends unknown[]>(channel: string, handler: (event: IpcMainInvokeEvent, ...args: Args) => unknown): void {

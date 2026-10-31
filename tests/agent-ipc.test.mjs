@@ -248,8 +248,17 @@ test('hosted pai windows route to their own agent and lose main-window-only feat
     onEvent() {}, onBackgroundActivity() {}, async dispose() {},
     async getSnapshot() { return { cwd: 'main', sessionPath: null }; },
   };
+  const paiFolder = join(root, 'pai-project');
+  await mkdir(paiFolder, { recursive: true });
+  await writeFile(join(paiFolder, 'note.txt'), 'pai note');
+  // The hosted window's own agent host: its "new conversation" moves its session
+  // without ever touching the main window's agent or workspace.
+  let paiSessionPath = null;
+  let paiNewSessions = 0;
   const paiAgent = {
-    async getSnapshot() { return { cwd: 'pai', sessionPath: null }; },
+    async getSnapshot() { return paiSessionPath ? { cwd: paiFolder, sessionPath: paiSessionPath } : { cwd: 'pai', sessionPath: null }; },
+    async newSession() { paiNewSessions += 1; paiSessionPath = join(paiFolder, 'two.jsonl'); },
+    async searchWorkspaceFiles(cwd, query) { return { cwd, query }; },
   };
   const ipc = await import('../packages/desktop/src/main/ipc.ts?pai-hosted');
   const { registerPaiWindowSlot, unregisterPaiWindowSlot } = await import('../packages/desktop/src/main/paiWindows.ts');
@@ -264,7 +273,7 @@ test('hosted pai windows route to their own agent and lose main-window-only feat
   const mainSender = { sender: main.webContents, senderFrame: main.webContents.mainFrame };
   const paiSender = { sender: pai.webContents, senderFrame: pai.webContents.mainFrame };
   const call = (sender, channel, ...args) => globalThis.__ipcHandlers.get(channel)(sender, ...args);
-  registerPaiWindowSlot({ win: pai, agent: paiAgent, liveSessionPath: null, busy: false });
+  registerPaiWindowSlot({ win: pai, cwd: paiFolder, agent: paiAgent, liveSessionPath: null, busy: false });
   assert.equal(call(paiSender, channels.appInfo).windowMode, 'pai');
   assert.equal(call(mainSender, channels.appInfo).windowMode, 'full');
   assert.deepEqual(call(paiSender, channels.updateState), { phase: 'unavailable', unavailableReason: 'unsupported', currentVersion: '0.1.7-test' });
@@ -279,6 +288,14 @@ test('hosted pai windows route to their own agent and lose main-window-only feat
   // Agent calls route to the requesting window's own agent host.
   assert.deepEqual(await call(paiSender, channels.agentSnapshot), { cwd: 'pai', sessionPath: null });
   assert.deepEqual(await call(mainSender, channels.agentSnapshot), { cwd: 'main', sessionPath: null });
+  // Read-only chat surfaces the window may reach stay inside its own folder.
+  assert.deepEqual(await call(paiSender, channels.workspaceSearchFiles, 'note'), { cwd: paiFolder, query: 'note' });
+  assert.equal((await call(paiSender, channels.contextRead, { kind: 'file', workspace: paiFolder, path: 'note.txt' })).name, 'note.txt');
+  await assert.rejects(() => call(paiSender, channels.contextRead, { kind: 'file', workspace: join(root, 'elsewhere'), path: 'note.txt' }), /未知工作区/);
+  // Its own "new conversation" creates inside its own agent host and keeps its folder.
+  assert.deepEqual(await call(paiSender, channels.agentNewSession), { cwd: paiFolder, sessionPath: join(paiFolder, 'two.jsonl') });
+  assert.equal(paiNewSessions, 1);
+  await assert.rejects(() => call(paiSender, channels.agentNewSession, { cwd: join(root, 'elsewhere') }), /打开它的文件夹/);
   unregisterPaiWindowSlot(pai);
   // Without a registered slot the same window is treated like a full window again.
   assert.equal(call(paiSender, channels.appInfo).windowMode, 'full');

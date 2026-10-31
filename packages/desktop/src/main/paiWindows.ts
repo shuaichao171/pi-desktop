@@ -10,6 +10,8 @@ import type { BrowserWindow, IpcMainInvokeEvent, WebContents } from 'electron';
 
 export interface PaiWindowSlot {
 	win: BrowserWindow;
+	/** Folder this window was opened for; every read-only surface stays inside it. */
+	cwd: string;
 	agent: unknown;
 	/** Session the slot's agent currently has open; null while switching or fresh. */
 	liveSessionPath: string | null;

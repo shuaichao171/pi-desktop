@@ -10,9 +10,10 @@ interface SidebarProps {
 	onNavigate(): void;
 	/** False while a non-chat view (automations/plugins) is the active page; clears the session-list highlight. */
 	sessionsActive: boolean;
+	onOpenTerminal?: () => void;
 }
 
-export function Sidebar({ open, projectRevealRequest = 0, narrow, onNavigate, sessionsActive }: SidebarProps) {
+export function Sidebar({ open, projectRevealRequest = 0, narrow, onNavigate, sessionsActive, onOpenTerminal }: SidebarProps) {
 	const { t } = useT();
 	const [actionError, setActionError] = useState<string | null>(null);
 	const reportActionError = useCallback((message: string | null) => {
@@ -22,7 +23,7 @@ export function Sidebar({ open, projectRevealRequest = 0, narrow, onNavigate, se
 	const collapsed = !open && !narrow;
 	return <aside className={`pd-sidebar${collapsed ? ' is-collapsed' : ''}${open ? ' is-open' : ''}`} aria-label={t('sidebar.main')} aria-hidden={narrow && !open} inert={narrow && !open}>
 		<div className="pd-sidebar-session-content" aria-hidden={!open} inert={!open}>
-			<SidebarSessionPanel visible={open} projectRevealRequest={projectRevealRequest} alternateViewOpen={!sessionsActive} onNavigate={onNavigate} onError={reportActionError} />
+			<SidebarSessionPanel visible={open} projectRevealRequest={projectRevealRequest} alternateViewOpen={!sessionsActive} onNavigate={onNavigate} onError={reportActionError} onOpenTerminal={onOpenTerminal} />
 		</div>
 		{actionError && <div className="pd-sidebar-error pd-sidebar-detail" role="alert">{actionError}</div>}
 	</aside>;

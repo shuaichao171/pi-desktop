@@ -1,22 +1,30 @@
-import { dialog, shell } from 'electron';
+import { dialog, shell, type IpcMainInvokeEvent } from 'electron';
 import { IPC_CHANNELS } from '@pidesktop/shared';
 import { getAppLocale } from './appLocale';
 import { WorkbenchService, type ProjectNicknameStore } from './workbenchService';
 import { ResultFileService } from './resultFileService';
 import { createWorkspaceWatcher } from './workspaceWatcher.ts';
-import { broadcastToRenderers, handleRendererInvoke, requireRendererSender } from './rendererIpc';
+import { broadcastToRenderers, handleRendererInvoke, hostedSenderWorkspace, requireRendererSender } from './rendererIpc';
+import { isAbsolute, join } from 'node:path';
+import { app } from 'electron';
 
 export function registerWorkbenchIpc(getWorkspace: () => string, nicknameStore?: ProjectNicknameStore): WorkbenchService {
 	const resultFiles = new ResultFileService(getWorkspace);
-	handleRendererInvoke(IPC_CHANNELS.resultFileOpen, (event, target: unknown) => resultFiles.openResultFile(target, (path) => {
+	// A hosted pai window previews files in the folder it was opened for, so its
+	// link guards compare against that folder instead of the main window's one.
+	const filesFor = (event: IpcMainInvokeEvent): ResultFileService => {
+		const hosted = hostedSenderWorkspace(event);
+		return hosted === undefined || hosted === getWorkspace() ? resultFiles : new ResultFileService(() => hosted);
+	};
+	handleRendererInvoke(IPC_CHANNELS.resultFileOpen, (event, target: unknown) => filesFor(event).openResultFile(target, (path) => {
 		requireRendererSender(event);
 		return shell.openPath(path);
 	}));
-	handleRendererInvoke(IPC_CHANNELS.resultFileReveal, (event, target: unknown) => resultFiles.revealResultFile(target, (path) => {
+	handleRendererInvoke(IPC_CHANNELS.resultFileReveal, (event, target: unknown) => filesFor(event).revealResultFile(target, (path) => {
 		requireRendererSender(event);
 		shell.showItemInFolder(path);
 	}));
-	handleRendererInvoke(IPC_CHANNELS.resultFilePreview, (event, target: unknown) => resultFiles.previewResultFile(target).then(preview => {
+	handleRendererInvoke(IPC_CHANNELS.resultFilePreview, (event, target: unknown) => filesFor(event).previewResultFile(target).then(preview => {
 		requireRendererSender(event);
 		return preview;
 	}));
@@ -37,6 +45,22 @@ export function registerWorkbenchIpc(getWorkspace: () => string, nicknameStore?:
 			requireRendererSender(event);
 			return shell.openPath(path);
 		});
+	});
+	// 自定义命令的“打开文件或文件夹”：相对路径按项目根解析，~ 展开为用户目录；文件用默认程序，文件夹用资源管理器。
+	handleRendererInvoke(IPC_CHANNELS.workspaceOpenPath, async (event, path: unknown, cwd: unknown) => {
+		requireRendererSender(event);
+		if (typeof path !== 'string' || path.trim().length === 0) throw new Error('路径无效');
+		if (typeof cwd !== 'string' || cwd.length === 0) throw new Error('项目路径无效');
+		const expanded = path.startsWith('~') ? join(app.getPath('home'), path.slice(1)) : path;
+		const resolved = isAbsolute(expanded) ? expanded : join(cwd, expanded);
+		const failure = await shell.openPath(resolved);
+		if (failure) throw new Error(failure);
+	});
+	handleRendererInvoke(IPC_CHANNELS.workspacePickPath, async (event, mode: unknown, cwd: unknown) => {
+		requireRendererSender(event);
+		if (mode !== 'file' && mode !== 'folder') throw new Error('选择模式无效');
+		const result = await dialog.showOpenDialog({ properties: mode === 'file' ? ['openFile', 'treatPackageAsDirectory'] : ['openDirectory'], defaultPath: typeof cwd === 'string' && cwd ? cwd : undefined });
+		return result.canceled || result.filePaths.length === 0 ? null : result.filePaths[0];
 	});
 	handleRendererInvoke(IPC_CHANNELS.workspaceOpenWith, async (_event, cwd: unknown, openerId: unknown) => {
 		if (typeof cwd !== 'string' || typeof openerId !== 'string') throw new Error('打开方式无效');
@@ -64,7 +88,7 @@ export function registerWorkbenchIpc(getWorkspace: () => string, nicknameStore?:
 	});
 	handleRendererInvoke(IPC_CHANNELS.workspaceCommitContext, () => service.gitCommitContext());
 	handleRendererInvoke(IPC_CHANNELS.workspaceCommit, (_event, message: string) => service.gitCommit(message));
-	handleRendererInvoke(IPC_CHANNELS.workspaceListEntries, (_event, relativePath?: string) => service.listEntries(relativePath));
+	handleRendererInvoke(IPC_CHANNELS.workspaceListEntries, (event, relativePath?: string) => service.listEntries(relativePath, hostedSenderWorkspace(event)));
 	handleRendererInvoke(IPC_CHANNELS.workspaceReadFile, (_event, relativePath: string) => service.readFile(relativePath));
 	handleRendererInvoke(IPC_CHANNELS.workspaceCreateEntry, (_event, parentPath: unknown, name: unknown, kind: unknown) => {
 		if (typeof parentPath !== 'string' || typeof name !== 'string' || (kind !== 'file' && kind !== 'directory')) throw new Error('新建参数无效');

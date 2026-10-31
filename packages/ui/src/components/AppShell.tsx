@@ -418,6 +418,8 @@ export function AppShell() {
 				<div className="pd-notification-center"><div ref={setNotificationTarget} className="pd-extension-notification-slot" /></div>
 				</div>
 				{settingsOpen && <SettingsPanel initialPage={settingsInitialPage} modelManagementTarget={settingsInitialPage === 'model' ? modelManagementTarget : undefined} onClose={() => setSettingsOpen(false)} themePreference={themePreference} onThemePreferenceChange={setThemePreference} colorPreferences={colorPreferences} onColorPreferencesChange={setColorPreferences} colorSaveFailed={colorSaveFailed} />}
+				{/* The chat surface keeps result-file links usable, so the dialog they open is rendered here too. */}
+				<ResultFilePreviewDialogRoot />
 				{isWindows && <WindowControls />}
 			</div>
 		</ExtensionDialogHost>
@@ -444,6 +446,7 @@ export function AppShell() {
 					narrow={narrow}
 					onNavigate={() => { setMainView('chat'); if (narrow) setSidebarOpen(false); }}
 					sessionsActive={mainView === 'chat'}
+					onOpenTerminal={() => { setMainView('chat'); setWorkbenchOpen(true); setTerminalRequest(value => value + 1); }}
 				/>
 			{!narrow && sidebarOpen && <div className="pd-sidebar-resize" role="separator" aria-label={t('app.resizeSidebar')} aria-orientation="vertical" aria-valuemin={MIN_SIDEBAR_WIDTH} aria-valuemax={MAX_SIDEBAR_WIDTH} aria-valuenow={sidebarWidth} tabIndex={0} onPointerDown={startResize} onPointerMove={moveResize} onPointerUp={stopResize} onPointerCancel={stopResize} onLostPointerCapture={stopResize} onKeyDown={(event) => {
 				if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
