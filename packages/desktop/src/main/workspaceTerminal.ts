@@ -3,6 +3,7 @@ import { execFile } from 'node:child_process';
 import { realpath, stat } from 'node:fs/promises';
 import type { IPty } from 'node-pty';
 import type { WorkspaceTerminalEvent, WorkspaceTerminalSnapshot } from '@pidesktop/shared/workbenchFeatures';
+import { workspaceKey } from './workspaceKey.ts';
 type Terminal = { pty: IPty; snapshot: WorkspaceTerminalSnapshot; pending: Map<number, number>; pendingBytes: number; paused: boolean; buffer: string; released?: boolean; timer?: ReturnType<typeof setTimeout> };
 type PtyAgentSocket = { on?(event: 'error', listener: (error: Error) => void): unknown; destroy?(): void };
 // node-pty's Windows ConPTY agent exposes its pipes only through private fields.
@@ -63,6 +64,21 @@ export class WorkspaceTerminalService {
   resize(request: { id: string; cols: number; rows: number }) { this.dimensions(request.cols, request.rows); const terminal = this.owned(request.id); if (terminal.snapshot.running) terminal.pty.resize(request.cols, request.rows); }
   acknowledge(request: { id: string; sequence: number }) { const terminal = this.owned(request.id); if (!Number.isSafeInteger(request.sequence) || request.sequence < 0 || request.sequence > terminal.snapshot.sequence) throw new Error('终端回执无效'); for (const [sequence, size] of terminal.pending) if (sequence <= request.sequence) { terminal.pending.delete(sequence); terminal.pendingBytes -= size; } if (terminal.paused && terminal.pendingBytes + terminal.buffer.length < 64 * 1024 && terminal.snapshot.running) { terminal.paused = false; terminal.pty.resume(); } }
   async close(id: string) { const terminal = this.owned(id); await this.stop(terminal); }
+  /**
+   * Releases a terminal belonging to a workspace that is going away.
+   *
+   * close() only accepts the terminal of the *current* workspace, so removing a
+   * project while another one is active used to leave its shell running with an id
+   * the renderer could never present again: the workspace came back without its
+   * terminal pane and the orphaned pty blocked every later open() with
+   * "已有终端位于 <removed path>" until the app restarted.
+   */
+  async closeForWorkspace(cwd: string): Promise<boolean> {
+    const terminal = this.terminal;
+    if (!terminal || workspaceKey(terminal.snapshot.cwd) !== workspaceKey(cwd)) return false;
+    await this.stop(terminal);
+    return true;
+  }
   private release(terminal: Terminal) {
     if (terminal.released) return;
     terminal.released = true;
