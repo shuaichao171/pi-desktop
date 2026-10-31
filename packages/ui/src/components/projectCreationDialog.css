@@ -18,7 +18,7 @@
 .pd-project-create-dialog::backdrop { background: var(--pd-overlay); }
 .pd-project-create-dialog > form { min-width: 0; margin: 0; }
 .pd-project-create-dialog header { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin: 0 0 18px; }
-.pd-project-create-dialog h2 { margin: 0; font-size: calc(var(--pd-font-base) + 10px); font-weight: 650; line-height: 1.35; overflow-wrap: anywhere; }
+.pd-project-create-dialog h2 { margin: 0; font-size: calc(var(--pd-font-base) + 10px); font-weight: var(--pd-weight-semibold); line-height: 1.35; overflow-wrap: anywhere; }
 .pd-project-create-dialog header > button { display: grid; flex: 0 0 30px; place-items: center; width: 30px; height: 30px; padding: 0; border: 0; border-radius: var(--pd-radius-md); background: transparent; color: var(--pd-text-subtle); cursor: pointer; }
 .pd-project-create-dialog header > button:hover:not(:disabled) { background: var(--pd-surface-hover); color: var(--pd-text); }
 .pd-project-create-name { display: flex; align-items: center; gap: 14px; width: 100%; min-width: 0; min-height: 50px; padding: 0 16px; border: 1px solid var(--pd-border); border-radius: var(--pd-radius-lg); background: var(--pd-surface-muted); }
@@ -28,10 +28,10 @@
 .pd-project-create-name input { display: block; flex: 1; width: 100%; min-width: 0; min-height: 48px; padding: 0; border: 0; border-radius: 0; outline: 0; background: transparent; color: var(--pd-text); font: inherit; font-size: calc(var(--pd-font-base) + 2px); }
 .pd-project-create-name input::placeholder { color: var(--pd-text-subtle); }
 .pd-project-create-name input:focus-visible { outline: 0; }
-.pd-project-create-source-label { display: block; margin: 18px 0 10px; color: var(--pd-text); font-size: calc(var(--pd-font-base) + 1px); font-weight: 600; line-height: 1.5; }
+.pd-project-create-source-label { display: block; margin: 18px 0 10px; color: var(--pd-text); font-size: calc(var(--pd-font-base) + 1px); font-weight: var(--pd-weight-semibold); line-height: 1.5; }
 .pd-project-create-source { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; min-width: 0; min-height: 130px; padding: 22px 18px; border: 1px solid var(--pd-border); border-radius: var(--pd-radius-lg); }
 .pd-project-create-source-picker { position: relative; display: inline-flex; align-items: center; max-width: 100%; min-width: 0; }
-.pd-project-create-source-picker select { appearance: none; width: 100%; min-width: 0; max-width: 100%; min-height: 32px; padding: 3px 28px 3px 8px; border: 0; border-radius: var(--pd-radius-sm); background: transparent; color: var(--pd-text-subtle); font: inherit; font-size: calc(var(--pd-font-base) + 1px); font-weight: 550; line-height: 1.5; text-overflow: ellipsis; cursor: pointer; }
+.pd-project-create-source-picker select { appearance: none; width: 100%; min-width: 0; max-width: 100%; min-height: 32px; padding: 3px 28px 3px 8px; border: 0; border-radius: var(--pd-radius-sm); background: transparent; color: var(--pd-text-subtle); font: inherit; font-size: calc(var(--pd-font-base) + 1px); font-weight: var(--pd-weight-medium); line-height: 1.5; text-overflow: ellipsis; cursor: pointer; }
 .pd-project-create-source-picker select:hover:not(:disabled) { background: var(--pd-surface-hover); color: var(--pd-text); }
 .pd-project-create-source-picker select option { background: var(--pd-surface); color: var(--pd-text); }
 .pd-project-create-source-picker > svg { position: absolute; right: 8px; flex-shrink: 0; color: var(--pd-text-subtle); pointer-events: none; }

@@ -3,11 +3,11 @@
 .pd-office-preview-toolbar span, .pd-office-preview-note { color: var(--pd-text-subtle); font-size: var(--pd-font-caption); }
 .pd-office-preview-toolbar select { max-width: 260px; padding: 4px 8px; border: 1px solid var(--pd-border); border-radius: var(--pd-radius-xs); color: var(--pd-text); background: var(--pd-bg); font: inherit; }
 .pd-office-preview-note { margin: 0; padding: 8px 16px; border-bottom: 1px solid var(--pd-border-soft); }
-.pd-office-preview-note strong { font-weight: 600; }
+.pd-office-preview-note strong { font-weight: var(--pd-weight-semibold); }
 .pd-office-preview-content { flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; }
 .pd-office-document { box-sizing: border-box; max-width: 840px; min-height: 100%; margin: auto; padding: 32px 40px; background: var(--pd-surface); line-height: 1.8; overflow-wrap: anywhere; }
 .pd-office-document p { min-height: 1em; margin: 0 0 12px; white-space: pre-wrap; }
-.pd-office-document .is-heading { font-weight: 650; font-size: 1.15em; margin: 24px 0 12px; }
+.pd-office-document .is-heading { font-weight: var(--pd-weight-semibold); font-size: 1.15em; margin: 24px 0 12px; }
 .pd-office-document .level-1 { font-size: 1.65em; }
 .pd-office-document .level-2 { font-size: 1.4em; }
 .pd-office-document table { width: 100%; table-layout: fixed; border-collapse: collapse; margin: 16px 0; }
@@ -15,7 +15,7 @@
 .pd-office-document td p:last-child { margin-bottom: 0; }
 .pd-office-sheet { min-width: 100%; border-collapse: separate; border-spacing: 0; font-size: var(--pd-font-caption); }
 .pd-office-sheet :is(th, td) { min-width: 70px; max-width: 360px; height: 30px; padding: 4px 9px; border-right: 1px solid var(--pd-border-soft); border-bottom: 1px solid var(--pd-border-soft); text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.pd-office-sheet th { color: var(--pd-text-subtle); font-weight: 500; background: var(--pd-surface); }
+.pd-office-sheet th { color: var(--pd-text-subtle); font-weight: var(--pd-weight-medium); background: var(--pd-surface); }
 .pd-office-sheet thead th { position: sticky; top: 0; z-index: 1; }
 .pd-office-sheet th:first-child { position: sticky; left: 0; min-width: 3ch; text-align: right; }
 .pd-office-sheet thead th:first-child { z-index: 2; }
@@ -24,6 +24,6 @@
 /* PowerPoint slide text preview */
 .pd-office-slides { display: flex; flex-direction: column; gap: 10px; }
 .pd-office-slide { border: 1px solid var(--pd-border-soft, var(--pd-border)); border-radius: var(--pd-radius-sm); padding: 8px 12px; }
-.pd-office-slide h3 { margin: 0 0 6px; font-size: var(--pd-font-xs); font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--pd-text-weak); }
+.pd-office-slide h3 { margin: 0 0 6px; font-size: var(--pd-font-xs); font-weight: var(--pd-weight-semibold); text-transform: uppercase; letter-spacing: var(--pd-tracking-wide); color: var(--pd-text-weak); }
 .pd-office-slide p { margin: 2px 0; }
 .pd-office-slide-empty { color: var(--pd-text-weak); }

@@ -23,7 +23,7 @@
 .pd-code-block .hljs-symbol, .pd-code-block .hljs-bullet, .pd-code-block .hljs-link { color: var(--pd-hl-symbol); }
 .pd-code-block .hljs-tag, .pd-code-block .hljs-name, .pd-code-block .hljs-selector-id, .pd-code-block .hljs-selector-class { color: var(--pd-hl-tag); }
 .pd-code-block .hljs-emphasis { font-style: italic; }
-.pd-code-block .hljs-strong { font-weight: 600; }
+.pd-code-block .hljs-strong { font-weight: var(--pd-weight-semibold); }
 
 /* Mermaid diagram blocks */
 .pd-mermaid-body { overflow: auto; padding: 10px 12px; }

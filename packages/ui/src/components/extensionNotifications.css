@@ -67,7 +67,7 @@
 .pd-extension-notice.is-warning { border-left-color: var(--pd-warning); }
 .pd-extension-notice.is-error { border-left-color: var(--pd-danger); }
 .pd-extension-notice > div { flex: 1; min-width: 0; }
-.pd-extension-notice strong { display: block; font-weight: 600; }
+.pd-extension-notice strong { display: block; font-weight: var(--pd-weight-semibold); }
 .pd-extension-notice p { margin: 4px 0 0; color: var(--pd-text-subtle); white-space: pre-wrap; }
 .pd-extension-notice button { display: grid; flex: 0 0 auto; place-items: center; width: 22px; height: 22px; padding: 0; border: 0; border-radius: var(--pd-radius-xs); background: transparent; color: var(--pd-text-subtle); cursor: pointer; }
 .pd-extension-notice button:hover { background: var(--pd-surface-hover); color: var(--pd-text); }

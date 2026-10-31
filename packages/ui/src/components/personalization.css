@@ -2,13 +2,13 @@
 .pd-instruction-card { margin-top: 18px; padding: 16px; border: 1px solid var(--pd-border); border-radius: var(--pd-radius-md); background: var(--pd-surface); }
 .pd-instruction-card:focus-within { border-color: var(--pd-border-strong, var(--pd-border)); }
 .pd-instruction-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.pd-instruction-heading h3 { margin: 0; font-size: var(--pd-font-base); font-weight: 600; }
+.pd-instruction-heading h3 { margin: 0; font-size: var(--pd-font-base); font-weight: var(--pd-weight-semibold); }
 .pd-instruction-heading > span { flex-shrink: 0; padding: 0 8px; border-radius: 999px; background: color-mix(in srgb, var(--pd-text) 8%, transparent); color: var(--pd-text-subtle); font-size: var(--pd-font-xs); line-height: 20px; }
 .pd-instruction-heading > span.is-exists { background: color-mix(in srgb, var(--pd-success) 14%, transparent); color: var(--pd-success); }
 .pd-instruction-description { margin: 6px 0 10px; color: var(--pd-text-subtle); font-size: var(--pd-font-sm); line-height: 1.6; }
 .pd-instruction-path { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; padding: 3px 9px; border-radius: var(--pd-radius-sm); background: color-mix(in srgb, var(--pd-text) 5%, transparent); color: var(--pd-text-subtle); font: var(--pd-font-xs)/1.6 var(--pd-font-mono, ui-monospace, Consolas, monospace); overflow-wrap: anywhere; user-select: text; }
 .pd-instruction-path > svg { flex: 0 0 auto; color: var(--pd-text-weak); }
-.pd-instruction-label { display: block; margin: 14px 0 7px; color: var(--pd-text-subtle); font-size: var(--pd-font-sm); font-weight: 500; }
+.pd-instruction-label { display: block; margin: 14px 0 7px; color: var(--pd-text-subtle); font-size: var(--pd-font-sm); font-weight: var(--pd-weight-medium); }
 .pd-instruction-editor { display: block; width: 100%; min-height: 155px; max-height: 440px; padding: 11px 12px; resize: vertical; border: 1px solid var(--pd-border); border-radius: var(--pd-radius-sm); background: var(--pd-bg); transition: border-color var(--pd-motion-fast, 120ms) ease; color: var(--pd-text); font: var(--pd-code-font-size, 12px)/1.65 ui-monospace, Consolas, 'Microsoft YaHei', monospace; tab-size: 2; }
 .pd-instruction-editor::placeholder { color: var(--pd-text-weak); }
 .pd-instruction-editor:focus { outline: none; border-color: var(--pd-focus-border, var(--pd-brand)); }

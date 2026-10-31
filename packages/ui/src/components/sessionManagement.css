@@ -27,7 +27,7 @@
 .pd-session-management-segmented { display: inline-flex; flex: 0 0 auto; gap: 2px; height: 34px; padding: 3px; border: 1px solid var(--pd-border); border-radius: var(--pd-radius-sm); background: var(--pd-surface-muted, var(--pd-bg)); }
 .pd-session-management-segmented button { padding: 0 12px; border: 0; border-radius: calc(var(--pd-radius-sm) - 2px); background: transparent; color: var(--pd-text-subtle); font-size: var(--pd-font-sm); white-space: nowrap; cursor: pointer; transition: background var(--pd-motion-fast, 120ms) ease, color var(--pd-motion-fast, 120ms) ease; }
 .pd-session-management-segmented button:hover { color: var(--pd-text); }
-.pd-session-management-segmented button.is-active { background: var(--pd-surface-raised, var(--pd-surface)); color: var(--pd-text); font-weight: 600; box-shadow: var(--pd-shadow-low, 0 1px 2px rgb(0 0 0 / 12%)); }
+.pd-session-management-segmented button.is-active { background: var(--pd-surface-raised, var(--pd-surface)); color: var(--pd-text); font-weight: var(--pd-weight-semibold); box-shadow: var(--pd-shadow-low, 0 1px 2px rgb(0 0 0 / 12%)); }
 .pd-session-management-segmented button:focus-visible { outline: 2px solid var(--pd-brand); outline-offset: 1px; }
 
 /* Summary / selection bar ------------------------------------------------- */
@@ -35,10 +35,10 @@
 .pd-session-management-count { flex: 1; min-width: 0; margin: 0; color: var(--pd-text-weak); font-size: var(--pd-font-sm); font-variant-numeric: tabular-nums; }
 .pd-session-management-summary span[role='status'] { flex: 0 0 auto; color: var(--pd-success); font-size: var(--pd-font-sm); }
 .pd-session-management-selection { padding: 0 6px 0 12px; border: 1px solid color-mix(in srgb, var(--pd-brand) 35%, transparent); border-radius: var(--pd-radius-sm); background: color-mix(in srgb, var(--pd-brand) 8%, transparent); font-size: var(--pd-font-sm); }
-.pd-session-management-selection > span { flex: 1; font-weight: 600; }
+.pd-session-management-selection > span { flex: 1; font-weight: var(--pd-weight-semibold); }
 .pd-session-management-selection button { display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 10px; border: 1px solid transparent; border-radius: var(--pd-radius-xs, 4px); background: transparent; color: var(--pd-text-subtle); font-size: var(--pd-font-sm); cursor: pointer; }
 .pd-session-management-selection button:hover { background: var(--pd-surface-hover); color: var(--pd-text); }
-.pd-session-management-selection button.is-danger { border-color: var(--pd-danger-border); background: var(--pd-danger-surface); color: var(--pd-danger); font-weight: 600; }
+.pd-session-management-selection button.is-danger { border-color: var(--pd-danger-border); background: var(--pd-danger-surface); color: var(--pd-danger); font-weight: var(--pd-weight-semibold); }
 .pd-session-management-selection button.is-danger:hover { background: color-mix(in srgb, var(--pd-danger) 18%, transparent); }
 
 /* Status ------------------------------------------------------------------- */
@@ -60,14 +60,14 @@
 .pd-session-management-group-toggle:hover .pd-session-management-chevron, .pd-session-management-group-toggle:hover .pd-session-management-folder { color: var(--pd-text); }
 
 .pd-session-management-group-title { display: flex; flex: 1; flex-direction: column; gap: 2px; min-width: 0; }
-.pd-session-management-group-name { display: flex; align-items: center; gap: 6px; min-width: 0; font-size: var(--pd-font-caption); font-weight: 600; }
+.pd-session-management-group-name { display: flex; align-items: center; gap: 6px; min-width: 0; font-size: var(--pd-font-caption); font-weight: var(--pd-weight-semibold); }
 .pd-session-management-group-name > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pd-session-management-cwd { overflow: hidden; color: var(--pd-text-weak); font: var(--pd-font-xs)/1.5 var(--pd-font-mono, ui-monospace, Consolas, monospace); text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left; unicode-bidi: plaintext; }
 .pd-session-management-group-stats { display: flex; flex: 0 0 auto; flex-direction: column; align-items: flex-end; gap: 2px; color: var(--pd-text-weak); font-size: var(--pd-font-xs); font-variant-numeric: tabular-nums; }
 .pd-session-management-group-stats span:first-child { color: var(--pd-text-subtle); font-size: var(--pd-font-sm); }
 
 /* Badges ------------------------------------------------------------------- */
-.pd-session-management-flag { flex: 0 0 auto; padding: 0 7px; border-radius: var(--pd-radius-pill, 999px); background: color-mix(in srgb, var(--pd-text) 9%, transparent); color: var(--pd-text-subtle); font-size: var(--pd-font-xs); font-weight: 500; line-height: 18px; white-space: nowrap; }
+.pd-session-management-flag { flex: 0 0 auto; padding: 0 7px; border-radius: var(--pd-radius-pill, 999px); background: color-mix(in srgb, var(--pd-text) 9%, transparent); color: var(--pd-text-subtle); font-size: var(--pd-font-xs); font-weight: var(--pd-weight-medium); line-height: 18px; white-space: nowrap; }
 .pd-session-management-flag.is-current { background: color-mix(in srgb, var(--pd-brand) 15%, transparent); color: var(--pd-brand); }
 .pd-session-management-flag.is-running { background: color-mix(in srgb, var(--pd-success) 15%, transparent); color: var(--pd-success); }
 
@@ -81,7 +81,7 @@
 
 .pd-session-management-main { display: flex; flex: 1; flex-direction: column; gap: 3px; min-width: 0; }
 .pd-session-management-title { display: flex; align-items: center; gap: 6px; min-width: 0; }
-.pd-session-management-name { overflow: hidden; color: var(--pd-text); font-size: var(--pd-font-caption); font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
+.pd-session-management-name { overflow: hidden; color: var(--pd-text); font-size: var(--pd-font-caption); font-weight: var(--pd-weight-medium); text-overflow: ellipsis; white-space: nowrap; }
 .pd-session-management-name.is-archived { color: var(--pd-text-subtle); }
 .pd-session-management-meta { display: flex; flex-wrap: wrap; align-items: center; color: var(--pd-text-weak); font-size: var(--pd-font-xs); line-height: 1.5; font-variant-numeric: tabular-nums; }
 .pd-session-management-meta > span + span::before { margin: 0 6px; content: '·'; opacity: .7; }
@@ -107,7 +107,7 @@
 .pd-session-management-rename footer { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
 .pd-session-management-rename footer button { min-height: 32px; padding: 0 14px; border: 1px solid var(--pd-border); border-radius: var(--pd-radius-sm); background: var(--pd-surface); color: var(--pd-text); cursor: pointer; }
 .pd-session-management-rename footer button:hover:not(:disabled) { background: var(--pd-surface-hover); }
-.pd-session-management-rename footer button.is-primary { border-color: var(--pd-brand); background: var(--pd-brand); color: var(--pd-brand-ink, #fff); font-weight: 600; }
+.pd-session-management-rename footer button.is-primary { border-color: var(--pd-brand); background: var(--pd-brand); color: var(--pd-brand-ink, #fff); font-weight: var(--pd-weight-semibold); }
 .pd-session-management-rename footer button.is-primary:hover:not(:disabled) { background: var(--pd-brand-hover, var(--pd-brand)); }
 .pd-session-management-rename footer button:disabled { opacity: .5; cursor: not-allowed; }
 

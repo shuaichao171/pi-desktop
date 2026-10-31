@@ -11,9 +11,9 @@
 /* Buttons ------------------------------------------------------------------- */
 .pd-mcp-button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 32px; padding: 0 12px; border: 1px solid var(--pd-border); border-radius: var(--pd-radius-sm); background: var(--pd-surface); color: var(--pd-text); font: inherit; font-size: var(--pd-font-sm); white-space: nowrap; cursor: pointer; transition: background var(--pd-motion-fast, 120ms) ease, border-color var(--pd-motion-fast, 120ms) ease; }
 .pd-mcp-button:hover:not(:disabled) { background: var(--pd-surface-hover); }
-.pd-mcp-button.is-primary { border-color: var(--pd-brand); background: var(--pd-brand); color: var(--pd-brand-ink, #fff); font-weight: 600; }
+.pd-mcp-button.is-primary { border-color: var(--pd-brand); background: var(--pd-brand); color: var(--pd-brand-ink, #fff); font-weight: var(--pd-weight-semibold); }
 .pd-mcp-button.is-primary:hover:not(:disabled) { background: var(--pd-brand-hover, var(--pd-brand)); }
-.pd-mcp-button.is-danger { border-color: var(--pd-danger-border); background: var(--pd-danger-surface); color: var(--pd-danger); font-weight: 600; }
+.pd-mcp-button.is-danger { border-color: var(--pd-danger-border); background: var(--pd-danger-surface); color: var(--pd-danger); font-weight: var(--pd-weight-semibold); }
 .pd-mcp-button.is-danger:hover:not(:disabled) { background: color-mix(in srgb, var(--pd-danger) 18%, transparent); }
 .pd-mcp-button:disabled, .pd-mcp-icon-button:disabled { opacity: .45; cursor: not-allowed; }
 .pd-mcp-button:focus-visible, .pd-mcp-icon-button:focus-visible, .pd-mcp-switch:focus-visible { outline: 2px solid var(--pd-brand); outline-offset: 1px; }
@@ -28,7 +28,7 @@
 .pd-mcp-context > svg { flex: 0 0 auto; }
 .pd-mcp-owner { flex: 1 1 200px; min-width: 0; overflow: hidden; color: var(--pd-text-subtle); font: var(--pd-font-xs)/1.5 var(--pd-font-mono, ui-monospace, Consolas, monospace); text-overflow: ellipsis; white-space: nowrap; }
 
-.pd-mcp-chip { display: inline-flex; flex: 0 0 auto; align-items: center; padding: 0 7px; border-radius: var(--pd-radius-pill, 999px); background: color-mix(in srgb, var(--pd-text) 9%, transparent); color: var(--pd-text-subtle); font-size: var(--pd-font-xs); font-weight: 500; line-height: 18px; white-space: nowrap; }
+.pd-mcp-chip { display: inline-flex; flex: 0 0 auto; align-items: center; padding: 0 7px; border-radius: var(--pd-radius-pill, 999px); background: color-mix(in srgb, var(--pd-text) 9%, transparent); color: var(--pd-text-subtle); font-size: var(--pd-font-xs); font-weight: var(--pd-weight-medium); line-height: 18px; white-space: nowrap; }
 .pd-mcp-chip-id { margin-left: 5px; font-family: var(--pd-font-mono); font-size: inherit; }
 .pd-mcp-chip.is-success { background: color-mix(in srgb, var(--pd-success) 15%, transparent); color: var(--pd-success); }
 .pd-mcp-chip.is-warning { background: color-mix(in srgb, var(--pd-warning) 16%, transparent); color: var(--pd-warning); }
@@ -56,7 +56,7 @@
 .pd-mcp-server.is-connected .pd-mcp-server-icon { background: color-mix(in srgb, var(--pd-success) 14%, transparent); color: var(--pd-success); }
 .pd-mcp-server.is-disabled .pd-mcp-server-icon, .pd-mcp-server.is-disabled h3 { opacity: .55; }
 .pd-mcp-server-title { display: flex; flex: 1; flex-direction: column; gap: 4px; min-width: 0; }
-.pd-mcp-server-title h3 { overflow: hidden; font-size: var(--pd-font-caption); font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.pd-mcp-server-title h3 { overflow: hidden; font-size: var(--pd-font-caption); font-weight: var(--pd-weight-semibold); text-overflow: ellipsis; white-space: nowrap; }
 .pd-mcp-server-title p { display: flex; flex-wrap: wrap; gap: 4px; margin: 0; }
 
 .pd-mcp-status { display: inline-flex; flex: 0 0 auto; align-items: center; gap: 6px; color: var(--pd-text-weak); font-size: var(--pd-font-sm); white-space: nowrap; }
@@ -108,22 +108,22 @@
 .pd-mcp-form > header { display: flex; flex: 0 0 auto; align-items: center; justify-content: space-between; padding: 16px 16px 12px 22px; border-bottom: 1px solid var(--pd-border-soft); }
 .pd-mcp-form > header h3 { font-size: var(--pd-font-lg); }
 .pd-mcp-form fieldset { display: flex; flex: 1; flex-direction: column; gap: 14px; min-width: 0; min-height: 0; margin: 0; padding: 18px 22px; overflow-y: auto; border: 0; }
-.pd-mcp-form label, .pd-mcp-field { display: flex; flex-direction: column; gap: 6px; min-width: 0; font-size: var(--pd-font-sm); font-weight: 600; }
-.pd-mcp-form small { margin-top: -2px; color: var(--pd-text-weak); font-size: var(--pd-font-xs); font-weight: 400; line-height: 1.5; }
-.pd-mcp-form input:not([type='checkbox']), .pd-mcp-form select, .pd-mcp-form textarea { box-sizing: border-box; width: 100%; min-height: 34px; padding: 6px 10px; border: 1px solid var(--pd-border); border-radius: var(--pd-radius-sm); background: var(--pd-surface); color: var(--pd-text); font: inherit; font-size: var(--pd-font-caption); font-weight: 400; }
+.pd-mcp-form label, .pd-mcp-field { display: flex; flex-direction: column; gap: 6px; min-width: 0; font-size: var(--pd-font-sm); font-weight: var(--pd-weight-semibold); }
+.pd-mcp-form small { margin-top: -2px; color: var(--pd-text-weak); font-size: var(--pd-font-xs); font-weight: var(--pd-weight-regular); line-height: 1.5; }
+.pd-mcp-form input:not([type='checkbox']), .pd-mcp-form select, .pd-mcp-form textarea { box-sizing: border-box; width: 100%; min-height: 34px; padding: 6px 10px; border: 1px solid var(--pd-border); border-radius: var(--pd-radius-sm); background: var(--pd-surface); color: var(--pd-text); font: inherit; font-size: var(--pd-font-caption); font-weight: var(--pd-weight-regular); }
 .pd-mcp-form textarea { resize: vertical; font-family: var(--pd-font-mono, ui-monospace, monospace); font-size: var(--pd-font-sm); }
 .pd-mcp-form input::placeholder, .pd-mcp-form textarea::placeholder { color: var(--pd-text-weak); }
 .pd-mcp-form input:focus, .pd-mcp-form select:focus, .pd-mcp-form textarea:focus { outline: none; border-color: var(--pd-focus-border, var(--pd-brand)); }
 .pd-mcp-form-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 
 .pd-mcp-segmented { display: flex; gap: 2px; padding: 3px; border: 1px solid var(--pd-border); border-radius: var(--pd-radius-sm); background: var(--pd-surface-muted, var(--pd-bg)); }
-.pd-mcp-segmented button { display: inline-flex; flex: 1; align-items: center; justify-content: center; gap: 6px; height: 28px; padding: 0 10px; border: 0; border-radius: calc(var(--pd-radius-sm) - 2px); background: transparent; color: var(--pd-text-subtle); font: inherit; font-size: var(--pd-font-sm); font-weight: 400; white-space: nowrap; cursor: pointer; }
+.pd-mcp-segmented button { display: inline-flex; flex: 1; align-items: center; justify-content: center; gap: 6px; height: 28px; padding: 0 10px; border: 0; border-radius: calc(var(--pd-radius-sm) - 2px); background: transparent; color: var(--pd-text-subtle); font: inherit; font-size: var(--pd-font-sm); font-weight: var(--pd-weight-regular); white-space: nowrap; cursor: pointer; }
 .pd-mcp-segmented button:hover { color: var(--pd-text); }
-.pd-mcp-segmented button.is-active { background: var(--pd-surface-raised, var(--pd-surface)); color: var(--pd-text); font-weight: 600; box-shadow: var(--pd-shadow-low, 0 1px 2px rgb(0 0 0 / 12%)); }
+.pd-mcp-segmented button.is-active { background: var(--pd-surface-raised, var(--pd-surface)); color: var(--pd-text); font-weight: var(--pd-weight-semibold); box-shadow: var(--pd-shadow-low, 0 1px 2px rgb(0 0 0 / 12%)); }
 
 .pd-mcp-form > footer, .pd-mcp-remove footer { display: flex; flex: 0 0 auto; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; }
 .pd-mcp-form > footer { padding: 12px 22px 16px; border-top: 1px solid var(--pd-border-soft); }
-.pd-mcp-form .pd-mcp-checkbox { flex-direction: row; align-items: center; gap: 8px; margin-right: auto; font-weight: 400; cursor: pointer; }
+.pd-mcp-form .pd-mcp-checkbox { flex-direction: row; align-items: center; gap: 8px; margin-right: auto; font-weight: var(--pd-weight-regular); cursor: pointer; }
 .pd-mcp-checkbox input { width: 15px; height: 15px; margin: 0; accent-color: var(--pd-brand); }
 
 .pd-mcp-remove { width: min(440px, calc(100vw - 32px)); padding: 22px; }

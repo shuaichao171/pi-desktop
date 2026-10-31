@@ -5,7 +5,7 @@
 
 .pd-fleet-strip { display: flex; align-items: center; gap: 8px; width: 100%; padding: 5px 10px; border: 0; background: none; color: var(--pd-text-subtle); font: inherit; font-size: var(--pd-font-sm); text-align: start; cursor: pointer; }
 .pd-fleet-strip:hover { background: var(--pd-surface-hover); color: var(--pd-text); }
-.pd-fleet-strip-title { flex: 0 0 auto; font-weight: 600; color: var(--pd-text); }
+.pd-fleet-strip-title { flex: 0 0 auto; font-weight: var(--pd-weight-semibold); color: var(--pd-text); }
 .pd-fleet-strip-label { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pd-fleet-strip-tool { flex: 0 1 auto; max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--pd-font-mono, ui-monospace, Consolas, monospace); font-size: var(--pd-font-xs); color: var(--pd-text-subtle); }
 .pd-fleet-chevron { flex: 0 0 auto; color: var(--pd-text-subtle); }
@@ -52,7 +52,7 @@
 .pd-fleet-inspect-task { margin: 0; color: var(--pd-text); font-size: var(--pd-font-xs); white-space: pre-line; overflow-wrap: anywhere; }
 .pd-fleet-inspect-task strong { margin-inline-end: 6px; color: var(--pd-text-subtle); }
 .pd-fleet-inspect-block { display: flex; flex-direction: column; gap: 3px; }
-.pd-fleet-inspect-block h5 { margin: 0; color: var(--pd-text-subtle); font-size: var(--pd-font-xs); font-weight: 600; }
+.pd-fleet-inspect-block h5 { margin: 0; color: var(--pd-text-subtle); font-size: var(--pd-font-xs); font-weight: var(--pd-weight-semibold); }
 .pd-fleet-inspect-block pre { margin: 0; padding: 6px 8px; border: 1px solid var(--pd-border-soft); border-radius: 4px; background: var(--pd-surface-hover); color: var(--pd-text); font-family: var(--pd-font-mono, ui-monospace, Consolas, monospace); font-size: var(--pd-font-xs); max-height: 160px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
 .pd-fleet-inspect-block ul { display: flex; flex-direction: column; gap: 3px; margin: 0; padding: 0; list-style: none; max-height: 200px; overflow-y: auto; }
 .pd-fleet-inspect-block li { display: flex; flex-direction: column; gap: 1px; padding: 4px 6px; border: 1px solid var(--pd-border-soft); border-radius: 4px; }

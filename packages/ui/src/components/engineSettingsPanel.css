@@ -10,7 +10,7 @@
 .pd-engine-button:hover:not(:disabled) { background: var(--pd-surface-hover); }
 .pd-engine-button:disabled { opacity: .45; cursor: not-allowed; }
 .pd-engine-button:focus-visible { outline: 2px solid var(--pd-brand); outline-offset: 1px; }
-.pd-engine-button.is-primary { border-color: var(--pd-brand); background: var(--pd-brand); color: var(--pd-brand-ink, #fff); font-weight: 600; }
+.pd-engine-button.is-primary { border-color: var(--pd-brand); background: var(--pd-brand); color: var(--pd-brand-ink, #fff); font-weight: var(--pd-weight-semibold); }
 .pd-engine-button.is-primary:hover:not(:disabled) { background: var(--pd-brand-hover, var(--pd-brand)); }
 .pd-engine-button.is-ghost { border-color: transparent; background: transparent; color: var(--pd-text-subtle); }
 .pd-engine-button.is-ghost:hover:not(:disabled) { background: var(--pd-surface-hover); color: var(--pd-text); }
@@ -22,11 +22,11 @@
 .pd-engine-status-icon.is-running { background: color-mix(in srgb, var(--pd-success) 14%, transparent); color: var(--pd-success); }
 .pd-engine-status-copy { display: flex; flex: 1; flex-direction: column; gap: 2px; min-width: 0; }
 .pd-engine-status-label { color: var(--pd-text-weak); font-size: var(--pd-font-xs); }
-.pd-engine-status-copy strong { font-size: var(--pd-font-base); font-weight: 600; font-variant-numeric: tabular-nums; }
+.pd-engine-status-copy strong { font-size: var(--pd-font-base); font-weight: var(--pd-weight-semibold); font-variant-numeric: tabular-nums; }
 .pd-engine-status-copy p { margin: 0; overflow: hidden; color: var(--pd-text-subtle); font-size: var(--pd-font-sm); text-overflow: ellipsis; white-space: nowrap; }
 .pd-engine-status-copy code { font-size: var(--pd-font-xs); }
 
-.pd-engine-chip { flex: 0 0 auto; padding: 0 8px; border-radius: var(--pd-radius-pill, 999px); font-size: var(--pd-font-xs); font-weight: 500; line-height: 20px; white-space: nowrap; }
+.pd-engine-chip { flex: 0 0 auto; padding: 0 8px; border-radius: var(--pd-radius-pill, 999px); font-size: var(--pd-font-xs); font-weight: var(--pd-weight-medium); line-height: 20px; white-space: nowrap; }
 .pd-engine-chip.is-success { background: color-mix(in srgb, var(--pd-success) 15%, transparent); color: var(--pd-success); }
 .pd-engine-chip.is-warning { background: color-mix(in srgb, var(--pd-warning) 16%, transparent); color: var(--pd-warning); }
 
@@ -49,7 +49,7 @@
 .pd-engine-mode-icon { display: grid; flex: 0 0 auto; place-items: center; width: 30px; height: 30px; border-radius: var(--pd-radius-sm); background: color-mix(in srgb, var(--pd-text) 8%, transparent); color: var(--pd-text-subtle); }
 .pd-engine-modes button.is-selected .pd-engine-mode-icon { color: var(--pd-text); }
 .pd-engine-mode-copy { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
-.pd-engine-mode-copy strong { font-size: var(--pd-font-caption); font-weight: 600; }
+.pd-engine-mode-copy strong { font-size: var(--pd-font-caption); font-weight: var(--pd-weight-semibold); }
 .pd-engine-mode-copy small { color: var(--pd-text-subtle); font-size: var(--pd-font-sm); line-height: 1.5; }
 .pd-engine-mode-check { position: absolute; top: 12px; right: 12px; display: grid; place-items: center; width: 16px; height: 16px; border: 1px solid var(--pd-border-strong, var(--pd-border)); border-radius: 50%; }
 .pd-engine-modes button.is-selected .pd-engine-mode-check { border-color: var(--pd-brand); background: var(--pd-brand); color: var(--pd-brand-ink, #fff); }

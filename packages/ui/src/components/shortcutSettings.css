@@ -11,7 +11,7 @@
 
 /* Groups -------------------------------------------------------------------- */
 .pd-shortcut-group { display: flex; flex-direction: column; gap: 8px; }
-.pd-shortcut-group h3 { margin: 0; padding-left: 2px; color: var(--pd-text-weak); font-size: var(--pd-font-xs); font-weight: 600; letter-spacing: .06em; text-transform: uppercase; }
+.pd-shortcut-group h3 { margin: 0; padding-left: 2px; color: var(--pd-text-weak); font-size: var(--pd-font-xs); font-weight: var(--pd-weight-semibold); letter-spacing: var(--pd-tracking-wide); text-transform: uppercase; }
 .pd-shortcut-rows { display: flex; flex-direction: column; margin: 0; padding: 0; overflow: hidden; border: 1px solid var(--pd-border); border-radius: var(--pd-radius-md); background: var(--pd-surface); list-style: none; }
 .pd-shortcut-rows li { display: flex; align-items: center; gap: 12px; min-height: 46px; padding: 7px 10px 7px 14px; transition: background var(--pd-motion-fast, 120ms) ease; }
 .pd-shortcut-rows li + li { border-top: 1px solid var(--pd-border-soft); }

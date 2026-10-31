@@ -46,7 +46,7 @@
 	min-width: 0;
 	flex: 1;
 	overflow: hidden;
-	font-weight: 650;
+	font-weight: var(--pd-weight-semibold);
 	text-overflow: ellipsis;
 	white-space: nowrap;
 }
@@ -69,7 +69,7 @@
 .pd-compaction-stream-body h3, .pd-compaction-stream-body h4 {
 	margin: 22px 0 10px;
 	color: var(--pd-text);
-	font-weight: 720;
+	font-weight: var(--pd-weight-bold);
 	line-height: 1.35;
 }
 .pd-compaction-stream-body h1 { font-size: 20px; }

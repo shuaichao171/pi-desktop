@@ -9,7 +9,7 @@
 .pd-changes-card-main { display: flex; align-items: center; flex: 1; gap: 12px; min-width: 0; padding: 2px; border: 0; border-radius: var(--pd-radius-sm); text-align: left; background: transparent; color: inherit; }
 .pd-changes-card-icon { display: flex; align-items: center; justify-content: center; flex: 0 0 40px; width: 40px; height: 40px; border-radius: var(--pd-radius-md); background: var(--pd-surface-hover); color: var(--pd-text-subtle); }
 .pd-changes-card-copy { display: flex; flex: 1; flex-direction: column; gap: 5px; min-width: 0; }
-.pd-changes-card-copy > strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--pd-font-caption); font-weight: 500; line-height: 1.5; }
+.pd-changes-card-copy > strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--pd-font-caption); font-weight: var(--pd-weight-medium); line-height: 1.5; }
 .pd-changes-card-subtitle { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; color: var(--pd-text-weak); font-size: var(--pd-font-sm); line-height: 1.5; }
 .pd-changes-card-main:hover .pd-changes-card-copy > strong { text-decoration: underline; text-underline-offset: 3px; }
 .pd-composer-changes-review { display: inline-flex; flex: 0 0 auto; align-items: center; justify-content: center; gap: 6px; min-height: 30px; padding: 4px 10px; border: 1px solid var(--pd-border); border-radius: var(--pd-radius-sm); background: transparent; color: var(--pd-text); font-size: var(--pd-font-sm); line-height: 1.4; white-space: nowrap; }

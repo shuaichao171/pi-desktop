@@ -13,7 +13,7 @@
 .pd-feature-dialog { position:fixed; inset:0; margin:auto; width:min(760px,calc(100vw - 32px)); max-height:calc(100vh - 40px); overflow:auto; color:var(--pd-text); background: var(--pd-dialog); border:1px solid var(--pd-dialog-border); border-radius:var(--pd-radius-dialog); padding:20px; }
 .pd-feature-dialog::backdrop { background:var(--pd-overlay); }
 .pd-feature-dialog header { display:flex; justify-content:space-between; gap:16px; align-items:center; }
-.pd-feature-dialog h2 { font-size:var(--pd-font-lg); font-weight:600; }
+.pd-feature-dialog h2 { font-size:var(--pd-font-lg); font-weight: var(--pd-weight-semibold); }
 .pd-feature-dialog a { color:var(--pd-text); text-decoration:underline; text-underline-offset:3px; }
 .pd-feature-dialog label { display:flex; flex-direction:column; gap:6px; margin:12px 0; }
 .pd-feature-dialog input,.pd-feature-dialog select,.pd-feature-dialog textarea { min-width:0; border:1px solid var(--pd-border); background:var(--pd-bg); color:inherit; border-radius:var(--pd-radius-sm); padding:8px; font:inherit; }
@@ -28,7 +28,7 @@
 .pd-terminal-menu button:disabled { opacity:0.45; cursor:default; }
 /* zcode ConversationFileRewindDialog: revert preview grouped by outcome. */
 .pd-checkpoint-tier { margin:12px 0; }
-.pd-checkpoint-tier h3 { font-size:var(--pd-font-sm); font-weight:600; margin:0 0 6px; }
+.pd-checkpoint-tier h3 { font-size:var(--pd-font-sm); font-weight: var(--pd-weight-semibold); margin:0 0 6px; }
 .pd-checkpoint-tier.is-safe h3 { color:var(--pd-success, #4bb788); }
 .pd-checkpoint-tier.is-skipped h3 { color:var(--pd-warning, #d0a24c); }
 .pd-checkpoint-tier details { border-top:1px solid var(--pd-border); padding:6px 0; }

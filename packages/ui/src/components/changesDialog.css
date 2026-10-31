@@ -8,7 +8,7 @@
 .pd-changes-dialog::backdrop { background: var(--pd-overlay); }
 .pd-changes-dialog-header { display: flex; flex: 0 0 auto; align-items: center; justify-content: space-between; gap: 12px; padding: 16px 18px 9px; }
 .pd-changes-dialog-header > div { display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px; min-width: 0; }
-.pd-changes-dialog-header h2 { margin: 0; font-size: var(--pd-font-lg); font-weight: 600; }
+.pd-changes-dialog-header h2 { margin: 0; font-size: var(--pd-font-lg); font-weight: var(--pd-weight-semibold); }
 .pd-changes-dialog-header > div > span:not(.pd-change-stats) { color: var(--pd-text-weak); font-size: var(--pd-font-sm); }
 .pd-changes-description { flex: 0 0 auto; margin: 0; padding: 0 18px 14px; color: var(--pd-text-weak); font-size: var(--pd-font-sm); line-height: 1.5; }
 .pd-changes-review { display: flex; flex: 1; min-height: 0; overflow: hidden; border-top: 1px solid var(--pd-border); }
@@ -16,7 +16,7 @@
 .pd-changes-file { display: flex; align-items: flex-start; gap: 7px; width: 100%; min-width: 0; min-height: 0; margin-bottom: 1px; padding: 8px; border: 0; border-radius: var(--pd-radius-sm); background: transparent; color: var(--pd-text-subtle); text-align: left; font-size: var(--pd-font-caption); }
 /* Dialog list: file name first (up to two lines), folder below and shortened from the front. */
 .pd-changes-file .pd-change-filename { flex-direction: column-reverse; align-items: stretch; gap: 2px; }
-.pd-changes-file .pd-change-filename > span { display: -webkit-box; overflow: hidden; color: var(--pd-text); font-weight: 500; line-height: 1.35; white-space: normal; overflow-wrap: anywhere; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.pd-changes-file .pd-change-filename > span { display: -webkit-box; overflow: hidden; color: var(--pd-text); font-weight: var(--pd-weight-medium); line-height: 1.35; white-space: normal; overflow-wrap: anywhere; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
 .pd-changes-file .pd-change-filename > small { direction: rtl; font-size: var(--pd-font-xs); text-align: left; }
 .pd-changes-file .pd-change-filename > small > bdi { direction: ltr; unicode-bidi: isolate; }
 .pd-changes-file > .pd-change-file-icon { margin-top: 1px; }

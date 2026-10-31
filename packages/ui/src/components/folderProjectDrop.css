@@ -1,5 +1,5 @@
 .pd-project-folder-drop-overlay { position: fixed; inset: 9px; z-index: var(--pd-z-drop); display: grid; place-items: center; border: 2px dashed var(--pd-brand); border-radius: var(--pd-radius-lg); background: color-mix(in srgb, var(--pd-bg) 88%, transparent); color: var(--pd-text); pointer-events: none; }
 .pd-project-folder-drop-card { display: flex; flex-direction: column; align-items: center; gap: 12px; max-width: calc(100vw - 48px); padding: 28px; border: 1px solid var(--pd-border); border-radius: var(--pd-radius-lg); background: var(--pd-surface-raised); box-shadow: var(--pd-shadow-popover); text-align: center; }
 .pd-project-folder-drop-card > svg { color: var(--pd-brand); }
-.pd-project-folder-drop-card strong { font-size: var(--pd-font-lg); font-weight: 500; }
+.pd-project-folder-drop-card strong { font-size: var(--pd-font-lg); font-weight: var(--pd-weight-medium); }
 .pd-project-folder-drop-card span { color: var(--pd-text-subtle); font-size: var(--pd-font-base); }
