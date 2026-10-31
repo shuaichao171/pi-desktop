@@ -268,6 +268,7 @@ const bridge: AgentBridge = {
 	listSessions: (cwd) => invoke(IPC_CHANNELS.agentListSessions, cwd),
 	searchSessions: (query) => invoke(IPC_CHANNELS.agentSearchSessions, query),
 	switchSession: (path) => invoke(IPC_CHANNELS.agentSwitchSession, path),
+	peekSession: (cwd, path) => invoke(IPC_CHANNELS.agentPeekSession, cwd, path),
 	revealSessionFile: (path) => invoke(IPC_CHANNELS.sessionRevealFile, path),
 	forkSession: (path, name) => invoke(IPC_CHANNELS.sessionFork, path, name),
 	openSessionInNewWindow: (path) => invoke(IPC_CHANNELS.sessionOpenWindow, path),

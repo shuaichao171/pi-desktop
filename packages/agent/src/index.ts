@@ -89,6 +89,7 @@ import type {
 	UiSubagentFleetNode,
 	UiSubagentInspectReply,
 	UiSubagentInspectMessage,
+	UiSessionPeek,
 } from '@pidesktop/shared';
 import { createAgentError, normalizeAgentError } from '../../shared/src/agentErrors.ts';
 import { BUILTIN_SLASH_COMMANDS, expandSlashPrompt, validateSlashCommandRequest, validSlashCommandName } from './slashCommands.ts';
@@ -2732,6 +2733,38 @@ export class AgentService {
 			await this.openContext({ cwd, sessionPath: path });
 			this.fire({ type: 'sessions-changed', cwd });
 		}, { supersede: true });
+	}
+
+	/**
+	 * Disk-level instant preview (seamless switch): build the exact content window a
+	 * ready event would send — same branch entries, same ids, same run and file-change
+	 * state — by opening the session file read-only and reusing the ready converters,
+	 * skipping the expensive runtime creation entirely. The renderer paints this while
+	 * the real load runs, and the paired ready verifies it by fingerprint. Any failure
+	 * (missing/foreign/locked/reserved session, unreadable file) yields null so the
+	 * renderer falls back to keeping the previous transcript visible.
+	 */
+	async peekSession(cwd: string, path: string): Promise<UiSessionPeek | null> {
+		if (this.closing) return null;
+		if (typeof cwd !== 'string' || !cwd || typeof path !== 'string' || !path || path.length > 32768 || /[\u0000-\u001f\u007f]/.test(path)) return null;
+		if (this.isSessionReserved(path)) return null;
+		if (!(await sessionBelongsToWorkspace(path, cwd))) return null;
+		try {
+			const manager = SessionManager.open(path, undefined, cwd);
+			const recent = trimRecentTimeline(historyTimeline(manager.getBranch(), null), READY_HISTORY_LIMIT);
+			const changes = new SessionFileChanges(cwd, manager, () => {}).restore();
+			return {
+				messages: recent.messages,
+				activities: recent.activities,
+				...(recent.runs ? { runs: recent.runs } : {}),
+				fileChanges: changes.items,
+				...(changes.turns ? { fileChangeTurns: changes.turns } : {}),
+				fileChangeActiveRunId: changes.activeRunId,
+				historyTotal: recent.historyTotal,
+			};
+		} catch {
+			return null;
+		}
 	}
 
 	async newSession(): Promise<void> {

@@ -22,7 +22,7 @@ const baseSnapshot = {
 
 const userMessage = (id, text) => ({ id, order: Number(id), runId: null, role: 'user', text, status: 'done' });
 
-function createHost({ snapshot = baseSnapshot } = {}) {
+function createHost({ snapshot = baseSnapshot, peek } = {}) {
   const listeners = new Set();
   const replies = new Map();
   const bridge = {
@@ -33,6 +33,7 @@ function createHost({ snapshot = baseSnapshot } = {}) {
     listSessions: async () => [],
     getAgentSnapshot: async () => snapshot,
     switchSession: (path) => new Promise((resolve) => replies.set(path, resolve)),
+    ...(peek ? { peekSession: peek } : {}),
     onAgentEvent(listener) { listeners.add(listener); return () => listeners.delete(listener); },
   };
   return {
@@ -51,7 +52,9 @@ beforeEach(() => {
 
 const settle = () => new Promise((resolve) => setImmediate(resolve));
 
-test('a cold switch commits the selection instantly and clears the transcript for the loading placeholder', async () => {
+const peekPayload = (messages) => ({ messages, activities: [], runs: [], fileChanges: [], fileChangeTurns: [], fileChangeActiveRunId: null, historyTotal: messages.length });
+
+test('a cold switch commits the selection instantly and keeps the previous transcript visible (keep-over)', async () => {
   const host = createHost({ snapshot: { ...baseSnapshot, messages: [userMessage('1', 'old conversation')] } });
   useChatStore.getState().setBridge(host.bridge);
   await settle();
@@ -60,13 +63,16 @@ test('a cold switch commits the selection instantly and clears the transcript fo
   const optimistic = useChatStore.getState();
   assert.equal(optimistic.sessionPath, 'C:\\sessions\\b.jsonl', 'the sidebar selection moves the moment the click lands');
   assert.equal(optimistic.cwd, 'C:\\workspace');
-  assert.deepEqual(optimistic.messages, [], 'no cached preview exists, so the transcript clears for the loading placeholder');
+  assert.deepEqual(optimistic.messages, [userMessage('1', 'old conversation')], 'no cached preview exists, so the previous transcript stays on screen while the target loads');
+  assert.equal(optimistic.conversationPreviewPath, 'C:\\sessions\\a.jsonl', 'the painted transcript is attributed to the session being left, not the optimistically selected target');
   assert.equal(optimistic.activities.length, 0);
   assert.equal(optimistic.sessionLoading, true);
   assert.equal(optimistic.navigationPending, true);
 
   host.emit(2, { type: 'reset', cwd: 'C:\\workspace' });
   assert.equal(useChatStore.getState().sessionPath, 'C:\\sessions\\b.jsonl', 'the reset that belongs to the pending switch keeps the optimistic selection');
+  assert.deepEqual(useChatStore.getState().messages, [userMessage('1', 'old conversation')], 'the switch reset keeps the previous conversation painted (no-blank-out)');
+  assert.equal(useChatStore.getState().conversationPreviewPath, 'C:\\sessions\\a.jsonl');
 
   host.emit(3, ready('C:\\workspace', 'C:\\sessions\\b.jsonl', [userMessage('2', 'new conversation')]));
   host.replies.get('C:\\sessions\\b.jsonl')();
@@ -76,8 +82,135 @@ test('a cold switch commits the selection instantly and clears the transcript fo
   assert.deepEqual(settled.messages, [userMessage('2', 'new conversation')]);
   assert.equal(settled.navigationPending, false);
   assert.equal(settled.sessionLoading, false);
+  assert.equal(settled.conversationPreviewPath, null, 'the authoritative ready clears the keep-over attribution');
 });
 
+test('a cold switch paints the disk peek instantly and the matching ready repaints nothing', async () => {
+  const peeked = peekPayload([userMessage('9', 'peeked from disk')]);
+  const host = createHost({ snapshot: { ...baseSnapshot, messages: [userMessage('1', 'old conversation')] }, peek: async () => peeked });
+  useChatStore.getState().setBridge(host.bridge);
+  await settle();
+
+  const switching = useChatStore.getState().switchSession('C:\\sessions\\b.jsonl');
+  assert.equal(useChatStore.getState().sessionPath, 'C:\\sessions\\b.jsonl', 'the selection commits instantly');
+  await settle(); await settle();
+  const painted = useChatStore.getState();
+  assert.equal(painted.conversationPreviewPath, 'C:\\sessions\\b.jsonl', 'the peeked content belongs to the incoming session: it paints lit, not keep-over dim');
+  assert.ok(painted.messages === peeked.messages, 'the disk peek paints by reference while the real load runs');
+  const revision = painted.timelineRevision;
+
+  host.emit(2, { type: 'reset', cwd: 'C:\\workspace' });
+  host.emit(3, ready('C:\\workspace', 'C:\\sessions\\b.jsonl', [userMessage('9', 'peeked from disk')]));
+  host.replies.get('C:\\sessions\\b.jsonl')();
+  await switching;
+  const settled = useChatStore.getState();
+  assert.ok(settled.messages === peeked.messages, 'a ready identical to the painted peek keeps the message objects — zero re-render');
+  assert.equal(settled.timelineRevision, revision, 'the matching ready does not rebuild the timeline');
+  assert.equal(settled.conversationPreviewPath, null);
+  assert.equal(settled.sessionPath, 'C:\\sessions\\b.jsonl');
+  assert.equal(settled.navigationPending, false);
+});
+
+test('a peek that resolves after its ready never paints over the settled conversation', async () => {
+  let resolvePeek;
+  const host = createHost({ snapshot: { ...baseSnapshot, messages: [userMessage('1', 'old')] }, peek: () => new Promise((resolve) => { resolvePeek = resolve; }) });
+  useChatStore.getState().setBridge(host.bridge);
+  await settle();
+
+  const switching = useChatStore.getState().switchSession('C:\\sessions\\b.jsonl');
+  await settle();
+  host.emit(2, { type: 'reset', cwd: 'C:\\workspace' });
+  host.emit(3, ready('C:\\workspace', 'C:\\sessions\\b.jsonl', [userMessage('2', 'authoritative')]));
+  await settle();
+  const settledByReady = useChatStore.getState().messages;
+
+  resolvePeek(peekPayload([userMessage('9', 'stale peek')]));
+  await settle(); await settle();
+  const after = useChatStore.getState();
+  assert.ok(after.messages === settledByReady, 'the late peek is discarded: the ready already settled the view');
+  assert.equal(after.conversationPreviewPath, null);
+  host.replies.get('C:\\sessions\\b.jsonl')();
+  await switching;
+});
+
+test('a peek painted before a failed switch rolls back with the navigation', async () => {
+  const peeked = peekPayload([userMessage('9', 'peeked')]);
+  const host = createHost({ snapshot: { ...baseSnapshot, messages: [userMessage('1', 'settled conversation')] }, peek: async () => peeked });
+  useChatStore.getState().setBridge(host.bridge);
+  await settle();
+  host.emit(2, ready('C:\\workspace', 'C:\\sessions\\a.jsonl', [userMessage('1', 'settled conversation')]));
+  await settle();
+
+  host.bridge.switchSession = () => new Promise((_resolve, reject) => { setTimeout(() => reject(new Error('load failed')), 10); });
+  await assert.rejects(useChatStore.getState().switchSession('C:\\sessions\\broken.jsonl'), /load failed/);
+  const restored = useChatStore.getState();
+  assert.equal(restored.sessionPath, 'C:\\sessions\\a.jsonl');
+  assert.deepEqual(restored.messages, [userMessage('1', 'settled conversation')], 'the painted peek is rolled back with the failed navigation');
+  assert.equal(restored.conversationPreviewPath, null);
+  assert.equal(restored.error, 'load failed');
+});
+
+test('a warm switch-back whose ready matches the painted preview repaints nothing', async () => {
+  const host = createHost({ snapshot: { ...baseSnapshot, messages: [userMessage('1', 'question')] } });
+  useChatStore.getState().setBridge(host.bridge);
+  await settle();
+
+  // Leave A for an empty B, then switch back: the keep-warm preview paints A.
+  const toB = useChatStore.getState().switchSession('C:\\sessions\\b.jsonl');
+  await settle();
+  host.emit(2, { type: 'reset', cwd: 'C:\\workspace' });
+  host.emit(3, ready('C:\\workspace', 'C:\\sessions\\b.jsonl', []));
+  host.replies.get('C:\\sessions\\b.jsonl')();
+  await toB;
+  assert.equal(useChatStore.getState().messages.length, 0, 'session B is empty; its ready replaced the retained A content');
+
+  const backToA = useChatStore.getState().switchSession('C:\\sessions\\a.jsonl');
+  await settle();
+  const previewed = useChatStore.getState();
+  assert.deepEqual(previewed.messages, [userMessage('1', 'question')], 'the keep-warm preview paints instantly');
+  assert.equal(previewed.conversationPreviewPath, 'C:\\sessions\\a.jsonl');
+  const paintedMessages = previewed.messages;
+  const revision = previewed.timelineRevision;
+
+  host.emit(4, { type: 'reset', cwd: 'C:\\workspace' });
+  host.emit(5, ready('C:\\workspace', 'C:\\sessions\\a.jsonl', [userMessage('1', 'question')]));
+  host.replies.get('C:\\sessions\\a.jsonl')();
+  await backToA;
+  const settled = useChatStore.getState();
+  assert.ok(settled.messages === paintedMessages, 'an identical ready keeps the painted message objects — the transcript does not re-render');
+  assert.equal(settled.timelineRevision, revision, 'an identical ready does not rebuild the timeline');
+  assert.equal(settled.conversationPreviewPath, null);
+  assert.equal(settled.sessionId, 'id:C:\\sessions\\a.jsonl', 'the ready still re-scopes the runtime session id');
+  assert.equal(settled.navigationPending, false);
+});
+
+test('a drifted ready replaces the painted preview', async () => {
+  const host = createHost({ snapshot: { ...baseSnapshot, messages: [userMessage('1', 'question')] } });
+  useChatStore.getState().setBridge(host.bridge);
+  await settle();
+
+  const toB = useChatStore.getState().switchSession('C:\\sessions\\b.jsonl');
+  await settle();
+  host.emit(2, { type: 'reset', cwd: 'C:\\workspace' });
+  host.emit(3, ready('C:\\workspace', 'C:\\sessions\\b.jsonl', []));
+  host.replies.get('C:\\sessions\\b.jsonl')();
+  await toB;
+
+  const backToA = useChatStore.getState().switchSession('C:\\sessions\\a.jsonl');
+  await settle();
+  const paintedMessages = useChatStore.getState().messages;
+  assert.equal(paintedMessages.length, 1);
+
+  // A settled while the reader was away: the ready window grew past the preview.
+  host.emit(4, { type: 'reset', cwd: 'C:\\workspace' });
+  host.emit(5, ready('C:\\workspace', 'C:\\sessions\\a.jsonl', [userMessage('1', 'question'), userMessage('2', 'background answer')]));
+  host.replies.get('C:\\sessions\\a.jsonl')();
+  await backToA;
+  const settled = useChatStore.getState();
+  assert.deepEqual(settled.messages, [userMessage('1', 'question'), userMessage('2', 'background answer')], 'a drifted ready replaces the painted preview wholesale');
+  assert.notEqual(settled.messages, paintedMessages);
+  assert.equal(settled.conversationPreviewPath, null);
+});
 test('a cross-workspace selection commits both workspaces immediately', async () => {
   const host = createHost({ snapshot: { ...baseSnapshot, cwd: 'C:\\workspace', sessionPath: 'C:\\sessions\\a.jsonl' } });
   host.bridge.switchWorkspace = async () => {};
