@@ -1855,6 +1855,13 @@ class SingleAgentService {
 		const session = this.runtime?.session;
 		if (!session) return;
 		const changes = this.fileChangeTrackers.get(session)?.restore();
+		// Keep the snapshot's change view in lockstep with what the ready publishes:
+		// warm re-activations rebuild their ready from this snapshot, and a stale
+		// empty list would wipe the renderer's changes card when the user returns
+		// to a previously loaded session.
+		this.state.fileChanges = changes?.items ?? [];
+		this.state.fileChangeTurns = changes?.turns ?? [];
+		this.state.fileChangeActiveRunId = changes?.activeRunId ?? null;
 		this.clearPendingThinking();
 		this.assistantId = null;
 		this.toolTitles.clear();
@@ -3423,6 +3430,8 @@ export class AgentService {
 			messages: snapshot.messages, activities: snapshot.activities,
 			runs: snapshot.runs,
 			fileChanges: snapshot.fileChanges,
+			fileChangeTurns: snapshot.fileChangeTurns,
+			fileChangeActiveRunId: snapshot.fileChangeActiveRunId,
 			historyTotal: snapshot.historyTotal,
 		});
 		this.fire({ type: 'status', status: snapshot.status, message: snapshot.statusMessage });
