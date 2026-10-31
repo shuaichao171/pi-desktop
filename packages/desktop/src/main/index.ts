@@ -168,7 +168,7 @@ function createWindow(options: CreateMainWindowOptions): BrowserWindow {
 		y: state.bounds.y,
 		minWidth: MAIN_WINDOW_MIN_WIDTH,
 		minHeight: MAIN_WINDOW_MIN_HEIGHT,
-		backgroundColor: '#161616',
+		backgroundColor: '#111216',
 		title: 'Pi Desktop',
 		// Match ZCode's Windows chrome: the renderer draws the title bar and controls.
 		// Keep the native title bar on macOS and Linux.
@@ -521,7 +521,7 @@ if (!hasSingleInstanceLock) {
 		autoHideMenuBar: process.platform === 'win32',
 		show: false,
 		hasShadow: true,
-		backgroundColor: '#161616',
+		backgroundColor: '#111216',
 		title: 'Pi Desktop',
 		webPreferences: {
 			contextIsolation: true,
