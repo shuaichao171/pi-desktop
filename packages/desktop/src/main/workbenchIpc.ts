@@ -5,6 +5,8 @@ import { WorkbenchService, type ProjectNicknameStore } from './workbenchService'
 import { ResultFileService } from './resultFileService';
 import { createWorkspaceWatcher } from './workspaceWatcher.ts';
 import { broadcastToRenderers, handleRendererInvoke, requireRendererSender } from './rendererIpc';
+import { isAbsolute, join } from 'node:path';
+import { app } from 'electron';
 
 export function registerWorkbenchIpc(getWorkspace: () => string, nicknameStore?: ProjectNicknameStore): WorkbenchService {
 	const resultFiles = new ResultFileService(getWorkspace);
@@ -37,6 +39,22 @@ export function registerWorkbenchIpc(getWorkspace: () => string, nicknameStore?:
 			requireRendererSender(event);
 			return shell.openPath(path);
 		});
+	});
+	// 自定义命令的“打开文件或文件夹”：相对路径按项目根解析，~ 展开为用户目录；文件用默认程序，文件夹用资源管理器。
+	handleRendererInvoke(IPC_CHANNELS.workspaceOpenPath, async (event, path: unknown, cwd: unknown) => {
+		requireRendererSender(event);
+		if (typeof path !== 'string' || path.trim().length === 0) throw new Error('路径无效');
+		if (typeof cwd !== 'string' || cwd.length === 0) throw new Error('项目路径无效');
+		const expanded = path.startsWith('~') ? join(app.getPath('home'), path.slice(1)) : path;
+		const resolved = isAbsolute(expanded) ? expanded : join(cwd, expanded);
+		const failure = await shell.openPath(resolved);
+		if (failure) throw new Error(failure);
+	});
+	handleRendererInvoke(IPC_CHANNELS.workspacePickPath, async (event, mode: unknown, cwd: unknown) => {
+		requireRendererSender(event);
+		if (mode !== 'file' && mode !== 'folder') throw new Error('选择模式无效');
+		const result = await dialog.showOpenDialog({ properties: mode === 'file' ? ['openFile', 'treatPackageAsDirectory'] : ['openDirectory'], defaultPath: typeof cwd === 'string' && cwd ? cwd : undefined });
+		return result.canceled || result.filePaths.length === 0 ? null : result.filePaths[0];
 	});
 	handleRendererInvoke(IPC_CHANNELS.workspaceOpenWith, async (_event, cwd: unknown, openerId: unknown) => {
 		if (typeof cwd !== 'string' || typeof openerId !== 'string') throw new Error('打开方式无效');
