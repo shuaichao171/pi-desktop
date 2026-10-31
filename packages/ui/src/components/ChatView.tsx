@@ -22,6 +22,7 @@ import { RunStatusBar } from './RunStatusBar';
 import { ComposerContextBar } from './ComposerContextBar';
 import { Icon } from './Icons';
 import { MessageItem } from './MessageItem';
+import { CompactionStream } from './CompactionStream';
 import { ConversationTurn } from './ConversationTurn';
 import { ActivityLabel } from './ActivityDisclosure';
 import { TranscriptFind } from './TranscriptFind';
@@ -31,6 +32,7 @@ import { resolveFollowsBottom } from '../scrollFollow';
 import { locateHistoryMessage } from '../conversationNavigation';
 import { TranscriptSearchContext, paintTranscriptMatches, revealTranscriptRange } from '../transcriptSearch';
 import './conversationEnhancements.css';
+import './compactionStream.css';
 
 const BOTTOM_THRESHOLD = 24;
 const SCROLL_TO_BOTTOM_DURATION = 260;
@@ -103,6 +105,8 @@ export function ChatView({ onOpenModelManagement, searchTarget, historyControls,
 	const agentStatus = useChatStore((s) => s.status);
 	const error = navigationError ?? agentError;
 	const timelineRevision = useChatStore((s) => s.timelineRevision);
+	const compactionPreview = useChatStore((s) => s.compactionPreview);
+	const compactionError = useChatStore((s) => s.compactionError);
 	const sessionLoading = useChatStore((s) => s.sessionLoading);
 	const navigationPending = useChatStore((s) => s.navigationPending);
 	const sessionPreparation = useChatStore((s) => s.sessionPreparation);
@@ -717,10 +721,12 @@ export function ChatView({ onOpenModelManagement, searchTarget, historyControls,
 									: timeline.map((entry) => renderEntry(entry))}
 							</div>
 						)}
-							<div ref={changesRegionRef} className="pd-transcript-end pd-transcript-changes">{!sessionLoading && <>
-								{agentStatus === 'busy' && liveChanges.length > 0 && <LiveChangesSummary items={liveChanges} scope={fileChangeActiveRunId ? { kind: 'turn', runId: fileChangeActiveRunId } : { kind: 'conversation' }} target={changesDock} review={openChangesReview} />}
-								{agentStatus !== 'busy' && legacyChanges.length > 0 && <ChangesCard key={`legacy:${disclosureScope}`} items={legacyChanges} scope={{ kind: 'conversation' }} variant="conversation" review={openChangesReview} />}
-							</>}</div>
+						<div ref={changesRegionRef} className="pd-transcript-end pd-transcript-changes">{!sessionLoading && <>
+							{agentStatus === 'busy' && liveChanges.length > 0 && <LiveChangesSummary items={liveChanges} scope={fileChangeActiveRunId ? { kind: 'turn', runId: fileChangeActiveRunId } : { kind: 'conversation' }} target={changesDock} review={openChangesReview} />}
+							{agentStatus !== 'busy' && legacyChanges.length > 0 && <ChangesCard key={`legacy:${disclosureScope}`} items={legacyChanges} scope={{ kind: 'conversation' }} variant="conversation" review={openChangesReview} />}
+					</>}</div>
+					{/* 压缩可见化：接管压缩时的时间线尾部流式卡片与失败横线（snow-app 同款样式） */}
+						{(compactionPreview || compactionError) && <div className="pd-transcript-end"><CompactionStream /></div>}
 						{awaitingResponse && <div className="pd-transcript-end"><div className="pd-message-column"><div className="pd-response-pending" role="status"><ActivityLabel active>{t('message.preparing')}</ActivityLabel></div></div></div>}
 						{error && <div className="pd-transcript-end">
 							{navigationError

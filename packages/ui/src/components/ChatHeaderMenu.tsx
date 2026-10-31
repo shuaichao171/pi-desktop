@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { UiMessage, UiSessionMetaPatch } from '@pidesktop/shared';
 import { useT } from '../i18n';
 import { useChatStore } from '../store';
@@ -7,6 +7,7 @@ import { SidebarPopover } from './SidebarPopover';
 import { HoverTooltip } from './HoverTooltip';
 import { SessionInfoPanel } from './SessionInfoPanel';
 import { SessionTreePanel } from './SessionTreePanel';
+import { MemoryPanel } from './MemoryPanel';
 import { runWithFeedback } from '../operationFeedback';
 import { isConversationWorkspace } from '../sidebarOrganization';
 
@@ -22,9 +23,33 @@ export function ChatHeaderMenu({ title, sessionPath, cwd, onRename, onOpenCommit
 	const folderLabel = t(isConversationWorkspace(cwd, conversationWorkspaces) ? 'chat.openConversationFolder' : 'chat.menuOpenWorkspace');
 	const [anchor, setAnchor] = useState<HTMLElement | null>(null);
 	const [notice, setNotice] = useState<string | null>(null);
-	const [panel, setPanel] = useState<'stats' | 'tree' | null>(null);
+	const [panel, setPanel] = useState<'stats' | 'tree' | 'memory' | null>(null);
 	const panelTrigger = useRef<HTMLElement | null>(null);
 	const saved = Boolean(sessionPath);
+
+	// [喵喵喵]: 记忆入口的锁定判定 — Magic Context 插件未安装/未启用/库未就绪时灰色
+	// 锁定，tooltip 说明原因（插件安装本身走设置面板，不在此处发起）
+	const bridge = useChatStore((s) => s.bridge);
+	const [memoryReady, setMemoryReady] = useState(false);
+	const [memoryLockReason, setMemoryLockReason] = useState('');
+	useEffect(() => {
+		if (!bridge || !cwd) return;
+		let active = true;
+		setMemoryReady(false);
+		void bridge.getMemoryAvailability(cwd)
+			.then((value) => {
+				if (!active) return;
+				if (value.pluginReady && value.databaseReady) setMemoryReady(true);
+				else {
+					setMemoryLockReason(value.reason === 'pluginMissing' ? t('memory.lock.pluginMissing')
+						: value.reason === 'pluginDisabled' ? t('memory.lock.pluginDisabled')
+							: value.reason === 'dbMissing' ? t('memory.lock.dbMissing')
+								: t('memory.unavailable.dbSchema'));
+				}
+			})
+			.catch(() => { if (active) setMemoryLockReason(t('memory.lock.dbMissing')); });
+		return () => { active = false; };
+	}, [bridge, cwd, t]);
 
 	function close() {
 		setAnchor(null);
@@ -60,7 +85,7 @@ export function ChatHeaderMenu({ title, sessionPath, cwd, onRename, onOpenCommit
 	);
 
 
-	function openPanel(kind: 'stats' | 'tree') {
+	function openPanel(kind: 'stats' | 'tree' | 'memory') {
 		panelTrigger.current = anchor;
 		close();
 		setPanel(kind);
@@ -101,6 +126,8 @@ export function ChatHeaderMenu({ title, sessionPath, cwd, onRename, onOpenCommit
 			<hr />
 			{item(t('chat.stats.menuEntry'), () => openPanel('stats'))}
 			{item(t('chat.tree.menuEntry'), () => openPanel('tree'))}
+			{item(t('memory.menuEntry'), () => openPanel('memory'), !memoryReady)}
+			{!memoryReady && memoryLockReason && <p className="pd-sidebar-menu-note">{memoryLockReason}</p>}
 			{item(t('chat.menuCopyMarkdown'), () => copyConversationMarkdown())}
 			{item(t('chat.menuExportHtml'), () => void exportAs('html'))}
 			{item(t('chat.menuExportJsonl'), () => void exportAs('jsonl'))}
@@ -112,5 +139,6 @@ export function ChatHeaderMenu({ title, sessionPath, cwd, onRename, onOpenCommit
 		</SidebarPopover>}
 		{panel === 'stats' && <SessionInfoPanel returnFocus={panelTrigger.current} onClose={() => setPanel(null)} />}
 		{panel === 'tree' && <SessionTreePanel returnFocus={panelTrigger.current} onClose={() => setPanel(null)} />}
+		{panel === 'memory' && <MemoryPanel returnFocus={panelTrigger.current} onClose={() => setPanel(null)} />}
 	</>;
 }

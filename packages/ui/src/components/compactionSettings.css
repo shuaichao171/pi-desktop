@@ -1,0 +1,159 @@
+/* 上下文压缩设置面板：模式选择卡、插件状态行与 Magic Context 配置控件 */
+
+.pd-compaction-settings-loading { margin: 0; color: var(--pd-text-weak); font-size: var(--pd-font-sm); }
+
+.pd-compaction-mode-picker {
+	display: grid;
+	gap: 8px;
+	grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+}
+
+.pd-compaction-mode {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	padding: 10px 12px;
+	border: 1px solid var(--pd-border);
+	border-radius: var(--pd-radius-md);
+	background: var(--pd-bg);
+	color: var(--pd-text-subtle);
+	text-align: left;
+	cursor: pointer;
+}
+
+.pd-compaction-mode:hover { border-color: var(--pd-text-weak); }
+
+.pd-compaction-mode.is-selected {
+	border-color: var(--pd-brand);
+	background: color-mix(in srgb, var(--pd-brand) 12%, var(--pd-bg));
+	color: var(--pd-text);
+}
+
+.pd-compaction-mode strong { font-size: var(--pd-font-sm); color: var(--pd-text); }
+.pd-compaction-mode span { font-size: var(--pd-font-xs); line-height: 1.5; }
+
+.pd-compaction-number {
+	width: 120px;
+	height: 30px;
+	padding: 0 8px;
+	border: 1px solid var(--pd-border);
+	border-radius: var(--pd-radius-sm);
+	background: var(--pd-bg);
+	color: var(--pd-text);
+	font-size: var(--pd-font-sm);
+}
+
+.pd-compaction-text {
+	min-width: 0;
+	height: 30px;
+	padding: 0 8px;
+	border: 1px solid var(--pd-border);
+	border-radius: var(--pd-radius-sm);
+	background: var(--pd-bg);
+	color: var(--pd-text);
+	font-size: var(--pd-font-sm);
+}
+
+.pd-compaction-inline-controls {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+	align-items: center;
+}
+
+.pd-compaction-inline-controls select,
+.pd-compaction-embedding select {
+	height: 30px;
+	padding: 0 6px;
+	border: 1px solid var(--pd-border);
+	border-radius: var(--pd-radius-sm);
+	background: var(--pd-bg);
+	color: var(--pd-text);
+	font-size: var(--pd-font-sm);
+}
+
+.pd-compaction-plugin-state {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 8px;
+}
+
+.pd-compaction-plugin-badge {
+	display: inline-flex;
+	align-items: center;
+	padding: 0 8px;
+	border-radius: var(--pd-radius-pill, 999px);
+	background: color-mix(in srgb, var(--pd-brand) 16%, transparent);
+	color: var(--pd-text);
+	font-size: var(--pd-font-xs);
+	line-height: 20px;
+	white-space: nowrap;
+}
+
+.pd-compaction-plugin-badge.is-off {
+	background: color-mix(in srgb, var(--pd-text-weak) 16%, transparent);
+	color: var(--pd-text-subtle);
+}
+
+.pd-compaction-plugin-badge.is-unknown {
+	background: color-mix(in srgb, var(--pd-warning) 16%, transparent);
+	color: var(--pd-warning);
+}
+
+.pd-compaction-plugin-version { font-size: var(--pd-font-xs); color: var(--pd-text-subtle); }
+
+.pd-compaction-plugin-action {
+	height: 28px;
+	padding: 0 12px;
+	border: 1px solid var(--pd-brand);
+	border-radius: var(--pd-radius-sm);
+	background: var(--pd-brand);
+	color: var(--pd-brand-ink);
+	font-size: var(--pd-font-xs);
+	cursor: pointer;
+}
+
+.pd-compaction-plugin-action:hover { background: var(--pd-brand-hover); }
+
+.pd-compaction-plugin-action.is-ghost {
+	border-color: var(--pd-border);
+	background: transparent;
+	color: var(--pd-text-subtle);
+}
+
+.pd-compaction-plugin-action.is-ghost:hover { border-color: var(--pd-text-weak); color: var(--pd-text); }
+
+.pd-compaction-plugin-busy { font-size: var(--pd-font-xs); color: var(--pd-text-weak); }
+
+.pd-compaction-plugin-hint {
+	margin: 6px 0 0;
+	font-size: var(--pd-font-xs);
+	line-height: 1.6;
+	color: var(--pd-text-weak);
+}
+
+.pd-compaction-embedding {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+}
+
+.pd-compaction-embedding > * { flex: 0 1 auto; }
+.pd-compaction-embedding > .pd-compaction-text { flex: 1 1 200px; }
+
+.pd-compaction-settings-actions { display: flex; gap: 8px; }
+
+.pd-compaction-settings-save {
+	height: 30px;
+	padding: 0 16px;
+	border: 1px solid var(--pd-brand);
+	border-radius: var(--pd-radius-sm);
+	background: var(--pd-brand);
+	color: var(--pd-brand-ink);
+	font-size: var(--pd-font-sm);
+	cursor: pointer;
+}
+
+.pd-compaction-settings-save:hover { background: var(--pd-brand-hover); }
+.pd-compaction-settings-save:disabled { opacity: 0.6; cursor: default; }

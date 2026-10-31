@@ -17,6 +17,8 @@ type SearchMethods = {
 
 export const AGENT_HOST_METHODS = [
  'checkPluginUpdate', 'getMcpSnapshot', 'saveMcpServer', 'removeMcpServer', 'connectMcpServer', 'disconnectMcpServer', 'testMcpServer',
+ 'getCompactionSettings', 'saveCompactionSettings', 'getMagicContextSnapshot', 'saveMagicContextConfig', 'installMagicContextPlugin', 'updateMagicContextPlugin', 'refreshMagicContextPluginStatus',
+ 'getMemoryAvailability', 'listProjectMemories', 'listUserMemories', 'getMemoryStats', 'updateProjectMemory', 'deleteProjectMemory', 'clearProjectMemories', 'dismissUserMemory',
 'submitInput', 'getInputQueue', 'mutateInputQueue', 'getFileCheckpoint', 'rewindFileCheckpoint', 'getEditRewindPreview', 'getFileChangeDiffs',
  'searchSessionsPage', 'searchProjectFiles', 'rebuildSearchIndex', 'cancelDataSearch', 'getProjectSearchRules', 'setProjectSearchRules',
  'testProviderModel', 'cancelProviderModelTest', 'getProjectDefaults', 'saveProjectDefaults', 'queryProviderUsage', 'saveProviderUsageQuery', 'resetProvider',

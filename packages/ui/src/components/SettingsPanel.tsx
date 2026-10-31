@@ -18,6 +18,7 @@ import type { ModelManagementTarget } from '../modelManagement';
 import { DEFAULT_UI_FONT_SIZE, UI_FONT_SIZE_MAX, UI_FONT_SIZE_MIN, applyUiFontSize, readUiFontSize, saveUiFontSize } from '../uiFontSize';
 import { createSettingsLeaveGuard, type SettingsDraftState as DraftState, type SettingsLeaveRequest } from '../settingsLeaveGuard';
 import { useBusyInputBehavior } from '../busyInputBehavior';
+import { CompactionSettingsPanel } from './CompactionSettingsPanel';
 import { ConversationMetricsSettings } from './ConversationMetricsSettings';
 import { useTaskNotificationSoundEnabled } from '../taskNotificationSound';
 import { useExtensionNoticeDisplayEnabled } from '../extensionNoticeDisplay';
@@ -453,9 +454,10 @@ export function SettingsPanel({ initialPage = 'general', modelManagementTarget, 
 									footer={extensionNoticesSaveFailed && <p className="pd-settings-feedback" role="status">{t('settings.extensionNoticesSaveFailed')}</p>}>
 									<SettingsSwitch setting="extension-notices" label={t('settings.extensionNotices')} checked={extensionNotices} onChange={next => setExtensionNoticesSaveFailed(!setExtensionNotices(next))} />
 								</SettingsRow>
-								<ConversationMetricsSettings />
-							</SettingsGroup>
-							<SettingsGroup title={t('settings.groupNotifications')}>
+					<ConversationMetricsSettings />
+				</SettingsGroup>
+				<CompactionSettingsPanel />
+				<SettingsGroup title={t('settings.groupNotifications')}>
 								{desktopSettingsError && <p role="alert">{desktopSettingsError}</p>}
 								<SettingsRow title={t('settings.notifications')} description={t('settings.notificationsDescription')}>
 									<SettingsSwitch setting="notifications" label={t('settings.notifications')} checked={desktopSettings?.notificationsEnabled ?? false} disabled={!desktopSettings || savingDesktopSettings} onChange={next => { void saveDesktopSettings({ notificationsEnabled: next }); }} />

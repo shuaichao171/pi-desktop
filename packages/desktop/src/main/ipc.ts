@@ -1,4 +1,4 @@
-import { MCP_FEATURE_CHANNELS, PLUGIN_UPDATE_CHANNELS } from '@pidesktop/shared';
+import { COMPACTION_FEATURE_CHANNELS, MEMORY_FEATURE_CHANNELS, MCP_FEATURE_CHANNELS, PLUGIN_UPDATE_CHANNELS } from '@pidesktop/shared';
 import { registerCloudSyncIpc } from './cloudSyncIpc';
 import { registerDebugApiIpc } from './debugApiIpc';
 /**
@@ -1106,6 +1106,22 @@ export function registerIpc(options: {
 	handleRendererInvoke(MCP_FEATURE_CHANNELS.connectMcpServer, (event, request: Parameters<typeof agentService.connectMcpServer>[0]) => agentFor(event).connectMcpServer(request));
 	handleRendererInvoke(MCP_FEATURE_CHANNELS.disconnectMcpServer, (event, request: Parameters<typeof agentService.disconnectMcpServer>[0]) => agentFor(event).disconnectMcpServer(request));
 	handleRendererInvoke(MCP_FEATURE_CHANNELS.testMcpServer, (event, request: Parameters<typeof agentService.testMcpServer>[0]) => agentFor(event).testMcpServer(request));
+	handleRendererInvoke(COMPACTION_FEATURE_CHANNELS.getCompactionSettings, (event) => agentFor(event).getCompactionSettings());
+	handleRendererInvoke(COMPACTION_FEATURE_CHANNELS.saveCompactionSettings, (event, request: Parameters<typeof agentService.saveCompactionSettings>[0]) => agentFor(event).saveCompactionSettings(request));
+	handleRendererInvoke(COMPACTION_FEATURE_CHANNELS.getMagicContextSnapshot, (event) => agentFor(event).getMagicContextSnapshot());
+	handleRendererInvoke(COMPACTION_FEATURE_CHANNELS.saveMagicContextConfig, (event, request: Parameters<typeof agentService.saveMagicContextConfig>[0]) => agentFor(event).saveMagicContextConfig(request));
+	handleRendererInvoke(COMPACTION_FEATURE_CHANNELS.installMagicContextPlugin, (event) => agentFor(event).installMagicContextPlugin());
+	handleRendererInvoke(COMPACTION_FEATURE_CHANNELS.updateMagicContextPlugin, (event) => agentFor(event).updateMagicContextPlugin());
+	handleRendererInvoke(COMPACTION_FEATURE_CHANNELS.refreshMagicContextPluginStatus, (event) => agentFor(event).refreshMagicContextPluginStatus());
+
+	handleRendererInvoke(MEMORY_FEATURE_CHANNELS.availability, (event, cwd: string) => agentFor(event).getMemoryAvailability(cwd));
+	handleRendererInvoke(MEMORY_FEATURE_CHANNELS.listProject, (event, cwd: string, query: Parameters<typeof agentService.listProjectMemories>[1]) => agentFor(event).listProjectMemories(cwd, query));
+	handleRendererInvoke(MEMORY_FEATURE_CHANNELS.listUser, (event, query: Parameters<typeof agentService.listUserMemories>[0]) => agentFor(event).listUserMemories(query));
+	handleRendererInvoke(MEMORY_FEATURE_CHANNELS.stats, (event, cwd: string) => agentFor(event).getMemoryStats(cwd));
+	handleRendererInvoke(MEMORY_FEATURE_CHANNELS.updateProject, (event, cwd: string, update: Parameters<typeof agentService.updateProjectMemory>[1]) => agentFor(event).updateProjectMemory(cwd, update));
+	handleRendererInvoke(MEMORY_FEATURE_CHANNELS.deleteProject, (event, cwd: string, id: number) => agentFor(event).deleteProjectMemory(cwd, id));
+	handleRendererInvoke(MEMORY_FEATURE_CHANNELS.clearProject, (event, cwd: string) => agentFor(event).clearProjectMemories(cwd));
+	handleRendererInvoke(MEMORY_FEATURE_CHANNELS.dismissUser, (event, id: number) => agentFor(event).dismissUserMemory(id));
 	workbenchService = registerWorkbenchIpc(() => activeWorkspace, {
 		// App-side remark store: only used when a project root has no .code-workspace
 		// file; keys follow the same normalization as every other workspace record.

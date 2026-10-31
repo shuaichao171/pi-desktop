@@ -1,0 +1,190 @@
+/*
+ * 压缩过程可见化卡片 —— snow-app CompactionStream 同款样式，
+ * 颜色与圆角映射到 pi-desktop 的 --pd-* 设计变量。
+ */
+
+.pd-compaction-stream {
+	display: flex;
+	width: min(100%, var(--pd-chat-content-max, 820px));
+	min-height: 180px;
+	max-height: min(52vh, 520px);
+	flex-direction: column;
+	overflow: hidden;
+	margin: 8px auto;
+	border: 1px solid var(--pd-border);
+	border-radius: var(--pd-radius-xl);
+	background: var(--pd-surface);
+	box-shadow: 0 6px 24px color-mix(in srgb, #000 18%, transparent);
+}
+
+.pd-compaction-stream-title {
+	display: flex;
+	flex: 0 0 auto;
+	align-items: center;
+	gap: 9px;
+	min-height: 42px;
+	padding: 0 14px;
+	border-bottom: 1px solid var(--pd-border);
+	background: var(--pd-surface-hover);
+	color: var(--pd-text-subtle);
+	font-size: var(--pd-font-xs);
+}
+
+.pd-compaction-stream-icon {
+	display: inline-flex;
+	width: 26px;
+	height: 26px;
+	flex: 0 0 auto;
+	align-items: center;
+	justify-content: center;
+	border-radius: var(--pd-radius-md);
+	background: var(--pd-bg);
+	color: var(--pd-text);
+}
+
+.pd-compaction-stream-heading {
+	min-width: 0;
+	flex: 1;
+	overflow: hidden;
+	font-weight: 650;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.pd-compaction-stream-body {
+	min-height: 0;
+	flex: 1;
+	overflow-y: auto;
+	padding: 20px 24px 28px;
+	background: var(--pd-bg);
+	font-size: 14px;
+	line-height: 1.72;
+	color: var(--pd-text);
+	overflow-wrap: anywhere;
+}
+
+.pd-compaction-stream-body > :first-child { margin-top: 0; }
+.pd-compaction-stream-body > :last-child { margin-bottom: 0; }
+.pd-compaction-stream-body h1, .pd-compaction-stream-body h2,
+.pd-compaction-stream-body h3, .pd-compaction-stream-body h4 {
+	margin: 22px 0 10px;
+	color: var(--pd-text);
+	font-weight: 720;
+	line-height: 1.35;
+}
+.pd-compaction-stream-body h1 { font-size: 20px; }
+.pd-compaction-stream-body h2 {
+	padding-bottom: 7px;
+	border-bottom: 1px solid var(--pd-border-soft);
+	font-size: 17px;
+}
+.pd-compaction-stream-body h3, .pd-compaction-stream-body h4 { font-size: 15px; }
+.pd-compaction-stream-body p { margin: 0 0 12px; }
+.pd-compaction-stream-body ul, .pd-compaction-stream-body ol {
+	margin: 0 0 14px;
+	padding-left: 24px;
+}
+.pd-compaction-stream-body li { margin: 5px 0; }
+.pd-compaction-stream-body blockquote {
+	margin: 0 0 14px;
+	padding: 8px 12px;
+	border-left: 3px solid var(--pd-border);
+	background: var(--pd-surface);
+	color: var(--pd-text-subtle);
+}
+.pd-compaction-stream-body table {
+	width: 100%;
+	border-collapse: collapse;
+	font-size: 13px;
+}
+.pd-compaction-stream-body th, .pd-compaction-stream-body td {
+	padding: 7px 10px;
+	border: 1px solid var(--pd-border-soft);
+	text-align: left;
+	vertical-align: top;
+}
+
+/* 首段摘要产出前的骨架扫掠占位（同款三条） */
+.pd-compaction-placeholder {
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+	padding-top: 4px;
+}
+
+.pd-compaction-placeholder span {
+	width: 84%;
+	height: 10px;
+	border-radius: var(--pd-radius-sm);
+	background-image: linear-gradient(90deg,
+		var(--pd-surface-hover) 0%,
+		var(--pd-surface-hover) 42%,
+		var(--pd-border-soft) 50%,
+		var(--pd-surface-hover) 58%,
+		var(--pd-surface-hover) 100%);
+	background-size: 200% 100%;
+	animation: pd-compaction-sweep 1.6s ease-in-out infinite;
+}
+
+.pd-compaction-placeholder span:nth-child(2) { width: 68%; }
+.pd-compaction-placeholder span:nth-child(3) { width: 76%; }
+
+@keyframes pd-compaction-sweep {
+	0% { background-position: 100% 0; }
+	100% { background-position: -100% 0; }
+}
+
+/* 压缩失败提示：同款横线样式（两侧细线 + 居中警告小字），弱化呈现不占高度 */
+.pd-compaction-notice {
+	display: flex;
+	width: min(100%, var(--pd-chat-content-max, 820px));
+	align-items: center;
+	gap: 10px;
+	margin: 8px auto;
+}
+
+.pd-compaction-notice-rule {
+	height: 1px;
+	flex: 1;
+	background: var(--pd-border);
+}
+
+.pd-compaction-notice-label {
+	display: inline-flex;
+	min-width: 0;
+	align-items: center;
+	gap: 6px;
+	color: var(--pd-warning, #d29922);
+	font-size: var(--pd-font-xs);
+	line-height: 1.4;
+	opacity: 0.85;
+}
+
+.pd-compaction-notice-label svg { flex-shrink: 0; }
+
+.pd-compaction-notice-text {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.pd-compaction-notice-close {
+	display: inline-flex;
+	flex-shrink: 0;
+	align-items: center;
+	justify-content: center;
+	width: 18px;
+	height: 18px;
+	margin-left: -4px;
+	padding: 0;
+	border: 0;
+	border-radius: var(--pd-radius-sm);
+	background: transparent;
+	color: var(--pd-text-weak);
+	cursor: pointer;
+}
+
+.pd-compaction-notice-close:hover {
+	background: var(--pd-surface-hover);
+	color: var(--pd-text);
+}

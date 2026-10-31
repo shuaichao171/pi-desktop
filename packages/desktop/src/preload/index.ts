@@ -1,5 +1,7 @@
 import { PLUGIN_UPDATE_CHANNELS } from '@pidesktop/shared/pluginUpdates';
 import { MCP_FEATURE_CHANNELS } from '@pidesktop/shared/mcpFeatures';
+import { COMPACTION_FEATURE_CHANNELS } from '@pidesktop/shared/compactionFeatures';
+import { MEMORY_FEATURE_CHANNELS } from '@pidesktop/shared/memoryFeatures';
 import { MANAGEMENT_FEATURE_CHANNELS } from '@pidesktop/shared/managementFeatures';
 import { WORKBENCH_FEATURE_CHANNELS } from '@pidesktop/shared/workbenchFeatures';
 import { DATA_FEATURE_CHANNELS } from '@pidesktop/shared/dataFeatures';
@@ -80,6 +82,21 @@ const bridge: AgentBridge = {
 	connectMcpServer: (...args) => invoke(MCP_FEATURE_CHANNELS.connectMcpServer, ...args),
 	disconnectMcpServer: (...args) => invoke(MCP_FEATURE_CHANNELS.disconnectMcpServer, ...args),
 	testMcpServer: (...args) => invoke(MCP_FEATURE_CHANNELS.testMcpServer, ...args),
+	getCompactionSettings: (...args) => invoke(COMPACTION_FEATURE_CHANNELS.getCompactionSettings, ...args),
+	saveCompactionSettings: (...args) => invoke(COMPACTION_FEATURE_CHANNELS.saveCompactionSettings, ...args),
+	getMagicContextSnapshot: (...args) => invoke(COMPACTION_FEATURE_CHANNELS.getMagicContextSnapshot, ...args),
+	saveMagicContextConfig: (...args) => invoke(COMPACTION_FEATURE_CHANNELS.saveMagicContextConfig, ...args),
+	installMagicContextPlugin: (...args) => invoke(COMPACTION_FEATURE_CHANNELS.installMagicContextPlugin, ...args),
+	updateMagicContextPlugin: (...args) => invoke(COMPACTION_FEATURE_CHANNELS.updateMagicContextPlugin, ...args),
+	refreshMagicContextPluginStatus: (...args) => invoke(COMPACTION_FEATURE_CHANNELS.refreshMagicContextPluginStatus, ...args),
+	getMemoryAvailability: (...args) => invoke(MEMORY_FEATURE_CHANNELS.availability, ...args),
+	listProjectMemories: (...args) => invoke(MEMORY_FEATURE_CHANNELS.listProject, ...args),
+	listUserMemories: (...args) => invoke(MEMORY_FEATURE_CHANNELS.listUser, ...args),
+	getMemoryStats: (...args) => invoke(MEMORY_FEATURE_CHANNELS.stats, ...args),
+	updateProjectMemory: (...args) => invoke(MEMORY_FEATURE_CHANNELS.updateProject, ...args),
+	deleteProjectMemory: (...args) => invoke(MEMORY_FEATURE_CHANNELS.deleteProject, ...args),
+	clearProjectMemories: (...args) => invoke(MEMORY_FEATURE_CHANNELS.clearProject, ...args),
+	dismissUserMemory: (...args) => invoke(MEMORY_FEATURE_CHANNELS.dismissUser, ...args),
 	checkPluginUpdate: (...args) => invoke(PLUGIN_UPDATE_CHANNELS.checkPluginUpdate, ...args),
 
 	submitInput: (...args) => invoke(INPUT_FEATURE_CHANNELS.submitInput, ...args),
