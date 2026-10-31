@@ -17,9 +17,9 @@ export default async function activityBarScenarios(review) {
   // The window-wide top bar spans everything, including the rail.
   await review.waitFor(`Boolean(${topBar})`);
   const barGeometry = await review.evaluate(`(() => { const t = ${topBar}.getBoundingClientRect(); const r = ${rail}.getBoundingClientRect(); return { topWidth: t.width, topLeft: t.left, railTop: r.top, brandFirst: ${topBar}.querySelector(".pd-brand-mark")?.getBoundingClientRect().left ?? -1 }; })()`);
-  await check(barGeometry.topWidth >= 1400 && barGeometry.topLeft <= 12, 'Top bar spans the window above all panels');
-  await check(barGeometry.railTop >= barGeometry.topWidth * 0 + 44 && barGeometry.railTop <= 76, 'Activity bar starts below the top bar');
-  await check(barGeometry.brandFirst >= 0 && barGeometry.brandFirst <= 32, 'Brand mark sits at the far left of the top bar');
+  await check(barGeometry.topWidth >= 1400 && barGeometry.topLeft <= 4, 'Top bar spans the window above all panels');
+  await check(barGeometry.railTop >= barGeometry.topWidth * 0 + 44 && barGeometry.railTop <= 56, 'Activity bar starts below the top bar');
+  await check(barGeometry.brandFirst >= 0 && barGeometry.brandFirst <= 24, 'Brand mark sits at the far left of the top bar');
   await check(await review.evaluate('document.querySelectorAll(".pd-brand-mark").length === 1'), 'Only the top bar owns the brand mark');
   await check(await review.evaluate('document.querySelectorAll(".pd-window-controls").length <= 1'), 'Window controls are mounted once');
   await check(await review.evaluate('document.querySelectorAll(".pd-chat-header").length === 0'), 'The app uses one global top bar instead of per-panel title bars');
@@ -32,7 +32,7 @@ export default async function activityBarScenarios(review) {
   await review.waitFor(`Boolean(${rail})`);
   const geometry = await review.evaluate(`(() => { const r = ${rail}.getBoundingClientRect(); const s = document.querySelector(".pd-sidebar").getBoundingClientRect(); return { railWidth: r.width, railLeft: r.left, sidebarLeft: s.left }; })()`);
   await check(geometry.railWidth >= 44 && geometry.railWidth <= 56, 'Activity bar is a narrow rail (48px nominal)');
-  await check(geometry.sidebarLeft >= geometry.railLeft + geometry.railWidth - 1 && geometry.railLeft <= 12, 'Activity bar sits left of the sidebar');
+  await check(geometry.sidebarLeft >= geometry.railLeft + geometry.railWidth - 1 && geometry.railLeft <= 4, 'Activity bar sits left of the sidebar');
 
   // Rail contents: new-session, automations, plugins on top; settings pinned at the bottom.
   await check(await review.evaluate(`${rail}.querySelector(".pd-activity-new-session") !== null`), 'New-session action lives in the rail');

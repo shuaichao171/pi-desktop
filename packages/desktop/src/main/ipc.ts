@@ -283,7 +283,7 @@ function createPaiWindow(request: PaiWindowRequest): void {
 		height: 780,
 		minWidth: 680,
 		minHeight: 520,
-		backgroundColor: '#161616',
+		backgroundColor: '#111216',
 		title: 'pai',
 		frame: process.platform !== 'win32',
 		autoHideMenuBar: process.platform === 'win32',

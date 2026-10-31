@@ -1150,7 +1150,6 @@ export const translations: Record<string, { 'zh-CN': string; 'en-US': string }> 
   'settings.color.preset.ocean': { 'zh-CN': '海洋', 'en-US': 'Ocean' },
   'settings.color.preset.forest': { 'zh-CN': '森林', 'en-US': 'Forest' },
   'settings.color.preset.sand': { 'zh-CN': '暖沙', 'en-US': 'Sand' },
-  'settings.color.preset.island': { 'zh-CN': '孤岛', 'en-US': 'Island' },
   'settings.color.preset.custom': { 'zh-CN': '自定义', 'en-US': 'Custom' },
   'settings.color.accent': { 'zh-CN': '强调色', 'en-US': 'Accent' },
   'settings.color.surface': { 'zh-CN': '背景色', 'en-US': 'Background' },
