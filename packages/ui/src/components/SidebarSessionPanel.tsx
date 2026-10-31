@@ -1401,6 +1401,7 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 							{submenuItem({ key: entry.id, label: projectCustomEntryDisplayName(entry), icon: entry.kind === 'command' ? 'terminal' : entry.target === 'folder' ? 'folder' : 'file', onSelect: () => { setPopup(null); if (entry.kind === 'command') void runCustomCommand(workspace, entry.value).catch((error) => onError(error instanceof Error ? error.message : String(error))); else void openCustomPath(workspace, entry.value).catch((error) => onError(error instanceof Error ? error.message : String(error))); } })}
 						</div>;
 					})}
+					{(customEntries[sidebarWorkspaceKey(popup.workspace)]?.length ?? 0) > 0 && <p className="pd-sidebar-menu-note">{t('sidebar.customEntryHint')}</p>}
 					{submenuItem({ key: 'add-command', label: t('sidebar.customCommandAdd'), icon: 'plus', onSelect: () => { const workspace = popup.workspace; setCustomDraft(''); setPopup({ kind: 'add-custom-command', workspace, anchor: popup.anchor, trigger: popup.trigger }); } })}
 					{submenuItem({ key: 'add-open', label: t('sidebar.customOpenAdd'), icon: 'plus', onSelect: () => { const workspace = popup.workspace; setCustomPathDraft(''); setPopup({ kind: 'add-custom-open', workspace, anchor: popup.anchor, trigger: popup.trigger }); } })}
 					{customEntryFlyout && <SidebarSubmenu anchor={customEntryFlyout.anchor} label={t('sidebar.customRename')} autoFocus onPointerEnter={clearBarSubTimer} onClose={() => setCustomEntryFlyout(null)}>
