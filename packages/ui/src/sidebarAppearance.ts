@@ -34,20 +34,11 @@ export const PROJECT_BAR_PRESETS: ProjectBarPreset[] = [
   { id: 'sunset', css: 'linear-gradient(90deg, #fc466b, #3f5efb)', light: false },
   { id: 'neon', css: 'linear-gradient(90deg, #f953c6, #b91d73)', light: false },
   { id: 'violet', css: 'linear-gradient(135deg, #667eea, #764ba2)', light: false },
-  { id: 'mint', css: 'linear-gradient(90deg, #43e97b, #38f9d7)', light: true },
   { id: 'dawn', css: 'linear-gradient(90deg, #f6d365, #fda085)', light: true },
-	{ id: 'cyber', css: 'radial-gradient(120% 90% at 82% 50%, rgba(0,229,255,.18), transparent 60%), repeating-linear-gradient(0deg, rgba(0,229,255,.14) 0 1px, transparent 1px 6px), repeating-linear-gradient(90deg, rgba(0,229,255,.14) 0 1px, transparent 1px 7px), linear-gradient(135deg, #000428, #004e92)', light: false },
-	{ id: 'matrix', css: 'repeating-linear-gradient(90deg, rgba(88,214,141,.22) 0 1px, transparent 1px 9px), radial-gradient(130% 150% at 88% 50%, rgba(52,232,158,.28), transparent 62%), linear-gradient(90deg, #05261f, #0d3f2e)', light: false },
 	{ id: 'synthwave', css: 'radial-gradient(64px 64px at 80% 130%, rgba(255,94,158,.85), rgba(255,94,158,0) 72%), repeating-linear-gradient(0deg, rgba(255,255,255,.08) 0 2px, transparent 2px 7px), linear-gradient(90deg, #3b0764, #7b2ff7 55%, #2d6cdf)', light: false },
-	{ id: 'parchment', css: 'radial-gradient(90px 30px at 12% 30%, rgba(139,90,43,.16), transparent 70%), radial-gradient(100px 26px at 68% 85%, rgba(139,90,43,.14), transparent 72%), repeating-linear-gradient(105deg, rgba(120,83,44,.05) 0 2px, transparent 2px 5px), linear-gradient(90deg, #f3e5c0, #dcbd8a)', light: true },
 	{ id: 'ink', css: 'radial-gradient(72px 26px at 15% 45%, rgba(43,52,66,.45), transparent 70%), radial-gradient(48px 20px at 44% 78%, rgba(43,52,66,.26), transparent 72%), radial-gradient(130px 55px at 90% 15%, rgba(43,52,66,.32), transparent 75%), linear-gradient(90deg, #e6ebf2, #a9b6c8)', light: true },
-	{ id: 'brass', css: 'radial-gradient(5px 5px at 93% 50%, rgba(255,232,166,.95), rgba(122,84,20,0) 65%), repeating-linear-gradient(90deg, rgba(255,226,150,.12) 0 2px, rgba(0,0,0,.12) 2px 4px, transparent 4px 7px), linear-gradient(135deg, #9a6a1d, #5c3a0c)', light: false },
-	{ id: 'copper', css: 'radial-gradient(30px 12px at 28% 28%, rgba(255,178,122,.28), transparent 70%), radial-gradient(34px 14px at 64% 74%, rgba(60,22,8,.4), transparent 72%), repeating-linear-gradient(115deg, rgba(255,190,140,.09) 0 3px, transparent 3px 8px), linear-gradient(90deg, #b87333, #55220d)', light: false },
-	{ id: 'goth', css: 'repeating-linear-gradient(45deg, rgba(255,255,255,.045) 0 1px, transparent 1px 8px), radial-gradient(150px 44px at 82% 120%, rgba(150,0,80,.28), transparent 72%), linear-gradient(90deg, #101014, #2b2b33)', light: false },
-	{ id: 'cyberpunk', css: 'linear-gradient(90deg, rgba(0,0,0,.2) 0 1px, transparent 1px 9px), linear-gradient(180deg, rgba(0,240,255,.5) 0 1px, rgba(255,248,140,.97) 1px 3px, rgba(252,238,10,.2) 3px 4px, transparent 4px 22px, rgba(252,238,10,.82) 22px 23px, rgba(255,0,110,.45) 23px), repeating-linear-gradient(45deg, rgba(252,238,10,.2) 0 3px, rgba(0,0,0,.48) 3px 6px, transparent 6px 13px), repeating-linear-gradient(90deg, rgba(0,0,0,.42) 0 3px, transparent 3px 13px), repeating-linear-gradient(0deg, rgba(0,0,0,.34) 0 1px, transparent 1px 4px), radial-gradient(150px 20px at 34% 132%, rgba(255,26,26,.5), transparent 78%), radial-gradient(110px 16px at 18% -42%, rgba(0,240,255,.34), transparent 74%), linear-gradient(90deg, #060102, #26051c 34%, #16061e 64%, #2a0304 88%, #060102)', light: false },
 	{ id: 'porcelain', css: 'linear-gradient(180deg, rgba(18,48,96,.5) 0 1px, transparent 1px 2px, rgba(31,74,138,.36) 2px 3px, transparent 3px 5px, rgba(31,74,138,.2) 5px 6px, transparent 6px 18px, rgba(31,74,138,.2) 18px 19px, transparent 19px 21px, rgba(31,74,138,.36) 21px 22px, transparent 22px 23px, rgba(18,48,96,.5) 23px), radial-gradient(ellipse 46px 13px at 18% 38%, rgba(31,74,138,.28), transparent 72%), radial-gradient(ellipse 54px 15px at 74% 30%, rgba(31,74,138,.26), transparent 72%), radial-gradient(ellipse 38px 11px at 47% 64%, rgba(31,74,138,.22), transparent 74%), radial-gradient(ellipse 30px 9px at 90% 68%, rgba(31,74,138,.2), transparent 74%), radial-gradient(ellipse 42px 12px at 34% 76%, rgba(31,74,138,.16), transparent 76%), radial-gradient(ellipse 26px 8px at 8% 22%, rgba(31,74,138,.14), transparent 78%), radial-gradient(ellipse 34px 10px at 62% 14%, rgba(31,74,138,.12), transparent 78%), radial-gradient(5px 3px at 62% 44%, rgba(18,48,96,.4), transparent 72%), radial-gradient(4px 2px at 27% 62%, rgba(18,48,96,.32), transparent 74%), linear-gradient(90deg, #f7fafc, #eaf1f9 52%, #f7fafc)', light: true },
 	{ id: 'creed', css: 'linear-gradient(52deg, transparent 33%, rgba(186,26,32,.52) 33% 38.5%, rgba(255,250,242,.88) 38.5% 39.6%, transparent 39.6%), repeating-linear-gradient(72deg, rgba(120,108,88,.13) 0 2px, transparent 2px 11px), radial-gradient(140px 22px at 15% 44%, rgba(104,88,64,.3), transparent 72%), radial-gradient(120px 20px at 76% 52%, rgba(255,255,255,.55), transparent 74%), linear-gradient(180deg, rgba(198,24,32,.7) 0 1px, transparent 1px 23px, rgba(198,24,32,.3) 23px), linear-gradient(90deg, #ede3d1, #fdfaf3 48%, #e0d4bd)', light: true },
-	{ id: 'mujica', css: 'linear-gradient(180deg, rgba(224,224,255,.42) 0 1px, rgba(224,224,255,.12) 1px 2px, transparent 2px), linear-gradient(0deg, rgba(206,164,86,.34) 0 1px, transparent 1px), repeating-linear-gradient(45deg, rgba(238,234,255,.14) 0 1px, transparent 1px 3px), repeating-linear-gradient(-45deg, rgba(238,234,255,.1) 0 1px, transparent 1px 3px), repeating-linear-gradient(45deg, rgba(0,0,0,.34) 0 1.5px, transparent 1.5px 8px), repeating-linear-gradient(90deg, rgba(255,238,210,.2) 0 1px, transparent 1px 8px), radial-gradient(150px 30px at 74% 128%, rgba(204,146,74,.24), transparent 76%), radial-gradient(120px 26px at 40% -42%, rgba(196,210,255,.16), transparent 74%), radial-gradient(150px 34px at 30% 126%, rgba(150,20,76,.68), transparent 78%), radial-gradient(140px 32px at 78% -40%, rgba(128,16,62,.6), transparent 76%), radial-gradient(120px 24px at 52% 50%, rgba(120,14,56,.34), transparent 78%), radial-gradient(9px 9px at 88% 32%, rgba(226,232,255,.5), transparent 70%), radial-gradient(7.4px 7.4px at 86.8% 23%, rgba(7,4,12,.85), transparent 72%), radial-gradient(4px 4px at 8% 50%, rgba(230,186,104,.9), rgba(150,100,30,0) 70%), linear-gradient(90deg, #07040c, #260e1c 38%, #340c1e 66%, #09040e)', light: false },
 ];
 
 function hexToRgb(hex: string): [number, number, number] | null {
@@ -74,16 +65,31 @@ export function projectBarStyle(value: string | null | undefined): { background:
   }
   const preset = PROJECT_BAR_PRESETS.find((item) => item.id === bar);
   if (preset) return { background: preset.css, light: preset.light };
+  // 用户预设按引用存储（user:<id>），文字深浅由条目上的 light 标志决定。
+  if (bar.startsWith('user:')) {
+    const userPreset = userBarPresetCache.find((item) => item.id === bar.slice(5));
+    return userPreset ? { background: userPreset.css, light: userPreset.light } : null;
+  }
   // Custom CSS (user-pasted gradient and the like): the shared validator already
   // stripped remote sources; text stays white over a subtle dark scrim in CSS.
   if (!isValidProjectBarValue(bar)) return null;
   return { background: bar, light: false };
 }
 
+/** 保存用户预设时的文字色建议：hex 按亮度判断，其余（渐变等）默认白字。 */
+export function suggestBarLight(css: string): boolean {
+  if (!css.startsWith('#')) return false;
+  const rgb = hexToRgb(css);
+  if (!rgb) return false;
+  return (0.299 * rgb[0] + 0.587 * rgb[1] + 0.114 * rgb[2]) / 255 > 0.62;
+}
+
 export interface UserBarPreset {
   id: string;
   name: string;
   css: string;
+  /** 行上文字用深色（true）还是白色（false）；保存时由 hex 亮度预判，可右键随时切换。 */
+  light: boolean;
 }
 
 const USER_BAR_PRESETS_KEY = 'pi-desktop.user-bar-presets.v1';
@@ -95,18 +101,23 @@ export function readUserBarPresets(storage?: Pick<Storage, 'getItem'>): UserBarP
     const raw = (storage ?? globalThis.localStorage)?.getItem(USER_BAR_PRESETS_KEY);
     const value = raw ? JSON.parse(raw) : [];
     if (!Array.isArray(value)) return [];
-    return value.slice(0, USER_BAR_PRESET_LIMIT).filter((item): item is UserBarPreset => {
+    return value.slice(0, USER_BAR_PRESET_LIMIT).flatMap((item) => {
       const candidate = item as Partial<UserBarPreset> | null;
-      return typeof candidate === 'object' && candidate !== null
-        && typeof candidate.id === 'string' && candidate.id.length > 0
-        && typeof candidate.name === 'string' && candidate.name.length > 0
-        && typeof candidate.css === 'string' && isValidProjectBarValue(candidate.css);
+      if (typeof candidate !== 'object' || candidate === null) return [];
+      if (typeof candidate.id !== 'string' || candidate.id.length === 0) return [];
+      if (typeof candidate.name !== 'string' || candidate.name.length === 0) return [];
+      if (typeof candidate.css !== 'string' || !isValidProjectBarValue(candidate.css)) return [];
+      // 旧数据没有 light 字段：归一为 false（白字），与历史行为一致。
+      return [{ id: candidate.id, name: candidate.name, css: candidate.css, light: candidate.light === true }];
     });
   } catch { return []; }
 }
 
+let userBarPresetCache: UserBarPreset[] = readUserBarPresets();
+
 export function saveUserBarPresets(presets: UserBarPreset[], storage?: Pick<Storage, 'setItem'>): void {
   try { (storage ?? globalThis.localStorage)?.setItem(USER_BAR_PRESETS_KEY, JSON.stringify(presets.slice(0, USER_BAR_PRESET_LIMIT))); } catch { /* User presets are cosmetic. */ }
+  userBarPresetCache = presets.slice(0, USER_BAR_PRESET_LIMIT);
 }
 
 export type { WorkspaceProjectAppearance };
