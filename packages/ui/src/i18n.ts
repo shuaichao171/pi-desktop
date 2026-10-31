@@ -799,7 +799,7 @@ export const translations: Record<string, { 'zh-CN': string; 'en-US': string }> 
   'sidebar.customCommand': { 'zh-CN': '自定义命令', 'en-US': 'Custom commands' },
   'sidebar.customCommandAdd': { 'zh-CN': '自定义命令', 'en-US': 'Custom command' },
   'sidebar.customOpenAdd': { 'zh-CN': '自定义需要打开的文件或文件夹', 'en-US': 'Custom file or folder to open' },
-  'sidebar.customOpen': { 'zh-CN': '打开', 'en-US': 'Open' },
+  'sidebar.customOpen': { 'zh-CN': '确认', 'en-US': 'OK' },
   'sidebar.customRename': { 'zh-CN': '重命名', 'en-US': 'Rename' },
   'sidebar.customDelete': { 'zh-CN': '删除', 'en-US': 'Delete' },
   'sidebar.customBrowseFile': { 'zh-CN': '浏览文件…', 'en-US': 'Browse files…' },
