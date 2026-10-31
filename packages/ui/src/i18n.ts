@@ -221,6 +221,7 @@ export const translations: Record<string, { 'zh-CN': string; 'en-US': string }> 
   "automation.template.tests.description": { 'zh-CN': "运行项目已有检查，汇总失败原因与建议。", 'en-US': "Run existing checks and summarize failures and next steps." },
   "automation.template.tests.prompt": { 'zh-CN': "阅读项目文档与测试脚本，选择并运行适合当前项目的现有测试和静态检查。汇总通过情况、失败原因以及建议的修复位置。不要安装或升级依赖，不要修改源文件。", 'en-US': "Read the project documentation and test scripts, then run the appropriate existing tests and static checks. Summarize passes, failure causes, and suggested places to fix. Do not install or upgrade dependencies, and do not modify source files." },
   'composer.slashTitle': { 'zh-CN': '指令', 'en-US': 'Commands' },
+  'composer.compactionTakenOver': { 'zh-CN': '内置压缩已被已加载的扩展接管，请自行排查，上下文仍由其机制自动管理', 'en-US': 'Built-in compaction has been taken over by a loaded extension — investigate on your side; context is still managed by its mechanism' },
   'composer.slashCommand.new': { 'zh-CN': '在当前项目中新建会话', 'en-US': 'Start a new conversation in this project' },
   'composer.slashCommand.compact': { 'zh-CN': '压缩当前上下文，可附带摘要要求', 'en-US': 'Compact the current context with optional summary instructions' },
   'composer.slashCommand.name': { 'zh-CN': '重命名当前会话：/name <名称>', 'en-US': 'Rename the current conversation: /name <title>' },
