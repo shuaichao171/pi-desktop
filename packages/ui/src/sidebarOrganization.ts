@@ -9,9 +9,49 @@ export interface SidebarPreferences {
   projectOrder: string[];
 }
 
+export interface SidebarProjectGroup {
+  id: string;
+  name: string;
+  projects: string[];
+}
+
+export interface SidebarSectionLayout {
+  collapsed: string[];
+  heights: Record<string, number>;
+  hidden: string[];
+}
+
+export interface SidebarSectionContribution {
+  id: string;
+  pluginId: string;
+  title: string;
+  viewId: string;
+  order?: number;
+  minHeight?: number;
+  defaultHeight?: number;
+  collapsible?: boolean;
+}
+
+export function createSidebarSectionRegistry() {
+  const sections = new Map<string, SidebarSectionContribution>();
+  return {
+    register(contribution: SidebarSectionContribution): () => void {
+      if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/.test(contribution.pluginId) || !contribution.viewId || !contribution.title.trim()) throw new Error('侧栏区域贡献无效');
+      const key = `${contribution.pluginId}:${contribution.id}`;
+      sections.set(key, { ...contribution, id: key, title: contribution.title.trim() });
+      return () => { sections.delete(key); };
+    },
+    list(): SidebarSectionContribution[] {
+      return [...sections.values()].sort((left, right) => (left.order ?? 1000) - (right.order ?? 1000) || left.id.localeCompare(right.id));
+    },
+  };
+}
+
 export type SidebarSession = UiSessionSummary & { workspace: string };
 
 const PREFERENCES_KEY = 'pi-desktop.sidebar-organization.v1';
+const PROJECT_GROUPS_KEY = 'pi-desktop.project-groups.v1';
+const SECTION_LAYOUT_KEY = 'pi-desktop.sidebar-sections.v1';
 
 function normalizePreferences(value: unknown): SidebarPreferences {
   const source = value && typeof value === 'object' && !Array.isArray(value)
@@ -43,6 +83,71 @@ export function reorderSidebarProjectPositions(saved: readonly string[], reorder
   let index = 0;
   return sidebarProjectPaths([...saved, ...projects], null)
     .map(path => keys.has(sidebarWorkspaceKey(path)) ? projects[index++]! : path);
+}
+
+export function normalizeSidebarProjectGroups(value: unknown): SidebarProjectGroup[] {
+  if (!Array.isArray(value)) return [];
+  const ids = new Set<string>();
+  return value.flatMap((entry): SidebarProjectGroup[] => {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return [];
+    const group = entry as Record<string, unknown>;
+    if (typeof group.id !== 'string' || !/^[\w.-]{1,80}$/.test(group.id) || ids.has(group.id)) return [];
+    if (typeof group.name !== 'string' || !group.name.trim() || group.name.trim().length > 80) return [];
+    ids.add(group.id);
+    return [{ id: group.id, name: group.name.trim(), projects: Array.isArray(group.projects) ? [...new Set(group.projects.filter((path): path is string => typeof path === 'string' && path.length > 0))] : [] }];
+  });
+}
+
+export function readSidebarProjectGroups(storage?: Pick<Storage, 'getItem'>): SidebarProjectGroup[] {
+  try {
+    const raw = (storage ?? globalThis.localStorage)?.getItem(PROJECT_GROUPS_KEY);
+    return normalizeSidebarProjectGroups(raw ? JSON.parse(raw) : []);
+  } catch { return []; }
+}
+
+export function saveSidebarProjectGroups(groups: SidebarProjectGroup[], storage?: Pick<Storage, 'setItem'>): void {
+  try { (storage ?? globalThis.localStorage)?.setItem(PROJECT_GROUPS_KEY, JSON.stringify(normalizeSidebarProjectGroups(groups))); } catch { /* Sidebar organization is cosmetic. */ }
+}
+
+const SECTION_IDS = ['project-groups', 'ungrouped-projects', 'unassigned-sessions'];
+
+export function readSidebarSectionLayout(storage?: Pick<Storage, 'getItem'>): SidebarSectionLayout {
+  try {
+    const raw = (storage ?? globalThis.localStorage)?.getItem(SECTION_LAYOUT_KEY);
+    const value = raw ? JSON.parse(raw) as Record<string, unknown> : {};
+    const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+    const heights = source.heights && typeof source.heights === 'object' && !Array.isArray(source.heights) ? source.heights as Record<string, unknown> : {};
+    return {
+      collapsed: Array.isArray(source.collapsed) ? [...new Set(source.collapsed.filter((id): id is string => typeof id === 'string' && id.length > 0))] : [],
+      heights: Object.fromEntries(Object.entries(heights).filter((entry): entry is [string, number] => typeof entry[1] === 'number' && Number.isFinite(entry[1]) && entry[1] >= 80 && entry[1] <= 1600)),
+      hidden: Array.isArray(source.hidden) ? [...new Set(source.hidden.filter((id): id is string => typeof id === 'string' && (SECTION_IDS as string[]).includes(id)))] : [],
+    };
+  } catch { return { collapsed: [], heights: {}, hidden: [] }; }
+}
+
+export function saveSidebarSectionLayout(layout: SidebarSectionLayout, storage?: Pick<Storage, 'setItem'>): void {
+  try { (storage ?? globalThis.localStorage)?.setItem(SECTION_LAYOUT_KEY, JSON.stringify(layout)); } catch { /* Sidebar layout is cosmetic. */ }
+}
+
+export function assignProjectToGroup(groups: SidebarProjectGroup[], project: string, groupId: string | null): SidebarProjectGroup[] {
+  const key = sidebarWorkspaceKey(project);
+  return groups.map(group => ({ ...group, projects: group.projects.filter(path => sidebarWorkspaceKey(path) !== key).concat(group.id === groupId ? [project] : []) }));
+}
+
+export function groupSidebarProjects(projects: readonly string[], groups: SidebarProjectGroup[]): { groups: { id: string; name: string; projects: string[] }[]; ungrouped: string[] } {
+  const available = new Map(sidebarProjectPaths(projects, null).map(project => [sidebarWorkspaceKey(project), project]));
+  const claimed = new Set<string>();
+  const grouped = groups.map(group => {
+    const members = group.projects.flatMap(path => {
+      const key = sidebarWorkspaceKey(path);
+      const project = available.get(key);
+      if (!project || claimed.has(key)) return [];
+      claimed.add(key);
+      return [project];
+    });
+    return { id: group.id, name: group.name, projects: members };
+  });
+  return { groups: grouped, ungrouped: [...available].filter(([key]) => !claimed.has(key)).map(([, path]) => path) };
 }
 
 /** Navigation may update the workspace MRU; explicit sidebar positions stay put. */

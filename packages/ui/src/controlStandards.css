@@ -19,6 +19,8 @@
 ) { outline: none !important; }
 :is(.pd-sidebar-popover, .pd-composer-config-popover) button:disabled { cursor: not-allowed; opacity: .55; }
 .pd-sidebar-popover [role='menuitemcheckbox'][aria-checked='true'] { background: var(--pd-selected); color: var(--pd-text); }
+/* Sidebar region-visibility checkboxes carry their own check icon: keep them plain like the radios. */
+.pd-sidebar-popover button.pd-menu-check-item[aria-checked='true'] { background: transparent; }
 .pd-settings-dialog :is(.pd-settings-error, .pd-settings-feedback) { font-size: var(--pd-font-caption); line-height: 1.5; overflow-wrap: anywhere; }
 /* Native select arrows differ per platform and sit far from the text; draw one
    chevron in the text color everywhere (the project source picker draws its own). */

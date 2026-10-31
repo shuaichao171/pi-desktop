@@ -42,6 +42,13 @@ test('multi-line AI output still applies: newlines collapse to spaces before val
   assert.equal(isValidProjectBarValue('  linear-gradient(45deg, #f66, #3cf)  '), true, 'outer whitespace is trimmed');
 });
 
+test('custom CSS has no length limit: layered gradients of any size pass', async () => {
+  const { isValidProjectBarValue } = await import('../packages/shared/src/index.ts');
+  const long = 'repeating-linear-gradient(90deg, rgba(0,229,255,.14) 0 1px, transparent 1px 6px), '.repeat(6) + 'linear-gradient(135deg, #000428, #004e92)';
+  assert.equal(long.length > 300, true, 'sanity: the fixture exceeds the old 300-char limit');
+  assert.equal(isValidProjectBarValue(long), true, 'length is no longer capped');
+});
+
 test('network references trip the leave-machine check', async () => {
   const { projectBarLeavesMachine } = await import('../packages/shared/src/index.ts');
   assert.equal(projectBarLeavesMachine('url(https://evil/x.png)'), true);
@@ -57,13 +64,28 @@ test('network references trip the leave-machine check', async () => {
   assert.equal(normalizeProjectBarValue('data:image/png;base64,AAAA'), null);
   assert.equal(normalizeProjectBarValue('data:image/png;base64,AAAA'), null);
 
-  // The sanity cap leaves room for rich multi-layer AI output (was 300, squeezed real results).
+  // Length is uncapped now (the 1000 sanity cap was dropped by request): rich multi-layer AI output passes.
   const layered = Array.from({ length: 5 }, (_, i) => `linear-gradient(115deg, #ff2ec433 0%, #00e5ff2b 55%, transparent ${60 + i}%)`).join(', ');
-  assert.equal(layered.length > 300 && layered.length <= 1000, true, 'the fixture itself spans the old cap');
+  assert.equal(layered.length > 300, true, 'the fixture itself spans the old cap');
   assert.equal(normalizeProjectBarValue(layered), layered);
-  assert.equal(normalizeProjectBarValue('linear-gradient(90deg, ' + '#f00, '.repeat(300) + '#00f)'), null, 'over 1000 is rejected');
+  const huge = 'linear-gradient(90deg, ' + '#f00, '.repeat(300) + '#00f)';
+  assert.equal(huge.length > 1000, true, 'sanity: the fixture exceeds the old 1000-char cap');
+  assert.equal(normalizeProjectBarValue(huge), huge, 'length is uncapped');
 });
 
+test('user bar presets persist through storage and drop entries with unrenderable css', async () => {
+  const { readUserBarPresets, saveUserBarPresets } = await import('../packages/ui/src/sidebarAppearance.ts');
+  let stored;
+  const storage = { getItem: () => stored, setItem: (key, value) => { stored = value; } };
+  saveUserBarPresets([
+    { id: 'a', name: '用户预设 1', css: 'linear-gradient(90deg, #000428, #004e92)' },
+    { id: 'b', name: 'broken', css: 'linear-gradient(evil); color:red' },
+  ], storage);
+  const read = readUserBarPresets(storage);
+  assert.deepEqual(read.map((preset) => preset.id), ['a'], 'entries failing the shared validator are dropped on read');
+  saveUserBarPresets(read, storage);
+  assert.deepEqual(JSON.parse(stored).map((preset) => preset.id), ['a']);
+});
 test('animation tiers stay in sync with shared and only map to whitelisted keyframe names', async () => {
   const { PROJECT_BAR_ANIM_IDS } = await import('../packages/shared/src/index.ts');
   const { PROJECT_BAR_ANIMS } = await import('../packages/ui/src/sidebarAppearance.ts');
