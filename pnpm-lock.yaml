@@ -8,6 +8,9 @@ overrides:
   '@electron/universal>fs-extra': 11.4.0
   '@electron/windows-sign>fs-extra': 11.4.0
 
+patchedDependencies:
+  '@earendil-works/pi-coding-agent@1.4.0': 4da6285fa7a1121b67206c839d82f071bf9f332411fc47cf15dcb25214e63797
+
 importers:
 
   .:
