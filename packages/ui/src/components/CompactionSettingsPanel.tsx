@@ -10,6 +10,8 @@ type Draft = {
 	pi: UiCompactionPiSettings;
 	preferences: UiDesktopCompactionPreferences;
 	magic: UiMagicContextConfig;
+	/** 上次快照时的 magic 配置基线：用于区分「用户改动」与「agent 侧写入」的 diff 判定。 */
+	magicBaseline: UiMagicContextConfig;
 	piVersion: string;
 	preferencesVersion: string;
 	magicVersion: string;
@@ -46,7 +48,7 @@ export function CompactionSettingsPanel() {
 	const { t } = useT();
 	const bridge = useChatStore((s) => s.bridge);
 	const models = useChatStore((s) => s.models);
-	const [draft, setDraft] = useState<Draft>({ loaded: false, pi: DEFAULT_PI, preferences: DEFAULT_PREFERENCES, magic: DEFAULT_MAGIC, piVersion: '', preferencesVersion: '', magicVersion: '' });
+	const [draft, setDraft] = useState<Draft>({ loaded: false, pi: DEFAULT_PI, preferences: DEFAULT_PREFERENCES, magic: DEFAULT_MAGIC, magicBaseline: DEFAULT_MAGIC, piVersion: '', preferencesVersion: '', magicVersion: '' });
 	const [plugin, setPlugin] = useState<PluginState>({ installed: false, enabled: null, installedVersion: null, latestVersion: null, updateAvailable: false });
 	const [busy, setBusy] = useState(false);
 	const [pluginBusy, setPluginBusy] = useState(false);
@@ -58,6 +60,7 @@ export function CompactionSettingsPanel() {
 			pi: settings.pi,
 			preferences: settings.preferences,
 			magic: magic.config,
+			magicBaseline: magic.config,
 			piVersion: settings.version,
 			preferencesVersion: settings.preferencesVersion,
 			magicVersion: magic.configVersion,
@@ -92,14 +95,26 @@ export function CompactionSettingsPanel() {
 		setFeedback(null);
 		try {
 			// [喵喵喵]: 顺序保存 —— 先写模式与 Pi compaction 块（决定扩展行为），再写
-			// Magic Context 配置；任一版本冲突都会中止并提示刷新，避免半套配置生效
+			// Magic Context 配置；任一版本冲突都会中止并提示刷新，避免半套配置生效。
+			// 模式切换会让 agent 侧写接管键 compaction.enabled 并重写 magic 配置文件，
+			// 因此第二步前必须重读快照：只落用户真正改过的字段、未改动则跳过保存，
+			// 避免用打开时的旧版本号误报「已被外部修改」、并用旧 enabled 覆盖接管键。
 			const settings = await bridge.saveCompactionSettings({
 				expectedPiVersion: draft.piVersion,
 				expectedPreferencesVersion: draft.preferencesVersion,
 				pi: draft.pi,
 				preferences: draft.preferences,
 			});
-			const magic = await bridge.saveMagicContextConfig({ expectedVersion: draft.magicVersion, config: draft.magic });
+			const latest = await bridge.getMagicContextSnapshot();
+			const changed: Partial<UiMagicContextConfig> = {};
+			for (const key of Object.keys(draft.magic) as (keyof UiMagicContextConfig)[]) {
+				if (JSON.stringify(draft.magic[key]) !== JSON.stringify(draft.magicBaseline[key])) {
+					(changed as Record<string, unknown>)[key] = draft.magic[key];
+				}
+			}
+			const magic = Object.keys(changed).length === 0
+				? latest
+				: await bridge.saveMagicContextConfig({ expectedVersion: latest.configVersion, config: { ...latest.config, ...changed } });
 			applySnapshot(settings, magic);
 			setFeedback({ kind: 'ok', text: t('compaction.settings.saved') });
 		} catch (error) {
@@ -115,7 +130,7 @@ export function CompactionSettingsPanel() {
 		setFeedback(null);
 		try {
 			const magic = action === 'install' ? await bridge.installMagicContextPlugin() : await bridge.updateMagicContextPlugin();
-			setDraft((current) => ({ ...current, magic: magic.config, magicVersion: magic.configVersion }));
+			setDraft((current) => ({ ...current, magic: magic.config, magicBaseline: magic.config, magicVersion: magic.configVersion }));
 			setPlugin(magic.plugin);
 			setFeedback({ kind: 'ok', text: action === 'install' ? t('compaction.settings.mcInstalled') : t('compaction.settings.mcUpdated') });
 		} catch (error) {
@@ -129,7 +144,7 @@ export function CompactionSettingsPanel() {
 		if (!bridge) return;
 		try {
 			const magic = await bridge.refreshMagicContextPluginStatus();
-			setDraft((current) => ({ ...current, magic: magic.config, magicVersion: magic.configVersion }));
+			setDraft((current) => ({ ...current, magic: magic.config, magicBaseline: magic.config, magicVersion: magic.configVersion }));
 			setPlugin(magic.plugin);
 		} catch (error) {
 			setFeedback({ kind: 'error', text: error instanceof Error ? error.message : String(error) });
