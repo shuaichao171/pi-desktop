@@ -26,3 +26,8 @@ desktop.ini
 tmp-electron-dist/
 tmp/
 pai-bug-investigation.md
+
+# Local AI-agent files: AGENTS.md is the index, RULES/ holds the rule bodies.
+# Each collaborator keeps a local copy without accidentally committing it.
+/AGENTS.md
+/RULES/
