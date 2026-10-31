@@ -145,6 +145,7 @@ export const ComposerContextPicker = forwardRef<ComposerContextPickerHandle, Com
 				width,
 				maxHeight,
 				left: Math.max(8, Math.min(rect.left, viewportWidth - width - 8)),
+				transformOrigin: side === 'top' ? 'center bottom' : 'center top',
 				...(side === 'top' ? { bottom: viewportHeight - rect.top + 6 } : { top: rect.bottom + 6 }),
 			};
 			setPosition((current) => current && Object.keys(next).length === Object.keys(current).length && Object.entries(next).every(([key, value]) => current[key as keyof CSSProperties] === value) ? current : next);

@@ -27,7 +27,7 @@ export interface HoverTooltipProps {
 }
 
 type TriggerProps = ButtonHTMLAttributes<HTMLButtonElement> & RefAttributes<HTMLButtonElement>;
-type TooltipPosition = { left: number; top: number; side: 'top' | 'bottom' | 'right'; zIndex: number };
+type TooltipPosition = { left: number; top: number; side: 'top' | 'bottom' | 'right'; origin: string; zIndex: number };
 
 const VIEWPORT_PADDING = 8;
 const TRIGGER_GAP = 6;
@@ -144,7 +144,8 @@ export function HoverTooltip({ children, title, description, shortcut, disabled 
 				const layer = Number.parseInt(window.getComputedStyle(ancestor).zIndex, 10);
 				if (Number.isFinite(layer)) zIndex = Math.max(zIndex, layer + 1);
 			}
-			setPosition((current) => current?.left === left && current.top === top && current.side === side && current.zIndex === zIndex ? current : { left, top, side, zIndex });
+			const origin = side === 'right' ? 'left center' : side === 'top' ? 'center bottom' : 'center top';
+			setPosition((current) => current?.left === left && current.top === top && current.side === side && current.origin === origin && current.zIndex === zIndex ? current : { left, top, side, origin, zIndex });
 		};
 		place();
 		const observer = new ResizeObserver(place);
@@ -236,7 +237,7 @@ export function HoverTooltip({ children, title, description, shortcut, disabled 
 				role="tooltip"
 				className={`pd-hover-tooltip${description != null ? ' has-description' : ''}`}
 				data-side={position?.side ?? preferredSide}
-				style={{ left: position?.left ?? 0, top: position?.top ?? 0, zIndex: position?.zIndex, visibility: position ? 'visible' : 'hidden', pointerEvents: interactive ? undefined : 'none' }}
+				style={{ left: position?.left ?? 0, top: position?.top ?? 0, zIndex: position?.zIndex, transformOrigin: position?.origin, visibility: position ? 'visible' : 'hidden', pointerEvents: interactive ? undefined : 'none' }}
 				onPointerEnter={() => { pointerInTooltip.current = true; clearCloseTimer(); }}
 				onPointerLeave={() => { pointerInTooltip.current = false; leave(); }}
 				onFocus={(event) => event.stopPropagation()}

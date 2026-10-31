@@ -109,6 +109,7 @@ export const ComposerSlashPicker = forwardRef<ComposerSlashPickerHandle, Compose
 			const next: CSSProperties = {
 				width, maxHeight: Math.min(420, side === 'top' ? above : below),
 				left: Math.max(8, Math.min(bounds.left, viewportWidth - width - 8)),
+				transformOrigin: side === 'top' ? 'center bottom' : 'center top',
 				...(side === 'top' ? { bottom: viewportHeight - bounds.top + 6 } : { top: bounds.bottom + 6 }),
 			};
 			setPosition((current) => current && Object.keys(current).length === Object.keys(next).length && Object.entries(next).every(([key, value]) => current[key as keyof CSSProperties] === value) ? current : next);
