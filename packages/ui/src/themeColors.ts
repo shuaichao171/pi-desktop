@@ -1,11 +1,11 @@
 export type ColorMode = 'light' | 'dark';
-export type ColorPresetId = 'default' | 'sky' | 'codex' | 'ocean' | 'forest' | 'sand' | 'custom';
+export type ColorPresetId = 'default' | 'sky' | 'codex' | 'ocean' | 'forest' | 'sand' | 'island' | 'custom';
 
 export interface ThemeColors { accent: string; surface: string; ink: string; contrast: number }
 export interface ThemeColorChoice extends ThemeColors { preset: ColorPresetId }
 export interface ThemeColorPreferences { light: ThemeColorChoice; dark: ThemeColorChoice }
 
-export const COLOR_PRESET_IDS = ['default', 'sky', 'codex', 'ocean', 'forest', 'sand'] as const;
+export const COLOR_PRESET_IDS = ['default', 'sky', 'codex', 'ocean', 'forest', 'sand', 'island'] as const;
 const STORAGE_KEY = 'pi-desktop.colors.v1';
 type NamedPreset = Exclude<ColorPresetId, 'custom'>;
 
@@ -33,6 +33,12 @@ const PRESETS: Record<NamedPreset, Record<ColorMode, ThemeColors>> = {
 	sand: {
 		light: { accent: '#9b622d', surface: '#fbf6ec', ink: '#3b3024', contrast: 50 },
 		dark: { accent: '#dcb580', surface: '#201b15', ink: '#f1e7d6', contrast: 50 },
+	},
+	// [喵喵喵]: island — Snow 孤岛观感：间隙底 #eef2f7/#050505；卡片表面由
+	// buildThemeTokens 从 surface 派生（dark 约 #0e0e0e、light 近白），文本深灰/近白。
+	island: {
+		light: { accent: '#0891b2', surface: '#eef2f7', ink: '#111827', contrast: 50 },
+		dark: { accent: '#22d3ee', surface: '#050505', ink: '#f5f5f5', contrast: 50 },
 	},
 };
 

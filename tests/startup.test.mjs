@@ -172,7 +172,7 @@ async function createStartupHarness(t, { workspaceError, initialization = deferr
   }
   await settle();
   const splash = windows[0];
-  assert.equal(splash.options.backgroundColor, '#111216', 'the first window is the dark boot splash');
+  assert.equal(splash.options.backgroundColor, '#161616', 'the first window is the dark boot splash');
   assert.equal(splash.options.width, 1280, 'the boot splash matches the main window size');
   assert.equal(splash.options.transparent, undefined, 'the boot splash is opaque');
   return {
