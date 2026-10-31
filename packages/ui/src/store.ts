@@ -172,6 +172,10 @@ let providerAuthRequest = 0;
 let unsubscribeAgentEvent: (() => void) | null = null;
 let bridgeGeneration = 0;
 let historyLoadRequest = 0;
+// Bumped whenever a ready event lands or a failed navigation rolls back: an
+// in-flight session peek that resolves after that point no longer matters (its
+// switch already ended) and must never paint over the settled conversation.
+let peekInvalidator = 0;
 const MAX_BOOTSTRAP_EVENTS = 256;
 const MAX_BOOTSTRAP_RESYNCS = 3;
 const SNAPSHOT_TIMEOUT_MS = 15_000;
@@ -517,6 +521,7 @@ modelProviders: [...get().modelProviders],
 				return;
 			}
 			case 'ready': {
+				peekInvalidator += 1;
 				sessionOpenMetrics.snapshot(event.cwd, event.sessionPath, event.sessionId, event.resumeKind);
 				const previous = get();
 				const completedPreparation = previous.sessionPreparation;
@@ -1762,6 +1767,7 @@ function readyMatchesPaintedPreview(previous: ChatState, event: ReadyEvent): boo
 	return previous.fileChanges.length === (event.fileChanges ?? []).length;
 }
 function restoreSettledConversation(set: (partial: Partial<ChatState>) => void): void {
+	peekInvalidator += 1;
 	const state = useChatStore.getState();
 	const settled = settledConversation;
 	set({
@@ -1816,6 +1822,49 @@ function beginOptimisticSessionSwitch(set: (partial: Partial<ChatState>) => void
 			queuedCount: 0, queuedMessages: [],
 			loadingOlder: false,
 		}),
+	});
+	// Cold path with nothing painted from the warm cache: read the target session
+	// straight from disk while the real load runs (peek), so its content shows long
+	// before the host finishes loading. The paired ready verifies it by fingerprint.
+	if (!painted && target.sessionPath !== null && state.bridge) paintSessionPeek(state.bridge, useChatStore.getState().navigationRequestId, { cwd: nextCwd, sessionPath: target.sessionPath });
+}
+
+/**
+ * Disk-level instant paint (seamless-switch peek): read the target session's content
+ * window straight from its file while the real load runs in the host. The payload is
+ * built by the exact converters a ready event uses, so the paired ready's fingerprint
+ * short-circuit confirms it with zero re-rendering — a cold switch paints within one
+ * disk read and never visibly changes again. Discarded once it no longer matters:
+ * superseded navigation, ended navigation, a ready that already landed
+ * (peekInvalidator), a rollback, or identity drift.
+ */
+function paintSessionPeek(bridge: AgentBridge, request: number, target: { cwd: string; sessionPath: string }): void {
+	const peek = bridge.peekSession;
+	if (!peek) return;
+	const invalidator = peekInvalidator;
+	void peek.call(bridge, target.cwd, target.sessionPath).then((payload) => {
+		if (!payload) return;
+		const state = useChatStore.getState();
+		if (invalidator !== peekInvalidator) return;
+		if (!currentSessionNavigation(bridge, request) || !state.navigationPending) return;
+		if (state.cwd !== target.cwd || state.sessionPath !== target.sessionPath) return;
+		if (state.conversationPreviewPath === target.sessionPath) return;
+		useChatStore.setState((previous) => ({
+			messages: payload.messages,
+			activities: payload.activities,
+			runs: payload.runs ?? [],
+			fileChanges: payload.fileChanges,
+			fileChangeTurns: payload.fileChangeTurns ?? [],
+			fileChangeActiveRunId: payload.fileChangeActiveRunId ?? null,
+			historyTotal: payload.historyTotal,
+			loadingOlder: false,
+			timelineRevision: previous.timelineRevision + 1,
+			// The painted content now belongs to the selected session itself: the keep-over
+			// dim lifts and reading-position restore follows the target's remembered spot.
+			conversationPreviewPath: target.sessionPath,
+		}));
+	}).catch(() => {
+		// Keep-over stays as-is; the authoritative ready replaces whatever is painted.
 	});
 }
 

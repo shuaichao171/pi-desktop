@@ -43,6 +43,7 @@ export const AGENT_HOST_METHODS = [
 	'listSlashCommands',
 	'executeSlashCommand',
 	'switchSession',
+	'peekSession',
 	'renameSession',
 	'forkSession',
 	'prepareSessionDeletion',

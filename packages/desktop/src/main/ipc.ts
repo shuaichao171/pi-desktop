@@ -1070,7 +1070,7 @@ function requireTrustedSender(event: IpcMainInvokeEvent): BrowserWindow {
 const mainOnlyChannels = new Set<string>([
 	IPC_CHANNELS.agentInit, IPC_CHANNELS.agentResidentSnapshot, IPC_CHANNELS.agentActivateResident,
 	IPC_CHANNELS.agentListWorkspaces, IPC_CHANNELS.workspaceListConversations, IPC_CHANNELS.conversationStoragePick,
-	IPC_CHANNELS.agentListSessions, IPC_CHANNELS.agentSearchSessions, IPC_CHANNELS.agentSwitchSession,
+	IPC_CHANNELS.agentListSessions, IPC_CHANNELS.agentSearchSessions, IPC_CHANNELS.agentSwitchSession, IPC_CHANNELS.agentPeekSession,
 	IPC_CHANNELS.sessionRevealFile, IPC_CHANNELS.sessionFork, IPC_CHANNELS.sessionOpenWindow, IPC_CHANNELS.sessionDelete,
 	IPC_CHANNELS.agentUpdateSessionMeta, IPC_CHANNELS.agentUpdateSessionOrders, IPC_CHANNELS.agentListSessionGroups, IPC_CHANNELS.agentUpdateSessionGroups,
 	IPC_CHANNELS.appRelaunch,
@@ -1705,6 +1705,13 @@ export function registerIpc(options: {
 		await agentService.switchSession(path);
 		await markSessionRead(path);
 	}));
+	handleRendererInvoke(IPC_CHANNELS.agentPeekSession, (event, cwd: unknown, path: unknown) => {
+		// Read-only disk preview: deliberately NOT queued behind workspace activation —
+		// its value is answering before the real load finishes, so it must never wait on
+		// the transition it is trying to cover.
+		if (typeof cwd !== 'string' || !cwd.trim() || typeof path !== 'string' || !path) return null;
+		return agentFor(event).peekSession(cwd, path);
+	});
 	handleRendererInvoke(IPC_CHANNELS.agentUpdateSessionMeta, (_event, path: string, patch: UiSessionMetaPatch) => queueWorkspaceActivation(async () => {
 		path = normalizeSessionPath(path);
 		if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw new Error('会话更新参数无效');

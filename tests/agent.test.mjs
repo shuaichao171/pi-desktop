@@ -188,3 +188,55 @@ test('session navigation queues latest-wins instead of rejecting while a slow sw
     rmSync(resolvedTemp, { recursive: true, force: true });
   }
 });
+
+test('peekSession reads a session from disk with the exact content window ready would send', async () => {
+  const tempRoot = mkdtempSync(join(tmpdir(), 'pi-desktop-test-'));
+  const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+  process.env.PI_CODING_AGENT_DIR = join(tempRoot, 'agent');
+  const workspace = join(tempRoot, 'workspace');
+  mkdirSync(workspace);
+
+  let service;
+  try {
+    const [{ AgentService }, { SessionManager }] = await Promise.all([
+      import('../packages/agent/src/index.ts'),
+      import('@earendil-works/pi-coding-agent'),
+    ]);
+    service = new AgentService();
+
+    const persisted = SessionManager.create(workspace);
+    persistConversation(persisted, 'Peek question', 'Peek answer');
+    persistConversation(persisted, 'Second question', 'Second answer');
+
+    // The peek happens before any init/load: it must work cold, straight from disk.
+    const peek = await service.peekSession(workspace, persisted.getSessionFile());
+    assert.ok(peek, 'the disk peek succeeds for a session the host has never loaded');
+    assert.equal(peek.historyTotal, 4, 'two user/assistant turns are counted');
+    assert.deepEqual(peek.messages.map(({ role, text }) => ({ role, text })), [
+      { role: 'user', text: 'Peek question' },
+      { role: 'assistant', text: 'Peek answer' },
+      { role: 'user', text: 'Second question' },
+      { role: 'assistant', text: 'Second answer' },
+    ], 'the peek window carries the full branch conversation');
+    assert.deepEqual(peek.fileChanges, []);
+
+    await service.init({ cwd: workspace });
+    await service.switchSession(persisted.getSessionFile());
+    const snapshot = service.getSnapshot();
+    assert.deepEqual(snapshot.messages, peek.messages, 'the loaded conversation equals the peek window object-for-object — a matching ready fingerprint-confirms the painted peek');
+    assert.equal(snapshot.historyTotal, peek.historyTotal);
+
+    assert.equal(await service.peekSession(workspace, join(tempRoot, 'outside.jsonl')), null, 'a session outside the workspace is refused');
+    assert.equal(await service.peekSession(workspace, persisted.getSessionFile() + '.missing'), null, 'a missing session file yields null, not an error');
+  } finally {
+    await service?.dispose();
+    if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+    else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+    const resolvedTemp = realpathSync.native(tempRoot);
+    const resolvedParent = realpathSync.native(tmpdir());
+    if (!resolvedTemp.startsWith(resolvedParent + sep)) {
+      throw new Error('Refusing to remove a test directory outside the temporary folder');
+    }
+    rmSync(resolvedTemp, { recursive: true, force: true });
+  }
+});

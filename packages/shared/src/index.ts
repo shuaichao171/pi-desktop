@@ -88,6 +88,7 @@ export const IPC_CHANNELS = {
   agentListSessions: 'agent:list-sessions',
   agentSearchSessions: 'agent:search-sessions',
   agentSwitchSession: 'agent:switch-session',
+  agentPeekSession: 'agent:peek-session',
   sessionRevealFile: 'session:reveal-file',
   sessionFork: 'session:fork',
   sessionOpenWindow: 'session:open-window',
@@ -448,6 +449,20 @@ export interface UiConversationRun {
   /** Null while running or when a crash/legacy record has no observed completion. */
   finishedAt: number | null;
   status: 'running' | 'completed' | 'cancelled' | 'failed' | 'interrupted';
+}
+
+/** Disk-level read-only preview of a session the host has not loaded yet: the exact
+ *  content window a ready event would send (same branch, ids, window and run state),
+ *  built by the same converters, so the renderer can paint it instantly and let the
+ *  authoritative ready verify it by fingerprint. Any read failure yields null. */
+export interface UiSessionPeek {
+  messages: UiMessage[];
+  activities: UiToolActivity[];
+  runs?: UiConversationRun[];
+  fileChanges: UiFileChange[];
+  fileChangeTurns?: UiFileChangeTurn[];
+  fileChangeActiveRunId?: string | null;
+  historyTotal: number;
 }
 
 export interface UiMessage {
@@ -1243,6 +1258,9 @@ export interface AgentBridge extends InputFeatureBridge, DataFeaturesBridge, Wor
   listSessions(cwd?: string): Promise<UiSessionSummary[]>;
   searchSessions(query: string): Promise<{ sessions: UiSessionSearchResult[]; truncated: boolean; skipped?: number }>;
   switchSession(path: string): Promise<void>;
+  /** Reads a session's content window straight from disk without loading it (seamless-switch peek).
+   *  Optional so older bridges and test harnesses can omit it; the store falls back to keep-over. */
+  peekSession?(cwd: string, path: string): Promise<UiSessionPeek | null>;
   /** Reveals a conversation file in the OS file manager (zcode session context menu). */
   revealSessionFile(path: string): Promise<void>;
   /** Copies a whole conversation into a new session beside it and returns the new file path (sidebar "Fork"). */
