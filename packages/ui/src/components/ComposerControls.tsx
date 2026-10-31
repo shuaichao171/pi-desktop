@@ -133,7 +133,8 @@ export function ComposerControls({ onOpenModelManagement, hasImages = false }: {
 			await state.bridge.executeSlashCommand({ cwd, sessionId, name: 'compact' });
 			close('input');
 		} catch (error) {
-			setCompactError(error instanceof Error ? error.message : String(error));
+			const message = error instanceof Error ? error.message : String(error);
+			setCompactError(/compaction cancelled/i.test(message) ? t('composer.compactionTakenOver') : message);
 		} finally { setCompacting(false); }
 	}
 

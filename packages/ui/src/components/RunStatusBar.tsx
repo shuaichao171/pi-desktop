@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react';
 import { useChatStore } from '../store';
-import { useT } from '../i18n';
+import { useT, translate } from '../i18n';
 import { attributeAgentError, type UiErrorKind } from '../errorAttribution';
 import { useConversationCopy } from '../conversationCopy';
 import { ErrorDetails } from './ErrorDetails';
@@ -87,6 +87,7 @@ async function runCompact(): Promise<void> {
 	try {
 		await state.bridge.executeSlashCommand({ cwd: state.cwd, sessionId: state.sessionId, name: 'compact' });
 	} catch (error) {
-		useChatStore.setState({ error: error instanceof Error ? error.message : String(error) });
+		const message = error instanceof Error ? error.message : String(error);
+		useChatStore.setState({ error: /compaction cancelled/i.test(message) ? translate('composer.compactionTakenOver') : message });
 	}
 }
