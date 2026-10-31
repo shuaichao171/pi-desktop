@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
+import { ExitPresence } from './ExitPresence';
 import { isValidProjectBarValue, normalizeProjectBarValue, projectBarLeavesMachine, type UiSessionGroup, type UiSidebarGroupChange, type WorkspaceOpener, type WorkspaceProjectNickname } from '@pidesktop/shared';
 import { PROJECT_BAR_ANIMS, PROJECT_BAR_PRESETS, readUserBarPresets, saveUserBarPresets, suggestBarLight, USER_BAR_PRESET_LIMIT, projectBarStyle, type UserBarPreset } from '../sidebarAppearance';
 import { projectCustomEntryDisplayName, readProjectCustomEntries, saveProjectCustomEntries, PROJECT_CUSTOM_ENTRY_LIMIT, type ProjectCustomEntry } from '../projectCustomEntries';
@@ -1241,7 +1242,7 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 		{drag && (ghostSession || ghostGroup || ghostProject) && <div className="pd-sidebar-drag-ghost" style={{ left: drag.ghost.x, top: drag.ghost.y, width: drag.ghost.width }} aria-hidden>
 			{ghostProject ? <><Icon name={pinnedWorkspaceSet.has(ghostProject) ? 'pin' : 'folder'} width="14" height="14" /><span>{projectDisplayName(ghostProject)}</span></> : ghostGroup ? <><Icon name="hash" width="14" height="14" /><span>{ghostGroup.name}</span></> : <span>{titleOf(ghostSession!)}</span>}
 		</div>}
-		{popup && <SidebarPopover key={popup.kind} anchor={popup.anchor} trigger={popup.trigger} point={popup.point} label={t(popup.kind === 'filter' ? 'sidebar.viewOptions' : popup.kind === 'rename-project' ? 'sidebar.projectNicknameEdit' : popup.kind === 'add-custom-command' ? 'sidebar.customCommandAdd' : popup.kind === 'add-custom-open' ? 'sidebar.customOpenAdd' : popup.kind === 'rename-custom-entry' ? 'sidebar.customRename' : popup.kind === 'edit-group' ? popup.group ? 'sidebar.renameGroup' : 'sidebar.newGroup' : popup.kind === 'project-group' ? 'sidebar.groupActions' : popup.kind === 'project' ? 'sidebar.projectActions' : 'sidebar.menuTitle')} dialog={popup.kind === 'edit-group' || popup.kind === 'rename-project' || popup.kind === 'add-custom-command' || popup.kind === 'add-custom-open' || popup.kind === 'rename-custom-entry'} className={popup.kind === 'session' || popup.kind === 'project' || popup.kind === 'project-group' ? 'pd-context-menu' : undefined} onClose={() => setPopup(null)}>
+		<ExitPresence show={Boolean(popup)} surface="pd-sidebar-popover">{popup && <SidebarPopover key={popup.kind} anchor={popup.anchor} trigger={popup.trigger} point={popup.point} label={t(popup.kind === 'filter' ? 'sidebar.viewOptions' : popup.kind === 'rename-project' ? 'sidebar.projectNicknameEdit' : popup.kind === 'add-custom-command' ? 'sidebar.customCommandAdd' : popup.kind === 'add-custom-open' ? 'sidebar.customOpenAdd' : popup.kind === 'rename-custom-entry' ? 'sidebar.customRename' : popup.kind === 'edit-group' ? popup.group ? 'sidebar.renameGroup' : 'sidebar.newGroup' : popup.kind === 'project-group' ? 'sidebar.groupActions' : popup.kind === 'project' ? 'sidebar.projectActions' : 'sidebar.menuTitle')} dialog={popup.kind === 'edit-group' || popup.kind === 'rename-project' || popup.kind === 'add-custom-command' || popup.kind === 'add-custom-open' || popup.kind === 'rename-custom-entry'} className={popup.kind === 'session' || popup.kind === 'project' || popup.kind === 'project-group' ? 'pd-context-menu' : undefined} onClose={() => setPopup(null)}>
 			{popup.kind === 'filter' && <>
 				<div className="pd-sidebar-menu-label">{t('sidebar.showRegions')}</div>
 				{checkbox(t('sidebar.groups'), regionVisible('project-groups'), () => toggleRegionVisibility('project-groups'))}
@@ -1494,6 +1495,6 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 					</SidebarSubmenu>}
 				</>}
 			</SidebarSubmenu>}
-		</SidebarPopover>}
+		</SidebarPopover>}</ExitPresence>
 	</div>;
 }
