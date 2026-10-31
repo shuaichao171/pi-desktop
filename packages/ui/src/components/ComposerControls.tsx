@@ -212,7 +212,7 @@ export function ComposerControls({ onOpenModelManagement, hasImages = false }: {
 				? Math.max(8, chrome.bottom + 8) : 8;
 			// Every picker rises from its own button; the model picker gets more height.
 			const limit = open === 'model' ? 600 : 440;
-			updatePosition({ left, bottom: window.innerHeight - rect.top + 6, maxHeight: Math.max(0, Math.min(limit, rect.top - 6 - topInset)) });
+			updatePosition({ left, bottom: window.innerHeight - rect.top + 6, maxHeight: Math.max(0, Math.min(limit, rect.top - 6 - topInset)), transformOrigin: open === 'model' ? 'right bottom' : 'center bottom' });
 		};
 		place();
 		// Panel transitions can move the button without resizing it. Track only

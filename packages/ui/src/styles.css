@@ -1348,18 +1348,21 @@ html.pd-popover-open :is(.pd-sidebar-toolbar, .pd-chat-header, .pd-chat-heading,
 /* Shared interaction rhythm. Transform animations never apply to the transcript
    itself: streamed text and restored history must retain their reading position. */
 :where(.pd-icon-button, .pd-send-button, .pd-composer-control, .pd-settings-nav button, .pd-session-item, .pd-search-result) {
-  transition: background-color var(--pd-motion-fast), color var(--pd-motion-fast), box-shadow var(--pd-motion-fast);
+  transition: background-color var(--pd-motion-fast), color var(--pd-motion-fast), box-shadow var(--pd-motion-fast), transform var(--pd-motion-fast) var(--pd-ease-enter);
 }
 .pd-send-button { transition: background-color var(--pd-motion-fast), transform var(--pd-motion-fast) var(--pd-ease-enter); }
 .pd-send-button:active:not(:disabled) { transform: scale(.96); }
+/* Press feedback on small controls only; full-width rows (.pd-session-item,
+   .pd-search-result) stay unscaled so list presses don't jump. */
+.pd-icon-button:active:not(:disabled), .pd-composer-control:active:not(:disabled) { transform: scale(.97); }
 .pd-composer-config-popover, .pd-context-picker, .pd-slash-picker, .pd-sidebar-popover, .pd-hover-tooltip {
   animation: pd-popover-enter var(--pd-motion-fast) var(--pd-ease-enter) both;
 }
 .pd-settings-dialog, .pd-search-dialog {
   animation: pd-dialog-enter var(--pd-motion-normal) var(--pd-ease-enter) both;
 }
-@keyframes pd-popover-enter { from { opacity: 0; translate: 0 4px; } to { opacity: 1; translate: 0 0; } }
-@keyframes pd-dialog-enter { from { opacity: 0; translate: 0 8px; } to { opacity: 1; translate: 0 0; } }
+@keyframes pd-popover-enter { from { opacity: 0; translate: 0 4px; scale: 0.97; } to { opacity: 1; translate: 0 0; scale: 1; } }
+@keyframes pd-dialog-enter { from { opacity: 0; translate: 0 8px; scale: 0.98; } to { opacity: 1; translate: 0 0; scale: 1; } }
 @media (prefers-reduced-motion: reduce) {
   :root { --pd-motion-fast: 0ms; --pd-motion-normal: 0ms; }
   *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }

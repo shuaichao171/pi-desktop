@@ -25,7 +25,7 @@ export function SidebarPopover({ anchor, trigger = anchor, point, label, dialog 
 			if (openPopoverCount === 0) document.documentElement.classList.remove('pd-popover-open');
 		};
 	}, []);
-	const [position, setPosition] = useState<{ top: number; left: number } | null>(null);
+	const [position, setPosition] = useState<{ top: number; left: number; origin: string } | null>(null);
 	useLayoutEffect(() => {
 		const menu = ref.current;
 		if (!menu) return;
@@ -38,7 +38,10 @@ export function SidebarPopover({ anchor, trigger = anchor, point, label, dialog 
 					? Math.max(8, Math.min(rect.top - box.height - 5, window.innerHeight - box.height - 8))
 					: Math.max(8, Math.min(rect.bottom + 5, window.innerHeight - box.height - 8)),
 			};
-			setPosition((old) => old?.top === next.top && old.left === next.left ? old : next);
+			const origin = point
+				? `${next.left >= point.x - 1 ? 'left' : 'right'} ${next.top >= point.y - 1 ? 'top' : 'bottom'}`
+				: `${align === 'start' ? 'left' : 'right'} ${placement === 'top' ? 'bottom' : 'top'}`;
+			setPosition((old) => old?.top === next.top && old.left === next.left && old.origin === origin ? old : { ...next, origin });
 		};
 		place();
 		const observer = new ResizeObserver(place);
@@ -75,7 +78,7 @@ export function SidebarPopover({ anchor, trigger = anchor, point, label, dialog 
 		};
 	}, [trigger]);
 	return createPortal(<div ref={ref} className={`pd-sidebar-popover${dialog ? ' is-form' : ''}${className ? ` ${className}` : ''}`} role={dialog ? 'dialog' : 'menu'} aria-label={label}
-		style={{ ...position, visibility: positioned ? 'visible' : 'hidden' }} onKeyDown={(event) => {
+		style={{ top: position?.top, left: position?.left, transformOrigin: position?.origin, visibility: positioned ? 'visible' : 'hidden' }} onKeyDown={(event) => {
 			if (event.nativeEvent.isComposing) return;
 			if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); onClose(); trigger.focus(); return; }
 			if (dialog || event.target instanceof Element && event.target.closest('.pd-sidebar-submenu')) return;
