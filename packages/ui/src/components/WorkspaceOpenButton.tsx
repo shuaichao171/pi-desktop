@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { ExitPresence } from './ExitPresence';
 import type { WorkspaceOpener } from '@pidesktop/shared';
 import { useT } from '../i18n';
 import { useChatStore } from '../store';
@@ -69,7 +70,7 @@ export function WorkspaceOpenButton({ cwd }: { cwd: string | null }) {
 				<button type="button" className="pd-workspace-open-main" aria-label={t('chat.openWorkspaceFolder')} title={t('chat.openWorkspaceFolder')} disabled={navigationPending} onClick={() => void openFolder()}><Icon name="folder" width="15" height="15" /></button>
 				<button ref={anchorRef} type="button" className="pd-workspace-open-menu" aria-haspopup="menu" aria-expanded={open} aria-label={t('chat.selectOpener')} onClick={() => { setError(null); setOpen((value) => !value); }}><Icon name="chevronDown" width="13" height="13" /></button>
 			</div>
-			{open && anchorRef.current && <SidebarPopover anchor={anchorRef.current} label={t('chat.selectOpener')} onClose={() => setOpen(false)}>
+			<ExitPresence show={Boolean(open && anchorRef.current)} surface="pd-sidebar-popover">{open && anchorRef.current && <SidebarPopover anchor={anchorRef.current} label={t('chat.selectOpener')} onClose={() => setOpen(false)}>
 				{editors === null && <p className="pd-sidebar-menu-note">{t('sidebar.openersLoading')}</p>}
 				{editors !== null && editors.length === 0 && <p className="pd-sidebar-menu-note">{t('sidebar.openersEmpty')}</p>}
 				{editors?.map((opener) => (
@@ -78,7 +79,7 @@ export function WorkspaceOpenButton({ cwd }: { cwd: string | null }) {
 						<span>{opener.name ?? (opener.id === 'vscode' ? 'VS Code' : opener.id)}</span>
 					</button>
 				))}
-			</SidebarPopover>}
+			</SidebarPopover>}</ExitPresence>
 			{error && <div className="pd-chat-title-error pd-workspace-open-error" role="alert">{t('chat.menuActionFailed', { message: error })}</div>}
 		</div>
 	);

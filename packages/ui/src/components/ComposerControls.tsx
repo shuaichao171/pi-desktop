@@ -1,4 +1,5 @@
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent } from 'react';
+import { ExitPresence } from './ExitPresence';
 import { createPortal } from 'react-dom';
 import type { UiThinkingLevel } from '@pidesktop/shared';
 import { useChatStore } from '../store';
@@ -299,7 +300,7 @@ export function ComposerControls({ onOpenModelManagement, hasImages = false }: {
 				<Icon name="lightbulb" width="16" height="16" /><span>{thinking ? t('composer.thinkingTrigger', { level: thinkingLabel }) : thinkingLabel}</span>{canThink && <Icon name="chevronDown" width="12" height="12" />}
 			</button>
 		</HoverTooltip>
-			{open && createPortal(<div ref={popoverRef} id={`pd-composer-${open}-picker`} className={`pd-composer-config-popover is-${open}`} style={position ?? { visibility: 'hidden' }} role={open === 'thinking' ? 'menu' : 'dialog'} aria-label={t(open === 'model' ? 'composer.pickerLabel' : open === 'context' ? 'composer.contextTitle' : 'composer.pickerThinking')} onKeyDown={onPickerKeyDown}>
+			<ExitPresence show={open !== null} surface="pd-composer-config-popover">{open && createPortal(<div ref={popoverRef} id={`pd-composer-${open}-picker`} className={`pd-composer-config-popover is-${open}`} style={position ?? { visibility: 'hidden' }} role={open === 'thinking' ? 'menu' : 'dialog'} aria-label={t(open === 'model' ? 'composer.pickerLabel' : open === 'context' ? 'composer.contextTitle' : 'composer.pickerThinking')} onKeyDown={onPickerKeyDown}>
 			<div className="pd-composer-picker-head"><strong>{t(open === 'model' ? 'composer.pickerTitle' : open === 'context' ? 'composer.contextTitle' : 'composer.pickerThinking')}</strong><button type="button" onClick={() => close('trigger')} aria-label={t(open === 'model' ? 'composer.pickerClose' : open === 'context' ? 'composer.contextClose' : 'composer.thinkingClose')}><Icon name="close" width="14" height="14" /></button></div>
 			{open === 'model' ? <>
 				<div className="pd-composer-picker-tools">
@@ -336,6 +337,6 @@ export function ComposerControls({ onOpenModelManagement, hasImages = false }: {
 				{compactError && <p className="pd-composer-picker-error" role="alert">{compactError}</p>}
 			</div>}
 			{error && <p className="pd-composer-picker-error" role="alert">{error}</p>}
-		</div>, document.body)}
+		</div>, document.body)}</ExitPresence>
 	</div>;
 }
