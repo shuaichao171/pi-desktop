@@ -1354,7 +1354,6 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 								{submenuItem({ key: 'bar-apply-cancel', label: t('sidebar.cancel'), icon: 'close', onSelect: () => setBarConfirm(null) })}
 							</>}
 							{submenuItem({ key: 'bar-ai', label: t('sidebar.appearanceAiCopy'), icon: 'brain', onSelect: () => { void navigator.clipboard.writeText(t('sidebar.appearanceAiPrompt')).then(() => setAiPromptCopied(true), () => {}); } })}
-							{submenuItem({ key: 'bar-ai-dynamic', label: t('sidebar.appearanceAiDynamic'), icon: 'refresh', onSelect: () => { void navigator.clipboard.writeText(t('sidebar.appearanceAiPromptDynamic')).then(() => setAiPromptCopied(true), () => {}); } })}
 							{aiPromptCopied && <p className="pd-sidebar-menu-note">{t('sidebar.appearanceAiCopied')}</p>}
 						</SidebarSubmenu>}
 						{barSubFlyout?.kind === 'anim' && <SidebarSubmenu anchor={barSubFlyout.anchor} label={t('sidebar.appearanceAnim')} autoFocus={barSubFlyout.keyboard} onPointerEnter={clearBarSubTimer}

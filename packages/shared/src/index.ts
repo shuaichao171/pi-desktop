@@ -917,7 +917,7 @@ const PROJECT_BAR_CSS_FORBIDDEN = /element\(|attr\(|expression\(|paint\(|@|;|\{|
 export function normalizeProjectBarValue(value: unknown): string | null {
 	const bar = typeof value === 'string' ? value.trim().replace(/\s+/g, ' ') : '';
 	if (!bar) return null;
-	if (bar.length > 300) return null;
+	if (bar.length > 1000) return null; // Sanity cap, not a security boundary; the charset/forbidden list is.
 	if (bar.startsWith('#')) return /^#[0-9a-fA-F]{3}$/.test(bar) || /^#[0-9a-fA-F]{6}$/.test(bar) ? bar : null;
 	if ((PROJECT_BAR_PRESET_IDS as readonly string[]).includes(bar)) return bar;
 	// Custom CSS: a conservative charset for gradients and colors (calc/rgba/repeats included),
