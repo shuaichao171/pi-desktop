@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { ExitPresence } from './ExitPresence';
 import type { ResultFileTarget } from '@pidesktop/shared';
 import { useChatStore } from '../store';
 import { useT } from '../i18n';
@@ -60,12 +61,12 @@ export function ResultFileLink({ href, children, title }: { href?: string; child
       onKeyDown={event => {
         if (event.key === 'ContextMenu' || event.shiftKey && event.key === 'F10') { event.preventDefault(); if (available) { setMenuPoint(undefined); setMenu(true); } }
       }}>{children}</a>
-    {menu && anchor.current && <SidebarPopover anchor={anchor.current} point={menuPoint} label={t('resultFile.actions')} onClose={() => setMenu(false)}>
+    <ExitPresence show={Boolean(menu && anchor.current)} surface="pd-sidebar-popover">{menu && anchor.current && <SidebarPopover anchor={anchor.current} point={menuPoint} label={t('resultFile.actions')} onClose={() => setMenu(false)}>
       {/* The preview returns focus to whatever held it on open; hand it back to the
           link first so closing the preview does not strand focus on the removed menu. */}
       <button type="button" role="menuitem" onClick={() => { setMenu(false); anchor.current?.focus({ preventScroll: true }); openPreview(target); }}><span>{t('resultFile.preview')}</span><Icon name="panelRight" width="14" height="14" /></button>
       <button type="button" role="menuitem" onClick={() => act('open')}><span>{t('resultFile.openDefault')}</span><Icon name="file" width="14" height="14" /></button>
       <button type="button" role="menuitem" onClick={() => act('reveal')}><span>{t('resultFile.reveal')}</span><Icon name="folder" width="14" height="14" /></button>
-    </SidebarPopover>}
+    </SidebarPopover>}</ExitPresence>
   </>;
 }

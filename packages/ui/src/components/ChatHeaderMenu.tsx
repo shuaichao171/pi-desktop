@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { ExitPresence } from './ExitPresence';
 import type { UiMessage, UiSessionMetaPatch } from '@pidesktop/shared';
 import { useT } from '../i18n';
 import { useChatStore } from '../store';
@@ -119,7 +120,7 @@ export function ChatHeaderMenu({ title, sessionPath, cwd, onRename, onOpenCommit
 
 	return <>
 		<HoverTooltip title={t('chat.menuLabel')}><button type="button" className="pd-icon-button pd-chat-header-more pd-top-bar-menu" aria-label={t('chat.menuLabel')} aria-haspopup="menu" aria-expanded={Boolean(anchor)} onClick={(event) => { setNotice(null); setAnchor(event.currentTarget); }}><Icon name="more" width="16" height="16" /></button></HoverTooltip>
-		{anchor && <SidebarPopover anchor={anchor} label={t('chat.menuLabel')} onClose={close}>
+		<ExitPresence show={Boolean(anchor)} surface="pd-sidebar-popover">{anchor && <SidebarPopover anchor={anchor} label={t('chat.menuLabel')} onClose={close}>
 			{item(t('sidebar.rename'), () => { close(); onRename(); }, !saved)}
 			{item(t(session?.pinned ? 'sidebar.unpin' : 'sidebar.pin'), () => perform({ pinned: !session?.pinned }), !saved)}
 			{item(t(session?.unread ? 'sidebar.markRead' : 'sidebar.markUnread'), () => perform(session?.unread ? { unread: false, expectedUnreadAt: session.unreadAt } : { unread: true }), !saved)}
@@ -140,7 +141,7 @@ export function ChatHeaderMenu({ title, sessionPath, cwd, onRename, onOpenCommit
 			{item(t('chat.menuOpenInVsCode'), () => { close(); openInVsCode(); }, !cwd)}
 			{item(t('chat.menuCommit'), () => { close(); onOpenCommit(); }, !cwd)}
 			{notice && <p className="pd-sidebar-menu-note">{notice}</p>}
-		</SidebarPopover>}
+		</SidebarPopover>}</ExitPresence>
 		{panel === 'stats' && <SessionInfoPanel returnFocus={panelTrigger.current} onClose={() => setPanel(null)} />}
 		{panel === 'tree' && <SessionTreePanel returnFocus={panelTrigger.current} onClose={() => setPanel(null)} />}
 		{panel === 'memory' && <MemoryPanel returnFocus={panelTrigger.current} onClose={() => setPanel(null)} />}

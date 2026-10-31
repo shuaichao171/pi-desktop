@@ -1,4 +1,5 @@
 import { useEffect, useId, useRef, useState } from 'react';
+import { ExitPresence } from './ExitPresence';
 import { createPortal } from 'react-dom';
 import type { WorkspaceBranches, WorkspaceGitCheckoutResult } from '@pidesktop/shared';
 import { useT } from '../i18n';
@@ -79,7 +80,7 @@ function ProjectChip({ isHome }: { isHome: boolean }) {
 					<Icon name="chevronDown" width="13" height="13" />
 				</button>
 			</div>
-			{open && anchorRef.current && <SidebarPopover anchor={anchorRef.current} label={t('composer.projectMenuLabel')} placement="top" align="start" className="pd-project-picker" onClose={() => setOpen(false)}>
+			<ExitPresence show={Boolean(open && anchorRef.current)} surface="pd-sidebar-popover">{open && anchorRef.current && <SidebarPopover anchor={anchorRef.current} label={t('composer.projectMenuLabel')} placement="top" align="start" className="pd-project-picker" onClose={() => setOpen(false)}>
 				<div className="pd-project-picker-head" aria-hidden="true"><span>{t('composer.projectPickerTitle')}</span>{projects.length > 0 && <small>{projects.length}</small>}</div>
 				{projects.length > 0 ? <div className="pd-project-picker-list">
 					{projects.map((workspace) => (
@@ -98,7 +99,7 @@ function ProjectChip({ isHome }: { isHome: boolean }) {
 						<span className="pd-project-option-icon is-action" aria-hidden="true"><Icon name="home" width="15" height="15" /></span><span className="pd-context-menu-main">{t('composer.projectClear')}</span>
 					</button>}
 				</div>
-			</SidebarPopover>}
+			</SidebarPopover>}</ExitPresence>
 			{error && <div className="pd-chat-title-error pd-context-chip-error" role="alert">{t('chat.menuActionFailed', { message: error })}</div>}
 		</div>
 	);
@@ -211,7 +212,7 @@ function BranchChip() {
 		<button ref={anchorRef} type="button" className="pd-context-chip" aria-haspopup="menu" aria-expanded={open} aria-label={`${t('composer.branchLabel')}: ${label}`} onClick={() => { const next = !open; setOpen(next); setQuery(''); if (next) void refresh(); }}>
 			<Icon name="gitBranch" width="15" height="15" /><span className="pd-context-chip-label">{label}</span><Icon name="chevronDown" width="13" height="13" />
 		</button>
-		{open && anchorRef.current && <SidebarPopover anchor={anchorRef.current} label={t('composer.branchLabel')} placement="top" dialog onClose={() => { setOpen(false); setSwitching(null); }}>
+		<ExitPresence show={Boolean(open && anchorRef.current)} surface="pd-sidebar-popover">{open && anchorRef.current && <SidebarPopover anchor={anchorRef.current} label={t('composer.branchLabel')} placement="top" dialog onClose={() => { setOpen(false); setSwitching(null); }}>
 			<input className="pd-context-branch-search" type="text" value={query} placeholder={t('composer.branchSearchPlaceholder')} onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => { if (event.key === 'Escape') { event.stopPropagation(); setOpen(false); anchorRef.current?.focus(); } }} />
 			<div className="pd-context-branch-list">{state.loading ? <p className="pd-context-branch-note" role="status">{t('composer.branchLoading')}</p> : visible.length === 0 ? <p className="pd-context-branch-note">{t('composer.branchEmpty')}</p> : visible.map((name) => {
 				const current = name === branches.current;
@@ -220,7 +221,7 @@ function BranchChip() {
 				</button>;
 			})}</div>
 			{state.error && <div className="pd-sidebar-error pd-context-branch-error" role="alert">{state.error}</div>}
-		</SidebarPopover>}
+		</SidebarPopover>}</ExitPresence>
 		{blocked && <BranchSwitchAssist initial={blocked} onClose={() => { setBlocked(null); requestAnimationFrame(() => anchorRef.current?.focus()); }} onSwitched={() => { setBlocked(null); void refresh(); requestAnimationFrame(() => anchorRef.current?.focus()); }} />}
 	</div>;
 }

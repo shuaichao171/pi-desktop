@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type PointerEvent } from 'react';
+import { ExitPresence } from './ExitPresence';
 import type { UiAppearanceState, UiSessionSearchResult, WorkspaceEntry } from '@pidesktop/shared';
 import { ChatView, type SearchMessageTarget } from './ChatView';
 import { ChatCommitDialog } from './ChatCommitDialog';
@@ -417,7 +418,7 @@ export function AppShell() {
 				</div>} /></div>
 				<div className="pd-notification-center"><div ref={setNotificationTarget} className="pd-extension-notification-slot" /></div>
 				</div>
-				{settingsOpen && <SettingsPanel initialPage={settingsInitialPage} modelManagementTarget={settingsInitialPage === 'model' ? modelManagementTarget : undefined} onClose={() => setSettingsOpen(false)} themePreference={themePreference} onThemePreferenceChange={setThemePreference} colorPreferences={colorPreferences} onColorPreferencesChange={setColorPreferences} colorSaveFailed={colorSaveFailed} />}
+				<ExitPresence show={settingsOpen} surface="pd-settings-overlay">{settingsOpen && <SettingsPanel initialPage={settingsInitialPage} modelManagementTarget={settingsInitialPage === 'model' ? modelManagementTarget : undefined} onClose={() => setSettingsOpen(false)} themePreference={themePreference} onThemePreferenceChange={setThemePreference} colorPreferences={colorPreferences} onColorPreferencesChange={setColorPreferences} colorSaveFailed={colorSaveFailed} />}</ExitPresence>
 				{/* The chat surface keeps result-file links usable, so the dialog they open is rendered here too. */}
 				<ResultFilePreviewDialogRoot />
 				{isWindows && <WindowControls />}
@@ -464,8 +465,8 @@ export function AppShell() {
 			<ScopedErrorBoundary scope="workbench" resetKeys={[workbenchRequest?.cwd, workbenchRequest?.requestId]}><WorkbenchSidePane open={workbenchOpen && mainView === 'chat'} modal={workbenchOverlay && !settingsOpen && !searchOpen} suspended={settingsOpen || searchOpen} width={clampWorkbenchWidth(workbenchWidth, viewportWidth)} onWidthChange={value => setWorkbenchWidth(clampWorkbenchWidth(value, viewportWidth))} onResizing={setWorkbenchResizing} onClose={closeWorkbench} openRequest={workbenchRequest} terminalRequest={terminalRequest} onTabChange={setWorkbenchTab} /></ScopedErrorBoundary>
 			</div>
 			{commitOpen && mainView === 'chat' && <ChatCommitDialog onClose={() => setCommitOpen(false)} />}
-			{settingsOpen && <SettingsPanel initialPage={settingsInitialPage} modelManagementTarget={settingsInitialPage === 'model' ? modelManagementTarget : undefined} onClose={() => setSettingsOpen(false)} themePreference={themePreference} onThemePreferenceChange={setThemePreference} colorPreferences={colorPreferences} onColorPreferencesChange={setColorPreferences} colorSaveFailed={colorSaveFailed} />}
-			{searchOpen && <div className="pd-overlay-error-host"><ScopedErrorBoundary scope="search" onReset={() => setSearchOpen(false)}><SearchDialog commands={searchCommands} onClose={() => setSearchOpen(false)} onSelectSession={selectSearchSession} onSelectFile={selectSearchFile} /></ScopedErrorBoundary></div>}
+			<ExitPresence show={settingsOpen} surface="pd-settings-overlay">{settingsOpen && <SettingsPanel initialPage={settingsInitialPage} modelManagementTarget={settingsInitialPage === 'model' ? modelManagementTarget : undefined} onClose={() => setSettingsOpen(false)} themePreference={themePreference} onThemePreferenceChange={setThemePreference} colorPreferences={colorPreferences} onColorPreferencesChange={setColorPreferences} colorSaveFailed={colorSaveFailed} />}</ExitPresence>
+			<ExitPresence show={searchOpen} surface="pd-search-overlay">{searchOpen && <div className="pd-overlay-error-host"><ScopedErrorBoundary scope="search" onReset={() => setSearchOpen(false)}><SearchDialog commands={searchCommands} onClose={() => setSearchOpen(false)} onSelectSession={selectSearchSession} onSelectFile={selectSearchFile} /></ScopedErrorBoundary></div>}</ExitPresence>
 			<FolderProjectDropZone onAdded={revealAddedProjects} />
 			<ResultFilePreviewDialogRoot />
 		</div>
