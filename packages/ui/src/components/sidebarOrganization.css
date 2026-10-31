@@ -21,12 +21,12 @@
 .pd-session-delete-dialog button { display: inline-flex; align-items: center; justify-content: center; min-height: 34px; padding: 6px 12px; border: 1px solid var(--pd-border); border-radius: var(--pd-radius-sm); background: var(--pd-surface); color: var(--pd-text); }
 .pd-session-delete-dialog button.is-danger { color: var(--pd-danger); border-color: var(--pd-danger-border); background: var(--pd-danger-surface); }
 /* One row: an equal-width view switch, then "new" and the view-options menu. */
-.pd-sidebar-organize-toolbar { display: flex; flex: 0 0 auto; align-items: center; gap: 6px; min-height: 34px; padding: 0 9px 6px 12px; }
+.pd-sidebar-organize-toolbar { display: flex; flex: 0 0 auto; align-items: center; gap: 6px; min-height: 24px; padding: 0 9px 0 12px; margin-bottom: 3px; }
 .pd-sidebar-mode { display: flex; flex: 1 1 auto; gap: 2px; max-width: 168px; min-width: 0; padding: 2px; border-radius: var(--pd-radius-md); background: var(--pd-sidebar-surface); }
 .pd-sidebar-mode button { display: flex; flex: 1 1 0; align-items: center; justify-content: center; min-width: 0; height: 26px; padding: 0 10px; border: 0; border-radius: var(--pd-radius-sm); background: transparent; color: var(--pd-text-subtle); font-size: var(--pd-font-caption); white-space: nowrap; transition: background var(--pd-motion-fast), color var(--pd-motion-fast); }
 .pd-sidebar-mode button[aria-selected='true'] { background: var(--pd-sidebar-tab); color: var(--pd-text); font-weight: 500; box-shadow: var(--pd-shadow-low); }
 .pd-sidebar-mode button:hover { color: var(--pd-text); }
-.pd-sidebar-organize-toolbar .pd-icon-button { position: relative; width: 28px; height: 28px; border-radius: var(--pd-radius-sm); color: var(--pd-text-subtle); }
+.pd-sidebar-organize-toolbar .pd-icon-button { position: relative; width: 24px; height: 24px; border-radius: var(--pd-radius-sm); color: var(--pd-text-subtle); }
 .pd-sidebar-organize-toolbar .pd-icon-button:hover:not(:disabled), .pd-sidebar-organize-toolbar .pd-icon-button[aria-expanded='true'] { background: var(--pd-sidebar-hover); color: var(--pd-text); }
 /* An active filter marks the options button instead of tinting it. */
 .pd-sidebar-organize-toolbar .pd-icon-button.has-dot::after { position: absolute; top: 5px; right: 5px; width: 6px; height: 6px; border-radius: 50%; background: var(--pd-brand); box-shadow: 0 0 0 2px var(--pd-sidebar); content: ''; }
@@ -43,7 +43,7 @@
 .pd-sidebar-group.is-pinned > .pd-sidebar-group-content { margin-left: 0; padding-left: 0; border-left: 0; }
 .pd-sidebar-group-heading { display: flex; align-items: center; min-height: 22px; border-radius: var(--pd-radius-sm); }
 .pd-sidebar-group-heading:hover { background: var(--pd-sidebar-hover); }
-.pd-sidebar-group-toggle { display: flex; flex: 1; align-items: center; gap: 5px; min-width: 0; height: 22px; padding: 0 6px; border: 0; border-radius: var(--pd-radius-sm); background: transparent; color: var(--pd-text); font-size: var(--pd-font-caption); text-align: left; }
+.pd-sidebar-group-toggle { display: flex; flex: 1; align-items: center; gap: 5px; min-width: 0; height: 22px; padding: 0 8px; border: 0; border-radius: var(--pd-radius-sm); background: transparent; color: var(--pd-text); font-size: var(--pd-font-caption); text-align: left; }
 .pd-sidebar-group-toggle > svg { flex: 0 0 auto; color: var(--pd-group-color, var(--pd-text)); }
 .pd-sidebar-group-toggle > span { overflow: hidden; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
 .pd-sidebar-group-toggle > .is-expanded { transform: rotate(90deg); }
@@ -92,7 +92,8 @@
 .pd-appearance-css:focus { outline: none; border-color: var(--pd-brand); }
 .pd-appearance-css::placeholder { color: var(--pd-text-subtle); }
 .pd-appearance-net-warn { color: var(--pd-danger); }
-.pd-sidebar-group-content { margin-left: 9px; padding-left: 2px; border-left: 1px solid var(--pd-sidebar-surface); }
+.pd-sidebar-group-content { margin-left: 16px; padding-left: 2px; border-left: 1px solid var(--pd-sidebar-surface); }
+.pd-sidebar-project-subgroup .pd-sidebar-group-content { margin-left: 26px; }
 .pd-sidebar-group.is-custom > .pd-sidebar-group-content { border-left-color: var(--pd-group-color); }
 /* Rows sit close to the guide line, but the leading indicator keeps a ~5px gap so it never covers the border. */
 .pd-organized-list .pd-session-item .pd-session-row { min-height: 22px; padding: 0 6px 0 3px; gap: 5px; }
@@ -180,3 +181,52 @@ body.pd-sidebar-dragging * { cursor: grabbing !important; }
 
 /* pi-subagents child-session badge (builtin agents derive "agent: task" names). */
 .pd-session-child-badge { flex: 0 0 auto; margin-left: 6px; padding: 0 6px; border: 1px solid var(--pd-border-soft); border-radius: 999px; color: var(--pd-text-subtle); font-size: var(--pd-font-xs); line-height: 16px; white-space: nowrap; }
+
+.pd-sidebar-project-subgroup { margin-bottom: 4px; }
+/* Full-width rows: hierarchy is expressed by leading indent only. */
+/* Group rows sit one notch left of project rows: they are containers, not items. */
+.pd-sidebar-group-heading[data-project-group-target] .pd-sidebar-group-toggle { padding-left: 3px; }
+.pd-sidebar-project-subgroup .pd-sidebar-group-toggle { padding-left: 18px; }
+.pd-sidebar-group-toggle > small { flex: 0 0 auto; color: var(--pd-text-subtle); }
+.pd-sidebar-group-heading .pd-group-add { flex: 0 0 auto; width: 20px; height: 22px; opacity: 0.55; }
+.pd-sidebar-group-heading:hover .pd-group-add, .pd-sidebar-group-heading .pd-group-add:focus-visible { opacity: 1; }
+.pd-sidebar-region[data-project-group-target=''] { position: relative; }
+
+.pd-sidebar-regions { display: flex; flex: 1 1 auto; flex-direction: column; min-height: 0; overflow: hidden; padding: 2px 0 0; }
+.pd-sidebar-region { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+.pd-sidebar-region + .pd-sidebar-region { border-top: 1px solid var(--pd-sidebar-surface); }
+.pd-sidebar-region-heading { display: flex; flex: 1 1 auto; min-width: 0; align-items: center; gap: 6px; padding: 0 6px; border: 0; background: transparent; color: var(--pd-text-weak); font-size: var(--pd-font-caption); font-weight: 600; text-align: left; }
+.pd-sidebar-region-heading-row { display: flex; flex: 0 0 30px; align-items: center; padding: 0 8px; background: var(--pd-sidebar-surface); }
+.pd-sidebar-region-heading-row:hover, .pd-sidebar-region-heading-row:focus-within { background: var(--pd-sidebar-hover); }
+.pd-sidebar-region-heading-row:hover .pd-sidebar-region-heading, .pd-sidebar-region-heading-row:focus-within .pd-sidebar-region-heading { color: var(--pd-text); }
+.pd-sidebar-region-heading-actions { display: flex; flex: 0 0 auto; align-items: center; }
+.pd-sidebar-region-heading-actions .pd-icon-button { opacity: 0.7; }
+.pd-sidebar-region-heading-row:hover .pd-sidebar-region-heading-actions .pd-icon-button, .pd-sidebar-region-heading-actions .pd-icon-button:focus-visible { opacity: 1; }
+/* The heading row and icon buttons share --pd-sidebar-hover as their resting
+   hover tint, so the buttons need a distinct pressed look or they vanish
+   against the row highlight. */
+.pd-sidebar .pd-sidebar-region-heading-actions .pd-icon-button:hover,
+.pd-sidebar .pd-sidebar-region-heading-actions .pd-icon-button:focus-visible,
+.pd-sidebar .pd-sidebar-group-heading .pd-icon-button:hover,
+.pd-sidebar .pd-sidebar-group-heading .pd-icon-button:focus-visible { background: var(--pd-sidebar); color: var(--pd-text); box-shadow: inset 0 0 0 1px var(--pd-border); }
+.pd-sidebar-region-heading > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pd-sidebar-region-heading > svg { flex: 0 0 auto; transition: transform var(--pd-motion-fast); }
+.pd-sidebar-region-heading > svg.is-expanded { transform: rotate(90deg); }
+/* Left padding equals the styled 5px scrollbar gutter, so rows sit an equal
+   distance from both sidebar edges whether or not the list scrolls. */
+.pd-sidebar-region-content { flex: 1 1 auto; min-height: 80px; overflow-x: hidden; overflow-y: auto; padding: 0 0 6px 5px; scrollbar-gutter: stable; }
+.pd-sidebar-region-content::-webkit-scrollbar { width: 5px; }
+.pd-sidebar-region-content::-webkit-scrollbar-thumb { border: 1px solid transparent; border-radius: var(--pd-radius-pill); background: var(--pd-scrollbar-thumb); background-clip: padding-box; }
+.pd-sidebar-region-content > .pd-session-item .pd-session-row { padding-left: 8px; }
+/* Rows now end at the scrollbar gutter; keep the hover actions clear of it. */
+.pd-sidebar-region-content .pd-session-actions { top: 50%; right: 8px; transform: translateY(-50%); }
+.pd-sidebar-region-content .pd-session-action { width: 20px; height: 20px; }
+.pd-sidebar-region.is-collapsed { flex-basis: 30px !important; }
+.pd-sidebar-region-resizer { position: relative; z-index: 1; flex: 0 0 7px; margin: -1px 12px; cursor: ns-resize; touch-action: none; }
+.pd-sidebar-region-resizer::after { position: absolute; top: 3px; right: 0; left: 0; height: 1px; background: transparent; content: ''; }
+.pd-sidebar-region-resizer:hover::after, .pd-sidebar-region-resizer:active::after { background: var(--pd-brand); }
+.pd-sidebar-inline-group-form { display: flex; flex: 0 0 auto; gap: 4px; margin: 0 9px 5px; }
+.pd-sidebar-inline-group-form input { flex: 1; min-width: 0; height: 28px; padding: 0 7px; border: 1px solid var(--pd-border); border-radius: var(--pd-radius-xs); background: var(--pd-bg); color: var(--pd-text); font-size: var(--pd-font-caption); }
+.pd-sidebar-inline-group-form button { display: grid; flex: 0 0 28px; place-items: center; border: 0; border-radius: var(--pd-radius-xs); background: transparent; color: var(--pd-text-subtle); }
+.pd-sidebar-inline-group-form button:hover:not(:disabled) { background: var(--pd-sidebar-hover); color: var(--pd-text); }
+.pd-sidebar-regions .pd-sidebar-group { margin-bottom: 2px; }

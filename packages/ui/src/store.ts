@@ -401,6 +401,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 					if (get().status === 'idle' || get().status === 'busy') {
 						void get().refreshSessions();
 						void get().refreshWorkspaces();
+void get().refreshModelProviders().catch(() => {});
 						return;
 					}
 				}
@@ -468,7 +469,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 					availableThinkingLevels: [],
 					contextUsage: null,
 					models: [],
-					modelProviders: [],
+modelProviders: [...get().modelProviders],
 					providerAuth: [],
 					settingsLoading: false,
 					settingsError: null,
@@ -559,6 +560,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
 				// later failed navigation can put the renderer back on the session the
 				// host still shows.
 				captureSettledConversation();
+// The balance segment reads usage-query config from the provider list; the
+// picker only loads it on open, so eager-load it once the session is live.
+if (!get().modelProviders.length) void get().refreshModelProviders().catch(() => {});
 				return;
 			}
 			case 'model':

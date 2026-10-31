@@ -8,7 +8,7 @@ import './projectCreationDialog.css';
 const folderName = (path: string) => path.split(/[\\/]/).filter(Boolean).at(-1) ?? path;
 const childPath = (parent: string, name: string) => `${parent.replace(/[\\/]+$/, '')}${parent.includes('\\') ? '\\' : '/'}${name}`;
 
-export function ProjectCreationDialog({ onClose }: { onClose(opened: boolean): void }) {
+export function ProjectCreationDialog({ onClose, onCreated }: { onClose(opened: boolean): void; onCreated?: (workspace: string) => void }) {
 	const { t } = useT();
 	const bridge = useChatStore(state => state.bridge);
 	const switchWorkspace = useChatStore(state => state.switchWorkspace);
@@ -84,7 +84,7 @@ export function ProjectCreationDialog({ onClose }: { onClose(opened: boolean): v
 				await switchWorkspace(path, retryActivation.current ? { force: true } : undefined);
 				retryActivation.current = false;
 			} catch (cause) { retryActivation.current = true; throw cause; }
-			if (current()) close(true);
+			if (current()) { onCreated?.(path); close(true); }
 		} catch (cause) { if (current()) setError(cause instanceof Error ? cause.message : String(cause)); }
 		finally { lock.current = false; if (mounted.current) setBusy(null); }
 	}

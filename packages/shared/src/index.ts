@@ -135,6 +135,8 @@ export const IPC_CHANNELS = {
   workspaceListPinned: 'workspace:list-pinned',
   workspaceSetPinned: 'workspace:set-pinned',
   workspaceOpenFolder: 'workspace:open-folder',
+  workspaceOpenPath: 'workspace:open-path',
+  workspacePickPath: 'workspace:pick-path',
   workspaceListEntries: 'workspace:list-entries',
   workspaceSearchFiles: 'workspace:search-files',
   workspaceReadFile: 'workspace:read-file',
@@ -900,7 +902,7 @@ export interface WorkspaceProjectNickname {
 }
 
 /** Background-bar preset ids for the project appearance bar (rendered as CSS in the UI layer). */
-export const PROJECT_BAR_PRESET_IDS = ['aurora', 'sunset', 'neon', 'violet', 'mint', 'dawn'] as const;
+export const PROJECT_BAR_PRESET_IDS = ['aurora', 'sunset', 'neon', 'violet', 'dawn', 'synthwave', 'ink', 'porcelain', 'creed'] as const;
 
 /** Background-bar animation tier ids (keyframes live in the app stylesheet, never in user input). */
 export const PROJECT_BAR_ANIM_IDS = ['flow', 'pulse', 'shimmer', 'hue', 'flicker', 'slide', 'tornado'] as const;
@@ -917,9 +919,9 @@ const PROJECT_BAR_CSS_FORBIDDEN = /element\(|attr\(|expression\(|paint\(|@|;|\{|
 export function normalizeProjectBarValue(value: unknown): string | null {
 	const bar = typeof value === 'string' ? value.trim().replace(/\s+/g, ' ') : '';
 	if (!bar) return null;
-	if (bar.length > 1000) return null; // Sanity cap, not a security boundary; the charset/forbidden list is.
 	if (bar.startsWith('#')) return /^#[0-9a-fA-F]{3}$/.test(bar) || /^#[0-9a-fA-F]{6}$/.test(bar) ? bar : null;
 	if ((PROJECT_BAR_PRESET_IDS as readonly string[]).includes(bar)) return bar;
+	if (bar.startsWith('user:')) return /^user:[a-zA-Z0-9-]{1,64}$/.test(bar) ? bar : null;
 	// Custom CSS: a conservative charset for gradients and colors (calc/rgba/repeats included),
 	// minus the constructs that could load content or break out of a single declaration.
 	// A function call is required so junk that no browser could render stays out too.
@@ -1131,6 +1133,10 @@ export interface AgentBridge extends InputFeatureBridge, DataFeaturesBridge, Wor
   /** Accepts native File objects; registers their directories without switching conversations. Regular files are ignored. */
   addDroppedWorkspaces(files: unknown[]): Promise<string[]>;
   openWorkspaceFolder(cwd: string): Promise<void>;
+  /** 打开项目内（或绝对）路径：文件用默认程序，文件夹用资源管理器。 */
+  openPath(path: string, cwd: string): Promise<void>;
+  /** 弹出原生选择器挑选文件或文件夹；取消返回 null。 */
+  pickPath(mode: 'file' | 'folder', cwd: string): Promise<string | null>;
   listWorkspaceEntries(relativePath?: string): Promise<WorkspaceEntry[]>;
   searchWorkspaceFiles(query: string, options?: { includeDirectories?: boolean }): Promise<{ files: WorkspaceEntry[]; truncated: boolean; skipped?: number; ignoredDirectories?: string[] }>;
   readWorkspaceFile(relativePath: string): Promise<string>;
