@@ -133,6 +133,54 @@
 	color: var(--pd-text-weak);
 }
 
+/* 备选模型链：有序列表，行内为序号 + 输入 + 上移/下移/移除 */
+.pd-compaction-fallback {
+	display: flex;
+	flex-direction: column;
+	align-items: flex-start;
+	gap: 6px;
+}
+
+.pd-compaction-fallback-row {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	width: 100%;
+}
+
+.pd-compaction-fallback-row .pd-compaction-text { flex: 1 1 200px; }
+
+.pd-compaction-fallback-order {
+	flex: 0 0 auto;
+	min-width: 14px;
+	color: var(--pd-text-weak);
+	font-size: var(--pd-font-xs);
+	font-variant-numeric: tabular-nums;
+	text-align: right;
+}
+
+.pd-compaction-fallback-row .pd-compaction-plugin-action {
+	flex: 0 0 auto;
+	height: 26px;
+	padding: 0 9px;
+}
+
+.pd-compaction-fallback-row .pd-compaction-plugin-action:disabled {
+	opacity: 0.4;
+	cursor: default;
+}
+
+.pd-compaction-fallback-row .pd-compaction-plugin-action:disabled:hover {
+	border-color: var(--pd-border);
+	color: var(--pd-text-subtle);
+}
+
+.pd-compaction-config-path code {
+	font-family: var(--pd-font-mono, ui-monospace, Consolas, monospace);
+	overflow-wrap: anywhere;
+	user-select: text;
+}
+
 .pd-compaction-embedding {
 	display: flex;
 	flex-wrap: wrap;
