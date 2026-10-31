@@ -98,6 +98,8 @@ interface ChatState {
 	/** Structured evidence for the last agent failure; text-only errors stay null. */
 	errorInfo: UiAgentError | null;
 	appInfo: AppInfo | null;
+	/** True in a hosted pai chat window: the main-window lists must never be requested there. */
+	hostedChatWindow: boolean;
 	/** Latest explicit project/session navigation intent; stale requests cannot overwrite it. */
 	navigationRequestId: number;
 	navigationPending: boolean;
@@ -107,7 +109,7 @@ interface ChatState {
 	/** Completed creations whose local draft was left before the backend receipt arrived. */
 	backgroundDraftTransfers: Array<{ requestId: number; from: UiInputScope; to: UiInputScope }>;
 
-	setBridge(bridge: AgentBridge): void;
+	setBridge(bridge: AgentBridge, options?: { hostedChatWindow?: boolean }): void;
 	retryAgent(): Promise<void>;
 	handleEvent(event: AgentUiEvent): void;
 	refreshSessions(): Promise<void>;
@@ -287,13 +289,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
 	error: null,
 	errorInfo: null,
 	appInfo: null,
+	hostedChatWindow: false,
 	navigationRequestId: 0,
 	navigationPending: false,
 	sessionPreparation: null,
 	draftTransfer: null,
 	backgroundDraftTransfers: [],
 
-	setBridge(bridge) {
+	setBridge(bridge, options) {
 		if (get().bridge === bridge) return;
 		sessionOpenMetrics.cancel();
 		cancelPreparedInput();
@@ -313,6 +316,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 		set({
 			...useChatStore.getInitialState(),
 			bridge,
+			hostedChatWindow: options?.hostedChatWindow ?? false,
 			timelineRevision: get().timelineRevision + 1,
 		});
 		let bootstrapping = true;
@@ -746,7 +750,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
 	async refreshWorkspaces() {
 		const bridge = get().bridge;
-		if (!bridge) return;
+		// A hosted pai chat window has no sidebar: the workspace registry is a
+		// main-window-only surface and requesting it there would surface an error banner.
+		if (!bridge || get().hostedChatWindow) return;
 		const request = ++workspacesRequest;
 		const navigationRequest = get().navigationRequestId;
 		try {
@@ -1491,8 +1497,10 @@ async function updateCustomProvider(action: (bridge: AgentBridge) => Promise<voi
 }
 
 async function refreshSessionCache(cwd: string, reportError = true): Promise<void> {
-	const { bridge, navigationRequestId } = useChatStore.getState();
-	if (!bridge || !cwd) return;
+	const { bridge, hostedChatWindow, navigationRequestId } = useChatStore.getState();
+	// Session lists only feed the sidebar and the @-mention picker; a hosted pai
+	// window must not reach the main-window-only listing channel.
+	if (!bridge || !cwd || hostedChatWindow) return;
 	const request = (sessionListRequests.get(cwd) ?? 0) + 1;
 	sessionListRequests.set(cwd, request);
 	useChatStore.setState((state) => ({ workspaceSessionRequests: { ...state.workspaceSessionRequests,

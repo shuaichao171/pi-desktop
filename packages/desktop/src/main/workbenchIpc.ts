@@ -1,22 +1,28 @@
-import { dialog, shell } from 'electron';
+import { dialog, shell, type IpcMainInvokeEvent } from 'electron';
 import { IPC_CHANNELS } from '@pidesktop/shared';
 import { getAppLocale } from './appLocale';
 import { WorkbenchService, type ProjectNicknameStore } from './workbenchService';
 import { ResultFileService } from './resultFileService';
 import { createWorkspaceWatcher } from './workspaceWatcher.ts';
-import { broadcastToRenderers, handleRendererInvoke, requireRendererSender } from './rendererIpc';
+import { broadcastToRenderers, handleRendererInvoke, hostedSenderWorkspace, requireRendererSender } from './rendererIpc';
 
 export function registerWorkbenchIpc(getWorkspace: () => string, nicknameStore?: ProjectNicknameStore): WorkbenchService {
 	const resultFiles = new ResultFileService(getWorkspace);
-	handleRendererInvoke(IPC_CHANNELS.resultFileOpen, (event, target: unknown) => resultFiles.openResultFile(target, (path) => {
+	// A hosted pai window previews files in the folder it was opened for, so its
+	// link guards compare against that folder instead of the main window's one.
+	const filesFor = (event: IpcMainInvokeEvent): ResultFileService => {
+		const hosted = hostedSenderWorkspace(event);
+		return hosted === undefined || hosted === getWorkspace() ? resultFiles : new ResultFileService(() => hosted);
+	};
+	handleRendererInvoke(IPC_CHANNELS.resultFileOpen, (event, target: unknown) => filesFor(event).openResultFile(target, (path) => {
 		requireRendererSender(event);
 		return shell.openPath(path);
 	}));
-	handleRendererInvoke(IPC_CHANNELS.resultFileReveal, (event, target: unknown) => resultFiles.revealResultFile(target, (path) => {
+	handleRendererInvoke(IPC_CHANNELS.resultFileReveal, (event, target: unknown) => filesFor(event).revealResultFile(target, (path) => {
 		requireRendererSender(event);
 		shell.showItemInFolder(path);
 	}));
-	handleRendererInvoke(IPC_CHANNELS.resultFilePreview, (event, target: unknown) => resultFiles.previewResultFile(target).then(preview => {
+	handleRendererInvoke(IPC_CHANNELS.resultFilePreview, (event, target: unknown) => filesFor(event).previewResultFile(target).then(preview => {
 		requireRendererSender(event);
 		return preview;
 	}));
@@ -64,7 +70,7 @@ export function registerWorkbenchIpc(getWorkspace: () => string, nicknameStore?:
 	});
 	handleRendererInvoke(IPC_CHANNELS.workspaceCommitContext, () => service.gitCommitContext());
 	handleRendererInvoke(IPC_CHANNELS.workspaceCommit, (_event, message: string) => service.gitCommit(message));
-	handleRendererInvoke(IPC_CHANNELS.workspaceListEntries, (_event, relativePath?: string) => service.listEntries(relativePath));
+	handleRendererInvoke(IPC_CHANNELS.workspaceListEntries, (event, relativePath?: string) => service.listEntries(relativePath, hostedSenderWorkspace(event)));
 	handleRendererInvoke(IPC_CHANNELS.workspaceReadFile, (_event, relativePath: string) => service.readFile(relativePath));
 	handleRendererInvoke(IPC_CHANNELS.workspaceCreateEntry, (_event, parentPath: unknown, name: unknown, kind: unknown) => {
 		if (typeof parentPath !== 'string' || typeof name !== 'string' || (kind !== 'file' && kind !== 'directory')) throw new Error('新建参数无效');

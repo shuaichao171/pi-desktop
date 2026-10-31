@@ -113,8 +113,12 @@ export function installModelSettingsFixture(options = {}) {
     exportDiagnostics: () => ({ path: '/fixture/diagnostics.zip', entries: 1, skipped: [] }),
     getDebugApiState: () => ({ enabled: false, port: 47899, authEnabled: false, token: '', running: false, baseUrl: null }),
     setDebugApiConfig: request => ({ enabled: request.enabled, port: request.port, authEnabled: request.authEnabled, token: request.token ?? '', running: false, baseUrl: null }),
+    // GoalBeacon subscribes whenever the bridge exposes these two; the fixture keeps
+    // the plugin-only surface invisible instead of letting the unknown-call proxy
+    // clone a listener function.
+    getGoalSnapshot: () => null,
   };
-  const subscriptions = ['onAgentEvent', 'onUpdateStateChanged', 'onAppCommand', 'onWindowChromeStateChanged', 'onExtensionDialog', 'onExtensionDialogClosed', 'onWorkspaceCommandEvent', 'onAutomationChanged', 'onWorkspaceChanged'];
+  const subscriptions = ['onAgentEvent', 'onUpdateStateChanged', 'onAppCommand', 'onWindowChromeStateChanged', 'onExtensionDialog', 'onExtensionDialogClosed', 'onWorkspaceCommandEvent', 'onAutomationChanged', 'onWorkspaceChanged', 'onGoalChanged'];
   const bridge = {};
   for (const name of subscriptions) bridge[name] = (listener) => {
     if (!listeners.has(name)) listeners.set(name, new Set());

@@ -47,6 +47,14 @@ export default async function paiScenarios(review) {
   await review.reducedMotion(true);
   await review.waitFor(`Boolean(document.querySelector('.pd-app-shell.is-pai')) && document.querySelector('${metrics}')?.textContent.includes('55s')`);
   await review.assert("!document.querySelector('.pd-sidebar') && !document.querySelector('.pd-sidebar-resize') && !document.querySelector('.pd-workbench-toggle') && !document.querySelector('.pd-header-sidebar-toggle') && !!document.querySelector('.pd-window-controls')", 'pai renders a standalone conversation without sidebar or workbench controls');
+  await review.assert(`(() => {
+    const row = document.querySelector('.pd-compact-controls'), controls = document.querySelector('.pd-pai-controls'), button = controls?.querySelector('button');
+    if (!row || !button) return false;
+    const region = node => { for (let element = node; element; element = element.parentElement) { const value = getComputedStyle(element).getPropertyValue('-webkit-app-region') || getComputedStyle(element).getPropertyValue('app-region'); if (value && value !== 'none') return value; } return 'none'; };
+    const box = row.getBoundingClientRect(), buttonBox = button.getBoundingClientRect();
+    return box.top <= 6 && box.width > 800 && box.height >= 24 && region(document.elementFromPoint(buttonBox.right + 120, box.top + box.height / 2)) === 'drag' && region(button) === 'no-drag';
+  })()`, 'The pai window keeps a draggable top strip while its own buttons stay clickable');
+  await review.screenshot('pai-drag-handle');
   await review.assert(`document.querySelector('${metrics}').textContent.includes('18.2 t/s') && document.querySelector('${metrics}').textContent.includes('↑500') && document.querySelector('${metrics}').textContent.includes('↓1K') && document.querySelector('${metrics}').textContent.includes('55s')`, 'The footer shows measured output rate, input/output tokens, and elapsed task time');
   await review.assert(`!document.querySelector('.pd-metric-cache')`, 'The retired cache read/write group is gone from the footer');
   await review.screenshot('pai-chat-with-metrics');

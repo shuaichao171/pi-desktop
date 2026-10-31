@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { registerHooks } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -130,4 +131,43 @@ test('result file IPC rechecks the renderer after resolution and before native d
   }
   assert.deepEqual(nativeCalls, []);
   await service.dispose();
+});
+
+test('a hosted pai window previews and lists files in its own folder instead of the active workspace', async t => {
+  const root = await mkdtemp(join(await realpath(tmpdir()), 'pi-pai-workbench-'));
+  const mainCwd = join(root, 'main-project');
+  const hostedCwd = join(root, 'pai-project');
+  await mkdir(mainCwd);
+  await mkdir(hostedCwd);
+  await writeFile(join(mainCwd, 'main.txt'), 'main note');
+  await writeFile(join(hostedCwd, 'pai.txt'), 'pai note');
+  t.after(() => rm(root, { recursive: true, force: true }));
+
+  const mainFrame = {};
+  const mainWebContents = { mainFrame, isDestroyed: () => false };
+  const hostedWebContents = { mainFrame, isDestroyed: () => false };
+  const service = registerWorkbenchIpc(() => mainCwd);
+  const { setRendererSenderRestriction } = await import('../packages/desktop/src/main/rendererIpc.ts');
+  setRendererSenderRestriction({
+    isPaiSender: event => event.sender === hostedWebContents,
+    mainOnlyChannels: new Set(),
+    hostedWorkspace: event => (event.sender === hostedWebContents ? hostedCwd : undefined),
+  });
+  t.after(() => { setRendererSenderRestriction(null); return service.dispose(); });
+  // The electron stub resolves every sender to one window, so point it at the caller.
+  const send = (webContents, channel, ...args) => {
+    globalThis.__testWindow = { webContents, isDestroyed: () => false };
+    return globalThis.__testHandlers.get(channel)({ sender: webContents, senderFrame: mainFrame }, ...args);
+  };
+
+  const hostedPreview = await send(hostedWebContents, IPC_CHANNELS.resultFilePreview, { cwd: hostedCwd, path: 'pai.txt' });
+  assert.equal(hostedPreview.text, 'pai note');
+  const mainPreview = await send(mainWebContents, IPC_CHANNELS.resultFilePreview, { cwd: mainCwd, path: 'main.txt' });
+  assert.equal(mainPreview.text, 'main note');
+  // Neither window may preview the other one's folder.
+  await assert.rejects(send(hostedWebContents, IPC_CHANNELS.resultFilePreview, { cwd: mainCwd, path: 'main.txt' }), /对话已切换/);
+  await assert.rejects(send(mainWebContents, IPC_CHANNELS.resultFilePreview, { cwd: hostedCwd, path: 'pai.txt' }), /对话已切换/);
+  // The composer's file picker lists the folder the requesting window belongs to.
+  assert.deepEqual((await send(hostedWebContents, IPC_CHANNELS.workspaceListEntries)).map(entry => entry.name), ['pai.txt']);
+  assert.deepEqual((await send(mainWebContents, IPC_CHANNELS.workspaceListEntries)).map(entry => entry.name), ['main.txt']);
 });

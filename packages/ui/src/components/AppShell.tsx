@@ -418,6 +418,8 @@ export function AppShell() {
 				<div className="pd-notification-center"><div ref={setNotificationTarget} className="pd-extension-notification-slot" /></div>
 				</div>
 				{settingsOpen && <SettingsPanel initialPage={settingsInitialPage} modelManagementTarget={settingsInitialPage === 'model' ? modelManagementTarget : undefined} onClose={() => setSettingsOpen(false)} themePreference={themePreference} onThemePreferenceChange={setThemePreference} colorPreferences={colorPreferences} onColorPreferencesChange={setColorPreferences} colorSaveFailed={colorSaveFailed} />}
+				{/* The chat surface keeps result-file links usable, so the dialog they open is rendered here too. */}
+				<ResultFilePreviewDialogRoot />
 				{isWindows && <WindowControls />}
 			</div>
 		</ExtensionDialogHost>

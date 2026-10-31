@@ -351,8 +351,9 @@ export class WorkbenchService {
 		return ['-C', root, '-c', 'core.fsmonitor=false', '-c', `core.hooksPath=${this.safeHooksPath}`];
 	}
 
-	async listEntries(relativePath = ''): Promise<WorkspaceEntry[]> {
-		const { root, path } = await this.resolveEntry(relativePath);
+	/** Hosted pai windows list from their own folder root instead of the active workspace. */
+	async listEntries(relativePath = '', cwd?: string): Promise<WorkspaceEntry[]> {
+		const { root, path } = await this.resolveEntry(relativePath, cwd === undefined ? undefined : await this.workspaceRoot(cwd));
 		if (!(await stat(path)).isDirectory()) throw new Error('不是文件夹');
 		const children = await readdir(path, { withFileTypes: true });
 		const entries: WorkspaceEntry[] = [];

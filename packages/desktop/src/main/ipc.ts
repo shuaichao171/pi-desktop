@@ -23,7 +23,7 @@ import { registerWorkbenchIpc } from './workbenchIpc';
 import type { WorkbenchService } from './workbenchService';
 import { backupCorruptStateFile, backupCorruptStateFileAsync, CorruptStateFileError, readStateFile, readStateFileAsync, writeStateFile, writeStateFileAsync } from './stateFiles';
 import { SessionGroupService } from './sessionGroups';
-import { broadcastToRenderers, handleRendererInvoke, requireRendererSender, setRendererSenderRestriction } from './rendererIpc';
+import { broadcastToRenderers, handleRendererInvoke, hostedSenderWorkspace, requireRendererSender, setRendererSenderRestriction } from './rendererIpc';
 import { normalizeUiDiagnostic } from '@pidesktop/shared';
 import { flushDiagnostics, initializeDiagnostics, recordDiagnostic } from './diagnostics';
 import { createInterface } from 'node:readline';
@@ -760,6 +760,27 @@ function newConversation(options?: unknown): Promise<UiInputScope> {
 	});
 }
 
+/**
+ * A hosted pai window creates its conversations inside its own agent host: the
+ * window keeps the folder it was opened for and never touches the main window's
+ * workspace activation or its active conversation (see newConversation).
+ */
+async function newPaiConversation(entry: PaiWindowEntry, options?: unknown): Promise<UiInputScope> {
+	if (options !== undefined && (!isRecord(options) || (options.cwd !== undefined && typeof options.cwd !== 'string'))) {
+		throw new Error('新对话选项无效');
+	}
+	if (isRecord(options) && typeof options.cwd === 'string' && workspaceKey(options.cwd) !== workspaceKey(entry.cwd)) {
+		throw new Error('pai 窗口只能在打开它的文件夹中新建对话');
+	}
+	await entry.agent.newSession();
+	// The window no longer stands for the conversation it was opened with.
+	entry.sessionPath = undefined;
+	const snapshot = await entry.agent.getSnapshot();
+	const scope = { cwd: snapshot.cwd, sessionPath: snapshot.sessionPath };
+	inputFeatures?.rememberScope(scope);
+	return scope;
+}
+
 function getProjectsDirectory(): string {
 	return join(app.getPath('documents'), 'Pi Desktop');
 }
@@ -1042,23 +1063,25 @@ function requireTrustedSender(event: IpcMainInvokeEvent): BrowserWindow {
  * main window's agent navigation, workspace/workbench surface, session
  * management, plugins, automations and updates. Enforced centrally in
  * handleRendererInvoke so modules registered outside ipc.ts are covered too.
+ * The chat-area surfaces a pai window does use — its own new conversation,
+ * context attachments and result-file previews — are absent here and scoped to
+ * the window's folder by their own handlers instead.
  */
 const mainOnlyChannels = new Set<string>([
-	IPC_CHANNELS.agentInit, IPC_CHANNELS.agentNewSession, IPC_CHANNELS.agentResidentSnapshot, IPC_CHANNELS.agentActivateResident,
+	IPC_CHANNELS.agentInit, IPC_CHANNELS.agentResidentSnapshot, IPC_CHANNELS.agentActivateResident,
 	IPC_CHANNELS.agentListWorkspaces, IPC_CHANNELS.workspaceListConversations, IPC_CHANNELS.conversationStoragePick,
 	IPC_CHANNELS.agentListSessions, IPC_CHANNELS.agentSearchSessions, IPC_CHANNELS.agentSwitchSession,
 	IPC_CHANNELS.sessionRevealFile, IPC_CHANNELS.sessionFork, IPC_CHANNELS.sessionOpenWindow, IPC_CHANNELS.sessionDelete,
 	IPC_CHANNELS.agentUpdateSessionMeta, IPC_CHANNELS.agentUpdateSessionOrders, IPC_CHANNELS.agentListSessionGroups, IPC_CHANNELS.agentUpdateSessionGroups,
-	IPC_CHANNELS.contextRead, IPC_CHANNELS.workspaceSearchFiles, IPC_CHANNELS.appRelaunch,
+	IPC_CHANNELS.appRelaunch,
 	IPC_CHANNELS.workspacePick, IPC_CHANNELS.workspaceProjectsDirectory, IPC_CHANNELS.workspaceCreateProject, IPC_CHANNELS.workspaceAddDropped,
 	IPC_CHANNELS.workspaceSwitch, IPC_CHANNELS.workspaceDefault, IPC_CHANNELS.workspaceRemove, IPC_CHANNELS.workspaceListPinned, IPC_CHANNELS.workspaceSetPinned,
 	IPC_CHANNELS.pluginCatalog, IPC_CHANNELS.pluginMutate, IPC_CHANNELS.pluginPreview, IPC_CHANNELS.pluginPickDirectory, IPC_CHANNELS.pluginDiscover,
 	IPC_CHANNELS.agentSetExtensionEnabled, PLUGIN_UPDATE_CHANNELS.checkPluginUpdate,
 	IPC_CHANNELS.updateCheck, IPC_CHANNELS.updateInstall,
 	IPC_CHANNELS.automationSnapshot, IPC_CHANNELS.automationSave, IPC_CHANNELS.automationSetEnabled, IPC_CHANNELS.automationDelete, IPC_CHANNELS.automationRun, IPC_CHANNELS.automationCancelRun,
-	IPC_CHANNELS.workspaceOpenFolder, IPC_CHANNELS.workspaceListEntries, IPC_CHANNELS.workspaceReadFile,
+	IPC_CHANNELS.workspaceOpenFolder, IPC_CHANNELS.workspaceReadFile,
 	IPC_CHANNELS.workspaceCreateEntry, IPC_CHANNELS.workspaceRenameEntry, IPC_CHANNELS.workspaceDeleteEntry,
-	IPC_CHANNELS.resultFileOpen, IPC_CHANNELS.resultFileReveal, IPC_CHANNELS.resultFilePreview,
 	IPC_CHANNELS.workspaceGitStatus, IPC_CHANNELS.workspaceGitDiff, IPC_CHANNELS.workspaceBranches, IPC_CHANNELS.workspaceCheckoutBranch,
 	IPC_CHANNELS.workspaceGitSetStaged, IPC_CHANNELS.workspaceGitDiscard, IPC_CHANNELS.workspaceGitLog, IPC_CHANNELS.workspaceGitGraph,
 	IPC_CHANNELS.workspaceGitSync, IPC_CHANNELS.workspaceGitCreateBranch,
@@ -1099,7 +1122,7 @@ export function registerIpc(options: {
 		try { createPaiWindow(request); }
 		catch (error) { showPaiErrorDialog(undefined, error instanceof Error ? error.message : String(error)); }
 	}
-	setRendererSenderRestriction({ isPaiSender, mainOnlyChannels });
+	setRendererSenderRestriction({ isPaiSender, mainOnlyChannels, hostedWorkspace: (event) => paiSlotForSender(event.sender)?.cwd });
 	handleRendererInvoke(MCP_FEATURE_CHANNELS.getMcpSnapshot, (event) => agentFor(event).getMcpSnapshot());
 	handleRendererInvoke(MCP_FEATURE_CHANNELS.saveMcpServer, (event, request: Parameters<typeof agentService.saveMcpServer>[0]) => agentFor(event).saveMcpServer(request));
 	handleRendererInvoke(MCP_FEATURE_CHANNELS.removeMcpServer, (event, request: Parameters<typeof agentService.removeMcpServer>[0]) => agentFor(event).removeMcpServer(request));
@@ -1621,13 +1644,16 @@ export function registerIpc(options: {
 		for (const session of result.sessions) rememberSessionOwner(session.path, session.cwd);
 		return { ...result, sessions: result.sessions.filter((session) => !automationExecutor.isSessionRunning(session.path)).map((session) => ({ ...session, ...meta[session.path] })) };
 	});
-	handleRendererInvoke(IPC_CHANNELS.workspaceSearchFiles, async (_event, query: string, options?: { includeDirectories?: boolean }) => agentService.searchWorkspaceFiles(activeWorkspace, query, options));
-	handleRendererInvoke(IPC_CHANNELS.contextRead, async (_event, request: unknown) => {
+	handleRendererInvoke(IPC_CHANNELS.workspaceSearchFiles, async (event, query: string, options?: { includeDirectories?: boolean }) => agentFor(event).searchWorkspaceFiles(hostedSenderWorkspace(event) ?? activeWorkspace, query, options));
+	handleRendererInvoke(IPC_CHANNELS.contextRead, async (event, request: unknown) => {
 		validateContextRequest(request);
-		if (!(await listWorkspaces()).includes(request.workspace)) throw new Error('未知工作区');
+		const hosted = hostedSenderWorkspace(event);
+		// A hosted pai window reads context from the folder it was opened for;
+		// the main window keeps the registered-workspace rule.
+		if (hosted ? workspaceKey(request.workspace) !== workspaceKey(hosted) : !(await listWorkspaces()).includes(request.workspace)) throw new Error('未知工作区');
 		if (request.kind !== 'session') return readWorkspaceContext(request);
 		if (await requireSessionOwner(request.path) !== request.workspace) throw new Error('会话不属于此工作区');
-		return agentService.readSessionContext(request.workspace, request.path);
+		return agentFor(event).readSessionContext(request.workspace, request.path);
 	});
 	// zcode session context menu: reveal the conversation file in the OS file
 	// manager. Only an existing file on disk is revealed; nothing is opened.
@@ -1858,7 +1884,10 @@ export function registerIpc(options: {
 
 	handleRendererInvoke(IPC_CHANNELS.agentAbort, (event) => agentFor(event).abort());
 
-	handleRendererInvoke(IPC_CHANNELS.agentNewSession, (_event, options?: unknown) => newConversation(options));
+	handleRendererInvoke(IPC_CHANNELS.agentNewSession, (event, options?: unknown) => {
+		const slot = paiSlotForSender(event.sender);
+		return slot ? newPaiConversation(slot as PaiWindowEntry, options) : newConversation(options);
+	});
 	handleRendererInvoke(IPC_CHANNELS.agentExtensionDialogPending, (event) => [...pendingDialogs.values()]
 		.filter(({ owner }) => owner === invokingWindow(event)).map(({ request }) => request));
 	handleRendererInvoke(IPC_CHANNELS.agentExtensionDialogResponse, (event, id: string, value: unknown) => {
