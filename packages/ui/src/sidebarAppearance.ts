@@ -74,16 +74,31 @@ export function projectBarStyle(value: string | null | undefined): { background:
   }
   const preset = PROJECT_BAR_PRESETS.find((item) => item.id === bar);
   if (preset) return { background: preset.css, light: preset.light };
+  // 用户预设按引用存储（user:<id>），文字深浅由条目上的 light 标志决定。
+  if (bar.startsWith('user:')) {
+    const userPreset = userBarPresetCache.find((item) => item.id === bar.slice(5));
+    return userPreset ? { background: userPreset.css, light: userPreset.light } : null;
+  }
   // Custom CSS (user-pasted gradient and the like): the shared validator already
   // stripped remote sources; text stays white over a subtle dark scrim in CSS.
   if (!isValidProjectBarValue(bar)) return null;
   return { background: bar, light: false };
 }
 
+/** 保存用户预设时的文字色建议：hex 按亮度判断，其余（渐变等）默认白字。 */
+export function suggestBarLight(css: string): boolean {
+  if (!css.startsWith('#')) return false;
+  const rgb = hexToRgb(css);
+  if (!rgb) return false;
+  return (0.299 * rgb[0] + 0.587 * rgb[1] + 0.114 * rgb[2]) / 255 > 0.62;
+}
+
 export interface UserBarPreset {
   id: string;
   name: string;
   css: string;
+  /** 行上文字用深色（true）还是白色（false）；保存时由 hex 亮度预判，可右键随时切换。 */
+  light: boolean;
 }
 
 const USER_BAR_PRESETS_KEY = 'pi-desktop.user-bar-presets.v1';
@@ -95,18 +110,23 @@ export function readUserBarPresets(storage?: Pick<Storage, 'getItem'>): UserBarP
     const raw = (storage ?? globalThis.localStorage)?.getItem(USER_BAR_PRESETS_KEY);
     const value = raw ? JSON.parse(raw) : [];
     if (!Array.isArray(value)) return [];
-    return value.slice(0, USER_BAR_PRESET_LIMIT).filter((item): item is UserBarPreset => {
+    return value.slice(0, USER_BAR_PRESET_LIMIT).flatMap((item) => {
       const candidate = item as Partial<UserBarPreset> | null;
-      return typeof candidate === 'object' && candidate !== null
-        && typeof candidate.id === 'string' && candidate.id.length > 0
-        && typeof candidate.name === 'string' && candidate.name.length > 0
-        && typeof candidate.css === 'string' && isValidProjectBarValue(candidate.css);
+      if (typeof candidate !== 'object' || candidate === null) return [];
+      if (typeof candidate.id !== 'string' || candidate.id.length === 0) return [];
+      if (typeof candidate.name !== 'string' || candidate.name.length === 0) return [];
+      if (typeof candidate.css !== 'string' || !isValidProjectBarValue(candidate.css)) return [];
+      // 旧数据没有 light 字段：归一为 false（白字），与历史行为一致。
+      return [{ id: candidate.id, name: candidate.name, css: candidate.css, light: candidate.light === true }];
     });
   } catch { return []; }
 }
 
+let userBarPresetCache: UserBarPreset[] = readUserBarPresets();
+
 export function saveUserBarPresets(presets: UserBarPreset[], storage?: Pick<Storage, 'setItem'>): void {
   try { (storage ?? globalThis.localStorage)?.setItem(USER_BAR_PRESETS_KEY, JSON.stringify(presets.slice(0, USER_BAR_PRESET_LIMIT))); } catch { /* User presets are cosmetic. */ }
+  userBarPresetCache = presets.slice(0, USER_BAR_PRESET_LIMIT);
 }
 
 export type { WorkspaceProjectAppearance };

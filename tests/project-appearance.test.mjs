@@ -79,12 +79,27 @@ test('user bar presets persist through storage and drop entries with unrenderabl
   const storage = { getItem: () => stored, setItem: (key, value) => { stored = value; } };
   saveUserBarPresets([
     { id: 'a', name: '用户预设 1', css: 'linear-gradient(90deg, #000428, #004e92)' },
+    { id: 'l', name: '浅色', css: 'linear-gradient(90deg, #f3e5c0, #dcbd8a)', light: true },
     { id: 'b', name: 'broken', css: 'linear-gradient(evil); color:red' },
   ], storage);
   const read = readUserBarPresets(storage);
-  assert.deepEqual(read.map((preset) => preset.id), ['a'], 'entries failing the shared validator are dropped on read');
+  assert.deepEqual(read.map((preset) => preset.id), ['a', 'l'], 'entries failing the shared validator are dropped on read');
+  assert.deepEqual(read.map((preset) => preset.light), [false, true], 'light flag survives; missing light normalizes to false');
+  const { projectBarStyle } = await import('../packages/ui/src/sidebarAppearance.ts');
+  assert.deepEqual(projectBarStyle('user:l'), { background: read[1].css, light: true }, 'user: references resolve to the stored css and light flag');
+  assert.equal(projectBarStyle('user:missing'), null, 'deleted user presets degrade to the default bar');
   saveUserBarPresets(read, storage);
-  assert.deepEqual(JSON.parse(stored).map((preset) => preset.id), ['a']);
+  assert.deepEqual(JSON.parse(stored).map((preset) => preset.id), ['a', 'l']);
+});
+
+test('user: references pass the shared validator and hex user presets suggest dark text', async () => {
+  const { normalizeProjectBarValue } = await import('../packages/shared/src/index.ts');
+  const { suggestBarLight } = await import('../packages/ui/src/sidebarAppearance.ts');
+  assert.equal(normalizeProjectBarValue('user:abc-1'), 'user:abc-1');
+  assert.equal(normalizeProjectBarValue('user:has space'), null);
+  assert.equal(suggestBarLight('#ffffff'), true);
+  assert.equal(suggestBarLight('#000428'), false);
+  assert.equal(suggestBarLight('linear-gradient(90deg, #fff, #000)'), false, 'non-hex defaults to white text');
 });
 test('animation tiers stay in sync with shared and only map to whitelisted keyframe names', async () => {
   const { PROJECT_BAR_ANIM_IDS } = await import('../packages/shared/src/index.ts');

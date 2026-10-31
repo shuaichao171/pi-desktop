@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import { isValidProjectBarValue, normalizeProjectBarValue, projectBarLeavesMachine, type UiSessionGroup, type UiSidebarGroupChange, type WorkspaceOpener, type WorkspaceProjectNickname } from '@pidesktop/shared';
-import { PROJECT_BAR_ANIMS, PROJECT_BAR_PRESETS, readUserBarPresets, saveUserBarPresets, USER_BAR_PRESET_LIMIT, projectBarStyle, type UserBarPreset } from '../sidebarAppearance';
+import { PROJECT_BAR_ANIMS, PROJECT_BAR_PRESETS, readUserBarPresets, saveUserBarPresets, suggestBarLight, USER_BAR_PRESET_LIMIT, projectBarStyle, type UserBarPreset } from '../sidebarAppearance';
 import { useChatStore } from '../store';
 import { useT } from '../i18n';
 import { managementCopy } from '../managementCopy';
@@ -214,11 +214,15 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 	const [userBarPresets, setUserBarPresets] = useState<UserBarPreset[]>(() => readUserBarPresets());
 	function addUserBarPreset(workspace: string, draft: string | null) {
 		const value = (draft ?? customBarCss(workspace)).trim();
-		if (!isValidProjectBarValue(value)) return;
-		setUserBarPresets((current) => current.length >= USER_BAR_PRESET_LIMIT || current.some((preset) => preset.css === value) ? current : [...current, { id: crypto.randomUUID(), name: t('sidebar.appearanceUserPresetName', { n: current.length + 1 }), css: value }]);
+		// 含远程引用的 css 不入库：应用时必须经过「渲染是否允许离开本机」确认，用户预设不能绕过它。
+		if (!isValidProjectBarValue(value) || projectBarLeavesMachine(value)) return;
+		setUserBarPresets((current) => current.length >= USER_BAR_PRESET_LIMIT || current.some((preset) => preset.css === value) ? current : [...current, { id: crypto.randomUUID(), name: t('sidebar.appearanceUserPresetName', { n: current.length + 1 }), css: value, light: suggestBarLight(value) }]);
 	}
 	function removeUserBarPreset(id: string) {
 		setUserBarPresets((current) => current.filter((preset) => preset.id !== id));
+	}
+	function toggleUserBarPresetText(id: string) {
+		setUserBarPresets((current) => current.map((preset) => preset.id === id ? { ...preset, light: !preset.light } : preset));
 	}
 	/** Live-previews a background bar (newlines collapsed); a failed write re-reads the stored truth. */
 	const applyProjectBar = (workspace: string, bar: string | null) => {
@@ -255,7 +259,7 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 	/** The current bar when it is user-pasted CSS (neither a preset id nor a hex color). */
 	const customBarCss = (workspace: string) => {
 		const bar = projectBars[workspace];
-		return bar && !bar.startsWith('#') && !bar.startsWith('data:') && !PROJECT_BAR_PRESETS.some((preset) => preset.id === bar) ? bar : '';
+		return bar && !bar.startsWith('#') && !bar.startsWith('data:') && !bar.startsWith('user:') && !PROJECT_BAR_PRESETS.some((preset) => preset.id === bar) ? bar : '';
 	};
 	const projectPaths = useMemo(() => sidebarProjectPaths(workspaces, null, conversationWorkspaces), [workspaces, conversationWorkspaces]);
 	const pinnedWorkspaceSet = useMemo(() => new Set(splitSidebarProjects(projectPaths, new Set(pinnedProjects)).pinned), [projectPaths, pinnedProjects]);
@@ -1382,11 +1386,12 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 							onClose={(restore) => { const anchor = barSubFlyout.anchor; setBarSubFlyout(null); setUserDeleteFlyout(null); if (restore) anchor.focus(); }}>
 							{userBarPresets.length === 0 && <p className="pd-sidebar-menu-note">{t('sidebar.appearanceUserPresetsEmpty')}</p>}
 							{userBarPresets.length > 0 && <div className="pd-appearance-swatches" role="group" aria-label={t('sidebar.appearanceUserPresets')}>
-								{userBarPresets.map((preset) => <button key={preset.id} type="button" role="menuitemradio" aria-checked={projectBars[popup.workspace] === preset.css} className={`pd-appearance-swatch${projectBars[popup.workspace] === preset.css ? ' is-active' : ''}`} style={{ background: preset.css }} title={preset.name} aria-label={preset.name} onClick={() => applyProjectBar(popup.workspace, preset.css)} onContextMenu={(event) => { event.preventDefault(); event.stopPropagation(); setUserDeleteFlyout({ presetId: preset.id, presetName: preset.name, anchor: event.currentTarget, keyboard: false }); }} />)}
+								{userBarPresets.map((preset) => <button key={preset.id} type="button" role="menuitemradio" aria-checked={projectBars[popup.workspace] === `user:${preset.id}`} className={`pd-appearance-swatch${projectBars[popup.workspace] === `user:${preset.id}` ? ' is-active' : ''}`} style={{ background: preset.css }} title={preset.name} aria-label={preset.name} onClick={() => applyProjectBar(popup.workspace, `user:${preset.id}`)} onContextMenu={(event) => { event.preventDefault(); event.stopPropagation(); setUserDeleteFlyout({ presetId: preset.id, presetName: preset.name, anchor: event.currentTarget, keyboard: false }); }} />)}
 							</div>}
 							{userBarPresets.length > 0 && <p className="pd-sidebar-menu-note">{t('sidebar.appearanceUserPresetHint')}</p>}
 							{userDeleteFlyout && <SidebarSubmenu anchor={userDeleteFlyout.anchor} label={userDeleteFlyout.presetName} autoFocus={userDeleteFlyout.keyboard} onPointerEnter={clearBarSubTimer}
 								onClose={() => setUserDeleteFlyout(null)}>
+								{submenuItem({ key: 'user-text', label: t((userBarPresets.find((preset) => preset.id === userDeleteFlyout.presetId)?.light ?? false) ? 'sidebar.appearanceUserPresetToLight' : 'sidebar.appearanceUserPresetToDark'), icon: 'palette', onSelect: () => { toggleUserBarPresetText(userDeleteFlyout.presetId); setUserDeleteFlyout(null); } })}
 								{submenuItem({ key: 'confirm-delete', label: t('sidebar.appearanceDeletePreset'), icon: 'trash', onSelect: () => { removeUserBarPreset(userDeleteFlyout.presetId); setUserDeleteFlyout(null); } })}
 							</SidebarSubmenu>}
 						</SidebarSubmenu>}
@@ -1401,7 +1406,7 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 								{submenuItem({ key: 'bar-apply-net', label: t('sidebar.appearanceNetApply'), icon: 'alert', onSelect: () => { const workspace = popup.workspace; applyProjectBar(workspace, barConfirm); setBarConfirm(null); } })}
 								{submenuItem({ key: 'bar-apply-cancel', label: t('sidebar.cancel'), icon: 'close', onSelect: () => setBarConfirm(null) })}
 							</>}
-							{submenuItem({ key: 'bar-save-user', label: t('sidebar.appearanceAddUserPreset'), icon: 'plus', disabled: !isValidProjectBarValue((barCssDraft ?? customBarCss(popup.workspace)).trim()), onSelect: () => addUserBarPreset(popup.workspace, barCssDraft ?? customBarCss(popup.workspace)) })}
+							{submenuItem({ key: 'bar-save-user', label: t('sidebar.appearanceAddUserPreset'), icon: 'plus', disabled: !isValidProjectBarValue((barCssDraft ?? customBarCss(popup.workspace)).trim()) || projectBarLeavesMachine((barCssDraft ?? customBarCss(popup.workspace)).trim()), onSelect: () => addUserBarPreset(popup.workspace, barCssDraft ?? customBarCss(popup.workspace)) })}
 							{submenuItem({ key: 'bar-ai', label: t('sidebar.appearanceAiCopy'), icon: 'brain', onSelect: () => { void navigator.clipboard.writeText(t('sidebar.appearanceAiPrompt')).then(() => setAiPromptCopied(true), () => {}); } })}
 							{aiPromptCopied && <p className="pd-sidebar-menu-note">{t('sidebar.appearanceAiCopied')}</p>}
 						</SidebarSubmenu>}

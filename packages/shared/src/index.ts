@@ -919,6 +919,7 @@ export function normalizeProjectBarValue(value: unknown): string | null {
 	if (!bar) return null;
 	if (bar.startsWith('#')) return /^#[0-9a-fA-F]{3}$/.test(bar) || /^#[0-9a-fA-F]{6}$/.test(bar) ? bar : null;
 	if ((PROJECT_BAR_PRESET_IDS as readonly string[]).includes(bar)) return bar;
+	if (bar.startsWith('user:')) return /^user:[a-zA-Z0-9-]{1,64}$/.test(bar) ? bar : null;
 	// Custom CSS: a conservative charset for gradients and colors (calc/rgba/repeats included),
 	// minus the constructs that could load content or break out of a single declaration.
 	// A function call is required so junk that no browser could render stays out too.

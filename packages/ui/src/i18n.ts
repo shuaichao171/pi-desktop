@@ -793,6 +793,8 @@ export const translations: Record<string, { 'zh-CN': string; 'en-US': string }> 
   'sidebar.appearanceUserPresetsEmpty': { 'zh-CN': '暂无用户预设，可在自定义 CSS 中添加。', 'en-US': 'No user presets yet — save one from custom CSS.' },
   'sidebar.appearanceDeletePreset': { 'zh-CN': '删除此用户预设', 'en-US': 'Delete this user preset' },
   'sidebar.appearanceUserPresetHint': { 'zh-CN': '右键色块可删除', 'en-US': 'Right-click a swatch to delete' },
+  'sidebar.appearanceUserPresetToDark': { 'zh-CN': '行上文字改用深色', 'en-US': 'Switch to dark text' },
+  'sidebar.appearanceUserPresetToLight': { 'zh-CN': '行上文字改用白色', 'en-US': 'Switch to white text' },
   'sidebar.expandAllGroups': { 'zh-CN': '展开全部分组', 'en-US': 'Expand all sections' },
   'sidebar.collapseAllGroups': { 'zh-CN': '收起全部分组', 'en-US': 'Collapse all sections' },
   'sidebar.noArchived': { 'zh-CN': '暂无归档对话', 'en-US': 'No archived sessions' },
