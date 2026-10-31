@@ -146,3 +146,28 @@ test('natural shell exit releases native output worker and remains restartable',
   assert.notEqual(second.id, first.id);
   await service.close(second.id);
 });
+
+test('removing a workspace releases its terminal so the next project can open one', { timeout: 60000 }, async t => {
+  const removed = await mkdtemp(join(tmpdir(), 'pi-pty-removed-'));
+  const active = await mkdtemp(join(tmpdir(), 'pi-pty-active-'));
+  let current = removed;
+  const service = new WorkspaceTerminalService(() => current, () => {});
+  t.after(async () => {
+    try { await service.dispose(); }
+    finally { await removeTerminalDirectory(removed); await removeTerminalDirectory(active); }
+  });
+  const first = await service.open({ cwd: removed, cols: 80, rows: 24 });
+  assert.equal(first.cwd, removed);
+  current = active;
+  // The pane is gone with the removed project, so close() can never reach this pty.
+  await assert.rejects(service.close(first.id), /终端不属于当前工作区/);
+  await assert.rejects(service.open({ cwd: active, cols: 80, rows: 24 }), /已有终端/);
+  // Removal releases it instead, and the next project can start its own shell.
+  assert.equal(await service.closeForWorkspace(removed), true);
+  assert.equal(await service.closeForWorkspace(removed), false, 'a released terminal is not closed twice');
+  await assert.rejects(service.close(first.id), /终端不属于当前工作区/);
+  const second = await service.open({ cwd: active, cols: 80, rows: 24 });
+  assert.equal(second.cwd, active);
+  assert.notEqual(second.id, first.id);
+  await service.close(second.id);
+});

@@ -21,5 +21,7 @@ export function registerWorkbenchFeatureIpc(currentCwd: () => string, directory:
   register(channels.resizeWorkspaceTerminal, terminal.resize.bind(terminal));
   register(channels.acknowledgeWorkspaceTerminal, terminal.acknowledge.bind(terminal));
   register(channels.closeWorkspaceTerminal, terminal.close.bind(terminal));
-  return { dispose: async () => { await terminal.dispose(); await commit.dispose(); } };
+  // Workspace removal is handled outside these channels: the removed project's
+  // terminal has to be released even though it no longer owns the active workspace.
+  return { closeTerminalForWorkspace: (cwd: string) => terminal.closeForWorkspace(cwd), dispose: async () => { await terminal.dispose(); await commit.dispose(); } };
 }

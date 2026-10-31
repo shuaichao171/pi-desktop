@@ -17,6 +17,7 @@ import { ChangesCard, LiveChangesSummary } from './ComposerChanges';
 import { ChangesDialog } from './ChangesDialog';
 import { useFileChangeDiffs } from '../fileChangeDiffs';
 import { findChangeMatches } from '../changesFind';
+import { createViewportOwnership } from '../viewportOwnership';
 import { RunStatusBar } from './RunStatusBar';
 import { ComposerContextBar } from './ComposerContextBar';
 import { Icon } from './Icons';
@@ -178,14 +179,13 @@ export function ChatView({ onOpenModelManagement, searchTarget, historyControls,
 	const [locationStatus, setLocationStatus] = useState<'loading' | 'missing' | null>(null);
 	const [locationTarget, setLocationTarget] = useState<{ id: string; snippet?: string } | null>(null);
 	const locationRequest = useRef<AbortController | null>(null);
-	const restoring = useRef(false);
-	const pendingJumpRef = useRef<{ frame: number; restoresReading: boolean } | null>(null);
+	const viewport = useRef(createViewportOwnership()).current;
+	const pendingJumpRef = useRef<{ frame: number } | null>(null);
 	const cancelPendingJump = useCallback(() => {
 		const pending = pendingJumpRef.current;
 		if (!pending) return;
 		cancelAnimationFrame(pending.frame);
 		pendingJumpRef.current = null;
-		if (pending.restoresReading) restoring.current = false;
 	}, []);
 	const readingAnchor = useRef<ReadingPosition | null>(null);
 	const conversationPreviewPath = useChatStore((s) => s.conversationPreviewPath);
@@ -335,21 +335,24 @@ export function ChatView({ onOpenModelManagement, searchTarget, historyControls,
 	// while sitting outside the mounted window. The switch lands at the bottom
 	// first (coherent paint), then moves the window after paint and applies the
 	// saved offset once the row mounts. User input cancels; the loop is bounded.
-	const pendingRestoreRef = useRef<{ saved: ReadingPosition; tries: number; frame: number } | null>(null);
+	const pendingRestoreRef = useRef<{ saved: ReadingPosition; tries: number; frame: number; token: number } | null>(null);
 	const cancelPendingRestore = useCallback(() => {
+		// Interruption always releases the viewport, even when no deferred restore is
+		// registered: the locate that took it was aborted, so its completion never runs
+		// and this is the last place that can hand the viewport back.
+		viewport.interrupt();
 		const pending = pendingRestoreRef.current;
 		if (!pending) return;
 		cancelAnimationFrame(pending.frame);
 		pendingRestoreRef.current = null;
-		restoring.current = false;
-	}, []);
+	}, [viewport]);
 	function schedulePendingRestore() {
 		const pending = pendingRestoreRef.current;
 		if (!pending) return;
 		pending.frame = requestAnimationFrame(() => {
 			const current = pendingRestoreRef.current;
 			if (current !== pending) return;
-			if (applyReadingRow(current.saved)) { pendingRestoreRef.current = null; restoring.current = false; return; }
+			if (applyReadingRow(current.saved)) { pendingRestoreRef.current = null; viewport.release(current.token); return; }
 			if (current.tries === 0 && virtualizeRef.current && current.saved.messageId) {
 				const index = timelineRef.current?.entries.findIndex((entry) => entryContainsMessage(entry, current.saved.messageId!)) ?? -1;
 				if (index >= 0) virtualizerRef.current.scrollToIndex(index, { align: 'start' });
@@ -357,7 +360,7 @@ export function ChatView({ onOpenModelManagement, searchTarget, historyControls,
 			current.tries += 1;
 			if (current.tries < 90) { schedulePendingRestore(); return; }
 			pendingRestoreRef.current = null;
-			restoring.current = false;
+			viewport.release(current.token);
 		});
 	}
 	const scrollToRow = useCallback((id: string) => {
@@ -370,7 +373,7 @@ export function ChatView({ onOpenModelManagement, searchTarget, historyControls,
 		return true;
 	}, []);
 
-	const jumpToMessage = useCallback((id: string, restoreReading?: () => void) => {
+	const jumpToMessage = useCallback((id: string) => {
 		cancelPendingJump();
 		cancelPendingRestore();
 		const transcript = scrollRef.current;
@@ -378,14 +381,13 @@ export function ChatView({ onOpenModelManagement, searchTarget, historyControls,
 		cancelScrollAnimation();
 		followsBottomRef.current = false;
 		readingAnchor.current = null;
-		if (restoreReading) restoring.current = true;
 		setRevealMessage(previous => ({ id, request: (previous?.request ?? 0) + 1, scope: disclosureScope }));
 		if (virtualize) {
 			const index = timelineRef.current?.entries.findIndex((entry) => entryContainsMessage(entry, id)) ?? -1;
 			if (index >= 0) virtualizer.scrollToIndex(index, { align: 'center' });
 		}
 		// Wait for disclosure/virtual rows to mount, keeping only the latest target.
-		const pending = { frame: 0, restoresReading: Boolean(restoreReading) };
+		const pending = { frame: 0 };
 		pendingJumpRef.current = pending;
 		pending.frame = requestAnimationFrame(() => {
 			if (pendingJumpRef.current !== pending) return;
@@ -393,7 +395,6 @@ export function ChatView({ onOpenModelManagement, searchTarget, historyControls,
 				if (pendingJumpRef.current !== pending) return;
 				pendingJumpRef.current = null;
 				scrollToRow(id);
-				restoreReading?.();
 			});
 		});
 	}, [cancelPendingJump, virtualize, virtualizer, scrollToRow, disclosureScope]);
@@ -429,7 +430,7 @@ export function ChatView({ onOpenModelManagement, searchTarget, historyControls,
 	// live DOM before it is saved; otherwise the dead id later fails to restore and
 	// forces a jump to the bottom on reopen.
 	useLayoutEffect(() => {
-		if (restoring.current) return;
+		if (viewport.restoring) return;
 		const anchor = readingAnchor.current;
 		if (!anchor?.messageId || messages.some((message) => message.id === anchor.messageId)) return;
 		const node = scrollRef.current;
@@ -459,7 +460,7 @@ export function ChatView({ onOpenModelManagement, searchTarget, historyControls,
 				const node = scrollRef.current;
 				if (!node) return;
 				if (followsBottomRef.current) node.scrollTop = node.scrollHeight;
-				else if (!restoring.current && readingAnchor.current?.messageId) {
+				else if (!viewport.restoring && readingAnchor.current?.messageId) {
 					const row = node.querySelector<HTMLElement>(`[data-message-id="${CSS.escape(readingAnchor.current.messageId)}"]`);
 					if (row && !row.closest('[inert],[hidden],[aria-hidden="true"]')) {
 						const delta = row.getBoundingClientRect().top - node.getBoundingClientRect().top - readingAnchor.current.offset;
@@ -515,16 +516,15 @@ export function ChatView({ onOpenModelManagement, searchTarget, historyControls,
 		if (anchorId && (timelineRef.current?.entries.some((entry) => entryContainsMessage(entry, anchorId)) ?? false)) {
 			// The anchor exists in the loaded (virtualized) timeline but is not mounted;
 			// refine after the first paint.
-			pendingRestoreRef.current = { saved, tries: 0, frame: 0 };
-			restoring.current = true;
+			pendingRestoreRef.current = { saved, tries: 0, frame: 0, token: viewport.own() };
 			schedulePendingRestore();
 		}
-	}, [cwd, sessionId, sessionPath, conversationPreviewPath, historyGeneration, sessionLoading, applyReadingRow, cancelPendingRestore]);
+	}, [cwd, sessionId, sessionPath, conversationPreviewPath, historyGeneration, sessionLoading, applyReadingRow, cancelPendingRestore, viewport]);
 	useLayoutEffect(() => {
 		const previous = memoryIdentity.current;
-		if (previous.cwd === cwd && previous.sessionPath === contentSessionPath && previous.historyGeneration === historyGeneration && readingAnchor.current && !restoring.current) saveReading(memoryKey, readingAnchor.current);
+		if (previous.cwd === cwd && previous.sessionPath === contentSessionPath && previous.historyGeneration === historyGeneration && readingAnchor.current && !viewport.restoring) saveReading(memoryKey, readingAnchor.current);
 		memoryKeyRef.current = memoryKey; memoryIdentity.current = { cwd, sessionPath: contentSessionPath, historyGeneration };
-	}, [memoryKey, cwd, contentSessionPath, historyGeneration]);
+	}, [memoryKey, cwd, contentSessionPath, historyGeneration, viewport]);
 
 	useEffect(() => () => { cancelScrollAnimation(); cancelPendingRestore(); }, []);
 
@@ -538,13 +538,13 @@ export function ChatView({ onOpenModelManagement, searchTarget, historyControls,
 		locationRequest.current?.abort(); const controller = new AbortController(); locationRequest.current = controller;
 		cancelPendingRestore();
 		setLocationTarget({ id, snippet });
-		followsBottomRef.current = false; restoring.current = true; setLocationStatus('loading');
+		followsBottomRef.current = false; const token = viewport.own(); setLocationStatus('loading');
 		void locateHistoryMessage(id, controller.signal, snippet).then((found) => {
 			if (controller.signal.aborted) return;
-			restoring.current = false; setLocationStatus(found ? null : 'missing');
+			viewport.release(token); setLocationStatus(found ? null : 'missing');
 			if (found) { jumpRef.current(found); setHighlightedMessage({ sessionPath: useChatStore.getState().sessionPath ?? '', messageId: found, requestId: Date.now() }); }
 		});
-	}, []);
+	}, [viewport]);
 	useEffect(() => {
 		if (sessionLoading || !searchTarget || searchTarget.sessionPath !== sessionPath || handledSearchRequest.current === searchTarget.requestId) return;
 		handledSearchRequest.current = searchTarget.requestId;
@@ -563,7 +563,7 @@ export function ChatView({ onOpenModelManagement, searchTarget, historyControls,
 		if (!node) return;
 		// Loading swaps the transcript content and clamps scrollTop; the resulting
 		// events are layout noise, not reading intent.
-		if (restoring.current || sessionLoading) return;
+		if (viewport.restoring || sessionLoading) return;
 		const nearBottom = node.scrollHeight - node.scrollTop - node.clientHeight <= BOTTOM_THRESHOLD;
 		if (scrollAnimationRef.current === null) {
 			// Sending a message resizes the composer and appends rows, so a view that

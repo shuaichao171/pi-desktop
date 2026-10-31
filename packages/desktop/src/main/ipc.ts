@@ -31,6 +31,7 @@ import { createReadStream } from 'node:fs';
 import { normalizeSessionPath, pruneMissingSessionMeta } from './sessionPaths';
 import { rendererLaunchUrl, validatePaiSession, validatePaiWorkspace } from './desktopLaunch';
 import { prepareWorkspaceDrop } from './workspaceDrop';
+import { workspaceKey } from './workspaceKey';
 import { createProjectCreator } from './projectCreation';
 import { createConversationWorkspace, createConversationWorkspaceSync, prepareConversationStorageDirectory } from './conversationStorage';
 import { createDesktopNotifier } from './notifications';
@@ -550,10 +551,6 @@ interface WorkspaceSettings {
 	explicitWorkspaces?: string[];
 	workspaceNicknames?: Record<string, string>;
 	workspaceAppearance?: Record<string, { bar?: string | null }>;
-}
-function workspaceKey(cwd: string): string {
-	const key = resolve(cwd);
-	return process.platform === 'win32' ? key.toLowerCase() : key;
 }
 
 const isValidProjectBar = isValidProjectBarValue;
@@ -1260,6 +1257,9 @@ export function registerIpc(options: {
 				autoInstallUpdates: typeof patch.autoInstallUpdates === 'boolean' ? patch.autoInstallUpdates : current.autoInstallUpdates,
 				conversationStorageDirectory: directory ?? current.conversationStorageDirectory,
 				piEngine: piEngine ?? current.piEngine,
+				// The debug API owns this field (debugApiIpc) and reads it back from disk: carrying the
+				// stored config over keeps a running server and its token alive across unrelated saves.
+				debugApi: current.debugApi,
 			};
 			writeDesktopSettings(desktopSettingsPath(), next);
 			keepAwake?.settingsChanged();
@@ -1524,6 +1524,9 @@ export function registerIpc(options: {
 		if (typeof cwd !== 'string' || cwd.length === 0 || cwd.length > 32768 || cwd.includes('\0')) throw new Error('项目路径无效');
 		const target = workspaceKey(cwd);
 		if (target === (activeWorkspace ? workspaceKey(activeWorkspace) : activeWorkspace)) throw new Error('无法移除当前项目，请先切换到其他项目');
+		// Removing the project orphans its shell: close() only accepts the terminal of
+		// the *current* workspace, so an unreachable pty would block every later open.
+		await workbenchFeatures?.closeTerminalForWorkspace(cwd);
 		await agentService.forgetWorkspace(cwd);
 		await withWorkspaceSettings(async (previous) => {
 			const workspaces = [...new Set([...(Array.isArray(previous.workspaces) ? previous.workspaces : []), previous.cwd]

@@ -36,6 +36,13 @@ const stubs = {
   './workbenchIpc': `
     export const registerWorkbenchIpc = () => globalThis.__ipcWorkbench ?? ({ reset: async () => {}, dispose: async () => {} });
   `,
+  './workbenchFeatureIpc': `
+    // Resolved lazily: the harness installs its fake only after registerIpc() ran.
+    export const registerWorkbenchFeatureIpc = () => ({
+      closeTerminalForWorkspace: (...args) => globalThis.__ipcWorkbenchFeatures.closeTerminalForWorkspace(...args),
+      dispose: async () => {},
+    });
+  `,
 };
 registerHooks({
   resolve(specifier, context, nextResolve) {
@@ -764,6 +771,15 @@ test('standalone conversations get independent folders and retain discoverable h
   const reversed = await call(IPC_CHANNELS.desktopSettingsSet, { closeBehavior: 'quit' });
   assert.equal(reversed.confirmBusyClose, true, 'choosing a behavior in Settings restores the confirmation');
   assert.equal(reversed.closeBehavior, 'quit');
+  // The debug API owns its own settings entry: a save that does not touch it must
+  // not drop it. The handler used to write a fixed 7-field object over the whole
+  // settings file, silently disabling a configured debug server on the next save.
+  const desktopSettingsFile = join(root, 'desktop-settings.json');
+  const debugApi = { enabled: true, port: 47899, authEnabled: true, token: 'debug-token-keep' };
+  await writeFile(desktopSettingsFile, JSON.stringify({ ...JSON.parse(await readFile(desktopSettingsFile, 'utf8')), debugApi }));
+  await call(IPC_CHANNELS.desktopSettingsSet, { notificationsEnabled: true });
+  assert.deepEqual(call(IPC_CHANNELS.desktopSettingsGet).debugApi, debugApi, 'an unrelated settings save keeps the debug-API configuration');
+  assert.deepEqual(JSON.parse(await readFile(desktopSettingsFile, 'utf8')).debugApi, debugApi, 'the debug-API configuration stays on disk');
   assert.equal(call(IPC_CHANNELS.workspaceDefault), changedRoot);
   await call(IPC_CHANNELS.agentNewSession);
   assert.equal(dirname(initialized.at(-1)), changedRoot);
@@ -791,7 +807,14 @@ test('standalone conversations get independent folders and retain discoverable h
     'explicitly adding a storage root as a project preserves that deliberate choice');
   await call(IPC_CHANNELS.workspaceSetPinned, []);
   await call(IPC_CHANNELS.workspaceSwitch, automatic.at(-1));
+  // Removing a project must release its terminal: the orphaned pty is unreachable
+  // afterwards (close() only accepts the current workspace's terminal) and would
+  // block the next project's terminal until the app restarted.
+  const closedTerminals = [];
+  globalThis.__ipcWorkbenchFeatures = { closeTerminalForWorkspace: async (cwd) => { closedTerminals.push(cwd); return true; }, dispose: async () => {} };
   await call(IPC_CHANNELS.workspaceRemove, project);
+  assert.deepEqual(closedTerminals, [project], 'removing a project releases its workspace terminal');
+  delete globalThis.__ipcWorkbenchFeatures;
   const persisted = JSON.parse(await readFile(settingsPath, 'utf8'));
   assert.deepEqual(persisted.conversationWorkspaces, automatic, 'normal workspace writes preserve internal metadata');
   assert.ok(persisted.conversationStorageDirectories.includes(home));
