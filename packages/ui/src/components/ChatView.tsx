@@ -136,6 +136,10 @@ export function ChatView({ onOpenModelManagement, searchTarget, historyControls,
 	// disclosure choices must stay keyed to that owner until the paired ready replaces it.
 	const contentSessionPath = conversationPreviewPath ?? sessionPath;
 	const disclosureScope = `${cwd}\0${contentSessionPath}\0${sessionId}`;
+	// Keep-over dim: the painted transcript belongs to a session that is not the
+	// selected one — the conversation being left, held visible while its replacement
+	// loads. A painted keep-warm preview of the target equals the identity and stays lit.
+	const keepOverConversation = conversationPreviewPath !== null && conversationPreviewPath !== sessionPath;
 	// Layout memory is scoped to a conversation. While the same session stays
 	// pending (resync/restart), the settled layout is preserved so an existing
 	// chat never flashes its blank draft. A pending switch keeps the previous
@@ -713,7 +717,7 @@ export function ChatView({ onOpenModelManagement, searchTarget, historyControls,
 					{locationStatus && <div className="pd-conversation-location" role="status">{c(locationStatus === 'loading' ? 'locating' : 'missing')}{locationStatus === 'missing' && locationTarget && <button type="button" onClick={() => locate(locationTarget.id, locationTarget.snippet)}>{c('retry')}</button>}</div>}
 					<TranscriptSearchContext.Provider value={findOpen && findScope === 'conversation' ? findQuery : ''}>
 					<ConversationDisclosureProvider scope={disclosureScope}>
-					<div ref={scrollRef} className="pd-transcript" onScroll={handleScroll} onWheel={cancelUserScrollOwnership} onTouchStart={cancelUserScrollOwnership} onPointerDown={cancelUserScrollOwnership} onKeyDown={(event) => {
+					<div ref={scrollRef} className={`pd-transcript${keepOverConversation && !isEmpty ? ' is-keep-over' : ''}`} onScroll={handleScroll} onWheel={cancelUserScrollOwnership} onTouchStart={cancelUserScrollOwnership} onPointerDown={cancelUserScrollOwnership} onKeyDown={(event) => {
 						if (['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' '].includes(event.key)) cancelUserScrollOwnership();
 					}}>
 						{/* zcode no-blank-out: the previous conversation stays visible while the target loads; the full-screen placeholder is only for the very first load when there is no previous content to keep showing. */}

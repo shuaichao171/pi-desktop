@@ -510,6 +510,13 @@ button:focus-visible, textarea:focus-visible, input:focus-visible { outline: 2px
 .pd-session-switching-track { width: min(280px, 60%); height: 3px; border-radius: var(--pd-radius-pill); background: var(--pd-border-soft); overflow: hidden; }
 .pd-session-switching-fill { display: block; height: 100%; width: 40%; border-radius: inherit; background: var(--pd-brand); animation: pd-session-switching-slide 1.1s ease-in-out infinite; }
 @keyframes pd-session-switching-slide { 0% { transform: translateX(-110%); } 100% { transform: translateX(285%); } }
+
+/* Keep-over dim (seamless switch): the transcript being left fades back while its
+   replacement loads, so the stale content reads as departing without a blank flash.
+   A painted preview of the target is already the incoming content and stays fully lit. */
+.pd-transcript { transition: opacity 140ms ease; }
+.pd-transcript.is-keep-over { opacity: .55; }
+@media (prefers-reduced-motion: reduce) { .pd-transcript { transition: none; } }
 @media (prefers-reduced-motion: reduce) { .pd-session-switching-fill { animation: none; width: 100%; opacity: .6; } }
 
 .pd-tool-panel { margin-top: 12px; border: 1px solid var(--pd-border); border-radius: var(--pd-radius-md); background: var(--pd-surface); }
