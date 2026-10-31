@@ -28,19 +28,23 @@ export function ChatHeaderMenu({ title, sessionPath, cwd, onRename, onOpenCommit
 	const saved = Boolean(sessionPath);
 
 	// [喵喵喵]: 记忆入口的锁定判定 — Magic Context 插件未安装/未启用/库未就绪时灰色
-	// 锁定，tooltip 说明原因（插件安装本身走设置面板，不在此处发起）
+	// 锁定，tooltip 说明原因（插件安装本身走设置面板，不在此处发起）。
+	// 挂载初查 + 每次打开菜单重查（插件装好后无需重启即解锁）；重查期间保留
+	// 上次状态而非强制归零，避免打开菜单时条目先灰后亮的闪烁。
 	const bridge = useChatStore((s) => s.bridge);
 	const [memoryReady, setMemoryReady] = useState(false);
 	const [memoryLockReason, setMemoryLockReason] = useState('');
 	useEffect(() => {
 		if (!bridge || !cwd) return;
 		let active = true;
-		setMemoryReady(false);
 		void bridge.getMemoryAvailability(cwd)
 			.then((value) => {
 				if (!active) return;
-				if (value.pluginReady && value.databaseReady) setMemoryReady(true);
-				else {
+				if (value.pluginReady && value.databaseReady) {
+					setMemoryReady(true);
+					setMemoryLockReason('');
+				} else {
+					setMemoryReady(false);
 					setMemoryLockReason(value.reason === 'pluginMissing' ? t('memory.lock.pluginMissing')
 						: value.reason === 'pluginDisabled' ? t('memory.lock.pluginDisabled')
 							: value.reason === 'dbMissing' ? t('memory.lock.dbMissing')
@@ -49,7 +53,7 @@ export function ChatHeaderMenu({ title, sessionPath, cwd, onRename, onOpenCommit
 			})
 			.catch(() => { if (active) setMemoryLockReason(t('memory.lock.dbMissing')); });
 		return () => { active = false; };
-	}, [bridge, cwd, t]);
+	}, [bridge, cwd, t, anchor]);
 
 	function close() {
 		setAnchor(null);
