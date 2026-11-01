@@ -26,9 +26,18 @@ export function ExitPresence({ show, surface, children }: { show: boolean; surfa
 	// render on purpose: the value must be current before the closing effect
 	// runs, and rewrites are idempotent for identical shows.
 	const frozen = useRef(show ? children : null);
-	if (show) frozen.current = children;
+	// Render-phase state update (same component, React re-renders before paint):
+	// when show flips true the new children must mount in THE SAME commit. An
+	// effect-deferred setRender(true) would commit one null frame first — any
+	// parent layout effect keyed on the opening state (e.g. the composer pickers'
+	// position pass) would then measure a missing ref and never re-run, leaving
+	// the reopened surface mounted but invisible.
+	if (show) {
+		frozen.current = children;
+		if (!render) setRender(true);
+	}
 	useEffect(() => {
-		if (show) { setRender(true); return; }
+		if (show) return;
 		if (!frozen.current) { setRender(false); return; }
 		const roots = Array.from(document.getElementsByClassName(surface));
 		roots.forEach((element) => element.classList.add('is-closing'));
@@ -38,5 +47,5 @@ export function ExitPresence({ show, surface, children }: { show: boolean; surfa
 			clearTimeout(timer);
 		};
 	}, [show, surface]);
-	return render ? frozen.current : null;
+	return (show || render) ? frozen.current : null;
 }
