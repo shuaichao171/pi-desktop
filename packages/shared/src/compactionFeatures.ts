@@ -4,7 +4,8 @@
  * - builtin：Pi 内置自动压缩（compaction 块阈值触发），由内置扩展 desktop-compaction
  *   接管摘要生成以便流式可见，设置写入 ~/.pi/agent/settings.json。
  * - magicContext：Magic Context 插件的后台压缩（historian 后台子代理 + session-history
- *   注入，无感知），配置写入 ~/.pi/agent/magic-context.jsonc。
+ *   注入，无感知），配置写入 ~/.config/cortexkit/magic-context.jsonc（XDG_CONFIG_HOME 优先），
+ *   与 pi CLI 共用同一份配置。
  */
 
 /** 压缩方式。两种模式互斥：magic context 接管后内置压缩会被其 cancel。 */
@@ -40,15 +41,29 @@ export interface UiCompactionSettingsWrite {
   preferences: UiDesktopCompactionPreferences;
 }
 
+/** historian 推理级别：插件 schema 支持的全部档位（无 none）。 */
+export type UiMagicContextThinkingLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+
+/**
+ * historian 模型设置。插件只在 historian.pi 块内识别这三个键（opencode/omp 为其他
+ * harness 专用块，omp 缺省继承 pi）；historist 顶层同名键属于旧层级，插件不识别。
+ */
+export interface UiMagicContextHistorian {
+  /** 形如 "provider/modelId"；null 表示使用插件内置回退链。 */
+  model: string | null;
+  /**
+   * 首选模型不可用/报错时按顺序尝试的备选模型链（同样是 "provider/modelId"）；
+   * 插件不会把会话模型追加到链尾，链耗尽即判定压缩失败。空数组=不写入该键。
+   */
+  fallbackModels: string[];
+  /** Pi 侧生成历史摘要时传给子代理的推理级别；null 表示不写入（用插件默认）。 */
+  thinkingLevel: UiMagicContextThinkingLevel | null;
+}
+
 /** Magic Context 的 magic-context.jsonc 中 pi-desktop 暴露的配置子集。 */
 export interface UiMagicContextConfig {
   enabled: boolean;
-  historian: {
-    /** 形如 "provider/modelId"；null 表示使用插件内置回退链。 */
-    model: string | null;
-    /** Pi 侧生成历史摘要时传给子代理的推理级别；null 表示不写入（用插件默认）。 */
-    thinkingLevel: 'off' | 'low' | 'medium' | 'high' | null;
-  };
+  historian: UiMagicContextHistorian;
   embedding: {
     provider: 'local' | 'openai-compatible' | 'off';
     /** 向量模型名；local 默认 Xenova/all-MiniLM-L6-v2。 */
@@ -81,7 +96,7 @@ export interface UiMagicContextPluginStatus {
 }
 
 export interface UiMagicContextSnapshot {
-  /** 用户级配置文件绝对路径（~/.pi/agent/magic-context.jsonc）。 */
+  /** 生效的用户级配置文件绝对路径（~/.config/cortexkit/magic-context.jsonc）。 */
   configPath: string;
   /** 配置文件内容哈希，写入时做乐观并发检查。 */
   configVersion: string;

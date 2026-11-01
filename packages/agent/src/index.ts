@@ -2393,6 +2393,12 @@ export class AgentService {
 	private closing = false;
 	private readonly requestProjectTrust: RequestProjectTrust;
 	private readonly requestExtensionDialog: RequestExtensionDialog;
+	/**
+	 * [喵喵喵]: Magic Context boot 键（compaction.enabled/enabled）存在一次未生效的同步 ——
+	 * 写键或重载失败时置 true，之后的任意一次保存都会重试整套同步。只靠「保存前后键值
+	 * 是否变化」判定会漏掉重试场景：失败的那次已把新值写进文件，重试时前后相等。
+	 */
+	private magicContextReloadPending = false;
 
 	constructor(
 		requestProjectTrust: RequestProjectTrust = async () => ({ trusted: false, remember: false }),
@@ -2412,17 +2418,15 @@ export class AgentService {
 
 	// [喵喵喵]: 模式切换改变压缩接管权 — 插件的 compaction.enabled 是其启动闭包捕获的键，
 	// builtin 写 false（插件 compaction-off，放行 pi-desktop 接管压缩，其余功能保留），
-	// magicContext 写 true（插件接管），写入后必须重载插件才生效；仅模式真正变化时才重载
+	// magicContext 写 true（插件接管），写入后必须重载插件才生效。
+	// 同步条件是「模式变化或有未完成的 pending」：失败的同步已把新 mode 写进文件，
+	// 重试时前后相等，只看模式变化就永远不会再重载（卡死到重启）
 	async saveCompactionSettings(request: UiCompactionSettingsWrite) {
 		const service = this.requireActive();
 		const previous = await service.getCompactionSettings();
 		const next = await service.saveCompactionSettings(request);
-		if (previous.preferences.mode !== next.preferences.mode) {
-			const magic = await service.getMagicContextSnapshot();
-			if (magic.plugin.installed) {
-				await service.setMagicContextCompactionOwnership(next.preferences.mode === 'magicContext');
-				await this.reloadMagicContextPlugin();
-			}
+		if (previous.preferences.mode !== next.preferences.mode || this.magicContextReloadPending) {
+			await this.syncMagicContextOwnership(service);
 		}
 		return next;
 	}
@@ -2430,13 +2434,14 @@ export class AgentService {
 	getMagicContextSnapshot() { return this.requireActive().getMagicContextSnapshot(); }
 
 	// [喵喵喵]: enabled 是插件 boot 键（false 时插件完全不注册），变化后重载才生效；
-	// historian/embedding/阈值走插件 LiveConfigReader 热生效，无需重载
+	// historian/embedding/阈值走插件 LiveConfigReader 热生效，无需重载。
+	// pending（上次 boot 键同步失败）也在这里一并补上，插件未安装时由 sync 内部清掉
 	async saveMagicContextConfig(request: UiMagicContextConfigWrite) {
 		const service = this.requireActive();
 		const before = await service.getMagicContextSnapshot();
 		const result = await service.saveMagicContextConfig(request);
-		if (result.plugin.installed && before.config.enabled !== result.config.enabled) {
-			await this.reloadMagicContextPlugin();
+		if (before.config.enabled !== result.config.enabled || this.magicContextReloadPending) {
+			await this.syncMagicContextOwnership(service);
 		}
 		return result;
 	}
@@ -2462,19 +2467,37 @@ export class AgentService {
 			if (action === 'update' && !detected.plugin.installed) throw new Error('Magic Context 尚未安装，无法更新');
 			return { cwd, action, source: MAGIC_CONTEXT_SOURCE, scope: 'user' as const };
 		});
-		// runPluginMutation 已对全部会话重载插件；此处补默认配置并把接管权归位到当前模式
+		// runPluginMutation 已对全部会话重载插件（boot 键随当前文件生效），历史 pending 就此了结
+		this.magicContextReloadPending = false;
 		const snapshot = await service.completeMagicContextOperation();
 		// [喵喵喵]: 安装后插件默认接管压缩（compaction.enabled 缺省=true）；若当前是 builtin
 		// 模式则切到 compaction-off。该写入发生在刚才的重载之后，需再重载一次让 boot 键生效
 		if (snapshot.plugin.installed) {
 			const settings = await service.getCompactionSettings();
 			if (settings.preferences.mode === 'builtin') {
-				await service.setMagicContextCompactionOwnership(false);
-				await this.reloadMagicContextPlugin();
+				await this.syncMagicContextOwnership(service);
 				return service.getMagicContextSnapshot();
 			}
 		}
 		return snapshot;
+	}
+
+	/**
+	 * [喵喵喵]: boot 键同步的统一入口 — 先置 pending 再写键/重载，任一步失败都保持 pending，
+	 * 让之后的任意一次保存（压缩设置或插件配置）重试整套同步；只有完整走完才清掉。
+	 * 插件未安装时接管键无意义，顺手清 pending 避免每次保存空转。
+	 */
+	private async syncMagicContextOwnership(service: SingleAgentService): Promise<void> {
+		this.magicContextReloadPending = true;
+		const magic = await service.getMagicContextSnapshot();
+		if (!magic.plugin.installed) {
+			this.magicContextReloadPending = false;
+			return;
+		}
+		const settings = await service.getCompactionSettings();
+		await service.setMagicContextCompactionOwnership(settings.preferences.mode === 'magicContext');
+		await this.reloadMagicContextPlugin();
+		this.magicContextReloadPending = false;
 	}
 
 	/**

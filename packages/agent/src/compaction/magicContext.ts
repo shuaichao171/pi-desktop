@@ -3,7 +3,7 @@ import { lstat, mkdir, open, readFile, rename, rm } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join } from 'node:path';
 import { getAgentDir } from '@earendil-works/pi-coding-agent';
-import type { UiMagicContextConfig, UiMagicContextPluginStatus, UiPluginCatalog } from '../../../shared/src/index';
+import type { UiMagicContextConfig, UiMagicContextPluginStatus, UiMagicContextThinkingLevel, UiPluginCatalog } from '../../../shared/src/index';
 
 /** Magic Context Pi 扩展的 npm 包名（pi install 形式为 npm:<name>）。 */
 export const MAGIC_CONTEXT_PACKAGE = '@cortexkit/pi-magic-context';
@@ -142,22 +142,72 @@ function optionalText(value: unknown, max: number): string | null {
 	return typeof value === 'string' && value.trim() && value.length <= max ? value : null;
 }
 
+/** 非数组对象取值；其他一律当空块，避免把字符串/数组当配置块展开。 */
+function objectBlock(value: unknown): Record<string, unknown> {
+	return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+const THINKING_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const;
+
+/** 推理级别取值：只接受插件 schema 列出的档位（无 none），其余视为未设置。 */
+function readThinkingLevel(value: unknown): UiMagicContextThinkingLevel | null {
+	return typeof value === 'string' && (THINKING_LEVELS as readonly string[]).includes(value)
+		? value as UiMagicContextThinkingLevel
+		: null;
+}
+
+/** 备选模型项：字符串，或 {model, thinking_level} 对象（按 model 读入）。 */
+function readFallbackModel(value: unknown): string | null {
+	if (typeof value === 'string') return optionalText(value, 400);
+	if (value && typeof value === 'object' && !Array.isArray(value)) return optionalText((value as Record<string, unknown>).model, 400);
+	return null;
+}
+
+interface MagicHistorianRead {
+	model: string | null;
+	fallbackModels: string[];
+	thinkingLevel: UiMagicContextThinkingLevel | null;
+	/** 值来自 historian.pi 块（true）还是旧顶层同名字段的只读回落（false）。 */
+	modelFromPi: boolean;
+	thinkingFromPi: boolean;
+}
+
+/**
+ * [喵喵喵]: Magic Context 只在 historian.pi 块内读模型设置（opencode/omp 是其他 harness 的
+ * 专用块，omp 缺省继承 pi）；顶层的 historian.model/thinking_level 是 pi-desktop 旧版写入的
+ * 过时层级，插件根本不识别。因此优先读 pi 块，只有 pi 未给出的键才回落到旧顶层字段，
+ * 否则用户此前在桌面版填的模型看起来「已设置」却始终不生效。
+ * pi.model 允许 {model, thinking_level} 对象形态，其嵌套推理级别与块级同级看待。
+ */
+function readMagicHistorian(historian: Record<string, unknown>): MagicHistorianRead {
+	const pi = objectBlock(historian.pi);
+	const rawModel = pi.model;
+	const nested = objectBlock(rawModel);
+	const piModel = typeof rawModel === 'string' ? optionalText(rawModel, 400) : optionalText(nested.model, 400);
+	const piThinking = readThinkingLevel(pi.thinking_level) ?? readThinkingLevel(nested.thinking_level);
+	const fallbackRaw = Array.isArray(pi.fallback_models) ? pi.fallback_models : [];
+	return {
+		model: piModel ?? optionalText(historian.model, 400),
+		thinkingLevel: piThinking ?? readThinkingLevel(historian.thinking_level),
+		fallbackModels: fallbackRaw.map(readFallbackModel).filter((item): item is string => item !== null),
+		modelFromPi: piModel !== null,
+		thinkingFromPi: piThinking !== null,
+	};
+}
+
 /** 校验并规范化 pi-desktop 暴露的配置子集；越界数值回落插件默认（null=不写入）。 */
 export function normalizeMagicContextConfig(input: unknown): UiMagicContextConfig {
-	const source = input && typeof input === 'object' && !Array.isArray(input) ? input as Record<string, unknown> : {};
-	const historian = source.historian && typeof source.historian === 'object' && !Array.isArray(source.historian) ? source.historian as Record<string, unknown> : {};
-	const embedding = source.embedding && typeof source.embedding === 'object' && !Array.isArray(source.embedding) ? source.embedding as Record<string, unknown> : {};
+	const source = objectBlock(input);
+	const historian = objectBlock(source.historian);
+	const embedding = objectBlock(source.embedding);
 	const threshold = source.execute_threshold_percentage;
 	const budget = source.history_budget_percentage;
-	const thinking = historian.thinking_level;
+	const read = readMagicHistorian(historian);
 	const percentage = (value: unknown, range: { min: number; max: number }): number | null =>
 		typeof value === 'number' && Number.isFinite(value) && value >= range.min && value <= range.max ? value : null;
 	return {
 		enabled: typeof source.enabled === 'boolean' ? source.enabled : true,
-		historian: {
-			model: optionalText(historian.model, 400),
-			thinkingLevel: thinking === 'off' || thinking === 'low' || thinking === 'medium' || thinking === 'high' ? thinking : null,
-		},
+		historian: { model: read.model, fallbackModels: read.fallbackModels, thinkingLevel: read.thinkingLevel },
 		embedding: {
 			provider: embedding.provider === 'openai-compatible' || embedding.provider === 'off' ? embedding.provider : 'local',
 			model: optionalText(embedding.model, 400),
@@ -174,11 +224,43 @@ export function normalizeMagicContextConfig(input: unknown): UiMagicContextConfi
 function mergeConfig(current: Record<string, unknown>, config: UiMagicContextConfig): Record<string, unknown> {
 	const next: Record<string, unknown> = { ...current };
 	next.enabled = config.enabled;
-	next.historian = { ...(next.historian && typeof next.historian === 'object' ? next.historian as Record<string, unknown> : {}) };
-	if (config.historian.model) (next.historian as Record<string, unknown>).model = config.historian.model;
-	else delete (next.historian as Record<string, unknown>).model;
-	if (config.historian.thinkingLevel) (next.historian as Record<string, unknown>).thinking_level = config.historian.thinkingLevel;
-	else delete (next.historian as Record<string, unknown>).thinking_level;
+
+	const historian = { ...objectBlock(next.historian) };
+	const pi = { ...objectBlock(historian.pi) };
+	const before = readMagicHistorian(historian);
+	const fallbackFromPi = Array.isArray(pi.fallback_models);
+	const thinkingAtBlock = readThinkingLevel(pi.thinking_level) !== null;
+
+	// [喵喵喵]: 值未变时不重写 —— pi.model 的对象形态被压成字符串会丢掉嵌套 reasoning 级别；
+	// 但只要模型键被重写（用户改了模型），就必须把推理级别落到块级，否则嵌套值随之消失。
+	const nextModel = config.historian.model;
+	const nextThinking = config.historian.thinkingLevel;
+	const modelUnchanged = before.modelFromPi && before.model === nextModel && before.thinkingLevel === nextThinking;
+	if (!modelUnchanged) {
+		if (nextModel) pi.model = nextModel;
+		else delete pi.model;
+	}
+	if (!(before.thinkingFromPi && before.thinkingLevel === nextThinking && (thinkingAtBlock || modelUnchanged))) {
+		if (nextThinking) pi.thinking_level = nextThinking;
+		else delete pi.thinking_level;
+	}
+
+	// 备选链同理：未变则保留原数组，避免把 {model, thinking_level} 对象项压成纯字符串
+	const nextFallbacks = config.historian.fallbackModels.map((item) => item.trim()).filter(Boolean);
+	const fallbacksUnchanged = nextFallbacks.length === before.fallbackModels.length
+		&& nextFallbacks.every((item, index) => item === before.fallbackModels[index]);
+	if (!(fallbackFromPi && fallbacksUnchanged)) {
+		if (nextFallbacks.length) pi.fallback_models = nextFallbacks;
+		else delete pi.fallback_models;
+	}
+
+	// 旧层级同名键一律清掉：留着会让用户以为设置生效，实际插件只认 pi 块（值已迁移进 pi）
+	delete historian.model;
+	delete historian.thinking_level;
+	if (Object.keys(pi).length) historian.pi = pi;
+	else delete historian.pi;
+	if (Object.keys(historian).length) next.historian = historian;
+	else delete next.historian;
 
 	next.embedding = { ...(next.embedding && typeof next.embedding === 'object' ? next.embedding as Record<string, unknown> : {}) };
 	(next.embedding as Record<string, unknown>).provider = config.embedding.provider;
@@ -242,7 +324,10 @@ export async function detectMagicContextPlugin(catalog: UiPluginCatalog | null):
 }
 
 export interface MagicContextStore {
-	/** 读取用户级配置（含内容哈希与插件状态）；catalog 为空时降级检测安装状态。 */
+	/**
+	 * 读取用户级配置（含内容哈希与插件状态）；catalog 为空时降级检测安装状态。
+	 * 最新版本号走缓存直读、不阻塞快照（探测在后台刷新），完成后由下次快照或「刷新状态」取到。
+	 */
 	snapshot(catalog: UiPluginCatalog | null): Promise<{ configPath: string; configVersion: string; config: UiMagicContextConfig; plugin: UiMagicContextPluginStatus }>;
 	/** 乐观锁写入配置；只覆盖 pi-desktop 管理的键。 */
 	save(request: { expectedVersion: string; config: UiMagicContextConfig }): Promise<{ configPath: string; configVersion: string; config: UiMagicContextConfig }>;
@@ -254,17 +339,48 @@ export interface MagicContextStore {
 	setCompactionOwnership(pluginOwns: boolean): Promise<void>;
 	/** 安装默认配置文件（仅在文件不存在时创建）。 */
 	ensureDefaultConfig(): Promise<void>;
-	/** 探测 npm 最新版本（失败静默返回 null；60s 内复用结果避免每次快照都请求）。 */
-	probeLatestVersion(): Promise<string | null>;
 }
 
 export function createMagicContextStore(fetcher: typeof fetch = fetch): MagicContextStore {
 	let probeCache: { at: number; version: string | null } | null = null;
+	let probeInFlight: Promise<void> | null = null;
+
+	/** 缓存有效期内的最新版本；未探测过或已过期返回 null。 */
+	const cachedLatestVersion = (): string | null => {
+		if (!probeCache || Date.now() - probeCache.at >= PROBE_CACHE_MS) return null;
+		return probeCache.version;
+	};
+
+	/**
+	 * [喵喵喵]: 后台刷新最新版本缓存 —— 快照不再 await 探测（12s 网络超时会挂住设置面板
+	 * 首开），改为立即返回缓存值、探测放后台；进行中的探测与有效缓存都直接跳过，
+	 * 避免并发快照重复请求。
+	 */
+	const refreshLatestVersion = (): void => {
+		if (probeInFlight || (probeCache && Date.now() - probeCache.at < PROBE_CACHE_MS)) return;
+		probeInFlight = (async () => {
+			try {
+				const response = await fetcher(LATEST_URL, { signal: AbortSignal.timeout(PROBE_TIMEOUT_MS), redirect: 'error', headers: { Accept: 'application/json' } });
+				let version: string | null = null;
+				if (response.ok) {
+					const data: unknown = await response.json().catch(() => null);
+					version = data && typeof (data as { version?: unknown }).version === 'string' ? (data as { version: string }).version : null;
+				}
+				probeCache = { at: Date.now(), version };
+			} catch {
+				// [喵喵喵]: 探测失败不缓存结果（下次快照会重试），UI 仅少显示最新版本号
+			} finally {
+				probeInFlight = null;
+			}
+		})();
+	};
+
 	return {
 		async snapshot(catalog) {
 			const current = await readEffectiveConfig();
 			const detected = await detectMagicContextPlugin(catalog);
-			const latest = await this.probeLatestVersion();
+			const latest = cachedLatestVersion();
+			refreshLatestVersion();
 			const installed = detected.installedVersion;
 			return {
 				configPath: current.source === 'legacy' ? legacyUserConfigPath() : cortexKitUserConfigPath(),
@@ -300,22 +416,6 @@ export function createMagicContextStore(fetcher: typeof fetch = fetch): MagicCon
 		async ensureDefaultConfig() {
 			const current = await readConfig(cortexKitUserConfigPath());
 			if (!current.text.trim()) await atomicWrite(cortexKitUserConfigPath(), defaultMagicContextConfig());
-		},
-		async probeLatestVersion() {
-			if (probeCache && Date.now() - probeCache.at < PROBE_CACHE_MS) return probeCache.version;
-			try {
-				const response = await fetcher(LATEST_URL, { signal: AbortSignal.timeout(PROBE_TIMEOUT_MS), redirect: 'error', headers: { Accept: 'application/json' } });
-				let version: string | null = null;
-				if (response.ok) {
-					const data: unknown = await response.json().catch(() => null);
-					version = data && typeof (data as { version?: unknown }).version === 'string' ? (data as { version: string }).version : null;
-				}
-				probeCache = { at: Date.now(), version };
-				return version;
-			} catch {
-				// [喵喵喵]: 探测失败不缓存结果（下次快照会重试），UI 仅少显示最新版本号
-				return null;
-			}
 		},
 	};
 }
