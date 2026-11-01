@@ -890,6 +890,18 @@ async function requireSessionOwner(path: string, allowCurrentDraft = false): Pro
 	return (await requireSessionOwners([path], allowCurrentDraft)).get(normalizeSessionPath(path))!;
 }
 
+/**
+ * Deletion trusts an owner this host already resolved from its own listing:
+ * prepareSessionDeletion re-confirms it in the agent with a directory + header
+ * check, so re-listing the whole project here would only repeat that work.
+ */
+async function sessionDeletionOwner(path: string): Promise<string> {
+	const cached = sessionOwnerByPath.get(path);
+	if (!cached || !(await listWorkspaces()).includes(cached)) return requireSessionOwner(path);
+	if (paiHeldSessionPaths().includes(path)) throw new Error('会话已在 pai 小窗中打开，请先关闭该小窗');
+	return cached;
+}
+
 /** Read only the session header line: machine-wide sessions may name a workspace the app never opened. */
 async function readSessionHeaderOwner(path: string): Promise<string | null> {
 	try {
@@ -1789,7 +1801,7 @@ export function registerIpc(options: {
 		const win = invokingWindow(event);
 		if (event.senderFrame !== win.webContents.mainFrame) throw new Error('Invalid session-delete sender');
 		const target = normalizeSessionPath(path);
-		const owner = await requireSessionOwner(target);
+		const owner = await sessionDeletionOwner(target);
 		if (automationExecutor.isSessionRunning(target)) throw new Error('自动化仍在运行，请结束后再删除会话');
 		// Deleting the loaded session is rejected: the renderer switches to a fresh one first (3.3).
 		const snapshot = await agentService.getSnapshot();

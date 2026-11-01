@@ -16,6 +16,8 @@ interface ActivityBarProps {
 	onOpenView(view: ActivityViewId): void;
 	onNewSession(): void;
 	onOpenSettings(): void;
+	/** Opens settings on the updates page; the rail shows this entry only while a newer version exists. */
+	onOpenUpdates(): void;
 	/** True while a session navigation is pending; disables the new-session action. */
 	navigationPending: boolean;
 	/** Sidebar pane visibility; the top rail button toggles it (Ctrl+B twin). */
@@ -23,7 +25,7 @@ interface ActivityBarProps {
 	onToggleSidebar(): void;
 }
 
-export function ActivityBar({ mainView, onOpenView, onNewSession, onOpenSettings, navigationPending, sidebarOpen, onToggleSidebar }: ActivityBarProps) {
+export function ActivityBar({ mainView, onOpenView, onNewSession, onOpenSettings, onOpenUpdates, navigationPending, sidebarOpen, onToggleSidebar }: ActivityBarProps) {
 	const { t } = useT();
 	const bridge = useChatStore((s) => s.bridge);
 	const platform = useChatStore((s) => s.appInfo?.platform);
@@ -44,7 +46,11 @@ export function ActivityBar({ mainView, onOpenView, onNewSession, onOpenSettings
 	const updateState = updateSnapshot;
 	const updateAvailable = updateState?.phase === 'available' || updateState?.phase === 'downloading' || updateState?.phase === 'ready' || updateState?.phase === 'installing'
 		|| Boolean(updateState?.availableVersion && (updateState.phase === 'error' || updateState.phase === 'checking'));
-
+	const updateVersion = updateState?.availableVersion ?? '';
+	const updateTitle = updateState?.phase === 'downloading'
+		? t('activity.updateDownloading', { version: updateVersion, percent: String(Math.round(updateState.progressPercent ?? 0)) })
+		: updateState?.phase === 'ready' || updateState?.phase === 'installing' ? t('activity.updateReady', { version: updateVersion })
+			: t('activity.updateAvailable', { version: updateVersion });
 
 	return (
 		<nav className="pd-activity-bar" aria-label={t('activity.barLabel')}>
@@ -65,8 +71,13 @@ export function ActivityBar({ mainView, onOpenView, onNewSession, onOpenSettings
 				 * opens: each ActivityViewContribution gains an icon below plugins. */}
 			</div>
 			<div className="pd-activity-bar-bottom">
-				<HoverTooltip title={updateAvailable ? t('activity.settingsUpdateHint') : t('sidebar.settings')} align="start">
-					<button type="button" className={`pd-activity-item pd-settings-entry${updateAvailable ? ' has-notice' : ''}`} aria-label={t('sidebar.settings')} onClick={() => onOpenSettings()}><Icon name="settings" width="20" height="20" /></button>
+				{/* A newer version gets its own entry above settings (replacing the old
+				 * red dot on the gear): it names the version and opens the updates page. */}
+				{updateAvailable && <HoverTooltip title={updateTitle} align="start">
+					<button type="button" className="pd-activity-item pd-activity-update has-notice" aria-label={updateTitle} onClick={() => onOpenUpdates()}><Icon name="update" width="20" height="20" /></button>
+				</HoverTooltip>}
+				<HoverTooltip title={t('sidebar.settings')} align="start">
+					<button type="button" className="pd-activity-item pd-settings-entry" aria-label={t('sidebar.settings')} onClick={() => onOpenSettings()}><Icon name="settings" width="20" height="20" /></button>
 				</HoverTooltip>
 			</div>
 		</nav>

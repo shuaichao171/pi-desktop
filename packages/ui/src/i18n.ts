@@ -674,7 +674,9 @@ export const translations: Record<string, { 'zh-CN': string; 'en-US': string }> 
   // ActivityBar
   'activity.barLabel': { 'zh-CN': '活动栏', 'en-US': 'Activity bar' },
   'activity.sessionsView': { 'zh-CN': '会话', 'en-US': 'Sessions' },
-  'activity.settingsUpdateHint': { 'zh-CN': '设置（有可用更新）', 'en-US': 'Settings (update available)' },
+  'activity.updateAvailable': { 'zh-CN': '有新版本 {version}，点击查看更新', 'en-US': 'Update {version} available' },
+  'activity.updateDownloading': { 'zh-CN': '正在下载新版本 {version}（{percent}%）', 'en-US': 'Downloading update {version} ({percent}%)' },
+  'activity.updateReady': { 'zh-CN': '新版本 {version} 已就绪，点击查看更新', 'en-US': 'Update {version} is ready to install' },
   'sidebar.search': { 'zh-CN': '搜索', 'en-US': 'Search' },
   'sidebar.historyNavigation': { 'zh-CN': '会话导航', 'en-US': 'Conversation history' },
   'sidebar.historyBack': { 'zh-CN': '后退', 'en-US': 'Back' },

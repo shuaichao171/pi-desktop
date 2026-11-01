@@ -15,6 +15,7 @@
 .pd-activity-bar .pd-activity-item.is-active::before { content: ''; position: absolute; left: -4px; width: 3px; height: 24px; border-radius: var(--pd-radius-pill); background: var(--pd-brand); }
 .pd-activity-new-session { color: var(--pd-text); }
 .pd-activity-new-session svg { stroke-width: 2.2; }
+.pd-activity-bar .pd-activity-update { color: var(--pd-brand); }
 .pd-activity-bar .pd-activity-item.has-notice::after { content: ''; position: absolute; top: 7px; right: 7px; width: 8px; height: 8px; border: 2px solid var(--pd-sidebar); border-radius: 50%; background: var(--pd-danger); }
 .pd-activity-bar .pd-activity-item:disabled { cursor: default; opacity: .45; }
 

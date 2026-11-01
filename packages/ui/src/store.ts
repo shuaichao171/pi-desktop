@@ -163,6 +163,8 @@ interface ChatState {
 }
 
 const sessionListRequests = new Map<string, number>();
+/** Sessions whose host-side deletion is in flight; listings must not bring them back. */
+const pendingSessionDeletions = new Set<string>();
 let workspacesRequest = 0;
 let settingsRequestCount = 0;
 let settingsGeneration = 0;
@@ -912,23 +914,28 @@ if (!get().modelProviders.length) void get().refreshModelProviders().catch(() =>
 		const { bridge } = get();
 		if (!bridge || !path) return;
 		set({ error: null });
+		// Hide the row at once: the host resolves ownership and evicts cached runtimes
+		// before unlinking, which takes seconds on projects with large transcripts.
+		// Listings that land meanwhile keep it hidden; a failure puts it back.
+		pendingSessionDeletions.add(path);
+		const hidden = hideSessionRows(path);
 		try {
 			// The main process rejects deleting the open session; switch to a fresh one first.
 			if (get().sessionPath === path) await get().newSession();
 			await bridge.deleteSession(path);
 			// Deleted conversations must not resurface from the keep-warm cache.
 			sessionConversationPreviews.delete(path);
-			set((state) => ({
-				sessionsByWorkspace: Object.fromEntries(Object.entries(state.sessionsByWorkspace)
-					.map(([workspace, sessions]) => [workspace, sessions.filter((session) => session.path !== path)])),
-				sessions: state.sessions.filter((session) => session.path !== path),
-			}));
-			const workspace = Object.keys(get().sessionsByWorkspace).find((cwd) => cwd === get().cwd);
-			if (workspace) await get().refreshWorkspaceSessions(workspace);
 		} catch (error) {
+			pendingSessionDeletions.delete(path);
+			if (get().bridge === bridge) restoreSessionRows(hidden);
 			set({ error: errorMessage(error) });
 			throw error;
 		}
+		pendingSessionDeletions.delete(path);
+		// The row is already gone, so the confirming refresh need not hold the caller.
+		// A newer request also discards any listing read before the unlink.
+		const workspaces = new Set([...hidden.workspaces.map(({ workspace }) => workspace), get().cwd]);
+		for (const workspace of workspaces) if (workspace && Object.hasOwn(get().sessionsByWorkspace, workspace)) void get().refreshWorkspaceSessions(workspace);
 	},
 	
 	async deleteSessions(paths, options) {
@@ -989,9 +996,10 @@ if (!get().modelProviders.length) void get().refreshModelProviders().catch(() =>
 				} catch (cause) { failed[path] = cause instanceof Error ? cause.message : String(cause); }
 			}
 			// One refresh for the whole batch instead of one per deletion (zcode emits a
-			// single workspace event after the batch loop, not one per item).
+			// single workspace event after the batch loop, not one per item). Deleted rows
+			// are already dropped, so the result dialog does not wait for the listing.
 			const workspace = Object.keys(get().sessionsByWorkspace).find((cwd) => cwd === get().cwd);
-			if (workspace) await get().refreshWorkspaceSessions(workspace);
+			if (workspace) void get().refreshWorkspaceSessions(workspace);
 		} catch (error) {
 			set({ error: errorMessage(error) });
 		}
@@ -1581,7 +1589,8 @@ async function refreshSessionCache(cwd: string, reportError = true): Promise<voi
 		const sessions = await bridge.listSessions(cwd);
 		if (useChatStore.getState().bridge !== bridge || sessionListRequests.get(cwd) !== request) return;
 		useChatStore.setState((state) => {
-			const merged = mergeRuntimeStates(cwd, sessions, state.sessionRuntimes);
+			const visible = pendingSessionDeletions.size ? sessions.filter((session) => !pendingSessionDeletions.has(session.path)) : sessions;
+			const merged = mergeRuntimeStates(cwd, visible, state.sessionRuntimes);
 			return { sessionsByWorkspace: { ...state.sessionsByWorkspace, [cwd]: merged },
 				workspaceSessionRequests: { ...state.workspaceSessionRequests, [cwd]: { phase: 'idle', requestId: request } },
 				...(state.cwd === cwd ? { sessions: merged } : {}) };
@@ -1592,6 +1601,42 @@ async function refreshSessionCache(cwd: string, reportError = true): Promise<voi
 		if (reportError && currentSessionNavigation(bridge, navigationRequestId) && sessionListRequests.get(cwd) === request) useChatStore.setState({ error: errorMessage(error) });
 	}
 }
+/** Rows an optimistic deletion removed, with their positions, so a failed delete restores them in place. */
+type HiddenSessionRows = { path: string; workspaces: { workspace: string; index: number; entry: UiSessionSummary }[]; current: { index: number; entry: UiSessionSummary } | null };
+
+function hideSessionRows(path: string): HiddenSessionRows {
+	const state = useChatStore.getState();
+	const workspaces = Object.entries(state.sessionsByWorkspace).flatMap(([workspace, sessions]) => {
+		const index = sessions.findIndex((session) => session.path === path);
+		return index < 0 ? [] : [{ workspace, index, entry: sessions[index] }];
+	});
+	const currentIndex = state.sessions.findIndex((session) => session.path === path);
+	const hidden: HiddenSessionRows = { path, workspaces, current: currentIndex < 0 ? null : { index: currentIndex, entry: state.sessions[currentIndex] } };
+	if (!workspaces.length && !hidden.current) return hidden;
+	useChatStore.setState((current) => ({
+		sessionsByWorkspace: Object.fromEntries(Object.entries(current.sessionsByWorkspace)
+			.map(([workspace, sessions]) => [workspace, sessions.filter((session) => session.path !== path)])),
+		sessions: current.sessions.filter((session) => session.path !== path),
+	}));
+	return hidden;
+}
+
+function restoreSessionRows(hidden: HiddenSessionRows): void {
+	// A listing that already returned the row wins; only re-insert what is missing.
+	const insert = (sessions: UiSessionSummary[], index: number, entry: UiSessionSummary) => sessions.some((session) => session.path === hidden.path)
+		? sessions : [...sessions.slice(0, index), entry, ...sessions.slice(index)];
+	useChatStore.setState((state) => {
+		const sessionsByWorkspace = { ...state.sessionsByWorkspace };
+		for (const { workspace, index, entry } of hidden.workspaces) {
+			if (Object.hasOwn(sessionsByWorkspace, workspace)) sessionsByWorkspace[workspace] = insert(sessionsByWorkspace[workspace], index, entry);
+		}
+		const sessions = state.cwd && Object.hasOwn(sessionsByWorkspace, state.cwd) && hidden.workspaces.some(({ workspace }) => workspace === state.cwd)
+			? sessionsByWorkspace[state.cwd]
+			: hidden.current ? insert(state.sessions, hidden.current.index, hidden.current.entry) : state.sessions;
+		return { sessionsByWorkspace, sessions };
+	});
+}
+
 /** Cached rows captured before an optimistic metadata overlay; [] when nothing was flipped. */
 type SessionMetaOverlay = { workspace: string; entry: UiSessionSummary }[];
 
