@@ -56,6 +56,7 @@
   --pd-surface: #222222;
   --pd-surface-hover: #2d2d2d;
   --pd-selected: #2d2d2d;
+  --pd-surface-active: #262626;
   --pd-border: #363636;
   --pd-border-soft: #2c2c2c;
   --pd-text: #e5e5e5;
@@ -193,6 +194,7 @@
   --pd-surface: #f1f1f1;
   --pd-surface-hover: #ececec;
   --pd-selected: #e5e5e5;
+  --pd-surface-active: #e2e2e2;
   --pd-border: #e0e0e0;
   --pd-border-soft: #e9e9e9;
   --pd-text: #262626;
@@ -1318,13 +1320,12 @@ html.pd-popover-open :is(.pd-sidebar-toolbar, .pd-chat-header, .pd-chat-heading,
 /* Shared interaction rhythm. Transform animations never apply to the transcript
    itself: streamed text and restored history must retain their reading position. */
 :where(.pd-icon-button, .pd-send-button, .pd-composer-control, .pd-settings-nav button, .pd-session-item, .pd-search-result) {
-  transition: background-color var(--pd-motion-fast), color var(--pd-motion-fast), box-shadow var(--pd-motion-fast), transform var(--pd-motion-fast) var(--pd-ease-enter);
+  transition: background-color var(--pd-motion-fast), color var(--pd-motion-fast), box-shadow var(--pd-motion-fast);
 }
-.pd-send-button { transition: background-color var(--pd-motion-fast), transform var(--pd-motion-fast) var(--pd-ease-enter); }
-.pd-send-button:active:not(:disabled) { transform: scale(.96); }
-/* Press feedback on small controls only; full-width rows (.pd-session-item,
-   .pd-search-result) stay unscaled so list presses don't jump. */
-.pd-icon-button:active:not(:disabled), .pd-composer-control:active:not(:disabled) { transform: scale(.97); }
+/* Press feedback is background-only (2026-11-01 user decision): pressed buttons
+   deepen one step via --pd-surface-active; no scale/transform, so icons and
+   text never stretch. */
+.pd-icon-button:active:not(:disabled), .pd-send-button:active:not(:disabled), .pd-composer-control:active:not(:disabled) { background: var(--pd-surface-active); }
 .pd-composer-config-popover, .pd-context-picker, .pd-slash-picker, .pd-sidebar-popover, .pd-hover-tooltip {
   animation: pd-popover-enter var(--pd-motion-fast) var(--pd-ease-enter) both;
 }
