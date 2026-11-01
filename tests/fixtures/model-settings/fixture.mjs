@@ -120,6 +120,12 @@ export function installModelSettingsFixture(options = {}) {
     getMemoryAvailability: () => ({ pluginReady: false, databaseReady: false, reason: 'renderer fixture' }),
     getProjectNickname: () => ({ nickname: null, hasWorkspaceFile: false }),
     getProjectAppearance: () => ({ bar: null, anim: null }),
+    getCompactionSettings: () => ({ version: 'fixture', pi: { enabled: true, reserveTokens: 16384, keepRecentTokens: 20000 }, preferencesVersion: 'fixture', preferences: { mode: 'builtin', compressModel: null } }),
+    getMagicContextSnapshot: () => ({
+      configPath: 'C:\\Users\\review\\.pi\\agent\\magic-context.jsonc', configVersion: 'fixture',
+      config: { enabled: false, historian: { model: null, thinkingLevel: null }, embedding: { provider: 'off', model: null, endpoint: null, apiKey: null, apiKeySet: false }, executeThresholdPercentage: null, historyBudgetPercentage: null },
+      plugin: { installed: false, enabled: null, installedVersion: null, latestVersion: null, updateAvailable: false, error: null },
+    }),
   };
   const subscriptions = ['onAgentEvent', 'onUpdateStateChanged', 'onAppCommand', 'onWindowChromeStateChanged', 'onExtensionDialog', 'onExtensionDialogClosed', 'onWorkspaceCommandEvent', 'onAutomationChanged', 'onWorkspaceChanged', 'onGoalChanged'];
   const bridge = {};
