@@ -324,7 +324,10 @@ export async function detectMagicContextPlugin(catalog: UiPluginCatalog | null):
 }
 
 export interface MagicContextStore {
-	/** 读取用户级配置（含内容哈希与插件状态）；catalog 为空时降级检测安装状态。 */
+	/**
+	 * 读取用户级配置（含内容哈希与插件状态）；catalog 为空时降级检测安装状态。
+	 * 最新版本号走缓存直读、不阻塞快照（探测在后台刷新），完成后由下次快照或「刷新状态」取到。
+	 */
 	snapshot(catalog: UiPluginCatalog | null): Promise<{ configPath: string; configVersion: string; config: UiMagicContextConfig; plugin: UiMagicContextPluginStatus }>;
 	/** 乐观锁写入配置；只覆盖 pi-desktop 管理的键。 */
 	save(request: { expectedVersion: string; config: UiMagicContextConfig }): Promise<{ configPath: string; configVersion: string; config: UiMagicContextConfig }>;
@@ -336,17 +339,48 @@ export interface MagicContextStore {
 	setCompactionOwnership(pluginOwns: boolean): Promise<void>;
 	/** 安装默认配置文件（仅在文件不存在时创建）。 */
 	ensureDefaultConfig(): Promise<void>;
-	/** 探测 npm 最新版本（失败静默返回 null；60s 内复用结果避免每次快照都请求）。 */
-	probeLatestVersion(): Promise<string | null>;
 }
 
 export function createMagicContextStore(fetcher: typeof fetch = fetch): MagicContextStore {
 	let probeCache: { at: number; version: string | null } | null = null;
+	let probeInFlight: Promise<void> | null = null;
+
+	/** 缓存有效期内的最新版本；未探测过或已过期返回 null。 */
+	const cachedLatestVersion = (): string | null => {
+		if (!probeCache || Date.now() - probeCache.at >= PROBE_CACHE_MS) return null;
+		return probeCache.version;
+	};
+
+	/**
+	 * [喵喵喵]: 后台刷新最新版本缓存 —— 快照不再 await 探测（12s 网络超时会挂住设置面板
+	 * 首开），改为立即返回缓存值、探测放后台；进行中的探测与有效缓存都直接跳过，
+	 * 避免并发快照重复请求。
+	 */
+	const refreshLatestVersion = (): void => {
+		if (probeInFlight || (probeCache && Date.now() - probeCache.at < PROBE_CACHE_MS)) return;
+		probeInFlight = (async () => {
+			try {
+				const response = await fetcher(LATEST_URL, { signal: AbortSignal.timeout(PROBE_TIMEOUT_MS), redirect: 'error', headers: { Accept: 'application/json' } });
+				let version: string | null = null;
+				if (response.ok) {
+					const data: unknown = await response.json().catch(() => null);
+					version = data && typeof (data as { version?: unknown }).version === 'string' ? (data as { version: string }).version : null;
+				}
+				probeCache = { at: Date.now(), version };
+			} catch {
+				// [喵喵喵]: 探测失败不缓存结果（下次快照会重试），UI 仅少显示最新版本号
+			} finally {
+				probeInFlight = null;
+			}
+		})();
+	};
+
 	return {
 		async snapshot(catalog) {
 			const current = await readEffectiveConfig();
 			const detected = await detectMagicContextPlugin(catalog);
-			const latest = await this.probeLatestVersion();
+			const latest = cachedLatestVersion();
+			refreshLatestVersion();
 			const installed = detected.installedVersion;
 			return {
 				configPath: current.source === 'legacy' ? legacyUserConfigPath() : cortexKitUserConfigPath(),
@@ -382,22 +416,6 @@ export function createMagicContextStore(fetcher: typeof fetch = fetch): MagicCon
 		async ensureDefaultConfig() {
 			const current = await readConfig(cortexKitUserConfigPath());
 			if (!current.text.trim()) await atomicWrite(cortexKitUserConfigPath(), defaultMagicContextConfig());
-		},
-		async probeLatestVersion() {
-			if (probeCache && Date.now() - probeCache.at < PROBE_CACHE_MS) return probeCache.version;
-			try {
-				const response = await fetcher(LATEST_URL, { signal: AbortSignal.timeout(PROBE_TIMEOUT_MS), redirect: 'error', headers: { Accept: 'application/json' } });
-				let version: string | null = null;
-				if (response.ok) {
-					const data: unknown = await response.json().catch(() => null);
-					version = data && typeof (data as { version?: unknown }).version === 'string' ? (data as { version: string }).version : null;
-				}
-				probeCache = { at: Date.now(), version };
-				return version;
-			} catch {
-				// [喵喵喵]: 探测失败不缓存结果（下次快照会重试），UI 仅少显示最新版本号
-				return null;
-			}
 		},
 	};
 }

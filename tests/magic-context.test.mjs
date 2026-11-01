@@ -6,7 +6,7 @@ import { test } from 'node:test';
 import { createMagicContextStore, normalizeMagicContextConfig } from '../packages/agent/src/compaction/magicContext.ts';
 
 /** 用临时 XDG_CONFIG_HOME 承载 cortexkit 配置，避免读写本机真实配置。 */
-async function withCortexConfig(initial, run) {
+async function withCortexConfig(initial, run, fetcher = async () => { throw new Error('offline'); }) {
   const root = mkdtempSync(join(tmpdir(), 'pi-magic-'));
   const previous = process.env.XDG_CONFIG_HOME;
   process.env.XDG_CONFIG_HOME = root;
@@ -14,8 +14,8 @@ async function withCortexConfig(initial, run) {
     const path = join(root, 'cortexkit', 'magic-context.jsonc');
     mkdirSync(join(root, 'cortexkit'), { recursive: true });
     if (initial !== null) writeFileSync(path, initial, 'utf8');
-    // 探测最新版本会打网络，注入必失败的 fetcher 让快照走本地分支
-    return await run({ path, store: createMagicContextStore(async () => { throw new Error('offline'); }) });
+    // 探测最新版本会打网络，默认注入必失败的 fetcher 让快照走本地分支
+    return await run({ path, store: createMagicContextStore(fetcher) });
   } finally {
     if (previous === undefined) delete process.env.XDG_CONFIG_HOME;
     else process.env.XDG_CONFIG_HOME = previous;
@@ -105,4 +105,29 @@ test('保存写入 historian.pi，迁移旧层级键并保持其他设置不动'
     assert.deepEqual(written.dreamer, { pi: { model: 'boer/dreamer' } });
     assert.deepEqual(saved.config.historian, { model: 'boer/next', fallbackModels: ['boer/second'], thinkingLevel: 'minimal' });
   });
+});
+
+test('版本探测不阻塞快照：缓存直读、并发共享一次探测、完成后可取', async () => {
+  let calls = 0;
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const fetcher = async () => {
+    calls += 1;
+    await gate;
+    return { ok: true, json: async () => ({ version: '9.9.9' }) };
+  };
+  await withCortexConfig('{}', async ({ store }) => {
+    // [喵喵喵]: 探测挂起时快照必须立即返回（不等待网络），版本号留空待后台补
+    assert.equal((await store.snapshot(null)).plugin.latestVersion, null);
+    assert.equal((await store.snapshot(null)).plugin.latestVersion, null);
+    assert.equal(calls, 1, '并发快照共享同一次探测');
+    release();
+    let latest = null;
+    for (let attempt = 0; attempt < 50 && latest !== '9.9.9'; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      latest = (await store.snapshot(null)).plugin.latestVersion;
+    }
+    assert.equal(latest, '9.9.9');
+    assert.equal(calls, 1, '缓存就绪后不再发起新探测');
+  }, fetcher);
 });
