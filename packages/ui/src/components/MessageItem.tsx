@@ -3,6 +3,7 @@ import { memo, useContext, useEffect, useLayoutEffect, useRef, useState, type Ke
 import { createPortal } from 'react-dom';
 import { useT } from '../i18n';
 import { useChatStore } from '../store';
+import { JumpToMessageContext } from '../transcriptJump';
 import { HoverTooltip } from './HoverTooltip';
 import { Icon } from './Icons';
 import { ThinkingActivity } from './ThinkingActivity';
@@ -214,6 +215,7 @@ const AssistantMessageItem = memo(function AssistantMessageItem({ message, highl
 	const c = useConversationCopy();
 	const [showReasoning] = useMessageStreamShowReasoning();
 	const idle = useChatStore((s) => s.status === 'idle');
+	const jumpToMessage = useContext(JumpToMessageContext);
 	const bodyRef = useRef<HTMLDivElement>(null);
 	const [selection, setSelection] = useState('');
 	const [selectionPosition, setSelectionPosition] = useState({ left: 0, top: 0 });
@@ -298,6 +300,7 @@ const AssistantMessageItem = memo(function AssistantMessageItem({ message, highl
 						<HoverTooltip title={t(copied ? 'message.copied' : 'message.copy')}><button type="button" className="pd-message-action" onClick={() => void copy()} aria-label={t(copied ? 'message.copied' : 'message.copy')}><Icon name={copied ? 'check' : 'copy'} width="14" height="14" /></button></HoverTooltip>
 						{canRegenerate && <HoverTooltip title={t('message.regenerate')} description={c('regenerateHint')}><button type="button" className="pd-message-action" onClick={() => void regenerate()} disabled={regenerating || !idle} aria-label={t('message.regenerate')}><Icon name="rotateCcw" width="14" height="14" />{regenerating && <span role="status">{c('regenerating')}</span>}</button></HoverTooltip>}
 						<HoverTooltip title={t('message.fork')} description={c('forkHint')}><button type="button" className="pd-message-action" onClick={() => void fork()} disabled={forking || !idle} aria-label={t('message.fork')}><Icon name="gitBranch" width="14" height="14" />{forking && <span role="status">{c('forking')}</span>}</button></HoverTooltip>
+						{jumpToMessage && <HoverTooltip title={t('message.jumpToStart')}><button type="button" className="pd-message-action" onClick={() => jumpToMessage(message.id)} aria-label={t('message.jumpToStart')}><Icon name="arrowUp" width="14" height="14" /></button></HoverTooltip>}
 					</div>
 				)}
 			</div>

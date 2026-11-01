@@ -31,6 +31,7 @@ import { findOccurrences, readReading, recentReading, readingKey, saveReading, t
 import { resolveFollowsBottom } from '../scrollFollow';
 import { locateHistoryMessage } from '../conversationNavigation';
 import { TranscriptSearchContext, paintTranscriptMatches, revealTranscriptRange } from '../transcriptSearch';
+import { JumpToMessageContext } from '../transcriptJump';
 import './conversationEnhancements.css';
 import './compactionStream.css';
 
@@ -682,6 +683,7 @@ export function ChatView({ onOpenModelManagement, searchTarget, historyControls,
 			canRegenerateId={canRegenerateLatest ? lastReplyId : null} />;
 
 	return (
+		<JumpToMessageContext.Provider value={jumpToMessage}>
 		<main className={`pd-main${settledEmpty ? ' is-empty' : ''}${compact ? ' is-compact' : ''}`}>
 			{historyControls && <div className="pd-compact-controls">{historyControls}</div>}
 
@@ -766,5 +768,6 @@ export function ChatView({ onOpenModelManagement, searchTarget, historyControls,
 				onClose={() => setChangesReview(null)} />}
 
 		</main>
+		</JumpToMessageContext.Provider>
 	);
 }
