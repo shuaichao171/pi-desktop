@@ -378,7 +378,13 @@ export function ChatView({ onOpenModelManagement, searchTarget, historyControls,
 		if (!transcript) return false;
 		const row = transcript.querySelector<HTMLElement>(`[data-message-id="${CSS.escape(id)}"]`);
 		if (!row || row.closest('[inert],[hidden],[aria-hidden="true"]')) return false;
-		row.scrollIntoView({ block: 'center', behavior: 'auto' });
+		// Scroll ONLY the transcript container: native scrollIntoView also walks
+		// every scrollable ancestor, dragging the composer column and app body
+		// along with the jump (viewport-equivalent of block: 'center').
+		const bounds = transcript.getBoundingClientRect();
+		const rowRect = row.getBoundingClientRect();
+		const target = transcript.scrollTop + rowRect.top - bounds.top - Math.max(0, (bounds.height - rowRect.height) / 2);
+		transcript.scrollTop = Math.max(0, Math.min(target, transcript.scrollHeight - transcript.clientHeight));
 		setShowBackToBottom(transcript.scrollHeight - transcript.scrollTop - transcript.clientHeight > BOTTOM_THRESHOLD);
 		return true;
 	}, []);
