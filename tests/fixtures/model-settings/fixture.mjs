@@ -117,6 +117,9 @@ export function installModelSettingsFixture(options = {}) {
     // the plugin-only surface invisible instead of letting the unknown-call proxy
     // clone a listener function.
     getGoalSnapshot: () => null,
+    getMemoryAvailability: () => ({ pluginReady: false, databaseReady: false, reason: 'renderer fixture' }),
+    getProjectNickname: () => ({ nickname: null, hasWorkspaceFile: false }),
+    getProjectAppearance: () => ({ bar: null, anim: null }),
   };
   const subscriptions = ['onAgentEvent', 'onUpdateStateChanged', 'onAppCommand', 'onWindowChromeStateChanged', 'onExtensionDialog', 'onExtensionDialogClosed', 'onWorkspaceCommandEvent', 'onAutomationChanged', 'onWorkspaceChanged', 'onGoalChanged'];
   const bridge = {};

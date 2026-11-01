@@ -39,8 +39,28 @@ function formatEventTime(iso: string | undefined): string {
 	return new Date(time).toLocaleString(undefined, { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
 }
 
-function taskGlyph(task: UiGoalTask): string {
-	return task.status === 'complete' ? '✓' : task.status === 'skipped' ? '⊘' : '○';
+/** `task_completed` → `task completed`: ledger types are raw plugin strings, shown as words. */
+function humanizeEventType(type: string): string {
+	return type.replace(/[_-]+/g, ' ').trim();
+}
+
+function taskTotal(goal: UiGoalRecord): number {
+	return goal.pendingTasks + goal.completedTasks + goal.skippedTasks;
+}
+
+/** Status-coloured ring that fills with completed tasks; a goal without tasks shows its core dot only. */
+function GoalRing({ goal }: { goal: UiGoalRecord }) {
+	const total = taskTotal(goal);
+	const fraction = total > 0 ? goal.completedTasks / total : goal.status === 'complete' ? 1 : 0;
+	const radius = 6.25;
+	const circumference = 2 * Math.PI * radius;
+	return (
+		<svg className="pd-goal-ring" data-goal-status={goal.status} width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
+			<circle className="pd-goal-ring-track" cx="8" cy="8" r={radius} />
+			{fraction > 0 && <circle className="pd-goal-ring-fill" cx="8" cy="8" r={radius} strokeDasharray={`${fraction * circumference} ${circumference}`} transform="rotate(-90 8 8)" />}
+			<circle className="pd-goal-ring-core" cx="8" cy="8" r="2.25" />
+		</svg>
+	);
 }
 
 function GoalStatusPill({ status }: { status: UiGoalRecord['status'] }) {
@@ -48,34 +68,61 @@ function GoalStatusPill({ status }: { status: UiGoalRecord['status'] }) {
 	return <span className="pd-goal-pill" data-goal-status={status}>{t(`goal.status.${status}`)}</span>;
 }
 
+function TaskProgress({ goal }: { goal: UiGoalRecord }) {
+	const { t } = useT();
+	const total = taskTotal(goal);
+	if (total === 0) return null;
+	const label = t('goal.tasksProgress', { done: String(goal.completedTasks), total: String(total) });
+	const share = (count: number) => `${(count / total) * 100}%`;
+	return (
+		<div className="pd-goal-progress">
+			<span className="pd-goal-progress-bar" role="progressbar" aria-label={label} aria-valuemin={0} aria-valuemax={total} aria-valuenow={goal.completedTasks}>
+				<span className="is-complete" style={{ width: share(goal.completedTasks) }} />
+				<span className="is-skipped" style={{ width: share(goal.skippedTasks) }} />
+			</span>
+			<span className="pd-goal-progress-label">{label}</span>
+		</div>
+	);
+}
+
+function GoalTaskRow({ task, current }: { task: UiGoalTask; current: boolean }) {
+	const { t } = useT();
+	return (
+		<li data-task-status={task.status} data-current={current || undefined}>
+			<span className="pd-goal-task-check" aria-hidden="true">{task.status === 'complete' && <Icon name="check" width="10" height="10" />}</span>
+			<span className="pd-goal-task-title">{task.title}</span>
+			{current && <span className="pd-goal-task-current">{t('goal.currentTask')}</span>}
+			{task.evidence && <span className="pd-goal-task-evidence" title={task.evidence}><Icon name="eye" width="11" height="11" />{t('goal.evidence')}</span>}
+		</li>
+	);
+}
+
 function GoalCard({ goal, actions }: { goal: UiGoalRecord; actions: GoalActions }) {
 	const { t } = useT();
-	const totalTasks = goal.pendingTasks + goal.completedTasks + goal.skippedTasks;
-	const currentTask = goal.currentTaskId ? goal.tasks.find((task) => task.id === goal.currentTaskId) : undefined;
+	const budgetShare = goal.tokenBudget ? goal.tokensUsed / goal.tokenBudget : 0;
 	return (
 		<section className="pd-goal-card" data-goal-status={goal.status}>
 			<header className="pd-goal-card-head">
-				<GoalStatusPill status={goal.status} />
+				<GoalRing goal={goal} />
 				<p className="pd-goal-objective">{goal.objective}</p>
-				{goal.sisyphus && <span className="pd-goal-badge">{t('goal.sisyphus')}</span>}
-				{goal.autoContinue && <span className="pd-goal-badge">{t('goal.autoContinue')}</span>}
+				<GoalStatusPill status={goal.status} />
 			</header>
+			<TaskProgress goal={goal} />
 			<div className="pd-goal-meta">
-				{totalTasks > 0 && <span>{t('goal.tasksProgress', { done: String(goal.completedTasks), total: String(totalTasks) })}</span>}
-				<span>{formatTokens(goal.tokensUsed)}{goal.tokenBudget ? ` / ${formatTokens(goal.tokenBudget)}` : ''} {t('goal.tokens')}</span>
-				<span>{t('goal.timeSpent')} {formatDuration(goal.activeSeconds)}</span>
-				{currentTask && <span className="pd-goal-current">{t('goal.currentTask')}: {currentTask.title}</span>}
+				<span className={budgetShare >= 0.8 ? 'is-warning' : undefined} title={t('goal.tokens')}><Icon name="cpu" width="12" height="12" />{formatTokens(goal.tokensUsed)}{goal.tokenBudget ? ` / ${formatTokens(goal.tokenBudget)}` : ''} {t('goal.tokens')}</span>
+				<span title={t('goal.timeSpent')}><Icon name="clock" width="12" height="12" />{formatDuration(goal.activeSeconds)}</span>
+				{goal.autoContinue && <span className="pd-goal-tag"><Icon name="refresh" width="11" height="11" />{t('goal.autoContinue')}</span>}
+				{goal.sisyphus && <span className="pd-goal-tag">{t('goal.sisyphus')}</span>}
 			</div>
-			{goal.pauseReason && <p className="pd-goal-pause-note"><Icon name="alert" width="12" height="12" />{t('goal.pauseReason')}: {goal.pauseReason}{goal.pauseSuggestedAction ? ` — ${t('goal.suggestedAction')}: ${goal.pauseSuggestedAction}` : ''}</p>}
+			{goal.pauseReason && (
+				<div className="pd-goal-pause-note">
+					<Icon name="alert" width="13" height="13" />
+					<p><strong>{t('goal.pauseReason')}</strong>{goal.pauseReason}{goal.pauseSuggestedAction && <><br /><strong>{t('goal.suggestedAction')}</strong>{goal.pauseSuggestedAction}</>}</p>
+				</div>
+			)}
 			{goal.tasks.length > 0 && (
 				<ul className="pd-goal-tasks">
-					{goal.tasks.map((task) => (
-						<li key={task.id} data-task-status={task.status}>
-							<span className="pd-goal-task-glyph" aria-hidden="true">{taskGlyph(task)}</span>
-							<span className="pd-goal-task-title">{task.title}</span>
-							{task.evidence && <span className="pd-goal-task-evidence" title={task.evidence}>{t('goal.evidence')}</span>}
-						</li>
-					))}
+					{goal.tasks.map((task) => <GoalTaskRow key={task.id} task={task} current={task.id === goal.currentTaskId && task.status === 'pending'} />)}
 				</ul>
 			)}
 			{actions.available && (
@@ -203,7 +250,7 @@ export function GoalBeacon() {
 	const openGoals = snapshot.goals.filter((goal) => goal.status !== 'complete');
 	const activeCount = openGoals.filter((goal) => goal.status === 'active').length;
 	const headline = openGoals[0] ?? snapshot.goals[0];
-	const totalTasks = headline.pendingTasks + headline.completedTasks + headline.skippedTasks;
+	const totalTasks = taskTotal(headline);
 	const actions: GoalActions = {
 		available: GOAL_COMMAND_NAMES.some((name) => availableCommands.has(name)),
 		enabled: Boolean(sessionId) && agentStatus === 'idle',
@@ -214,13 +261,14 @@ export function GoalBeacon() {
 	return (
 		<div className={`pd-goal-beacon${expanded ? ' is-expanded' : ''}`} data-goal-count={snapshot.goals.length}>
 			<button type="button" className="pd-goal-strip" onClick={() => setExpanded(!expanded)} aria-expanded={expanded} aria-label={t(expanded ? 'goal.collapse' : 'goal.expand')}>
-				<span className="pd-goal-light" data-goal-status={headline.status} aria-hidden="true" />
-				<span className="pd-goal-strip-title">{openGoals.length > 1 ? `${t('goal.title')} ${openGoals.length}` : t('goal.title')}</span>
-				<GoalStatusPill status={headline.status} />
-				<span className="pd-goal-strip-objective">{headline.objective}</span>
+				<GoalRing goal={headline} />
+				<span className="pd-goal-strip-title">{t('goal.title')}</span>
+				{openGoals.length > 1 && <span className="pd-goal-count">{openGoals.length}</span>}
+				<span className="pd-goal-strip-objective" title={headline.objective}>{headline.objective}</span>
+				{activeCount > 1 && <span className="pd-goal-strip-meta">{t('goal.activeCount', { count: String(activeCount) })}</span>}
+				{headline.autoContinue && <span className="pd-goal-strip-meta"><Icon name="refresh" width="11" height="11" />{t('goal.autoContinue')}</span>}
 				{totalTasks > 0 && <span className="pd-goal-strip-tasks">{t('goal.tasksProgress', { done: String(headline.completedTasks), total: String(totalTasks) })}</span>}
-				{activeCount > 1 && <span className="pd-goal-badge">{t('goal.activeCount', { count: String(activeCount) })}</span>}
-				{headline.autoContinue && <span className="pd-goal-badge">{t('goal.autoContinue')}</span>}
+				<GoalStatusPill status={headline.status} />
 				<Icon name={expanded ? 'chevronDown' : 'chevronUp'} width="13" height="13" className="pd-goal-chevron" />
 			</button>
 			{expanded && (
@@ -231,7 +279,7 @@ export function GoalBeacon() {
 							<h4>{t('goal.recentActivity')}</h4>
 							<ul>
 								{snapshot.recentEvents.slice(0, 8).map((event, index) => (
-									<li key={`${event.type}-${event.at ?? index}-${index}`}><code>{event.type}</code>{event.at ? <time>{formatEventTime(event.at)}</time> : null}</li>
+									<li key={`${event.type}-${event.at ?? index}-${index}`}><span className="pd-goal-activity-type" title={event.type}>{humanizeEventType(event.type)}</span>{event.at ? <time>{formatEventTime(event.at)}</time> : null}</li>
 								))}
 							</ul>
 						</section>
@@ -245,9 +293,9 @@ export function GoalBeacon() {
 									<ul>
 										{workspace.goals.slice(0, 5).map((goal) => (
 											<li key={goal.id} data-goal-status={goal.status}>
-												<span className="pd-goal-light" data-goal-status={goal.status} aria-hidden="true" />
-												<span className="pd-goal-strip-objective">{goal.objective}</span>
-												<span className="pd-goal-pill" data-goal-status={goal.status}>{t(`goal.status.${goal.status}`)}</span>
+												<GoalRing goal={goal} />
+												<span className="pd-goal-strip-objective" title={goal.objective}>{goal.objective}</span>
+												<GoalStatusPill status={goal.status} />
 											</li>
 										))}
 									</ul>

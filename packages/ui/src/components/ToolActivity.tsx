@@ -162,7 +162,9 @@ const SubagentActivityItem = memo(function SubagentActivityItem({ activity }: { 
 	const sub = activity.subagent!;
 	const duration = useDurationLabel(activity);
 	const detail = activity.detail ?? '';
-	const tokens = sub.tokens != null ? (sub.tokens >= 1000 ? `${(sub.tokens / 1000).toFixed(1)}K` : String(sub.tokens)) : null;
+	const tokens = sub.tokens != null ? `${sub.tokens >= 1000 ? `${(sub.tokens / 1000).toFixed(1)}K` : sub.tokens} tokens` : null;
+	const progress = sub.turnCount != null ? t('chat.subagent.progress', { turn: sub.turnCount, tools: sub.toolCount ?? 0 }) : null;
+	const meta = [progress, tokens].filter(Boolean).join(' · ');
 	const recent = sub.recentTools ?? [];
 	return (
 		<div className={'pd-activity-item pd-subagent-item is-' + activity.status}>
@@ -174,23 +176,25 @@ const SubagentActivityItem = memo(function SubagentActivityItem({ activity }: { 
 					{sub.async === true && <span className="pd-subagent-async-tag">{t('chat.subagent.asyncTag')}</span>}
 					{sub.model && <span className="pd-subagent-model" title={sub.model}>{sub.model}</span>}
 				</span>
-				{running && sub.turnCount != null && <span className="pd-subagent-progress">{t('chat.subagent.progress', { turn: sub.turnCount, tools: sub.toolCount ?? 0 })}</span>}
-				{tokens && <span className="pd-subagent-tokens">{tokens}</span>}
+				{meta && <span className="pd-subagent-meta">{meta}</span>}
 				{duration && <span className="pd-activity-duration">{duration}</span>}
 				<span className={'pd-activity-status is-' + activity.status}>{t(running && sub.async === true ? 'chat.subagent.background' : 'chat.tool.' + activity.status)}</span>
 				<Icon name="chevronDown" className={'pd-chevron' + (expanded ? ' is-open' : '')} width="14" height="14" />
 			</button>
 			<ActivityDisclosure id={detailId} expanded={expanded}>
 				<div className="pd-activity-detail pd-subagent-detail">
-					{sub.task && <p className="pd-subagent-task" title={sub.task}>{sub.task}</p>}
-					{running && sub.currentTool && <p className="pd-subagent-current">{t('chat.subagent.currentTool')}：<code>{sub.currentTool}</code></p>}
-					{sub.async === true && <p className="pd-subagent-async-hint">{t('chat.subagent.asyncHint')}</p>}
-					{sub.runId && <p className="pd-subagent-runid" title={sub.runId}>run {sub.runId.slice(0, 8)}</p>}
-					{recent.length > 0 && <div className="pd-subagent-recent">{recent.map((item, index) => <span key={index} className="pd-subagent-recent-chip" title={item.args}>{item.tool}</span>)}</div>}
-					{sub.outputReference && <div className="pd-subagent-output">
-						<span>{t('chat.subagent.output')}</span>
-						<code title={sub.outputReference}>{sub.outputReference}</code>
-					</div>}
+					<div className="pd-subagent-card">
+						{sub.task && <p className="pd-subagent-task" title={sub.task}>{sub.task}</p>}
+						{running && sub.currentTool && <p className="pd-subagent-current"><span className="pd-subagent-live" aria-hidden="true" />{t('chat.subagent.currentTool')}<code>{sub.currentTool}</code></p>}
+						{recent.length > 0 && <ol className="pd-subagent-recent">{recent.map((item, index) => (
+							<li key={index} className="pd-subagent-recent-chip" title={item.args ? `${item.tool} ${item.args}` : item.tool}><code>{item.tool}</code>{item.args && <span>{item.args}</span>}</li>
+						))}</ol>}
+						{(sub.outputReference || sub.runId) && <div className="pd-subagent-foot">
+							{sub.outputReference && <span className="pd-subagent-output"><Icon name="file" width="12" height="12" />{t('chat.subagent.output')}<code title={sub.outputReference}>{sub.outputReference}</code></span>}
+							{sub.runId && <span className="pd-subagent-runid" title={sub.runId}>run {sub.runId.slice(0, 8)}</span>}
+						</div>}
+					</div>
+					{sub.async === true && <p className="pd-subagent-async-hint"><Icon name="clock" width="12" height="12" />{t('chat.subagent.asyncHint')}</p>}
 					{detail ? <pre className="pd-activity-output is-wrapped">{detail}</pre> : <p className="pd-activity-no-output">{t(running ? 'chat.tool.waiting' : 'chat.tool.noOutput')}</p>}
 				</div>
 			</ActivityDisclosure>

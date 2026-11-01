@@ -3,7 +3,7 @@ import type { UiSubagentFleetNode, UiSubagentInspectReply } from '@pidesktop/sha
 import { useChatStore } from '../store';
 import { useT } from '../i18n';
 import { operationFeedback } from '../operationFeedback';
-import { Icon } from './Icons';
+import { Icon, type IconName } from './Icons';
 import './fleetCard.css';
 
 /**
@@ -42,9 +42,16 @@ function liveCount(nodes: UiSubagentFleetNode[]): number {
 	return count;
 }
 
-function StatePill({ state }: { state: UiSubagentFleetNode['state'] }) {
+const STATE_ICONS: Record<UiSubagentFleetNode['state'], IconName | null> = {
+	queued: null, running: 'loader', complete: 'check', failed: 'close', partial: 'alert', paused: 'square', stopped: 'square', rejected: 'minusCircle',
+};
+
+/** Round status mark: a spinner while running, a dashed ring while queued, an icon once settled. */
+function StateGlyph({ state }: { state: UiSubagentFleetNode['state'] }) {
 	const { t } = useT();
-	return <span className="pd-fleet-pill" data-fleet-state={state}>{t(`fleet.state.${state}`)}</span>;
+	const icon = STATE_ICONS[state];
+	const label = t(`fleet.state.${state}`);
+	return <span className="pd-fleet-glyph" data-fleet-state={state} role="img" aria-label={label} title={label}>{icon && <Icon name={icon} width="11" height="11" />}</span>;
 }
 
 function FleetNodeRow({ node, depth, actions }: { node: UiSubagentFleetNode; depth: number; actions: FleetActions }) {
@@ -54,27 +61,27 @@ function FleetNodeRow({ node, depth, actions }: { node: UiSubagentFleetNode; dep
 	const counts: string[] = [];
 	if (node.activity?.turnCount !== undefined) counts.push(t('fleet.turns', { count: String(node.activity.turnCount) }));
 	if (node.activity?.toolCount !== undefined) counts.push(t('fleet.tools', { count: String(node.activity.toolCount) }));
+	// Running and complete read from the glyph alone; rarer states also say their name.
+	const namedState = node.state !== 'running' && node.state !== 'complete';
+	const busy = !actions.enabled || actions.pending !== null;
 	return (
-		<li className="pd-fleet-node" data-fleet-state={node.state} style={{ paddingInlineStart: depth * 16 }}>
-			<span className="pd-fleet-node-line">
-				<StatePill state={node.state} />
+		<li className="pd-fleet-node" data-fleet-state={node.state} data-fleet-depth={depth}>
+			<div className="pd-fleet-node-row">
+				<StateGlyph state={node.state} />
 				<span className="pd-fleet-node-label" title={node.label}>{node.label}</span>
+				{namedState && <span className="pd-fleet-node-state">{t(`fleet.state.${node.state}`)}</span>}
+				{node.hostStep && <span className="pd-fleet-host-step" title={node.hostStep.detail ?? node.hostStep.reasonCode}>{t('fleet.hostStep')}{node.hostStep.verdict ? ` · ${node.hostStep.verdict}` : ''}</span>}
+				{tool && <code className="pd-fleet-node-tool" title={tool}>{tool}</code>}
+				{counts.length > 0 && <span className="pd-fleet-node-counts">{counts.join(' · ')}</span>}
 				{elapsed && <span className="pd-fleet-node-elapsed">{elapsed}</span>}
-			</span>
-			{(tool || counts.length > 0 || node.hostStep) && (
-				<span className="pd-fleet-node-detail">
-					{tool && <code>{tool}</code>}
-					{counts.map((count) => <span key={count}>{count}</span>)}
-					{node.hostStep && <span className="pd-fleet-host-step" title={node.hostStep.detail ?? node.hostStep.reasonCode}>{t('fleet.hostStep')}{node.hostStep.verdict ? `: ${node.hostStep.verdict}` : ''}</span>}
-				</span>
-			)}
-			{depth === 0 && actions.available && (isLive(node) || node.kind === 'subagent' || node.kind === 'workflow') && (
-				<span className="pd-fleet-node-actions">
-					{isLive(node) && <button type="button" disabled={!actions.enabled || actions.pending !== null} onClick={() => void actions.run('subagents-stop', node.id)}>{t('fleet.stop')}</button>}
-					{node.state === 'running' && <button type="button" disabled={!actions.enabled || actions.pending !== null} onClick={() => actions.beginSteer(node.id)}>{t('fleet.steer')}</button>}
-					<button type="button" disabled={!actions.enabled || actions.pending !== null} onClick={() => void actions.inspect(node)}>{t('fleet.inspect')}</button>
-				</span>
-			)}
+				{depth === 0 && actions.available && (isLive(node) || node.kind === 'subagent' || node.kind === 'workflow') && (
+					<span className="pd-fleet-node-actions">
+						{node.state === 'running' && <button type="button" disabled={busy} onClick={() => actions.beginSteer(node.id)}><Icon name="steer" width="12" height="12" />{t('fleet.steer')}</button>}
+						<button type="button" disabled={busy} onClick={() => void actions.inspect(node)}><Icon name="eye" width="12" height="12" />{t('fleet.inspect')}</button>
+						{isLive(node) && <button type="button" className="is-danger" disabled={busy} onClick={() => void actions.run('subagents-stop', node.id)}><Icon name="square" width="11" height="11" />{t('fleet.stop')}</button>}
+					</span>
+				)}
+			</div>
 			{node.children && node.children.length > 0 && (
 				<ul className="pd-fleet-children">
 					{node.children.map((child) => <FleetNodeRow key={`${child.kind}:${child.id}`} node={child} depth={depth + 1} actions={actions} />)}
@@ -100,7 +107,7 @@ function InspectDetail({ reply, onClose }: { reply: UiSubagentInspectReply; onCl
 		<section className="pd-fleet-inspect">
 			<header>
 				<h4>{reply.label ?? reply.asyncId ?? t('fleet.title')}{reply.status ? ` · ${reply.status}` : ''}</h4>
-				<button type="button" onClick={onClose} aria-label={t('fleet.close')}>✕</button>
+				<button type="button" onClick={onClose} aria-label={t('fleet.close')}><Icon name="close" width="12" height="12" /></button>
 			</header>
 			{reply.error && <p className="pd-fleet-inspect-error">{t('fleet.inspectFailed')}: {reply.error.message} <code>({reply.error.code})</code></p>}
 			{reply.task && <p className="pd-fleet-inspect-task"><strong>{t('fleet.inspectTask')}</strong>{reply.task}</p>}
@@ -183,11 +190,10 @@ export function FleetCard() {
 	return (
 		<div className={`pd-fleet-card${expanded ? ' is-expanded' : ''}`} data-fleet-count={fleet.runs.length}>
 			<button type="button" className="pd-fleet-strip" onClick={() => setExpanded(!expanded)} aria-expanded={expanded} aria-label={t(expanded ? 'fleet.collapse' : 'fleet.expand')}>
-				<Icon name="plugins" width="13" height="13" />
+				<StateGlyph state={headline.state} />
 				<span className="pd-fleet-strip-title">{t('fleet.title')}</span>
 				{running > 0 && <span className="pd-fleet-badge">{t('fleet.running', { count: String(running) })}</span>}
-				<StatePill state={headline.state} />
-				<span className="pd-fleet-strip-label">{headline.label}</span>
+				<span className="pd-fleet-strip-label" title={headline.label}>{headline.label}</span>
 				{headline.activity?.currentTool && <code className="pd-fleet-strip-tool">{headline.activity.currentTool}</code>}
 				<Icon name={expanded ? 'chevronDown' : 'chevronUp'} width="13" height="13" className="pd-fleet-chevron" />
 			</button>
