@@ -31,6 +31,7 @@ import { findOccurrences, readReading, recentReading, readingKey, saveReading, t
 import { resolveFollowsBottom } from '../scrollFollow';
 import { locateHistoryMessage } from '../conversationNavigation';
 import { TranscriptSearchContext, paintTranscriptMatches, revealTranscriptRange } from '../transcriptSearch';
+import { JumpToMessageContext } from '../transcriptJump';
 import './conversationEnhancements.css';
 import './compactionStream.css';
 
@@ -377,7 +378,13 @@ export function ChatView({ onOpenModelManagement, searchTarget, historyControls,
 		if (!transcript) return false;
 		const row = transcript.querySelector<HTMLElement>(`[data-message-id="${CSS.escape(id)}"]`);
 		if (!row || row.closest('[inert],[hidden],[aria-hidden="true"]')) return false;
-		row.scrollIntoView({ block: 'center', behavior: 'auto' });
+		// Scroll ONLY the transcript container: native scrollIntoView also walks
+		// every scrollable ancestor, dragging the composer column and app body
+		// along with the jump (viewport-equivalent of block: 'center').
+		const bounds = transcript.getBoundingClientRect();
+		const rowRect = row.getBoundingClientRect();
+		const target = transcript.scrollTop + rowRect.top - bounds.top - Math.max(0, (bounds.height - rowRect.height) / 2);
+		transcript.scrollTop = Math.max(0, Math.min(target, transcript.scrollHeight - transcript.clientHeight));
 		setShowBackToBottom(transcript.scrollHeight - transcript.scrollTop - transcript.clientHeight > BOTTOM_THRESHOLD);
 		return true;
 	}, []);
@@ -682,6 +689,7 @@ export function ChatView({ onOpenModelManagement, searchTarget, historyControls,
 			canRegenerateId={canRegenerateLatest ? lastReplyId : null} />;
 
 	return (
+		<JumpToMessageContext.Provider value={jumpToMessage}>
 		<main className={`pd-main${settledEmpty ? ' is-empty' : ''}${compact ? ' is-compact' : ''}`}>
 			{historyControls && <div className="pd-compact-controls">{historyControls}</div>}
 
@@ -766,5 +774,6 @@ export function ChatView({ onOpenModelManagement, searchTarget, historyControls,
 				onClose={() => setChangesReview(null)} />}
 
 		</main>
+		</JumpToMessageContext.Provider>
 	);
 }

@@ -571,6 +571,7 @@ export const translations: Record<string, { 'zh-CN': string; 'en-US': string }> 
   'message.copied': { 'zh-CN': '已复制', 'en-US': 'Copied' },
   'message.fork': { 'zh-CN': '分叉：从此处继续对话', 'en-US': 'Fork: continue the conversation from here' },
   'message.regenerate': { 'zh-CN': '重新生成：回到上一条用户消息重发', 'en-US': 'Regenerate: rewind to the last user message and resend' },
+  'message.jumpToStart': { 'zh-CN': '回到本条回复开头', 'en-US': 'Jump to the start of this reply' },
   'message.system.compaction': { 'zh-CN': '上下文已压缩', 'en-US': 'Context compacted' },
   'message.system.branch-summary': { 'zh-CN': '分支摘要', 'en-US': 'Branch summary' },
   'message.system.custom': { 'zh-CN': '系统提示', 'en-US': 'System notice' },
