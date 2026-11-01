@@ -49,6 +49,27 @@ export default async function updateScenarios(review) {
     window.__updateReview=state;
     state.setState(state.current);
   })()`);
+
+  // Activity bar: the update entry exists only while a newer version is known,
+  // sits directly above settings, and opens the updates page without acting.
+  await review.assert('!document.querySelector(".pd-activity-update")', 'Idle shows no update entry in the rail');
+  await emit({ phase: 'available', availableVersion: '0.1.6' });
+  await review.waitFor('Boolean(document.querySelector(".pd-activity-update"))');
+  await review.assert(`(() => {
+    const update=document.querySelector(".pd-activity-update").getBoundingClientRect();
+    const settings=document.querySelector(".pd-activity-bar .pd-settings-entry").getBoundingClientRect();
+    return update.bottom<=settings.top+1 && Math.abs(update.left-settings.left)<1;
+  })()`, 'Update entry sits directly above settings');
+  await review.assert('document.querySelector(".pd-activity-update").getAttribute("aria-label").includes("0.1.6")', 'Update entry names the available version');
+  await review.screenshot('updates-00-rail-entry');
+  await review.click('.pd-activity-update');
+  await review.waitFor(`Boolean(document.querySelector(${JSON.stringify(check)}))`);
+  await review.assert('window.__updateReview.checks.length===0 && window.__updateReview.installs.length===0', 'The rail entry only navigates; it never checks or installs');
+  await review.key('Escape');
+  await review.waitFor('!document.querySelector(".pd-settings-dialog")');
+  await emit({ phase: 'idle' });
+  await review.waitFor('!document.querySelector(".pd-activity-update")');
+
   await review.click('.pd-settings-entry');
   await review.clickText('.pd-settings-nav button', '更新');
   await review.waitFor(`Boolean(document.querySelector(${JSON.stringify(check)}))`);

@@ -571,6 +571,7 @@ export const translations: Record<string, { 'zh-CN': string; 'en-US': string }> 
   'message.copied': { 'zh-CN': '已复制', 'en-US': 'Copied' },
   'message.fork': { 'zh-CN': '分叉：从此处继续对话', 'en-US': 'Fork: continue the conversation from here' },
   'message.regenerate': { 'zh-CN': '重新生成：回到上一条用户消息重发', 'en-US': 'Regenerate: rewind to the last user message and resend' },
+  'message.jumpToStart': { 'zh-CN': '回到本条回复开头', 'en-US': 'Jump to the start of this reply' },
   'message.system.compaction': { 'zh-CN': '上下文已压缩', 'en-US': 'Context compacted' },
   'message.system.branch-summary': { 'zh-CN': '分支摘要', 'en-US': 'Branch summary' },
   'message.system.custom': { 'zh-CN': '系统提示', 'en-US': 'System notice' },
@@ -673,7 +674,9 @@ export const translations: Record<string, { 'zh-CN': string; 'en-US': string }> 
   // ActivityBar
   'activity.barLabel': { 'zh-CN': '活动栏', 'en-US': 'Activity bar' },
   'activity.sessionsView': { 'zh-CN': '会话', 'en-US': 'Sessions' },
-  'activity.settingsUpdateHint': { 'zh-CN': '设置（有可用更新）', 'en-US': 'Settings (update available)' },
+  'activity.updateAvailable': { 'zh-CN': '有新版本 {version}，点击查看更新', 'en-US': 'Update {version} available' },
+  'activity.updateDownloading': { 'zh-CN': '正在下载新版本 {version}（{percent}%）', 'en-US': 'Downloading update {version} ({percent}%)' },
+  'activity.updateReady': { 'zh-CN': '新版本 {version} 已就绪，点击查看更新', 'en-US': 'Update {version} is ready to install' },
   'sidebar.search': { 'zh-CN': '搜索', 'en-US': 'Search' },
   'sidebar.historyNavigation': { 'zh-CN': '会话导航', 'en-US': 'Conversation history' },
   'sidebar.historyBack': { 'zh-CN': '后退', 'en-US': 'Back' },

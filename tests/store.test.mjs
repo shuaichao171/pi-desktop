@@ -1184,3 +1184,41 @@ test('keep-warm previews never cross a bridge replacement', async () => {
   assert.equal(useChatStore.getState().messages.length, 0);
   await backToA;
 });
+
+test('deleting a session hides its row at once, keeps listings from restoring it, and rolls back on failure', async () => {
+  const cwd = baseSnapshot.cwd;
+  const rows = ['a', 'b', 'c'].map((name, index) => ({ path: `C:\\sessions\\${name}.jsonl`, id: name, firstMessage: name, modified: `2026-11-0${index + 1}T00:00:00.000Z`, messageCount: 1 }));
+  const sessionsByCwd = { [cwd]: rows };
+  const host = createBridge({ sessionsByCwd });
+  useChatStore.getState().setBridge(host.bridge);
+  await settle();
+  await useChatStore.getState().refreshWorkspaceSessions(cwd);
+  const paths = () => useChatStore.getState().sessionsByWorkspace[cwd].map((session) => session.path);
+  const visible = () => useChatStore.getState().sessions.map((session) => session.path);
+  assert.deepEqual(paths(), rows.map((row) => row.path));
+
+  const removal = deferred();
+  host.bridge.deleteSession = () => removal.promise;
+  const deleting = useChatStore.getState().deleteSession(rows[1].path);
+  assert.deepEqual(paths(), [rows[0].path, rows[2].path], 'the row disappears before the host finishes');
+  assert.deepEqual(visible(), [rows[0].path, rows[2].path]);
+  await useChatStore.getState().refreshWorkspaceSessions(cwd);
+  assert.deepEqual(paths(), [rows[0].path, rows[2].path], 'a listing read before the unlink cannot resurrect the row');
+  const listed = host.sessionListCalls.length;
+  sessionsByCwd[cwd] = [rows[0], rows[2]];
+  removal.resolve();
+  await deleting;
+  await settle();
+  assert.ok(host.sessionListCalls.length > listed, 'a confirming refresh follows without holding the caller');
+  assert.deepEqual(paths(), [rows[0].path, rows[2].path]);
+
+  const failure = deferred();
+  host.bridge.deleteSession = () => failure.promise;
+  const failing = useChatStore.getState().deleteSession(rows[0].path);
+  assert.deepEqual(paths(), [rows[2].path]);
+  failure.reject(new Error('disk busy'));
+  await assert.rejects(failing, /disk busy/);
+  assert.deepEqual(paths(), [rows[0].path, rows[2].path], 'a failed delete puts the row back in its place');
+  assert.deepEqual(visible(), [rows[0].path, rows[2].path]);
+  assert.match(useChatStore.getState().error ?? '', /disk busy/);
+});

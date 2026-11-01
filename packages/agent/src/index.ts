@@ -2833,8 +2833,13 @@ export class AgentService {
 		await this.runTransition(async () => {
 			if (this.isSessionReserved(path)) throw new Error('会话正在切换或删除，请稍后重试');
 			const key = sessionPathKey(path);
-			const sessions = await this.listSessions(cwd);
-			if (!sessions.some((session) => sessionPathKey(session.path) === key)) throw new Error('会话不属于指定工作区');
+			// Directory + header check first: a full listing parses every transcript in
+			// the project, which takes seconds on large ones. Rows the cheap check cannot
+			// confirm (unpersisted live sessions, path aliases) still fall back to it.
+			if (!(await sessionBelongsToWorkspace(path, cwd))) {
+				const sessions = await this.listSessions(cwd);
+				if (!sessions.some((session) => sessionPathKey(session.path) === key)) throw new Error('会话不属于指定工作区');
+			}
 			const entries = [...this.contexts.entries()].filter(([, context]) => {
 				const loadedPath = context.getSnapshot().sessionPath;
 				return loadedPath != null && sessionPathKey(loadedPath) === key;

@@ -8,7 +8,7 @@ import { useChatStore } from '../store';
 import { useT } from '../i18n';
 import { managementCopy } from '../managementCopy';
 import { sessionRuntimeKey, summarizeSessionStates } from '../managementState';
-import { operationFeedback } from '../operationFeedback';
+import { operationFeedback, runWithFeedback } from '../operationFeedback';
 import type { ContextMenuPoint } from '../contextMenuPosition';
 import { changedSidebarOrders, moveSidebarProject, moveSidebarSession } from '../sidebarDrag';
 import { isConversationWorkspace } from '../sidebarOrganization';
@@ -1228,11 +1228,16 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 			if (!removed) requestAnimationFrame(() => target.anchor.isConnected && target.anchor.focus());
 			else operationFeedback.show({ id: `project-remove:${target.summary.workspace}`, kind: 'success', title: t('sidebar.projectRemoved'), detail: target.summary.name });
 		}} />}
-		{trashTarget && <SessionDeleteDialog title={titleOf(trashTarget.session)} workspace={trashTarget.session.workspace} onDelete={() => useChatStore.getState().deleteSession(trashTarget.session.path)} onClose={(deleted) => {
+		{trashTarget && <SessionDeleteDialog title={titleOf(trashTarget.session)} workspace={trashTarget.session.workspace} onDelete={async () => {
+			// Close at once instead of holding the modal: the store hides the row
+			// immediately while the host-side delete (seconds on large projects) runs.
+			// The outcome arrives as a toast; a failure restores the row and offers retry.
+			const { path } = trashTarget.session;
+			void runWithFeedback({ id: `session-delete:${path}`, title: t('sidebar.deleteSession'), success: copy.deleted, run: () => useChatStore.getState().deleteSession(path) });
+		}} onClose={(deleted) => {
 			const target = trashTarget;
 			trashFocus.current = deleted ? { path: target.nextPath } : { path: target.session.path, anchor: target.anchor };
 			setTrashTarget(null);
-			if (deleted) operationFeedback.show({ id: `session-delete:${target.session.path}`, kind: 'success', title: copy.deleted, detail: titleOf(target.session) });
 		}} />}
 		{bulkTrashTarget && <SessionBulkDeleteDialog sessions={bulkTrashTarget} onDelete={paths => useChatStore.getState().deleteSessions(paths, { expectArchived: true })} onClose={() => {
 			trashFocus.current = { anchor: archiveSelectAllRef.current ?? undefined };
