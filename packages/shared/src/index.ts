@@ -8,13 +8,10 @@ export * from './approval.ts';
 export * from './activity.ts';
 import type { PluginUpdatesBridge } from './pluginUpdates';
 import type { McpFeaturesBridge } from './mcpFeatures';
-import type { CompactionFeaturesBridge } from './compactionFeatures';
 import type { ResultFilesBridge } from './resultFiles';
 export * from './resultFiles.ts';
 export * from './pluginUpdates.ts';
 export * from './mcpFeatures.ts';
-export * from './compactionFeatures.ts';
-export * from './memoryFeatures.ts';
 export * from './goalFeatures.ts';
 import type { GoalFeaturesBridge } from './goalFeatures';
 export * from './subagentFeatures.ts';
@@ -675,17 +672,6 @@ export type AgentUiEvent =
   | { type: 'error'; message: string; error?: UiAgentError }
   | { type: 'subagent-fleet'; fleet: UiSubagentFleetSnapshot | null }
   | { type: 'subagent-inspect'; reply: UiSubagentInspectReply }
-  | {
-      type: 'compaction-preview';
-      /** start=接管压缩并开始生成；delta=摘要增量；end=成功（系统行摘要卡接棒）；error=失败取消。 */
-      phase: 'start' | 'delta' | 'end' | 'error';
-      /** 触发来源：手动 /compact、自动阈值或溢出恢复。 */
-      reason: 'manual' | 'threshold' | 'overflow';
-      /** phase=delta 时的摘要文本增量。 */
-      delta?: string;
-      /** phase=error 时的用户可读失败原因。 */
-      message?: string;
-    }
 
 export interface AgentEventEnvelope {
   sequence: number;
@@ -1106,8 +1092,7 @@ export interface UiAppearanceState {
 /** Main → renderer commands (tray menu, notification clicks). */
 export type UiAppCommand = { type: 'new-session' } | { type: 'switch-session'; path: string; cwd?: string } | { type: 'open-settings' } | { type: 'appearance-changed'; appearance: UiAppearanceState };
 
-import type { MemoryFeaturesBridge } from './memoryFeatures';
-export interface AgentBridge extends InputFeatureBridge, DataFeaturesBridge, WorkbenchFeaturesBridge, ManagementFeaturesBridge, PluginUpdatesBridge, McpFeaturesBridge, CompactionFeaturesBridge, MemoryFeaturesBridge, ResultFilesBridge, CloudSyncFeaturesBridge, GoalFeaturesBridge {
+export interface AgentBridge extends InputFeatureBridge, DataFeaturesBridge, WorkbenchFeaturesBridge, ManagementFeaturesBridge, PluginUpdatesBridge, McpFeaturesBridge, ResultFilesBridge, CloudSyncFeaturesBridge, GoalFeaturesBridge {
   getPersonalization(): Promise<UiInstructionDocument[]>;
   saveInstruction(request: UiSaveInstructionRequest): Promise<UiSaveInstructionResult>;
   getPluginCatalog(cwd: string): Promise<UiPluginCatalog>;
