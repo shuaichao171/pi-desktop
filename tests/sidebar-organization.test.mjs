@@ -201,7 +201,7 @@ test('project list excludes the default conversation workspace and deduplicates 
   assert.notEqual(sidebarWorkspaceKey('/src/One'), sidebarWorkspaceKey('/src/one'));
 });
 
-test('project grouping keeps default and unregistered conversations below projects without duplicate pins', () => {
+test('project grouping keeps default and unregistered conversations below projects with pins leading each list', () => {
   const home = 'C:/Users/me/PiDesktopWorkspace';
   const workspaces = [home, 'D:/Projects/One', 'D:/Projects/Empty'];
   const sessions = collectSidebarSessions([...workspaces, 'D:/Projects/Removed'], {
@@ -212,9 +212,9 @@ test('project grouping keeps default and unregistered conversations below projec
   const original = structuredClone(sessions);
   const grouped = buildSidebarProjectGroups([...sessions, sessions[0]], sidebarProjectPaths(workspaces, home));
   assert.deepEqual(grouped.projects.map(project => [project.workspace, paths(project.sessions)]), [
-    ['D:/Projects/One', ['project']], ['D:/Projects/Empty', []],
+    ['D:/Projects/One', ['project-pin', 'project']], ['D:/Projects/Empty', []],
   ]);
-  assert.deepEqual(paths(grouped.unassigned), ['general', 'removed']);
+  assert.deepEqual(paths(grouped.unassigned), ['general-pin', 'general', 'removed']);
   assert.deepEqual(paths(buildSidebarGroups(sessions, []).pinned), ['general-pin', 'project-pin']);
   assert.deepEqual(sessions, original);
 });

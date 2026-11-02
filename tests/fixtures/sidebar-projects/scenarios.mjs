@@ -47,11 +47,10 @@ function installSidebarProjectsFixture(saved) {
 
 export default async function sidebarProjectsScenarios(review) {
   const q = JSON.stringify, state = 'window.__sidebarProjectsReview', prefKey = 'pi-desktop.sidebar-organization.v1';
-  await review.waitFor('window.__modelReview?.ready === true && Boolean(document.querySelector(".pd-sidebar-mode"))');
+  await review.waitFor('window.__modelReview?.ready === true && Boolean(document.querySelector(".pd-activity-bar"))');
   await review.viewport(1440, 1200);
   await review.reducedMotion(false);
   await review.reloadWithFixture(`(${installSidebarProjectsFixture.toString()})();`);
-  await review.click('[data-mode="project"]');
   await review.waitFor(`document.querySelectorAll('.pd-sidebar-group[data-section-key^="project:"]').length === 6`);
   const paths = await review.evaluate(`${state}.paths`);
   const section = name => `.pd-sidebar-group[data-section-key=${q('project:' + paths[name])}]`;
@@ -63,7 +62,7 @@ export default async function sidebarProjectsScenarios(review) {
   const preferences = `JSON.parse(localStorage.getItem(${q(prefKey)}))`;
   const collapsed = `JSON.stringify(${preferences}.collapsed)`;
   const noBadges = `!document.querySelector('.pd-sidebar-group-toggle > small')`;
-  const symbolsOnly = `(() => { const states = Array.from(document.querySelectorAll('.pd-session-state-counts')); return states.length > 0 && states.every(node => !/[0-9]/.test(node.textContent) && /^[!↻×•\\s]+$/u.test(node.textContent) && node.getAttribute('aria-label')); })()`;
+  const symbolsOnly = `(() => { const states = Array.from(document.querySelectorAll('.pd-session-state-counts')); return states.length > 0 && states.every(node => !/[0-9]/.test(node.textContent) && node.querySelector('b') && node.getAttribute('aria-label')); })()`;
   const uniqueRows = `(() => { const paths = Array.from(document.querySelectorAll('.pd-session-item[data-session-path]')).map(row => row.dataset.sessionPath); return new Set(paths).size === paths.length; })()`;
   async function point(selector, fraction = .5) {
     return review.evaluate(`(() => { const node = document.querySelector(${q(selector)}); if (!node) throw new Error('Missing pointer target'); node.scrollIntoView({ block: 'nearest', inline: 'nearest' }); const rect = node.getBoundingClientRect(), x = rect.left + Math.min(rect.width * .45, 95), y = rect.top + rect.height * ${fraction}; const hit = document.elementFromPoint(x,y); if (!rect.width || !rect.height || !(hit === node || node.contains(hit))) throw new Error('Pointer target obscured'); return {x,y}; })()`);
@@ -81,8 +80,8 @@ export default async function sidebarProjectsScenarios(review) {
   await review.assert(`${expanded('Alpha')} === ${!beforeToggle}`, 'The outside title click still performs its normal collapse toggle exactly once');
   await right('Alpha'); await click('Bravo');
   await closed('Clicking another project title closes the previous project menu');
-  await right('Alpha'); await review.click('.pd-sidebar-brand .pd-brand-mark');
-  await closed('Clicking the sidebar brand closes the context menu');
+  await right('Alpha'); await review.click('.pd-top-bar .pd-brand-mark');
+  await closed('Clicking the brand mark closes the context menu');
   await review.click(more('Alpha')); await review.waitFor(`Boolean(document.querySelector(${q(menu)}))`);
   await review.click(more('Alpha'));
   await closed('Clicking the same more button toggles its open menu closed');
@@ -93,11 +92,12 @@ export default async function sidebarProjectsScenarios(review) {
   await right('Alpha'); await review.key('Escape');
   await review.assert(`document.activeElement === document.querySelector(${q(more('Alpha'))})`, 'Escape from a context menu opened on the title restores focus to its more button');
   await review.click(more('Alpha'));
-  await review.click(`${menu} [role=menuitem][aria-haspopup="menu"]`);
+  await review.clickText(`${menu} [role=menuitem]`, "打开方式");
   await review.clickText('.pd-sidebar-submenu [role=menuitem]', '在资源管理器中打开');
   await review.assert(`${state}.reveals.length === 1 && ${state}.reveals[0] === ${q(paths.Alpha)} && !document.querySelector(${q(menu)})`, 'A menu action executes once for the intended project and closes normally');
   await right('Alpha');
-  const plus = await point(`${section('Alpha')} .pd-group-more:not([aria-haspopup])`);
+  // The context menu hangs from the click point; press the plus button above its top edge.
+  const plus = await point(`${section("Alpha")} .pd-group-more:not([aria-haspopup])`, .2);
   await review.mouseDown(plus.x, plus.y); await review.mouseMove(plus.x + 9, plus.y);
   await review.assert(`!document.querySelector('.pd-sidebar-drag-ghost') && !document.querySelector(${q(menu)})`, 'Pressing the project plus button closes its menu and never starts project dragging');
   await review.mouseUp();
@@ -108,19 +108,9 @@ export default async function sidebarProjectsScenarios(review) {
   await review.click(more('Alpha')); await review.clickText(`${menu} [role=menuitem]`, '取消置顶');
   await review.waitFor(`!${state}.pinned.includes(${q(paths.Alpha)})`);
   await review.assert(noBadges, 'Project headings display no total-session count badges');
-  await review.assert(symbolsOnly, 'Project attention indicators preserve their symbols and accessible details without visible numeric badges');
-  await review.click('[data-mode="grouped"]');
-  await review.assert(`${noBadges} && ${uniqueRows}`, 'Custom groups and Ungrouped retain unique members without total-session count badges');
-  await review.assert(symbolsOnly, 'Grouped attention indicators contain status symbols instead of visible counts');
-  await review.click('.pd-sidebar-group[data-section-key="group:projects-review"] .pd-group-more');
-  await review.clickText(`${menu} [role=menuitem]`, '重命名分组');
-  await review.assert('document.activeElement === document.querySelector("#pd-sidebar-group-name") && Boolean(document.querySelector(".pd-sidebar-popover[role=dialog]"))', 'Changing the group menu into a rename dialog keeps focus in the new editor');
-  await review.key('Escape');
-  await review.click('[data-mode="project"]');
-  await review.click('.pd-sidebar-organize-actions button[aria-label="视图选项"]');
-  if (await review.evaluate(`[...document.querySelectorAll('.pd-sidebar-popover [role="menuitem"]')].some(item => item.textContent.trim() === '展开全部分组')`)) { await review.clickText('.pd-sidebar-popover [role="menuitem"]', '展开全部分组'); await review.click('.pd-sidebar-organize-actions button[aria-label="视图选项"]'); }
-  await review.clickText('.pd-sidebar-popover [role="menuitem"]', '收起全部分组');
-  await review.click('.pd-sidebar-group[data-section-key="pinned"] > .pd-sidebar-group-heading .pd-sidebar-group-toggle');
+  await review.assert(symbolsOnly, 'Project attention indicators show status dots with accessible details and no visible numeric badges');
+  // Project sections replace the old pinned section; collapse every project to its heading row.
+  for (const name of Object.keys(paths)) if (await review.evaluate(expanded(name))) await click(name);
   await review.screenshot('sidebar-projects-menus-and-count-free-headings');
 
   // A short press remains a click; only moving past the threshold starts reordering.

@@ -43,7 +43,7 @@ export default async function workbenchFeatures(review) {
   await review.assert('window.__workbenchFeatures.commits[0].id==="preview-stagedOnly"','Commit consumes the exact preview identity');
   await review.waitFor('!document.querySelector(".pd-commit-dialog")');
 
-  await review.click('.pd-workbench-toggle');
+  await review.click('.pd-top-bar-workspace-button');
   await review.click('[data-segment-key=git]');
   await review.click('[data-feature=checkpoint]');
   await review.waitFor('document.querySelector(".pd-feature-dialog")?.textContent.includes("manual.txt")');

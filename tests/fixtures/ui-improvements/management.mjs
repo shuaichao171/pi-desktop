@@ -40,7 +40,6 @@ export default async function managementScenarios(review) {
     Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async text=>{state.copied.push(text);}}});
     window.__managementReview=state;
   })()`);
-  await review.click('[data-mode="project"]');
   await review.waitFor("document.querySelectorAll('[data-session-path]').length===2 && Boolean(document.querySelector('.pd-workspace-list-error'))");
   await review.assert("!document.querySelector('.pd-workspace-list-error').textContent.includes('加载中')", 'Failed workspace stops loading and exposes a local retry');
   await review.evaluate('window.__managementReview.failWorkspace=false');
@@ -63,21 +62,23 @@ export default async function managementScenarios(review) {
   await review.assert("document.querySelector('.pd-session-delete-dialog').textContent.includes('后台审查会话') && document.querySelector('.pd-session-delete-workspace').textContent===window.__managementReview.cwd", 'Trash dialog retains the exact title and workspace');
   await review.key('Escape');
   await review.assert("!document.querySelector('.pd-session-delete-dialog') && window.__managementReview.deletes.length===0", 'Esc cancels without a deletion request');
+  // Confirming closes the dialog and hides the row at once; deletion finishes in the background.
+  const firstRow = "[...document.querySelectorAll('[data-session-path]')].some(row => row.dataset.sessionPath === window.__managementReview.firstPath)";
   await openSessionMenu();
   await review.click('.pd-sidebar-menu-danger');
   await review.click('.pd-session-delete-dialog button.is-danger');
-  await review.key('Enter');
-  await review.assert("document.querySelector('.pd-session-delete-dialog button.is-danger').disabled && window.__managementReview.deletes.length===1", 'Repeated activation while deleting submits only once');
+  await review.waitFor(`!document.querySelector('.pd-session-delete-dialog') && !(${firstRow})`);
+  await review.assert('window.__managementReview.deletes.length===1', 'Confirming deletes once in the background after hiding the row');
   await review.evaluate('window.__managementReview.rejectDelete()');
-  await review.waitFor("Boolean(document.querySelector('.pd-session-delete-error'))");
+  await review.waitFor(`${firstRow} && document.querySelector('.pd-operation-feedback')?.textContent.includes('模拟删除失败')`);
   await review.screenshot('management-02-delete-retry');
-  await review.click('.pd-session-delete-dialog button.is-danger');
+  await review.click('.pd-operation-notice-retry');
+  await review.waitFor(`!(${firstRow}) && window.__managementReview.deletes.length===2`);
   await review.evaluate('window.__managementReview.finishDelete()');
-  await review.waitFor("!document.querySelector('.pd-session-delete-dialog') && document.querySelectorAll('[data-session-path]').length===1");
-  await review.record('trash-restored-focus', "({activeTag:document.activeElement.tagName,activeClass:document.activeElement.className,activePath:document.activeElement.closest('[data-session-path]')?.dataset.sessionPath,deletes:window.__managementReview.deletes,target:window.__managementReview.firstPath})");
-  await review.assert("document.activeElement.matches('.pd-session-row,.pd-organized-list') && window.__managementReview.deletes.every(path=>path===window.__managementReview.firstPath)", 'Retry preserves its target and success restores list focus');
+  await review.waitFor("document.querySelectorAll('[data-session-path]').length===1");
+  await review.assert('window.__managementReview.deletes.every(path=>path===window.__managementReview.firstPath)', 'A failed delete restores its row and the notice retry deletes the same conversation');
 
-  await review.click('.pd-sidebar-automation');
+  await review.click('.pd-activity-automations');
   await review.waitFor("Boolean(document.querySelector('.pd-automation-latest'))");
   await review.assert("document.querySelector('.pd-automation-card-heading .pd-automation-status').textContent.includes('已启用') && document.querySelector('.pd-automation-latest').textContent.includes('失败')", 'Enabled schedule and latest failed result are both visible');
   await review.click('.pd-automation-latest');
@@ -102,7 +103,7 @@ export default async function managementScenarios(review) {
   await review.viewport(1440, 1000);
   await review.evaluate("document.documentElement.dataset.theme='dark';document.documentElement.style.setProperty('--pd-ui-font-size','13px')");
 
-  await review.click('.pd-sidebar-plugins');
+  await review.click('.pd-activity-plugins');
   await review.waitFor("Boolean(document.querySelector('.pd-plugin-card-main'))");
   await review.click('.pd-plugin-card-main');
   await review.assert("document.querySelectorAll('.pd-plugin-resource-group').length===4 && document.querySelectorAll('.pd-plugin-resource').length===30 && document.querySelector('.pd-plugin-resource-group.has-error h3 button').getAttribute('aria-expanded')==='true'", 'Thirty resources are grouped with the error group expanded');

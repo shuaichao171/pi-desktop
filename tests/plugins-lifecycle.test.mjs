@@ -103,11 +103,46 @@ test('inactive busy sessions and stale workspace requests reject plugin changes 
     await service.switchWorkspace(other);
     first.activePromptCalls += 1;
     try {
-      await assert.rejects(service.mutatePlugin({ cwd: other, action: 'set-enabled', path, kind: 'extensions', scope: 'user', enabled: false }), /全部会话空闲/);
       await assert.rejects(service.setExtensionEnabled(path, false), /全部会话空闲/);
+      await assert.rejects(service.mutatePlugin({ cwd: other, action: 'reload' }), /全部会话空闲/);
+      await assert.rejects(service.mutatePlugin({ cwd: other, action: 'remove', source: path, scope: 'user' }), /全部会话空闲/);
       await assert.rejects(service.mutatePlugin({ cwd, action: 'reload' }), /工作区已变化/);
     } finally { first.activePromptCalls -= 1; }
     assert.equal((await service.getPluginCatalog(other)).resources.find((item) => item.path === path).enabled, true);
+  });
+});
+
+test('a resource toggle during a running conversation saves now and reloads at the next all-idle boundary', async () => {
+  await fixture(async ({ service, cwd, other, path }) => {
+    const first = service.active;
+    await service.switchWorkspace(other);
+    const events = [];
+    service.onEvent(({ event }) => { if (event.type === 'plugins-reloaded') events.push(event); });
+    let reloads = 0;
+    for (const context of service.contexts.values()) {
+      const reload = context.runtime.session.reload.bind(context.runtime.session);
+      context.runtime.session.reload = async (...args) => { reloads += 1; return reload(...args); };
+    }
+    first.activePromptCalls += 1;
+    let released = false;
+    try {
+      assert.equal(service.hasRunningSessions(), true);
+      const catalog = await service.mutatePlugin({ cwd: other, action: 'set-enabled', path, kind: 'extensions', scope: 'user', enabled: false });
+      assert.equal(catalog.reloadPending, true);
+      assert.equal(catalog.resources.find((item) => item.path === path).enabled, false, 'configuration is saved immediately');
+      assert.equal(reloads, 0, 'a running session keeps its loaded extensions');
+      assert.ok(first.listSlashCommands().some((command) => command.name === 'plugin-marker'));
+      assert.equal((await service.getPluginCatalog(other)).reloadPending, true);
+      // Prompts and navigation are not held back by the saved-but-unloaded change.
+      await service.switchWorkspace(cwd);
+      await service.switchWorkspace(other);
+      first.activePromptCalls -= 1; released = true;
+      await service.flushPluginReload();
+      assert.equal(reloads, 2, 'every loaded session reloads once nothing runs');
+      assert.equal(events.length, 1);
+      assert.equal(first.listSlashCommands().some((command) => command.name === 'plugin-marker'), false);
+      assert.equal((await service.getPluginCatalog(other)).reloadPending, undefined);
+    } finally { if (!released) first.activePromptCalls -= 1; }
   });
 });
 

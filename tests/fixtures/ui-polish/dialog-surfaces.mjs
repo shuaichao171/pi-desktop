@@ -8,7 +8,7 @@ const expected = {
 };
 
 export default async function dialogSurfaces(review) {
-  await review.waitFor('window.__modelReview?.ready === true && Boolean(document.querySelector(".pd-sidebar-mode"))');
+  await review.waitFor('window.__modelReview?.ready === true && Boolean(document.querySelector(".pd-activity-bar"))');
   await review.viewport(1440, 900);
   await review.reducedMotion(true);
   const theme = await review.evaluate('document.documentElement.dataset.theme === "light" ? "light" : "dark"');
@@ -29,7 +29,7 @@ export default async function dialogSurfaces(review) {
   await review.waitFor('!document.querySelector(".pd-settings-dialog")');
 
   await review.evaluate(`window.piDesktop.getProjectsDirectory = async () => 'C:/Users/review/Projects';`);
-  await review.click('.pd-project-empty button');
+  await review.click('[data-region-id="ungrouped-projects"] [aria-label="新建项目"]');
   await review.waitFor('document.querySelector(".pd-project-create-dialog")?.open === true');
   await review.assert(`${background('.pd-project-create-dialog')} === ${JSON.stringify(want.dialog)}`, 'Project creation uses the shared dialog panel colour');
   if (want.field) await review.assert(`${background('.pd-project-create-name')} === ${JSON.stringify(want.field)} && getComputedStyle(document.querySelector('.pd-project-create-name input')).boxShadow === 'none'`, 'The project name field is one white box without an inner focus ring');

@@ -72,7 +72,8 @@ export default async function archiveConfirmScenarios(review) {
   await review.key('Escape');
   await review.assert(`!${armed('target')} && ${state}.writes.length === 0`, 'Escape cancels the armed confirm without writing');
 
-  // 3. A press outside the confirming row cancels it (and can open that row).
+  // 3. A press outside the confirming row cancels it; the pressed row is the
+  //    current conversation, so it does not navigate.
   await moveTo('other');
   await review.click(archiveButton('other'));
   await review.waitFor(armed('other'));
@@ -86,7 +87,7 @@ export default async function archiveConfirmScenarios(review) {
   await review.waitFor(armed('target'));
   await review.click(archiveButton('target'));
   await review.waitFor(`!document.querySelector(${q(row('target'))})`);
-  await review.assert(`${state}.writes.length === 1 && ${state}.writes[0].patch.archived === true && ${state}.rows.find(r => r.id === 'target').archived === true && ${state}.navigation.length === 1`, 'The confirming second click archives exactly its conversation without opening it');
+  await review.assert(`${state}.writes.length === 1 && ${state}.writes[0].patch.archived === true && ${state}.rows.find(r => r.id === 'target').archived === true && ${state}.navigation.length === 0`, 'The confirming second click archives exactly its conversation without opening it');
   await review.screenshot('archive-confirm-committed');
 
   // 5. Unarchive stays immediate: in the archive view one click restores the

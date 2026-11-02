@@ -17,13 +17,13 @@ function installSidebarGapFixture() {
 }
 
 export default async function sidebarGapScenarios(review) {
-  await review.waitFor('window.__modelReview?.ready === true && Boolean(document.querySelector(".pd-sidebar-mode"))');
+  await review.waitFor('window.__modelReview?.ready === true && Boolean(document.querySelector(".pd-activity-bar"))');
   await review.viewport(1440, 1000);
   await review.reducedMotion(true);
   await review.reloadWithFixture(`(${installSidebarGapFixture.toString()})()`);
   await review.waitFor(`document.querySelectorAll('.pd-session-item[data-session-path]').length === 2`);
   const gap = await review.evaluate(`(() => {
-    const plugins = document.querySelector('.pd-sidebar-plugins');
+    const plugins = document.querySelector('.pd-activity-plugins');
     const toolbar = document.querySelector('.pd-sidebar-organize-toolbar');
     const list = document.querySelector('.pd-project-section');
     if (!plugins || !toolbar || !list) return JSON.stringify({ missing: true });
@@ -36,6 +36,6 @@ export default async function sidebarGapScenarios(review) {
       hasSeparator: getComputedStyle(list).borderTopWidth !== '0px',
     });
   })()`);
-  console.log('GAP', gap);
+  await review.record('sidebar-gap', JSON.stringify(gap));
   await review.screenshot('sidebar-gap');
 }

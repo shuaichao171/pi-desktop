@@ -24,7 +24,7 @@ export default async function workbenchWorkspaceScenario(review) {
     window.__workbenchWorkspace=state;
     state.switchWorkspace('project-a');
   })()`);
-  await review.click('.pd-workbench-toggle');
+  await review.click('.pd-top-bar-workspace-button');
   await review.click('[data-segment-key=git]');
   await review.waitFor('document.querySelector(".pd-workbench-branch")?.textContent.includes("project-a")');
 

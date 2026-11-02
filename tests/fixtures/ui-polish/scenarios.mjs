@@ -15,7 +15,7 @@ function seedConversation() {
 }
 
 export default async function uiPolishScenarios(review) {
-  await review.waitFor('window.__modelReview?.ready === true && Boolean(document.querySelector(".pd-sidebar-mode"))');
+  await review.waitFor('window.__modelReview?.ready === true && Boolean(document.querySelector(".pd-activity-bar"))');
   await review.viewport(1440, 1000);
   await review.reducedMotion(true);
   await review.waitFor('Boolean(document.querySelector(".pd-empty-state"))');

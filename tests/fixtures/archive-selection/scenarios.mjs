@@ -42,7 +42,7 @@ export default async function archiveSelectionScenarios(review) {
   const dialog = 'dialog.pd-session-bulk-trash-dialog';
   const selected = 'document.querySelectorAll("input.pd-archive-session-checkbox:checked").length';
   const checkboxes = 'document.querySelectorAll("input.pd-archive-session-checkbox").length';
-  await review.waitFor('window.__modelReview?.ready === true && Boolean(document.querySelector(".pd-sidebar-mode"))');
+  await review.waitFor('window.__modelReview?.ready === true && Boolean(document.querySelector(".pd-activity-bar"))');
   await review.viewport(1440, 1000);
   await review.reloadWithFixture(`(${installArchiveSelectionFixture.toString()})();`);
   await review.waitFor('document.querySelectorAll(".pd-metric-group").length === 3');
@@ -76,7 +76,7 @@ export default async function archiveSelectionScenarios(review) {
   await review.assert('Array.from(document.querySelectorAll(".pd-metric-group")).every(element => element.getAttribute("aria-label") && element.tabIndex < 0) && document.querySelector(".pd-conversation-metrics").textContent.includes("36 t/s")', 'All metric values remain displayed with accessible descriptions and no extra keyboard tab stops');
   await review.evaluate('document.querySelector(".pd-settings-entry").focus()');
   await hover('.pd-settings-entry');
-  await review.assert('document.activeElement === document.querySelector(".pd-settings-entry") && !document.querySelector("[role=tooltip]") && !document.querySelector(".pd-settings-entry[title], .pd-settings-entry[aria-describedby]")', 'Settings accepts keyboard focus and pointer hover without displaying a tooltip');
+  await review.assert('document.activeElement === document.querySelector(".pd-settings-entry") && !document.querySelector(".pd-settings-entry[title]")', 'Settings accepts keyboard focus and pointer hover; its activity-bar tooltip is the only description');
   await review.key('Enter');
   await review.waitFor('Boolean(document.querySelector(".pd-settings-dialog"))');
   await review.click('.pd-settings-header button[aria-label="关闭设置"]');

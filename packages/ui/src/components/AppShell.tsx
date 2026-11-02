@@ -1,16 +1,14 @@
-import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type PointerEvent } from 'react';
+import { Suspense, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type PointerEvent } from 'react';
 import { ExitPresence } from './ExitPresence';
 import type { UiAppearanceState, UiSessionSearchResult, WorkspaceEntry } from '@pidesktop/shared';
 import { ChatView, type SearchMessageTarget } from './ChatView';
-import { ChatCommitDialog } from './ChatCommitDialog';
 import type { ChatTitleHandle } from './ChatTitle';
 import { ScopedErrorBoundary } from './ScopedErrorBoundary';
 import { ActivityBar } from './ActivityBar';
 import { TopBar } from './TopBar';
-import { AutomationPage } from './AutomationPage';
-import { PluginsPage } from './PluginsPage';
-import { SearchDialog, type SearchCommand } from './SearchDialog';
-import { SettingsPanel, type ThemePreference } from './SettingsPanel';
+import type { SearchCommand } from './SearchDialog';
+import type { ThemePreference } from './SettingsPanel';
+import { AutomationPage, ChatCommitDialog, PluginsPage, SearchDialog, SettingsPanel, preloadLazySurfaces } from './lazySurfaces';
 import { Sidebar } from './Sidebar';
 import { Icon } from './Icons';
 import { HoverTooltip } from './HoverTooltip';
@@ -109,6 +107,7 @@ export function AppShell() {
 	const workbenchOverlay = viewportWidth <= 1100;
 	useEffect(() => { const resize = () => setViewportWidth(window.innerWidth); window.addEventListener('resize', resize); return () => window.removeEventListener('resize', resize); }, []);
 	useEffect(() => { installResultFilePressRescue(); installInputModality(); }, []);
+	useEffect(() => preloadLazySurfaces(), []);
 	const agentStatus = useChatStore((state) => state.status);
 	const previousStatusRef = useRef(agentStatus);
 	useEffect(() => {
@@ -418,7 +417,7 @@ export function AppShell() {
 				</div>} /></div>
 				<div className="pd-notification-center"><div ref={setNotificationTarget} className="pd-extension-notification-slot" /></div>
 				</div>
-				<ExitPresence show={settingsOpen} surface="pd-settings-overlay">{settingsOpen && <SettingsPanel initialPage={settingsInitialPage} modelManagementTarget={settingsInitialPage === 'model' ? modelManagementTarget : undefined} onClose={() => setSettingsOpen(false)} themePreference={themePreference} onThemePreferenceChange={setThemePreference} colorPreferences={colorPreferences} onColorPreferencesChange={setColorPreferences} colorSaveFailed={colorSaveFailed} />}</ExitPresence>
+				<ExitPresence show={settingsOpen} surface="pd-settings-overlay">{settingsOpen && <Suspense fallback={null}><SettingsPanel initialPage={settingsInitialPage} modelManagementTarget={settingsInitialPage === 'model' ? modelManagementTarget : undefined} onClose={() => setSettingsOpen(false)} themePreference={themePreference} onThemePreferenceChange={setThemePreference} colorPreferences={colorPreferences} onColorPreferencesChange={setColorPreferences} colorSaveFailed={colorSaveFailed} /></Suspense>}</ExitPresence>
 				{/* The chat surface keeps result-file links usable, so the dialog they open is rendered here too. */}
 				<ResultFilePreviewDialogRoot />
 				{isWindows && <WindowControls />}
@@ -457,17 +456,17 @@ export function AppShell() {
 			}} />}
 			<div className="pd-main-view">
 			<div className="pd-chat-view-host" hidden={mainView !== 'chat'} inert={mainView !== 'chat'}><ScopedErrorBoundary scope="conversation" resetKeys={[conversationCwd, conversationId, conversationPath]}><ChatView onOpenModelManagement={openModelManagement} searchTarget={searchMessageTarget} navigationError={navigation.error} /></ScopedErrorBoundary></div>
-			{mainView === 'automations' && <ScopedErrorBoundary scope="automation"><AutomationPage onOpenSession={async (cwd, path) => { const selected = await useChatStore.getState().selectSession(cwd, path); if (selected) { setSearchMessageTarget(null); setMainView('chat'); if (narrow) setSidebarOpen(false); } return selected; }} /></ScopedErrorBoundary>}
-			{mainView === 'plugins' && <ScopedErrorBoundary scope="plugins"><PluginsPage /></ScopedErrorBoundary>}
+			{mainView === 'automations' && <ScopedErrorBoundary scope="automation"><Suspense fallback={null}><AutomationPage onOpenSession={async (cwd, path) => { const selected = await useChatStore.getState().selectSession(cwd, path); if (selected) { setSearchMessageTarget(null); setMainView('chat'); if (narrow) setSidebarOpen(false); } return selected; }} /></Suspense></ScopedErrorBoundary>}
+			{mainView === 'plugins' && <ScopedErrorBoundary scope="plugins"><Suspense fallback={null}><PluginsPage /></Suspense></ScopedErrorBoundary>}
 			{/* Pages without a composer keep notices at the top of the view. */}
 			<div className="pd-notification-center">{mainView !== 'chat' && <><OperationFeedback /><UpdateNotice /></>}<div ref={setNotificationTarget} className="pd-extension-notification-slot" /></div>
 			</div>
 			<button type="button" className={`pd-workbench-scrim${workbenchOpen && mainView === 'chat' ? ' is-open' : ''}`} aria-label={t('app.closeWorkbench')} aria-hidden={!workbenchOpen || mainView !== 'chat'} inert={!workbenchOpen || mainView !== 'chat'} tabIndex={-1} onClick={closeWorkbench} />
 			<ScopedErrorBoundary scope="workbench" resetKeys={[workbenchRequest?.cwd, workbenchRequest?.requestId]}><WorkbenchSidePane open={workbenchOpen && mainView === 'chat'} modal={workbenchOverlay && !settingsOpen && !searchOpen} suspended={settingsOpen || searchOpen} width={clampWorkbenchWidth(workbenchWidth, viewportWidth)} onWidthChange={value => setWorkbenchWidth(clampWorkbenchWidth(value, viewportWidth))} onResizing={setWorkbenchResizing} onClose={closeWorkbench} openRequest={workbenchRequest} terminalRequest={terminalRequest} onTabChange={setWorkbenchTab} /></ScopedErrorBoundary>
 			</div>
-			{commitOpen && mainView === 'chat' && <ChatCommitDialog onClose={() => setCommitOpen(false)} />}
-			<ExitPresence show={settingsOpen} surface="pd-settings-overlay">{settingsOpen && <SettingsPanel initialPage={settingsInitialPage} modelManagementTarget={settingsInitialPage === 'model' ? modelManagementTarget : undefined} onClose={() => setSettingsOpen(false)} themePreference={themePreference} onThemePreferenceChange={setThemePreference} colorPreferences={colorPreferences} onColorPreferencesChange={setColorPreferences} colorSaveFailed={colorSaveFailed} />}</ExitPresence>
-			<ExitPresence show={searchOpen} surface="pd-search-overlay">{searchOpen && <div className="pd-overlay-error-host"><ScopedErrorBoundary scope="search" onReset={() => setSearchOpen(false)}><SearchDialog commands={searchCommands} onClose={() => setSearchOpen(false)} onSelectSession={selectSearchSession} onSelectFile={selectSearchFile} /></ScopedErrorBoundary></div>}</ExitPresence>
+			{commitOpen && mainView === 'chat' && <Suspense fallback={null}><ChatCommitDialog onClose={() => setCommitOpen(false)} /></Suspense>}
+			<ExitPresence show={settingsOpen} surface="pd-settings-overlay">{settingsOpen && <Suspense fallback={null}><SettingsPanel initialPage={settingsInitialPage} modelManagementTarget={settingsInitialPage === 'model' ? modelManagementTarget : undefined} onClose={() => setSettingsOpen(false)} themePreference={themePreference} onThemePreferenceChange={setThemePreference} colorPreferences={colorPreferences} onColorPreferencesChange={setColorPreferences} colorSaveFailed={colorSaveFailed} /></Suspense>}</ExitPresence>
+			<ExitPresence show={searchOpen} surface="pd-search-overlay">{searchOpen && <div className="pd-overlay-error-host"><ScopedErrorBoundary scope="search" onReset={() => setSearchOpen(false)}><Suspense fallback={null}><SearchDialog commands={searchCommands} onClose={() => setSearchOpen(false)} onSelectSession={selectSearchSession} onSelectFile={selectSearchFile} /></Suspense></ScopedErrorBoundary></div>}</ExitPresence>
 			<FolderProjectDropZone onAdded={revealAddedProjects} />
 			<ResultFilePreviewDialogRoot />
 		</div>

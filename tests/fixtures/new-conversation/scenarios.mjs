@@ -220,7 +220,6 @@ export default async function newConversationScenarios(review) {
   await assertDraft('The native menu command immediately returns from Plugins and focuses the new draft');
   await complete();
 
-  await review.click('[data-mode="project"]');
   await review.click('.pd-activity-automations');
   await review.click('.pd-sidebar-group[data-project-path="C:/new-conversation/project"] .pd-group-more:not([aria-haspopup])');
   await assertDraft('A project New conversation entry shows its draft before backend preparation');

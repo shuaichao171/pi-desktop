@@ -182,7 +182,7 @@ export default async function composerControlsScenarios(review) {
     await review.evaluate(`${c}.ready(${JSON.stringify(status)}); ${c}.pendingNavigation = null`);
     await review.fill(textarea, `切换期间保留草稿 ${status}`);
     await review.evaluate(`${c}.navigationActionsBefore = ${c}.calls.filter(call => call.name === 'submit' || call.name === 'abort').length`);
-    await review.click('.pd-new-session');
+    await review.click('.pd-activity-new-session');
     await review.waitFor(`${c}.pendingNavigation !== null && !document.querySelector('${textarea}').disabled && document.querySelector('${textarea}').value === '' && document.activeElement === document.querySelector('${textarea}')`);
     await review.fill(textarea, `新会话首条消息 ${status}`);
     await review.key('Enter');

@@ -26,7 +26,7 @@ export default async function scenarios(review) {
   await review.waitFor(`${editor}?.value === '旧对话尚未发送的草稿'`);
 
   async function createConversation() {
-    await review.click('.pd-new-session');
+    await review.click('.pd-activity-new-session');
     await review.waitFor(`Boolean(${state}.pending)`);
     await review.evaluate(`${state}.emitReset()`);
     await review.settle();

@@ -10,7 +10,7 @@ export default async function workbenchContextMenus(review) {
     ];
     window.piDesktop.openWorkspacePathInEditor = async path => { window.__workbenchMenuReview.editorPaths.push(path); };
   })()`);
-  await review.click('.pd-workbench-toggle');
+  await review.click('.pd-top-bar-workspace-button');
   await review.waitFor('document.querySelectorAll(".pd-workbench [data-file-path]").length === 41');
 
   const openAt = async (path, edge = false) => {
@@ -77,6 +77,9 @@ export default async function workbenchContextMenus(review) {
   await review.key('ArrowDown');
   await review.assert('document.activeElement === document.querySelectorAll(".pd-workbench-file-menu button")[1]', 'Arrow keys can select actions inside the narrow menu');
   await review.screenshot('workbench-menu-narrow-modal');
+  // The editor action sits below the create/rename/delete/copy actions.
+  for (let step = 0; step < 5; step++) await review.key('ArrowDown');
+  await review.assert('document.activeElement?.textContent.trim() === "在编辑器中打开"', 'Arrow keys reach the open-in-editor action');
   await review.key('Enter');
   await review.assert('window.__workbenchMenuReview.editorPaths.join(",") === "src" && !document.querySelector(".pd-workbench-file-menu")', 'Keyboard action uses the correct path and closes the menu');
   await openAt('readme-39.ts', true);

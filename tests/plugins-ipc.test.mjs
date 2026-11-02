@@ -46,7 +46,7 @@ test('settings, input and plugin IPC authenticate senders; plugin mutations coor
   globalThis.__pluginWorkerStuck = false;
   const catalog = { cwd, packages: [], resources: [], warnings: [], projectTrusted: true };
   const instructions = [{ id: 'user', path: join(root, 'AGENTS.md'), content: 'Use Chinese.', exists: true, revision: 'initial' }];
-  let mutations = 0;
+  let mutations = 0, workspaceSwitches = 0;
   let mutate = async () => catalog;
   const queueReads = [], queueMutations = [];
   const queueSnapshot = { version: 7, paused: true, items: [] };
@@ -58,6 +58,9 @@ test('settings, input and plugin IPC authenticate senders; plugin mutations coor
     async getPluginCatalog(requested) { assert.equal(requested, cwd); return catalog; },
     async previewPluginResource(request) { return { path: request.path, text: 'preview', truncated: false }; },
     async mutatePlugin(input) { mutations++; return mutate(input); },
+    async hasRunningSessions() { return globalThis.__pluginSessionsRunning === true; },
+    async switchWorkspace() { workspaceSwitches++; },
+    async getSnapshot() { return { cwd, sessionId: 'test', sessionPath: null, status: 'idle' }; },
     async setExtensionEnabled() { mutations++; return mutate(); },
     async executeSlashCommand() { mutations++; return mutate(); },
     async getInputQueue(scope) { queueReads.push(scope); return { ...queueSnapshot, scope }; },
@@ -150,6 +153,22 @@ test('settings, input and plugin IPC authenticate senders; plugin mutations coor
     assert.equal(mutations, 1);
     release();
     await pending;
+
+    // A conversation is running: an install only downloads and saves in the agent,
+    // so project switching stays free while plugin and automation work stays serialized.
+    globalThis.__pluginSessionsRunning = true;
+    const installGate = deferred(), installEntered = deferred();
+    mutate = async () => { installEntered.resolve(); await installGate.promise; return { ...catalog, reloadPending: true }; };
+    const install = { cwd, action: 'install', source: 'npm:example', scope: 'user' };
+    const installing = call(ch.pluginMutate, install);
+    await installEntered.promise;
+    await assert.rejects(call(ch.pluginMutate, reload), /已有插件操作/);
+    await assert.rejects(call(ch.automationRun, task.id), /插件/);
+    await call(ch.workspaceSwitch, cwd);
+    assert.equal(workspaceSwitches, 1, 'the activation queue is not held by a background install');
+    installGate.resolve();
+    assert.equal((await installing).reloadPending, true);
+    globalThis.__pluginSessionsRunning = false;
 
     mutate = async () => { throw new Error('disk failure'); };
     await assert.rejects(call(ch.pluginMutate, reload), /disk failure/);

@@ -151,13 +151,18 @@ export function Composer({ header, onOpenModelManagement, changesSlotRef }: { he
 	const busy = status === 'busy';
 	const alternateShortcut = platform === 'darwin' ? '⌘Enter' : 'Ctrl+Enter';
 	const stopping = bridge !== null && stopRequests.get(stopScopeKey)?.bridge === bridge;
+	// Not ready to SEND yet. Typing stays open during switches and startup: the
+	// draft is keyed to the optimistically selected target and sends once ready.
 	const unavailable = !sessionPreparation && (navigating || status === 'starting' || status === 'uninitialized' || status === 'error');
+	// Only lock the editor when no conversation scope exists to hold its draft
+	// (first launch before any workspace is known).
+	const inputLocked = !sessionPreparation && !cwd && status !== 'idle' && status !== 'busy';
 	const contextUnavailable = unavailable || Boolean(sessionPreparation);
 	const canPersistDraft = !sessionPreparation && !navigating && Boolean(cwd && sessionId) && status !== 'starting' && status !== 'uninitialized' && status !== 'error';
 	const busyHint = t('composer.busyHint', { action: t(defaultBusyBehavior === 'followUp' ? 'composer.queueSend' : 'composer.steer'), alternate: t(defaultBusyBehavior === 'followUp' ? 'composer.steer' : 'composer.queueSend'), shortcut: alternateShortcut });
 	// ZCode-style semantic split: fresh conversation invites a new task, an
 	// existing thread invites a follow-up (busy keeps the queue/steer hint).
-	const placeholder = status === 'error' ? t('composer.connectionErrorPlaceholder') : unavailable ? t('composer.connecting') : busy ? busyHint : t(hasConversationHistory ? 'composer.placeholderFollowUp' : 'composer.placeholder');
+	const placeholder = status === 'error' ? t('composer.connectionErrorPlaceholder') : inputLocked ? t('composer.connecting') : busy ? busyHint : t(hasConversationHistory ? 'composer.placeholderFollowUp' : 'composer.placeholder');
 	const hasContent = Boolean(text.trim() || attachments.length);
 	const showStop = busy && !hasContent;
 	const primaryActionLabel = t(showStop ? stopping ? 'composer.stopping' : 'composer.stopTitle' : 'composer.send');
@@ -701,7 +706,7 @@ export function Composer({ header, onOpenModelManagement, changesSlotRef }: { he
 								</>}
 						</div>
 					))}</div>}
-					<textarea ref={textareaRef} value={text} rows={2} placeholder={placeholder} aria-label={t('composer.messageLabel')} disabled={unavailable} onChange={(event) => { changeText(event.target.value); syncCompletions(event.target.value, event.target.selectionStart, event.target.selectionEnd); }} onSelect={(event) => syncCompletions(event.currentTarget.value, event.currentTarget.selectionStart, event.currentTarget.selectionEnd)} onCompositionStart={() => { composingRef.current = true; setContextPicker(null); setSlashTrigger(null); }} onCompositionEnd={(event) => { composingRef.current = false; syncCompletions(event.currentTarget.value, event.currentTarget.selectionStart, event.currentTarget.selectionEnd); }} onKeyDown={onKeyDown} onPaste={onPaste} />
+					<textarea ref={textareaRef} value={text} rows={2} placeholder={placeholder} aria-label={t('composer.messageLabel')} disabled={inputLocked} onChange={(event) => { changeText(event.target.value); syncCompletions(event.target.value, event.target.selectionStart, event.target.selectionEnd); }} onSelect={(event) => syncCompletions(event.currentTarget.value, event.currentTarget.selectionStart, event.currentTarget.selectionEnd)} onCompositionStart={() => { composingRef.current = true; setContextPicker(null); setSlashTrigger(null); }} onCompositionEnd={(event) => { composingRef.current = false; syncCompletions(event.currentTarget.value, event.currentTarget.selectionStart, event.currentTarget.selectionEnd); }} onKeyDown={onKeyDown} onPaste={onPaste} />
 					<div className="pd-composer-toolbar">
 						{quotes.filter((item) => item.key === draftKey && text.includes(item.block)).map((item, index) => <button type="button" className="pd-quote-chip" key={`${item.source}:${index}`} onClick={() => { changeText(textRef.current.replace(item.block, '')); setQuotes((items) => items.filter((entry) => entry !== item)); }} aria-label={c('removeQuote')}>{item.source} ×</button>)}
 						<div className="pd-composer-meta">
@@ -712,7 +717,7 @@ export function Composer({ header, onOpenModelManagement, changesSlotRef }: { he
 							<ComposerControls onOpenModelManagement={onOpenModelManagement} hasImages={attachments.some((item) => item.kind === 'image')} />
 							{status === 'error' || retrying
 								? <button type="button" className="pd-send-button pd-composer-retry" onClick={() => void retryConnection()} disabled={retrying}><Icon name="refresh" width="15" height="15" /><span>{t(retrying ? 'composer.retryingConnection' : 'composer.retryConnection')}</span></button>
-								: <button type="button" className="pd-send-button" data-action={showStop ? 'stop' : 'send'} onClick={() => void (showStop ? stopCurrentTask() : submit())} disabled={showStop ? stopping || navigating && !sessionPreparation : !canSubmit} aria-label={primaryActionLabel} aria-busy={showStop ? stopping : sending}><Icon name={showStop ? 'square' : 'arrowUp'} width="16" height="16" /></button>}
+								: <button type="button" className="pd-send-button" data-action={showStop ? 'stop' : 'send'} onClick={() => void (showStop ? stopCurrentTask() : submit())} disabled={showStop ? stopping || navigating && !sessionPreparation : !canSubmit} title={!showStop && unavailable && hasContent ? t('composer.connecting') : undefined} aria-label={primaryActionLabel} aria-busy={showStop ? stopping : sending}><Icon name={showStop ? 'square' : 'arrowUp'} width="16" height="16" /></button>}
 						</div>
 					</div>
 				</div>

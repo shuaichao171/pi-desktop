@@ -9,8 +9,8 @@ import { registerDebugApiIpc } from './debugApiIpc';
  */
 
 import { app, BrowserWindow, dialog, shell, type IpcMainInvokeEvent } from 'electron';
-import { mkdirSync, statSync } from 'node:fs';
-import { rm, stat } from 'node:fs/promises';
+import { statSync } from 'node:fs';
+import { mkdir, rm, stat } from 'node:fs/promises';
 import { basename, dirname, join, resolve } from 'node:path';
 import { IPC_CHANNELS, PROJECT_BAR_ANIM_IDS, isValidProjectBarValue, normalizeProjectBarValue, type AgentEventEnvelope, type AppLocale, type UiAppCommand, type UiAttachment, type UiExtensionDialogRequest, type UiInputScope, type UiSessionMetaPatch, type UiSidebarGroupChange, type UiSlashCommandRequest, type UiThinkingLevel } from '@pidesktop/shared';
 import { createIsolatedAgentService } from './agentClient';
@@ -93,6 +93,8 @@ let sessionGroupService: SessionGroupService | null = null;
 let automationService: ReturnType<typeof createAutomationService> | null = null;
 let goalWatchService: ReturnType<typeof createGoalWatchService> | null = null;
 let pluginMutationActive = false;
+/** Background plugin install while conversations run: never blocks new conversations or project switches. */
+let pluginInstallActive = false;
 const discoverPlugins = createPluginDiscovery();
 /** Resolved each time an agent host process is forked; custom engines apply after an app restart. */
 const agentEngineOptions: AgentHostEngineOptions = {
@@ -1043,7 +1045,7 @@ function requirePluginWorkspace(cwd: unknown): asserts cwd is string {
 }
 
 async function withPluginMutation<T>(cwd: string, action: () => Promise<T>): Promise<T> {
-	if (pluginMutationActive) throw new Error('已有插件操作正在进行，请稍后重试');
+	if (pluginMutationActive || pluginInstallActive) throw new Error('已有插件操作正在进行，请稍后重试');
 	requirePluginWorkspace(cwd);
 	// Reserve before any asynchronous read: new schedules are deferred, while
 	// already claimed runs are observed by the serialized snapshot below.
@@ -1057,6 +1059,22 @@ async function withPluginMutation<T>(cwd: string, action: () => Promise<T>): Pro
 		});
 		return result;
 	} finally { pluginMutationActive = false; }
+}
+
+/**
+ * Install / enable-toggle while a conversation runs. The agent only downloads and
+ * saves configuration (its reload waits for an all-idle boundary), so the workspace
+ * activation queue stays free: new conversations and project switches proceed.
+ */
+async function withBackgroundPluginMutation<T>(cwd: string, action: () => Promise<T>): Promise<T> {
+	if (pluginMutationActive || pluginInstallActive) throw new Error('已有插件操作正在进行，请稍后重试');
+	requirePluginWorkspace(cwd);
+	pluginInstallActive = true;
+	try {
+		if (await automationService?.hasActiveRuns() || automationExecutor.hasActiveWorkers()) throw new Error('自动化仍在运行，请结束后再修改插件');
+		requirePluginWorkspace(cwd);
+		return await action();
+	} finally { pluginInstallActive = false; }
 }
 
 /**
@@ -1244,7 +1262,7 @@ export function registerIpc(options: {
 	const automations = createAutomationService({
 		filePath: join(app.getPath('userData'), 'automations.json'),
 		execute: (task, signal, dispatch) => automationExecutor.execute(task, signal, dispatch),
-		canRun: () => pluginMutationActive ? false : automationExecutor.hasUnreleasedWorkers()
+		canRun: () => pluginMutationActive || pluginInstallActive ? false : automationExecutor.hasUnreleasedWorkers()
 			? '上次自动化执行进程尚未退出，请重启应用后重试' : true,
 		validateWorkspace: async (cwd) => {
 			if (!(await listWorkspaces()).includes(cwd)) throw new Error('未知工作区，请先在侧栏打开项目');
@@ -1390,7 +1408,9 @@ export function registerIpc(options: {
 		requirePluginSender(event);
 		if (!isRecord(input)) throw new Error('插件操作参数无效');
 		requirePluginWorkspace(input.cwd);
-		return withPluginMutation(input.cwd, () => agentService.mutatePlugin(input));
+		const run = () => agentService.mutatePlugin(input);
+		if ((input.action !== 'install' && input.action !== 'set-enabled') || pluginMutationActive || pluginInstallActive) return withPluginMutation(input.cwd, run);
+		return agentService.hasRunningSessions().then((running) => (running ? withBackgroundPluginMutation : withPluginMutation)(input.cwd, run));
 	});
 	handleRendererInvoke(IPC_CHANNELS.pluginPreview, (event, request: { cwd: string; path: string; kind: UiPluginResourceKind; scope: UiPluginScope }) => {
 		requirePluginSender(event);
@@ -1563,12 +1583,12 @@ export function registerIpc(options: {
 		if (options !== undefined && (!isRecord(options) || (options.fresh !== undefined && typeof options.fresh !== 'boolean'))) throw new Error('项目切换选项无效');
 		return activateWorkspace(cwd, false, isRecord(options) && options.fresh === true);
 	});
-	handleRendererInvoke(IPC_CHANNELS.workspaceDefault, () => {
+	handleRendererInvoke(IPC_CHANNELS.workspaceDefault, async () => {
 		// The detach target is always the home workspace, not the last-saved cwd
 		// that defaultWorkspace() restores.
 		const home = readCurrentDesktopSettings().conversationStorageDirectory;
 		// Recursive mkdir still fails with EPERM on an existing drive root (D:\).
-		if (!statSync(home, { throwIfNoEntry: false })?.isDirectory()) mkdirSync(home, { recursive: true });
+		if (!(await stat(home).catch(() => null))?.isDirectory()) await mkdir(home, { recursive: true });
 		return home;
 	});
 	handleRendererInvoke(IPC_CHANNELS.workspaceRemove, (_event, cwd: string) => queueWorkspaceActivation(async () => {
@@ -1705,7 +1725,7 @@ export function registerIpc(options: {
 		if (!/\.jsonl$/i.test(target)) throw new Error('会话路径无效');
 		if (!(await stat(target)).isFile()) throw new Error('会话文件不存在');
 		const owner = await requireSessionOwner(target);
-		if (!statSync(owner, { throwIfNoEntry: false })?.isDirectory()) throw new Error('会话所属的工作区已不存在');
+		if (!(await stat(owner).catch(() => null))?.isDirectory()) throw new Error('会话所属的工作区已不存在');
 		// A hosted pai window owns its own agent host and keeps running after
 		// the main window that opened it closes.
 		openPaiWindow({ cwd: owner, sessionPath: target });

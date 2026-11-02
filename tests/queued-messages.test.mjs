@@ -130,3 +130,51 @@ test('SDK queues project accepted instructions, duplicates, attachments and sess
     rmSync(target, { recursive: true, force: true });
   }
 });
+
+test('prompt without a behavior during the SDK busy window queues as followUp instead of failing hard', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'pi-desktop-queue-fallback-'));
+  const workspace = join(root, 'workspace');
+  mkdirSync(workspace);
+  const environment = new Map(['PI_CODING_AGENT_DIR', 'PI_OFFLINE'].map((name) => [name, process.env[name]]));
+  process.env.PI_CODING_AGENT_DIR = join(root, 'agent');
+  process.env.PI_OFFLINE = '1';
+  let service;
+  let session;
+  try {
+    const { AgentService } = await import('../packages/agent/src/index.ts');
+    service = new AgentService();
+    const errors = [];
+    service.onEvent(({ event }) => { if (event.type === 'error') errors.push(event.message); });
+    await service.init({ cwd: workspace });
+    session = service.active.runtime.session;
+    // Simulate the pre-run catch-up compaction window: the SDK already counts as
+    // busy (isStreaming) while agent_start has not reached the desktop yet, so the
+    // composer captured no streaming behavior for this send.
+    Object.defineProperties(session, {
+      isStreaming: { configurable: true, get: () => true },
+      isIdle: { configurable: true, get: () => false },
+    });
+    await service.prompt('Queued while the compaction preview is visible');
+    await settle();
+    const snapshot = service.getSnapshot();
+    assert.equal(snapshot.queuedCount, 1);
+    assert.deepEqual(snapshot.queuedMessages.map(({ text, behavior }) => [text, behavior]), [
+      ['Queued while the compaction preview is visible', 'followUp'],
+    ]);
+    assert.deepEqual(errors, [], 'the status race must surface as a queued follow-up, not an SDK error');
+  } finally {
+    if (session) {
+      delete session.isStreaming;
+      delete session.isIdle;
+      session.clearQueue();
+    }
+    await service?.dispose();
+    for (const [name, value] of environment) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+    const target = resolve(root);
+    if (!target.startsWith(realpathSync.native(tmpdir()) + sep)) throw new Error('Unsafe temporary path');
+    rmSync(target, { recursive: true, force: true });
+  }
+});

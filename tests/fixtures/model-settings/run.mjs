@@ -78,6 +78,9 @@ async function waitFor(expression, timeout = 12000) {
 }
 async function settle() {
   await evaluate('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+  // ExitPresence keeps a closed surface mounted with `is-closing` for its exit
+  // animation; an action has settled once those leftovers have unmounted.
+  await evaluate('new Promise(resolve => { const end = Date.now() + 600; (function poll() { if (!document.querySelector(".is-closing") || Date.now() > end) resolve(); else setTimeout(poll, 16); })(); })');
 }
 async function clickElement(expression) {
   const point = await evaluate(`(() => { const e = ${expression}; if (!e || e.disabled) throw new Error('Click target missing or disabled'); e.scrollIntoView({block:'center',inline:'nearest'}); const box=e.getBoundingClientRect(); const x=Math.max(0,Math.min(innerWidth-1,box.x+box.width/2)); const y=Math.max(0,Math.min(innerHeight-1,box.y+box.height/2)); const hit=document.elementFromPoint(x,y); if (!(hit===e || e.contains(hit))) throw new Error('Click target is obscured'); return {x,y}; })()`);
@@ -178,7 +181,7 @@ try {
       const revision = ++fixtureReload;
       ({ identifier: scenarioScript } = await send('Page.addScriptToEvaluateOnNewDocument', { source: `${source}\nwindow.__reviewFixtureReload = ${revision};` }));
       await send('Page.reload');
-      await waitFor(`window.__reviewFixtureReload === ${revision} && window.__modelReview?.ready === true && Boolean(document.querySelector('.pd-sidebar-mode, .pd-app-shell.is-pai'))`);
+      await waitFor(`window.__reviewFixtureReload === ${revision} && window.__modelReview?.ready === true && Boolean(document.querySelector('.pd-activity-bar, .pd-app-shell.is-pai'))`);
       await settle();
       logs.steps.push({ fixtureReload: revision });
     },

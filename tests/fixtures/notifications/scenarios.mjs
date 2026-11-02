@@ -78,7 +78,7 @@ export default async function notificationScenarios(review) {
   await review.assert(`${noHints} && document.querySelector('.pd-send-button').disabled && document.querySelector('.pd-composer-add-attachment').disabled`, 'Restoring a draft is quiet and retains send/attachment safeguards');
   await review.evaluate(`${state}.resolveDrafts()`);
   await review.waitFor('!document.querySelector(".pd-send-button").disabled');
-  await review.click('.pd-new-session');
+  await review.click('.pd-activity-new-session');
   await review.waitFor(`${state}.created === 1`);
   await review.assert(noHints, 'Creating a conversation does not show a pending New session notification');
   await review.evaluate(`${state}.finishNew()`);
@@ -107,13 +107,13 @@ export default async function notificationScenarios(review) {
   await review.screenshot('notifications-above-composer-stacked');
   await review.waitFor('!document.querySelector("[data-notification-id=notice-brief]") && Boolean(document.querySelector("[data-notification-id=notice-review]"))');
   await review.assert(`window.__notificationsReview.dismissed.includes('notice-brief')`, 'A notice disappears on its own while a longer one stays');
-  await review.click('.pd-workbench-toggle');
+  await review.click('.pd-top-bar-workspace-button');
   await review.waitFor('document.querySelector(".pd-workbench")?.classList.contains("is-open")');
   await review.assert(centered, 'Update notifications follow the composer when the workbench opens');
   await review.assert(aboveComposer, 'Floating notices follow the composer when the workbench opens');
   await review.screenshot('notifications-with-workbench');
-  await review.click('.pd-workbench-toggle');
-  await review.click('.pd-sidebar-collapse');
+  await review.click('.pd-top-bar-workspace-button');
+  await review.click('.pd-activity-sessions');
   await review.assert(centered, 'Update notifications stay above the composer when the sidebar collapses');
   await review.assert(aboveComposer, 'Floating notices stay above the composer when the sidebar collapses');
   await review.viewport(680, 800);
@@ -129,7 +129,8 @@ export default async function notificationScenarios(review) {
   await review.reloadWithFixture(`(${installNotificationFixture.toString()})(true)`);
   await review.waitFor('Boolean(document.querySelector(".pd-app-shell.is-pai"))');
   await review.evaluate(`${state}.resolveDrafts()`);
-  await openEditorNotice();
+  // The pai window has no top bar or conversation menu, so it has no editor action to fail.
+  await review.assert('!document.querySelector(".pd-top-bar, .pd-chat-header-more")', 'The standalone pai window omits the main window chrome');
   await review.evaluate(`${state}.showNotices()`);
   await review.waitFor('Boolean(document.querySelector(".pd-extension-notice"))');
   await review.assert(aboveComposer, 'The standalone pai window keeps notices above its own composer');

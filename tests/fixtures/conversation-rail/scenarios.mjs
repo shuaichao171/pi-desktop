@@ -17,11 +17,17 @@ export default async function conversationRailScenarios(review) {
     fixture.emitAgent({ type: 'status', status: 'idle' });
     state.title = index => messages[index * 2].text;
     state.preview = () => document.querySelector('.pd-conv-rail-preview-title')?.textContent ?? null;
-    const originalScrollIntoView = Element.prototype.scrollIntoView;
-    Element.prototype.scrollIntoView = function (...args) {
-      if (this instanceof HTMLElement && this.dataset.messageId) state.jumps.push({ id: this.dataset.messageId, at: performance.now() });
-      return originalScrollIntoView.apply(this, args);
-    };
+    // Jumps scroll only the transcript (no scrollIntoView), so record which user
+    // message sits nearest the transcript centre after each scroll write.
+    const scrollTop = Object.getOwnPropertyDescriptor(Element.prototype, 'scrollTop');
+    Object.defineProperty(Element.prototype, 'scrollTop', { configurable: true, get() { return scrollTop.get.call(this); }, set(value) {
+      scrollTop.set.call(this, value);
+      if (!this.classList.contains('pd-transcript')) return;
+      const bounds = this.getBoundingClientRect(), centre = bounds.top + bounds.height / 2;
+      const rows = [...this.querySelectorAll('[data-message-id^="rail-user-"]')];
+      const nearest = rows.sort((a, b) => Math.abs(a.getBoundingClientRect().top + a.getBoundingClientRect().height / 2 - centre) - Math.abs(b.getBoundingClientRect().top + b.getBoundingClientRect().height / 2 - centre))[0];
+      if (nearest) state.jumps.push({ id: nearest.dataset.messageId, at: performance.now() });
+    } });
     document.addEventListener('pointerenter', event => {
       const marker = event.target instanceof Element && event.target.matches('[data-rail-id]') ? event.target : null;
       if (marker) state.pointerEntries.push({ id: marker.dataset.railId, at: performance.now(), trusted: event.isTrusted });

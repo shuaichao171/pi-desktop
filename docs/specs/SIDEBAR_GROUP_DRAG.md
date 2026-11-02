@@ -1,5 +1,7 @@
 # 侧栏分组拖动
 
+> 现状：6bd093b 将侧栏重构为「分组 / 未分组 / 无归属会话」三区后，会话分组视图与会话拖动已停用（`dragMode = false`），对应的 UI 场景 `tests/fixtures/sidebar-drag` 已删除。项目拖动排序由 `tests/fixtures/sidebar-projects` 覆盖。下文保留原设计供参考。
+
 - “项目”视图中的会话只保留点击和菜单操作，不响应鼠标左键拖动。
 - “分组”视图保留会话排序、跨组移动和分组标题排序。参考 `reference/zcode/packages/ui/src/WorkspaceGroupedTasksSection.tsx` 的完整拖动预览：先从当前所有容器移除会话，再插入目标位置，途经分组不会残留副本。
 - 鼠标松开前不保存。松开后只保存最终变动的容器；拖回原位置不写入。保存期间保留最终位置，失败后显示已确认的数据并提示错误。
@@ -11,7 +13,7 @@
 
 ```text
 node --test tests/sidebar-drag.test.mjs tests/sidebar-organization.test.mjs tests/session-groups.test.mjs tests/session-groups-ipc.test.mjs
-node tests/fixtures/model-settings/run.mjs --run --scenario=../sidebar-drag/scenarios.mjs
+node tests/fixtures/model-settings/run.mjs --run --scenario=../sidebar-projects/scenarios.mjs
 ```
 
 UI 场景使用独立 headless 浏览器的真实鼠标按下、移动和松开事件，覆盖连续往返、同组排序、空区与折叠区拖入、取消、保存失败、项目视图禁拖和折叠持久化；结束后清理测试浏览器及临时配置。

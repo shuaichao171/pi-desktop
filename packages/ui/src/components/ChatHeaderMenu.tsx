@@ -134,8 +134,8 @@ export function ChatHeaderMenu({ title, sessionPath, cwd, onRename, onOpenCommit
 			{item(t('memory.menuEntry'), () => openPanel('memory'), !memoryReady)}
 			{!memoryReady && memoryLockReason && <p className="pd-sidebar-menu-note">{memoryLockReason}</p>}
 			{item(t('chat.menuCopyMarkdown'), () => copyConversationMarkdown())}
-			{item(t('chat.menuExportHtml'), () => void exportAs('html'))}
-			{item(t('chat.menuExportJsonl'), () => void exportAs('jsonl'))}
+			{item(t('chat.menuExportHtml'), () => { close(); void exportAs('html'); })}
+			{item(t('chat.menuExportJsonl'), () => { close(); void exportAs('jsonl'); })}
 			<hr />
 			{item(folderLabel, () => { close(); openFolder(); }, !cwd)}
 			{item(t('chat.menuOpenInVsCode'), () => { close(); openInVsCode(); }, !cwd)}

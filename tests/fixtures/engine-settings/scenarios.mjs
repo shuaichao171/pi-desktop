@@ -27,7 +27,7 @@ const modeButton = position => `[data-setting="engine-mode"] button[role=radio]:
 const calls = name => `window.__engineReview.calls.filter(call => call[0] === '${name}')`;
 
 export default async function engineSettingsScenarios(review) {
-  await review.waitFor('window.__modelReview?.ready === true && Boolean(document.querySelector(".pd-sidebar-mode"))');
+  await review.waitFor('window.__modelReview?.ready === true && Boolean(document.querySelector(".pd-activity-bar"))');
   await review.viewport(1440, 1000);
   await review.reducedMotion(true);
   await review.evaluate(`(${installEngineFixture.toString()})()`);

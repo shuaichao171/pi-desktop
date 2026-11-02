@@ -12,6 +12,7 @@ import { translate } from './i18n.ts';
 import { parseSlashCommand } from './composerSlash.ts';
 import { mergeRuntimeStates, sessionRuntimeKey, type WorkspaceSessionRequest } from './managementState.ts';
 import { mergeConversationRuns } from './conversationRuns.ts';
+import { operationFeedback } from './operationFeedback.ts';
 import type { UiAgentError } from '@pidesktop/shared';
 import type {
 	AgentBridge,
@@ -107,6 +108,8 @@ interface ChatState {
 	/** Latest explicit project/session navigation intent; stale requests cannot overwrite it. */
 	navigationRequestId: number;
 	navigationPending: boolean;
+	/** Bumped when a deferred plugin reload lands, so open plugin views refetch. */
+	pluginReloadRevision: number;
 	/** A new standalone conversation is prepared without blocking its local draft. */
 	sessionPreparation: { requestId: number; draftScope: UiInputScope } | null;
 	draftTransfer: { requestId: number; from: UiInputScope; to: UiInputScope } | null;
@@ -193,7 +196,10 @@ interface SessionPreparation {
 	ready: ReadyEvent | null;
 	reset: boolean;
 	promise: Promise<void>;
+	/** Model / thinking picked while the runtime is still being prepared; applied before the draft goes live. */
+	deferred: DeferredSessionSettings;
 }
+interface DeferredSessionSettings { model?: { provider: string; id: string }; thinkingLevel?: UiThinkingLevel }
 interface PreparedInput {
 	bridge: AgentBridge;
 	requestId: number;
@@ -306,6 +312,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 	hostedChatWindow: false,
 	navigationRequestId: 0,
 	navigationPending: false,
+	pluginReloadRevision: 0,
 	sessionPreparation: null,
 	draftTransfer: null,
 	backgroundDraftTransfers: [],
@@ -727,6 +734,12 @@ if (!get().modelProviders.length) void get().refreshModelProviders().catch(() =>
 			case 'sessions-changed':
 				void get().refreshWorkspaceSessions(event.cwd);
 				return;
+			case 'plugins-reloaded':
+				set({ pluginReloadRevision: get().pluginReloadRevision + 1 });
+				operationFeedback.show({ id: 'plugins-reloaded', kind: event.warnings.length ? 'error' : 'success',
+					title: translate(event.warnings.length ? 'plugins.reloadedWithWarnings' : 'plugins.reloadedNotice'),
+					...(event.warnings.length ? { detail: event.warnings.join('\n') } : {}) });
+				return;
 			case 'session-runtime': {
 				set((state) => {
 					const sessionRuntimes = { ...state.sessionRuntimes, [sessionRuntimeKey(event.cwd, event.path)]: event.runtime };
@@ -1075,6 +1088,15 @@ if (!get().modelProviders.length) void get().refreshModelProviders().catch(() =>
 	async setModel(provider, id) {
 		const bridge = get().bridge;
 		if (!bridge) return;
+		const preparing = activePreparation();
+		if (preparing) {
+			// The runtime does not exist yet: remember the choice and show it now.
+			preparing.deferred.model = { provider, id };
+			const chosen = get().models.find((item) => item.provider === provider && item.id === id);
+			set({ model: id, modelProvider: provider, modelName: chosen?.name ?? null, settingsError: null,
+				...(chosen?.thinkingLevels?.length ? { availableThinkingLevels: chosen.thinkingLevels } : {}) });
+			return;
+		}
 		const generation = beginSettingsRequest();
 		try {
 			await bridge.setModel(provider, id);
@@ -1089,6 +1111,12 @@ if (!get().modelProviders.length) void get().refreshModelProviders().catch(() =>
 	async setThinkingLevel(level) {
 		const bridge = get().bridge;
 		if (!bridge) return;
+		const preparing = activePreparation();
+		if (preparing) {
+			preparing.deferred.thinkingLevel = level;
+			set({ thinkingLevel: level, settingsError: null });
+			return;
+		}
 		const generation = beginSettingsRequest();
 		try {
 			await bridge.setThinkingLevel(level);
@@ -1399,8 +1427,10 @@ function prepareConversation(kind: SessionPreparation['kind'], options?: { cwd?:
 	// when creating another conversation inside the same project.
 	const draftScope = retainedScope ?? (kind === 'detach' ? { cwd: previous.cwd, sessionPath: previous.sessionPath }
 		: { cwd: options?.cwd ?? '', sessionPath: `draft:${crypto.randomUUID()}` });
+	// A retry of the same draft keeps the model / thinking already picked for it.
+	const inherited = sessionPreparation && sameInputScope(sessionPreparation.draftScope, draftScope) ? { ...sessionPreparation.deferred } : {};
 	const preparing: SessionPreparation = { bridge, requestId: request, kind, options, draftScope, failed: false,
-		ready: null, reset: false, promise: Promise.resolve() };
+		ready: null, reset: false, promise: Promise.resolve(), deferred: inherited };
 	const preserveBackgroundDraft = (receipt: UiInputScope | void): void => {
 		if (kind !== 'new' || !receipt || generation !== bridgeGeneration || useChatStore.getState().bridge !== bridge) return;
 		useChatStore.setState(state => ({ backgroundDraftTransfers: [...state.backgroundDraftTransfers,
@@ -1420,9 +1450,14 @@ function prepareConversation(kind: SessionPreparation['kind'], options?: { cwd?:
 				preparing.ready = { ...snapshot, type: 'ready', sessionId: snapshot.sessionId };
 			}
 			if (!currentSessionNavigation(bridge, request)) { preserveBackgroundDraft(receipt); return; }
+			// Choices made in the picker while preparing reach the runtime before the
+			// first input does; a rejected choice never fails the conversation itself.
+			const settingsFailure = await applyDeferredSettings(preparing);
+			if (!currentSessionNavigation(bridge, request)) { preserveBackgroundDraft(receipt); return; }
 			sessionPreparation = null;
 			// Transfer input only after the backend has activated its real scope.
 			useChatStore.getState().handleEvent(preparing.ready);
+			if (settingsFailure) useChatStore.setState({ settingsError: settingsFailure });
 			void Promise.all([useChatStore.getState().refreshWorkspaces(), useChatStore.getState().refreshSessions()]);
 		} catch (error) {
 			if (!currentSessionNavigation(bridge, request)) {
@@ -1461,6 +1496,32 @@ function prepareConversation(kind: SessionPreparation['kind'], options?: { cwd?:
 		queuedMessages: [], queuedCount: 0, historyTotal: 0, loadingOlder: false, sessionLoading: false,
 		timelineRevision: state.timelineRevision + 1, historyGeneration: state.historyGeneration + 1 }));
 	return preparing.promise;
+}
+
+function activePreparation(): SessionPreparation | null {
+	const preparing = sessionPreparation;
+	return preparing && useChatStore.getState().sessionPreparation?.requestId === preparing.requestId
+		&& currentSessionNavigation(preparing.bridge, preparing.requestId) ? preparing : null;
+}
+
+/** Applies picker choices made during preparation; returns the first failure message, if any. */
+async function applyDeferredSettings(preparing: SessionPreparation): Promise<string | null> {
+	const { model, thinkingLevel } = preparing.deferred;
+	if (!model && !thinkingLevel) return null;
+	let failure: string | null = null;
+	try { if (model) await preparing.bridge.setModel(model.provider, model.id); }
+	catch (error) { failure = errorMessage(error); }
+	try { if (thinkingLevel) await preparing.bridge.setThinkingLevel(thinkingLevel); }
+	catch (error) { failure ??= errorMessage(error); }
+	// Model / thinking events are held back during preparation; the snapshot is
+	// the authoritative post-change state for the ready that goes live.
+	try {
+		const snapshot = await snapshotWithTimeout(preparing.bridge);
+		if (snapshot.sessionId && snapshot.status !== 'error' && preparing.ready && snapshot.sessionId === preparing.ready.sessionId) {
+			preparing.ready = { ...snapshot, type: 'ready', sessionId: snapshot.sessionId };
+		}
+	} catch { /* Keep the earlier ready; later model events still converge the picker. */ }
+	return failure;
 }
 
 function conversationView(state: ChatState): Partial<ChatState> {

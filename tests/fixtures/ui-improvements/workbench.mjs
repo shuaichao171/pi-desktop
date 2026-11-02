@@ -20,7 +20,7 @@ export default async function workbenchScenario(review) {
     window.__workbenchReview=state;
   })()`);
   await review.viewport(1440,1000);
-  await review.click('.pd-workbench-toggle');
+  await review.click('.pd-top-bar-workspace-button');
   await review.waitFor('document.querySelectorAll(".pd-workbench [data-file-path]").length===2');
   await review.assert('document.querySelector(".pd-workbench").getAttribute("role")==="complementary"','Wide layout remains a nonmodal pane');
   await review.evaluate('document.querySelector(".pd-composer-shell textarea").focus()');
@@ -72,9 +72,9 @@ export default async function workbenchScenario(review) {
   await review.assert('document.activeElement===window.__workbenchReview.focusables().at(-1)','Overlay Shift+Tab wraps to its last control');
   await review.screenshot('workbench-900-git');
   await review.key('Escape');
-  await review.assert('!document.querySelector(".pd-workbench").classList.contains("is-open") && document.activeElement.matches(".pd-workbench-toggle")','Escape closes the overlay and restores the trigger');
+  await review.assert('!document.querySelector(".pd-workbench").classList.contains("is-open") && document.activeElement.matches(".pd-top-bar-workspace-button")','Escape closes the overlay and restores the trigger');
   await review.viewport(680,1000);
-  await review.click('.pd-workbench-toggle');
+  await review.click('.pd-top-bar-workspace-button');
   await review.click('.pd-workbench-preview-expand');
   await review.assert('document.querySelector(".pd-workbench-body").classList.contains("is-preview-expanded")','Narrow preview expands without discarding list state');
   await review.screenshot('workbench-680-expanded-diff');

@@ -338,7 +338,7 @@ test('composer workspace selection creates a fresh session, including the first 
   assert.equal(ipc.defaultWorkspace(), project);
   const valid = { sender: main.webContents, senderFrame: main.webContents.mainFrame };
   const switchWorkspace = globalThis.__ipcHandlers.get(IPC_CHANNELS.workspaceSwitch);
-  const home = globalThis.__ipcHandlers.get(IPC_CHANNELS.workspaceDefault)(valid);
+  const home = await globalThis.__ipcHandlers.get(IPC_CHANNELS.workspaceDefault)(valid);
   assert.equal(home, join(root, 'PiDesktopWorkspace'));
   assert.deepEqual(await globalThis.__ipcHandlers.get(IPC_CHANNELS.agentListWorkspaces)(valid), [project, home]);
 
@@ -797,7 +797,7 @@ test('standalone conversations get independent folders and retain discoverable h
   await call(IPC_CHANNELS.desktopSettingsSet, { notificationsEnabled: true });
   assert.deepEqual(call(IPC_CHANNELS.desktopSettingsGet).debugApi, debugApi, 'an unrelated settings save keeps the debug-API configuration');
   assert.deepEqual(JSON.parse(await readFile(desktopSettingsFile, 'utf8')).debugApi, debugApi, 'the debug-API configuration stays on disk');
-  assert.equal(call(IPC_CHANNELS.workspaceDefault), changedRoot);
+  assert.equal(await call(IPC_CHANNELS.workspaceDefault), changedRoot);
   await call(IPC_CHANNELS.agentNewSession);
   assert.equal(dirname(initialized.at(-1)), changedRoot);
   const automatic = [...initialized];

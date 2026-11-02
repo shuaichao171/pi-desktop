@@ -24,7 +24,7 @@ export default async function borrowedWorkbench(review) {
     mock('previewResultFile', target => ({kind:'office',path:target.path,name:target.path,size:800,officeFormat:target.path.endsWith('docx')?'docx':'xlsx',bytesBase64:target.path.endsWith('docx')?${JSON.stringify(docx)}:${JSON.stringify(xlsx)}}));
     window.__borrowedWorkbench=state; state.switchTo('project-a');
   })()`);
-  await review.click('.pd-workbench-toggle'); await review.waitFor('Boolean(document.querySelector("[data-file-path=src]"))');
+  await review.click('.pd-top-bar-workspace-button'); await review.waitFor('Boolean(document.querySelector("[data-file-path=src]"))');
   await review.click('[data-file-path=src]'); await review.waitFor('Boolean(document.querySelector("[data-file-path=\\\"src/app.ts\\\"]"))');
   await review.click('[data-file-path="src/app.ts"]');
   await review.waitFor('document.querySelectorAll(".pd-workbench-reader .hljs-comment").length === 2');

@@ -20,7 +20,7 @@ function installSessionManagementFixture() {
 }
 
 export default async function sessionManagementScenarios(review) {
-  await review.waitFor('window.__modelReview?.ready === true && Boolean(document.querySelector(".pd-sidebar-mode"))');
+  await review.waitFor('window.__modelReview?.ready === true && Boolean(document.querySelector(".pd-activity-bar"))');
   await review.viewport(1440, 1000);
   await review.reducedMotion(true);
   await review.reloadWithFixture(`(${installSessionManagementFixture.toString()})()`);

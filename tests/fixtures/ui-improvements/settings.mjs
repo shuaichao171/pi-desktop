@@ -87,15 +87,20 @@ export default async function settingsReview(review) {
   await review.assert('[...document.querySelectorAll(".pd-composer-picker-model")].every(row => { const content = row.querySelector(":scope > span"); return content.getBoundingClientRect().bottom <= row.getBoundingClientRect().bottom + 0.5; })', 'Model rows keep full height so their text never paints over the next row');
   await review.screenshot('model-picker-crowded-list');
   await review.key('Escape');
-  await review.evaluate(`(() => { const fixture=window.__modelReview; fixture.installAttempts=0; window.piDesktop.installUpdate=async()=>{fixture.installAttempts++;if(fixture.installAttempts===1)throw new Error('Update unavailable for this test');return new Promise(resolve=>{fixture.finishInstallation=resolve;});};fixture.emit('onUpdateStateChanged',{phase:'available',currentVersion:'0.1.5',availableVersion:'0.1.6'});})()`);
+  // Updates download in the background; the toast offers installation once the update is ready
+  // and reports a failed attempt inline, keeping the install action available to retry.
+  await review.evaluate(`(() => { const fixture=window.__modelReview; fixture.installAttempts=0; window.piDesktop.installUpdate=async()=>{fixture.installAttempts++;if(fixture.installAttempts===1)throw new Error('Update unavailable for this test');return new Promise(resolve=>{fixture.finishInstallation=resolve;});};fixture.emit('onUpdateStateChanged',{phase:'ready',currentVersion:'0.1.5',availableVersion:'0.1.6'});})()`);
+  await review.assert('Boolean(document.querySelector(".pd-activity-update"))', 'A ready update is announced in the activity bar');
   await review.click('.pd-update-notice-primary');
-  await review.waitFor('Boolean(document.querySelector(".pd-operation-notice.is-error"))');
-  await review.click('.pd-sidebar-collapse');
-  await review.assert('Boolean(document.querySelector(".pd-sidebar.is-collapsed")) && !document.querySelector(".pd-operation-notice").closest(".pd-sidebar")', 'Sidebar failure remains accessible after collapsing the sidebar');
-  await review.evaluate(`(() => {const retry=[...document.querySelectorAll('.pd-operation-notice button')].find(button=>button.textContent==='Retry');retry.click();retry.click();})()`);
+  await review.waitFor('document.querySelector(".pd-update-notice-error")?.textContent.includes("Update unavailable for this test")');
+  await review.click('.pd-activity-sessions');
+  await review.assert('Boolean(document.querySelector(".pd-sidebar.is-collapsed")) && Boolean(document.querySelector(".pd-update-notice-primary")) && !document.querySelector(".pd-update-notice").closest(".pd-sidebar")', 'An update failure remains accessible after collapsing the sidebar');
+  const retry = await review.evaluate(`(() => { const box = document.querySelector('.pd-update-notice-primary').getBoundingClientRect(); return { x: box.x + box.width / 2, y: box.y + box.height / 2 }; })()`);
+  for (let press = 0; press < 2; press++) { await review.mouseDown(retry.x, retry.y); await review.mouseUp(); }
   await review.waitFor('Boolean(window.__modelReview.finishInstallation)');
-  await review.assert('window.__modelReview.installAttempts===2 && document.querySelector(".pd-operation-notice").getAttribute("aria-busy")==="true"', 'Repeated notice retry starts only one installation and exposes pending state');
+  await review.assert('window.__modelReview.installAttempts===2 && !document.querySelector(".pd-update-notice")', 'Repeated retry starts only one installation and hides the toast while it is pending');
   await review.evaluate('window.__modelReview.finishInstallation()');
-  await review.waitFor('!document.querySelector(".pd-operation-notice")');
+  await review.settle();
+  await review.assert('window.__modelReview.installAttempts===2', 'A finished installation does not start another attempt');
   await review.record('save-calls',`${savedCalls}.map(c=>({provider:c.args[0].provider,baseUrl:c.args[0].baseUrl}))`);
 }

@@ -47,9 +47,9 @@ export default async function extensionRequestsScenarios(review) {
   await review.assert(`(() => { const request=document.querySelector(${q(card)}), input=document.querySelector(${q(composer)}); return !document.querySelector('dialog[open]') && request.closest('.pd-composer-wrap') !== null && request.getBoundingClientRect().bottom <= input.closest('.pd-composer-shell').getBoundingClientRect().top + 1; })()`, 'The question appears above the composer without opening a modal dialog');
   await review.key('Escape');
   await review.assert(`${state}.attempts.length === 0 && Boolean(document.querySelector(${q(card)}))`, 'Escape while editing the composer does not cancel an unrelated question');
-  await review.click('.pd-sidebar-collapse');
+  await review.click('.pd-activity-sessions');
   await review.assert(`document.querySelector('.pd-sidebar').classList.contains('is-collapsed') && ${state}.attempts.length === 0`, 'A pending question does not block sidebar interaction');
-  await review.click('.pd-sidebar-collapse');
+  await review.click('.pd-activity-sessions');
 
   await review.click(head + ' button[aria-expanded="true"]');
   await review.assert(`Boolean(document.querySelector(${q(head + ' button[aria-expanded="false"]')})) && ${state}.attempts.length === 0`, 'Collapsing a question does not answer or cancel it');

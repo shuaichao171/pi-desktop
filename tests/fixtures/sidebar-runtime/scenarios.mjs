@@ -41,14 +41,16 @@ function installSidebarRuntimeFixture() {
 
 export default async function sidebarRuntimeScenarios(review) {
   const q = JSON.stringify;
-  await review.waitFor('window.__modelReview?.ready === true && Boolean(document.querySelector(".pd-sidebar-mode"))');
+  await review.waitFor('window.__modelReview?.ready === true && Boolean(document.querySelector(".pd-activity-bar"))');
   await review.viewport(1440, 1000);
   await review.reducedMotion(true);
   await review.reloadWithFixture(`(${installSidebarRuntimeFixture.toString()})()`);
-  // A group previews its first five rows; the rest sit behind "show more".
-  await review.waitFor(`document.querySelectorAll('.pd-session-item[data-session-path]').length === 6 && Boolean(document.querySelector('.pd-session-more'))`);
-  await review.click('.pd-session-more');
-  await review.waitFor(`document.querySelectorAll('.pd-session-item[data-session-path]').length === 8`);
+  // Alpha's two rows sit under its project and the six home conversations,
+  // the pinned one included, sit under unassigned conversations.
+  await review.waitFor(`document.querySelectorAll('.pd-session-item[data-session-path]').length >= 7`);
+  // Unassigned lists preview five rows; reveal the sixth.
+  while (await review.evaluate('Boolean(document.querySelector(".pd-session-more"))')) await review.click('.pd-session-more');
+  await review.assert(`document.querySelectorAll('.pd-session-item[data-session-path]').length === 8`, 'Every conversation, including the pinned one, has a sidebar row');
   const rowOf = title => `[...document.querySelectorAll('.pd-session-item')].find(item => item.querySelector('.pd-session-title-text')?.textContent === ${q(title)})`;
   const rowProp = async (title, expression) => review.evaluate(`(() => { const item = ${rowOf(title)}; return item ? ${expression} : 'MISSING'; })()`);
   const check = async (value, message) => { if (value !== true) throw new Error(`Scenario check failed: ${message} (got ${JSON.stringify(value)})`); };
@@ -77,7 +79,6 @@ export default async function sidebarRuntimeScenarios(review) {
   await review.screenshot('sidebar-runtime-row-hover-no-tooltip');
   await review.mouseMove(900, 500);
   // Project view keeps the same row vocabulary.
-  await review.click('[data-mode="project"]');
   await review.waitFor(`document.querySelectorAll('.pd-sidebar-group[data-project-path]').length > 0`);
   await check(await rowProp('Alpha 运行中的对话', `Boolean(item.closest('.pd-sidebar-group[data-project-path]')?.querySelector('.pd-session-spinner'))`), 'Project view shows the running spinner too');
   // Aggregate vocabulary on the project heading: colored dots, no glyph text.

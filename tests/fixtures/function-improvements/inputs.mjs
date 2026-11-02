@@ -49,13 +49,14 @@ export default async function inputScenarios(review) {
   await review.clickText('.pd-composer-attachment-hint button', '取消PDF处理');
   await review.waitFor('!window.__inputReview.pdf && !document.querySelector(".pd-composer-attachment-hint button")');
   await review.assert('document.querySelector(".pd-composer-shell textarea").value === "Original draft with image" && document.querySelectorAll(".pd-composer-attachment").length === 1', 'Cancelling PDF extraction preserves the original draft');
+  await review.assert('!document.querySelector(".pd-composer-attachment-job")', 'A cancelled PDF is not left behind as a failed attachment job that blocks sending');
   await review.evaluate(`(() => {const state=window.__inputReview;state.queue.items=[{id:'queue-first',text:'Same text',behavior:'followUp',version:1,state:'accepted',attachments:[{kind:'image',name:'first.png',mimeType:'image/png'}]},{id:'queue-second',text:'Same text',behavior:'followUp',version:1,state:'recovered',message:'Confirm before sending',attachments:[{kind:'image',name:'second.png',mimeType:'image/png'}]}];state.publishQueue();})()`);
   await review.waitFor('document.querySelectorAll(".pd-composer-queue-item").length === 2');
   await review.click('[data-queue-id=queue-first] [aria-label="更多操作"]');
   await review.clickText('.pd-queue-menu button', '暂停后续消息');
   await review.waitFor('window.__inputReview.queue.paused === true');
   await review.clickText('[data-queue-id=queue-second] button', '确认恢复');
-  await review.waitFor('document.querySelector("[data-queue-id=queue-second]")?.dataset.state === "accepted" && document.querySelector(".pd-composer-queue")?.getAttribute("aria-busy") === "false"');
+  await review.waitFor('document.querySelector("[data-queue-id=queue-second]")?.dataset.state === "accepted" && document.querySelector("[data-queue-id=queue-second]")?.getAttribute("aria-busy") === "false"');
   await review.evaluate('document.querySelector("[data-queue-id=queue-second] .pd-queue-drag").focus()');
   await review.key('ArrowUp');
   await review.waitFor('window.__inputReview.queue.items[0].id === "queue-second"');
@@ -89,6 +90,8 @@ export default async function inputScenarios(review) {
   })()`);
   const quietRecovery = '!document.querySelector(".pd-composer-error") && !/草稿所属工作区或会话已变化|重试恢复草稿|Retry draft recovery/.test(document.querySelector(".pd-composer-wrap").textContent)';
   await review.waitFor('window.__inputReview.recoveryReads["input-recovery-retry"] === 1');
+  // Type only once the switched-to conversation's composer has painted.
+  await review.settle();
   await review.fill('.pd-composer-shell textarea', '草稿后台恢复期间继续编辑');
   await review.waitFor('!document.querySelector(".pd-send-button").disabled');
   await review.assert(quietRecovery, 'A failed draft read shows no scope warning or manual recovery button and keeps current input usable');

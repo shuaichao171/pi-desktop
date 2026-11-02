@@ -105,7 +105,7 @@ function installSidebarFolderDropFixture() {
 
 export default async function sidebarFolderDropScenarios(review) {
   const q = JSON.stringify, state = 'window.__sidebarFolderDropReview', snapshot = 'window.__modelReview.snapshot';
-  const unassigned = '.pd-sidebar-group[data-section-key="unassigned"]';
+  const unassigned = '.pd-sidebar-region[data-region-id="unassigned-sessions"]';
   const overlay = '.pd-project-folder-drop-overlay';
   const composer = '.pd-composer-shell';
   // Rows carry a compact recency label at their end, but never a project subtitle under the title.
@@ -119,21 +119,19 @@ export default async function sidebarFolderDropScenarios(review) {
     await review.record('synthetic-' + type, `({ event: ${q(event)}, dropCalls: ${state}.drops, projectPaths: ${projectOrder} })`);
   };
 
-  await review.waitFor('window.__modelReview?.ready === true && Boolean(document.querySelector(".pd-sidebar-mode"))');
+  await review.waitFor('window.__modelReview?.ready === true && Boolean(document.querySelector(".pd-activity-bar"))');
   await review.viewport(1440, 1000);
   await review.reducedMotion(true);
   await review.reloadWithFixture(`(${installSidebarFolderDropFixture.toString()})()`);
-  await review.waitFor(`document.querySelectorAll('.pd-session-item[data-session-path]').length === 4`);
-  await review.assert(`${noMetadata} && ${uniqueRows}`, 'Conversation rows have no project subtitle and remain unique in custom-group mode');
-  await review.assert(`document.querySelector(${q('[data-section-key="group:folder-review-group"]')})?.textContent.includes('Alpha 项目对话') && document.querySelector('[data-section-key=pinned]')?.textContent.includes('没有项目的置顶对话')`, 'Custom grouping and pinned conversations remain available');
-  await review.click('[data-mode="project"]');
+  await review.waitFor(`document.querySelectorAll('.pd-session-item[data-session-path]').length >= 3`);
+  await review.assert(`${noMetadata} && ${uniqueRows}`, 'Conversation rows have no project subtitle and remain unique');
   await review.waitFor(`Boolean(document.querySelector(${q(unassigned)}))`);
-  await review.assert(`JSON.stringify(${projectOrder}) === JSON.stringify([${state}.paths.Bravo, ${state}.paths.Alpha])`, 'Project mode excludes the default workspace and retains the pinned project partition');
-  await review.assert(`document.querySelector(${q(unassigned)}).textContent.includes('没有项目的已有对话') && !document.querySelector(${q(unassigned)}).textContent.includes('没有项目的置顶对话') && ${uniqueRows}`, 'Unassigned saved conversations appear once below projects while pinned conversations stay pinned');
-  await review.assert(`(() => { const groups = [...document.querySelectorAll('.pd-organized-list > .pd-sidebar-group')]; return groups.at(-1)?.dataset.sectionKey === 'unassigned' && groups[0]?.dataset.sectionKey === 'pinned'; })()`, 'Unassigned is the last section below projects and pinned conversations');
+  await review.assert(`JSON.stringify(${projectOrder}) === JSON.stringify([${state}.paths.Bravo, ${state}.paths.Alpha])`, 'The project list excludes the default workspace and retains the pinned project partition');
+  await review.assert(`JSON.stringify([...document.querySelectorAll(${q(unassigned + ' .pd-session-title-text')})].map(node => node.textContent)) === JSON.stringify(['没有项目的置顶对话', '没有项目的已有对话']) && ${uniqueRows}`, 'Unassigned saved conversations appear once below projects with the pinned one first');
+  await review.assert(`JSON.stringify([...document.querySelectorAll('.pd-sidebar-region')].map(region => region.dataset.regionId)) === '["project-groups","ungrouped-projects","unassigned-sessions"]'`, 'Unassigned conversations sit in the last region below the project regions');
   await review.assert(noMetadata, 'Project-grouped saved conversation rows omit timestamp and project subtitle');
 
-  await review.click('.pd-new-session');
+  await review.click('.pd-activity-new-session');
   await review.waitFor(`${state}.newSessions === 1 && ${snapshot}.cwd === ${state}.conversationWorkspaces[0]`);
   await review.assert(`${snapshot}.cwd !== ${state}.paths.home && !${state}.navigation.at(-1).options?.cwd && ${projectOrder}.length === 2`, 'Global New conversation creates a separate directory without adding an explicit project');
   await review.assert('!document.querySelector(".pd-session-item.is-unsaved")', 'An empty new conversation stays out of the sidebar until its first message');
@@ -152,13 +150,11 @@ export default async function sidebarFolderDropScenarios(review) {
   await review.waitFor(`!document.querySelector(${q(overlay)})`);
   await review.assert(`${state}.drops.length === 0`, 'Leaving the application dismisses the overlay without registering a project');
 
-  await review.click('[data-mode="grouped"]');
   await drag('dragenter', '.pd-sidebar', dropped);
   await review.waitFor(`Boolean(document.querySelector(${q(overlay)}))`);
   await drag('dragover', composer, dropped);
   await drag('drop', composer, dropped);
   await review.waitFor(`${state}.drops.length === 1 && ${projectOrder}.includes(${state}.paths.Added) && !document.querySelector(${q(overlay)})`);
-  await review.assert('document.querySelector("[data-mode=project]").getAttribute("aria-selected") === "true"', 'An asynchronously registered folder reveals project mode after dropping from custom-group mode');
   await review.assert(`${state}.drops[0].length === 1 && ${state}.drops[0][0] === 'Added' && ${state}.reads.length > ${state}.beforeDrop.reads`, 'Dropping a directory registers it once and refreshes the sidebar project list');
   const preserved = `${snapshot}.cwd === ${state}.beforeDrop.cwd && ${snapshot}.sessionId === ${state}.beforeDrop.sessionId && ${snapshot}.sessionPath === ${state}.beforeDrop.sessionPath && ${state}.navigation.length === ${state}.beforeDrop.navigation && document.querySelector(${q(composer + ' > textarea')}).value === ${state}.beforeDrop.text`;
   await review.assert(preserved, 'Adding a dropped project preserves the current conversation, workspace, and typed draft');

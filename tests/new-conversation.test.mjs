@@ -420,3 +420,44 @@ test('leaving a displayed failed draft keeps it recoverable, while retrying it d
   host.activations[3].resolve();
   await fresh;
 });
+
+test('model and thinking picked while a new conversation prepares are applied before the first input is sent', async () => {
+  const host = fixture(), calls = [];
+  let liveModel = {model:'model',modelProvider:'provider',thinkingLevel:'off'};
+  host.bridge.setModel = async (provider,id) => { calls.push(['model',provider,id]); liveModel = {...liveModel,model:id,modelProvider:provider}; };
+  host.bridge.setThinkingLevel = async level => { calls.push(['thinking',level]); liveModel = {...liveModel,thinkingLevel:level}; };
+  host.bridge.getAgentSnapshot = async () => ({...ready(),...liveModel,status:'idle',sequence:1});
+  useChatStore.setState({models:[{provider:'other',id:'picked',name:'Picked model',reasoning:true,input:['text'],contextWindow:1,maxTokens:1,thinkingLevels:['off','high']}]});
+  const opening = useChatStore.getState().newSession();
+  await useChatStore.getState().setModel('other','picked');
+  await useChatStore.getState().setThinkingLevel('high');
+  assert.deepEqual(calls,[],'nothing reaches the runtime while it is still being prepared');
+  assert.equal(useChatStore.getState().model,'picked','the picker shows the choice immediately');
+  assert.equal(useChatStore.getState().modelName,'Picked model');
+  assert.equal(useChatStore.getState().thinkingLevel,'high');
+  const sending = useChatStore.getState().send('After the switch',undefined,[],'deferred-model-input');
+  await tick();
+  host.publish();
+  host.activations[0].resolve();
+  await Promise.all([opening,sending]);
+  assert.deepEqual(calls,[['model','other','picked'],['thinking','high']]);
+  assert.equal(host.submissions.length,1,'the first input waits for the deferred settings');
+  assert.equal(useChatStore.getState().model,'picked','the live ready reflects the applied choice');
+  assert.equal(useChatStore.getState().modelProvider,'other');
+  assert.equal(useChatStore.getState().thinkingLevel,'high');
+});
+
+test('a rejected deferred model choice is reported without failing the new conversation', async () => {
+  const host = fixture();
+  host.bridge.setModel = async () => { throw new Error('Model unavailable'); };
+  host.bridge.getAgentSnapshot = async () => ({...ready(),status:'idle',sequence:1});
+  const opening = useChatStore.getState().newSession();
+  await useChatStore.getState().setModel('other','missing');
+  await tick();
+  host.publish();
+  host.activations[0].resolve();
+  await opening;
+  assert.equal(useChatStore.getState().sessionId,'created');
+  assert.equal(useChatStore.getState().model,'model','the session keeps the model the runtime actually uses');
+  assert.equal(useChatStore.getState().settingsError,'Model unavailable');
+});

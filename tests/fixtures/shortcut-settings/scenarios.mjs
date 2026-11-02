@@ -3,7 +3,7 @@
 const row = label => `[...document.querySelectorAll('.pd-shortcut-rows li')].find(item => item.querySelector('.pd-shortcut-label > span')?.textContent === ${JSON.stringify(label)})`;
 
 export default async function shortcutSettingsScenarios(review) {
-  await review.waitFor('window.__modelReview?.ready === true && Boolean(document.querySelector(".pd-sidebar-mode"))');
+  await review.waitFor('window.__modelReview?.ready === true && Boolean(document.querySelector(".pd-activity-bar"))');
   await review.viewport(1440, 1000);
   await review.reducedMotion(true);
   await review.evaluate("localStorage.removeItem('pi-desktop.shortcuts.v1')");

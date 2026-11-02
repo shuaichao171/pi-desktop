@@ -95,7 +95,6 @@ export default async function projectCreationScenarios(review) {
   }
   async function install(theme = 'dark') {
     await review.reloadWithFixture(`(${installProjectCreationFixture.toString()})(${q({ theme })});`);
-    await review.click('[data-mode="project"]');
     await review.waitFor(`Boolean(document.querySelector('[aria-label="新建项目"]'))`);
   }
   async function layout(label) {
@@ -116,7 +115,7 @@ export default async function projectCreationScenarios(review) {
     })()`);
   }
 
-  await review.waitFor('window.__modelReview?.ready === true && Boolean(document.querySelector(".pd-sidebar-mode"))');
+  await review.waitFor('window.__modelReview?.ready === true && Boolean(document.querySelector(".pd-activity-bar"))');
   await review.viewport(1440, 1000);
   await review.reducedMotion(true);
   await install();

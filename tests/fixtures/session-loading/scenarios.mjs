@@ -100,13 +100,12 @@ export default async function sessionLoadingScenarios(review) {
   await review.reducedMotion(true);
   await review.reloadWithFixture(`(${installSessionLoadingFixture.toString()})()`);
   await review.waitFor(`document.querySelector('[data-message-id="first-assistant-3"]') && ${ready('first')}`);
-  await review.click('[data-mode="grouped"]');
   await review.waitFor(`Boolean(document.querySelector(${q(row('second'))}))`);
   await review.screenshot('session-loading-history-before');
 
-  // First pass: cold switch (no cached preview) — instant selection + full
-  // loading placeholder. Second pass: warm switch-back — keep-warm preview
-  // paints instantly with the slim switching bar instead of a placeholder.
+  // First pass: cold switch (no cached preview) — instant selection while the
+  // previous conversation stays painted (keep-over) under the slim switching bar.
+  // Second pass: warm switch-back — keep-warm preview paints the target instantly.
   for (const [width, target, mode] of [[1440, 'second', 'cold'], [900, 'first', 'warm']]) {
     await review.viewport(width, 1000);
     await review.evaluate(`${state}.beginSamples()`);
@@ -114,14 +113,14 @@ export default async function sessionLoadingScenarios(review) {
     await review.waitFor(`${state}.phase === 'before-reset'`);
     await review.assert(`document.querySelector(${q(row(target))})?.getAttribute('aria-current') === 'page'`, `zcode instant selection: the ${mode} switch highlights ${target} the moment the click lands`);
     if (mode === 'cold') {
-      await review.assert(`Boolean(document.querySelector('.pd-session-loading')) && !document.querySelector('.pd-message-row') && !document.querySelector('.pd-session-switching')`, `a cold swap shows the full loading placeholder before reset at ${width}px`);
+      await review.assert(`!document.querySelector('.pd-session-loading') && Boolean(document.querySelector('.pd-message-row')) && Boolean(document.querySelector('.pd-session-switching'))`, `a cold swap keeps the previous conversation under the slim switching bar before reset at ${width}px`);
     } else {
       await review.assert(`!document.querySelector('.pd-session-loading') && Boolean(document.querySelector('.pd-message-row')) && Boolean(document.querySelector('.pd-session-switching'))`, `a warm switch-back paints the cached conversation instantly with the slim switching bar at ${width}px`);
     }
     await assertBottom(`Composer remains at the bottom before reset at ${width}px`);
     await advance('reset', 'reset');
     if (mode === 'cold') {
-      await review.assert(`Boolean(document.querySelector('.pd-session-loading')) && document.querySelector(${q(row(target))})?.getAttribute('aria-current') === 'page'`, `the delayed reset keeps the placeholder and the optimistic selection at ${width}px`);
+      await review.assert(`!document.querySelector('.pd-session-loading') && Boolean(document.querySelector('.pd-session-switching')) && document.querySelector(${q(row(target))})?.getAttribute('aria-current') === 'page'`, `the delayed reset keeps the switching bar and the optimistic selection at ${width}px`);
     } else {
       await review.assert(`!document.querySelector('.pd-session-loading') && Boolean(document.querySelector('.pd-message-row'))`, `the delayed reset keeps the painted preview at ${width}px`);
     }

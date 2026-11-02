@@ -425,6 +425,8 @@ export interface UiPluginCatalog {
   packages: UiPluginPackage[];
   resources: UiPluginResource[];
   warnings: string[];
+  /** Saved while a conversation was running; extensions reload automatically once every session is idle. */
+  reloadPending?: boolean;
 }
 export type UiPluginMutation =
   | { cwd: string; action: 'update-target'; scope: UiPluginScope; previewId: string }
@@ -671,6 +673,8 @@ export type AgentUiEvent =
   | { type: 'queue'; count: number; items: UiQueuedMessage[] }
   | { type: 'file-changes'; items: UiFileChange[]; turns: UiFileChangeTurn[]; activeRunId: string | null }
   | { type: 'sessions-changed'; cwd: string }
+  /** A plugin change deferred while conversations ran has now been reloaded into every session. */
+  | { type: 'plugins-reloaded'; cwd: string; warnings: string[] }
   | { type: 'session-runtime'; cwd: string; path: string; runtime: UiSessionRuntimeState }
   | { type: 'error'; message: string; error?: UiAgentError }
   | { type: 'subagent-fleet'; fleet: UiSubagentFleetSnapshot | null }

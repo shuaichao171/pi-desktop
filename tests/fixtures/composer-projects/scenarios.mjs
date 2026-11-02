@@ -177,13 +177,12 @@ export default async function composerProjectsScenarios(review) {
     await review.click(chip);
     await review.waitFor(`Boolean(document.querySelector(${q(menu)})) && [...document.querySelectorAll(${q(menu + ' [role="menuitem"]')})].some(button => button.textContent.trim() === '打开项目…' && !button.disabled)`);
   }
-  await review.waitFor('window.__modelReview?.ready === true && Boolean(document.querySelector(".pd-new-session"))');
+  await review.waitFor('window.__modelReview?.ready === true && Boolean(document.querySelector(".pd-activity-new-session"))');
   await review.viewport(1440, 1000);
   await review.reducedMotion(true);
   await review.reloadWithFixture(`(${installComposerProjectsFixture.toString()})()`);
-  await review.waitFor(`document.querySelector('.pd-message-list')?.textContent.includes('已有历史：project-a') && !document.querySelector('.pd-new-session').disabled`);
+  await review.waitFor(`document.querySelector('.pd-message-list')?.textContent.includes('已有历史：project-a') && !document.querySelector('.pd-activity-new-session').disabled`);
 
-  await review.click('[data-mode="project"]');
   await review.click('.pd-sidebar-group[data-project-path="C:/composer-projects/project-a"] .pd-group-more:not([aria-haspopup])');
   await readyBlank('project-a', 1, 'Project New conversation clears the previously visible project history');
   await review.assert(`${state}.navigation[0].options.cwd === ${state}.paths['project-a']`, 'Project-level creation passes its explicit directory to newSession');
@@ -237,7 +236,7 @@ export default async function composerProjectsScenarios(review) {
 
   // The project picker belongs to an empty conversation. Once the optimistic
   // message is accepted, use the real sidebar action to create the next draft.
-  await review.click('.pd-new-session');
+  await review.click('.pd-activity-new-session');
   await readyBlank('standalone', 3, 'The sidebar opens a new blank independent conversation after the accepted message');
   await review.assert(`!document.querySelector(${q(clear)}) && document.querySelectorAll('.pd-composer-context .pd-context-chip').length === 1`, 'A fresh independent draft displays only the project selector');
   await openMenu();

@@ -65,9 +65,10 @@ export function ComposerControls({ onOpenModelManagement, hasImages = false }: {
 	const generation = useRef(0);
 	const pickerRevision = useRef(0);
 	// Model and thinking switches only affect the NEXT model request, so they stay
-	// available while a conversation turn is running; only session-switch/load
-	// transitions and picker-internal pending states still block.
-	const canChange = !preparingSession && !loading && !pending;
+	// available while a conversation turn is running and while a new conversation
+	// is still being prepared (the store defers the choice until it goes live);
+	// only picker-internal pending states block.
+	const canChange = !loading && !pending;
 	const canThink = levels.length > 1;
 	const currentModel = models.find((item) => item.id === model && item.provider === provider);
 	const modelLabel = model ? modelName?.trim() || model : t('composer.selectModel');
@@ -110,7 +111,6 @@ export function ComposerControls({ onOpenModelManagement, hasImages = false }: {
 	}
 
 	function toggle(picker: Picker) {
-		if (preparingSession) return;
 		if (picker === 'thinking' && !canThink) return;
 		pickerRevision.current += 1;
 		setError(null);
@@ -145,7 +145,7 @@ export function ComposerControls({ onOpenModelManagement, hasImages = false }: {
 	}
 
 	useEffect(() => {
-		if (!open || preparingSession) return;
+		if (!open) return;
 		let active = true;
 		if (open === 'model') {
 			void Promise.allSettled([refreshModels(), refreshModelProviders(), refreshProviderAuth()]).then((results) => {
@@ -167,7 +167,7 @@ export function ComposerControls({ onOpenModelManagement, hasImages = false }: {
 			document.removeEventListener('pointerdown', outside);
 			document.removeEventListener('focusin', outside);
 		};
-	}, [open, preparingSession, refreshModels, refreshModelProviders, refreshProviderAuth]);
+	}, [open, refreshModels, refreshModelProviders, refreshProviderAuth]);
 
 	useLayoutEffect(() => {
 		// The first portal render is hidden until measured; hidden controls cannot focus.

@@ -1,7 +1,7 @@
 // Render failures stay inside the failing surface instead of blanking the window.
 // Each surface gets a malformed bridge response that breaks it while rendering.
 // node tests/fixtures/model-settings/run.mjs --run --scenario=../error-boundaries/scenarios.mjs
-const alive = 'Boolean(document.querySelector(".pd-sidebar-mode")) && Boolean(document.querySelector(".pd-new-session"))';
+const alive = 'Boolean(document.querySelector(".pd-activity-bar")) && Boolean(document.querySelector(".pd-activity-new-session"))';
 
 export default async function errorBoundaryScenarios(review) {
   await review.waitFor(`window.__modelReview?.ready === true && ${alive}`);
@@ -11,11 +11,11 @@ export default async function errorBoundaryScenarios(review) {
   await review.evaluate("window.__boundaryErrors = []; console.error = (...args) => { window.__boundaryErrors.push(args.map(value => value instanceof Error ? value.message : String(value)).join(' ')); }");
 
   await review.evaluate("Object.assign(window.piDesktop, { getPluginCatalog: async () => ({}), newSession: async () => undefined })");
-  await review.click('.pd-sidebar-plugins');
+  await review.click('.pd-activity-plugins');
   await review.waitFor('Boolean(document.querySelector(".pd-main-view > .pd-scoped-error"))');
   await review.assert(alive, 'A plugins page failure keeps the sidebar and window usable');
   await review.screenshot('error-boundary-plugins');
-  await review.click('.pd-new-session');
+  await review.click('.pd-activity-new-session');
   await review.waitFor('!document.querySelector(".pd-main-view > .pd-scoped-error") && Boolean(document.querySelector(".pd-composer-shell"))');
 
   // A malformed search response breaks the dialog while it renders.
@@ -34,6 +34,6 @@ export default async function errorBoundaryScenarios(review) {
   await review.assert('Boolean(document.querySelector(".pd-settings-nav")) && Boolean(document.querySelector(".pd-settings-header > button"))', 'A settings page failure keeps the settings navigation and close button');
   await review.screenshot('error-boundary-settings');
   await review.clickText('.pd-settings-nav button', '常规');
-  await review.waitFor('!document.querySelector(".pd-settings-content .pd-scoped-error") && document.querySelectorAll(".pd-settings-content .pd-settings-group").length === 4');
+  await review.waitFor('!document.querySelector(".pd-settings-content .pd-scoped-error") && document.querySelectorAll(".pd-settings-content .pd-settings-group").length === 5');
   await review.assert("(() => { const logged = window.__boundaryErrors.join(' | '); return logged.includes(\"reading 'find'\") && logged.includes(\"reading 'map'\") && /#31|Objects are not valid/.test(logged) && !/Unexpected bridge call/.test(logged); })()", 'Only the three forced render failures were reported');
 }

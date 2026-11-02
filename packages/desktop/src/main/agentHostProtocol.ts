@@ -65,6 +65,7 @@ export const AGENT_HOST_METHODS = [
 	'setExtensionEnabled',
 	'getPluginCatalog',
 	'mutatePlugin',
+	'hasRunningSessions',
 	'previewPluginResource',
 	'prompt',
 	'editUserMessage',

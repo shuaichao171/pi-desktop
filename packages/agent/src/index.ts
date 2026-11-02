@@ -1388,7 +1388,10 @@ class SingleAgentService {
 				images: attachments.filter((attachment) => attachment.kind === 'image').map(({ kind, name, mimeType }) => ({ kind, name, mimeType })),
 			}, () => session.prompt(promptText, {
 				expandPromptTemplates,
-				streamingBehavior: behavior,
+				// 状态竞态兜底：桌面状态与 SDK 忙状态可能短暂不一致（如 settled 后、agent_start 前
+				// 的运行前补压缩窗口）。此时发送自动排队为 followUp，而不是触发 SDK 硬报错；
+				// 必须在序列化回调执行时求值，不能信任入队时捕获的 session.isIdle。
+				streamingBehavior: behavior ?? (!session.isIdle ? 'followUp' : undefined),
 				images,
 				preflightResult: (stage) => {
 					// SDK abort only cancels an already-started agent loop. A request
@@ -2366,6 +2369,8 @@ class SingleAgentService {
 }
 
 /** Keep independent Pi runtimes alive while the user moves between conversations. */
+const PLUGIN_RELOAD_RETRY_MS = 1_500;
+
 export class AgentService {
 	private readonly personalization = createPersonalizationService({ userDirectory: homedir(), agentDirectory: getAgentDir() });
 	private readonly contexts = new Map<string, SingleAgentService>();
@@ -2388,6 +2393,11 @@ export class AgentService {
 	private credentialOperation: Promise<void> | null = null;
 	private providerOperation: Promise<void> | null = null;
 	private pluginOperation: Promise<UiPluginCatalog> | null = null;
+	/** Background download/settings write; unlike pluginOperation it never blocks prompts or navigation. */
+	private pluginInstallOperation: Promise<UiPluginCatalog> | null = null;
+	/** Configuration saved while sessions ran; reloaded at the next all-idle boundary. */
+	private pluginReloadPending = false;
+	private pluginReloadTimer: ReturnType<typeof setTimeout> | null = null;
 	private pluginWarnings: string[] = [];
 	private readonly mcp = new McpManager(getAgentDir());
 	private closing = false;
@@ -3132,10 +3142,16 @@ export class AgentService {
 	async getPluginCatalog(cwd: string): Promise<UiPluginCatalog> {
 		const service = this.requirePluginWorkspace(cwd);
 		const catalog = await service.getPluginCatalog();
-		return { ...catalog, warnings: [...new Set([...catalog.warnings, ...this.pluginWarnings])] };
+		return { ...catalog, ...(this.pluginReloadPending ? { reloadPending: true } : {}), warnings: [...new Set([...catalog.warnings, ...this.pluginWarnings])] };
 	}
+	/** True while any loaded session runs or is configuring; plugin installs then defer their reload. */
+	hasRunningSessions(): boolean { return [...this.contexts.values()].some((context) => !context.canEvict); }
 	mutatePlugin(input: UiPluginMutation): Promise<UiPluginCatalog> {
-		return this.runPluginMutation(input?.cwd, async () => input);
+		// Adding a package or toggling a resource only writes configuration, so it may
+		// run beside a conversation. Remove / update replace files a loaded extension may
+		// still read, and an explicit reload needs idle sessions: those keep the idle gate.
+		const deferReload = input?.action === 'install' || input?.action === 'set-enabled';
+		return this.runPluginMutation(input?.cwd, async () => input, { deferReload });
 	}
 	async previewPluginResource(request: { cwd: string; path: string; kind: UiPluginResourceKind; scope: UiPluginScope }): Promise<UiPluginResourcePreview> {
 		return this.requirePluginWorkspace(request?.cwd).previewPluginResource(request);
@@ -3183,6 +3199,9 @@ export class AgentService {
 		try { await this.credentialOperation; } catch { /* Credential errors are reported to the caller. */ }
 		try { await this.providerOperation; } catch { /* Provider errors are reported to the caller. */ }
 		try { await this.pluginOperation; } catch { /* Plugin errors are reported to the caller. */ }
+		try { await this.pluginInstallOperation; } catch { /* Plugin errors are reported to the caller. */ }
+		if (this.pluginReloadTimer) clearTimeout(this.pluginReloadTimer);
+		this.pluginReloadTimer = null;
 		await Promise.allSettled([...this.contexts.values()].map((service) => service.dispose()));
 		await this.mcp.dispose();
 		this.contexts.clear();
@@ -3205,10 +3224,64 @@ export class AgentService {
 		return service;
 	}
 
-	private async runPluginMutation(cwd: string, request: () => Promise<UiPluginMutation>): Promise<UiPluginCatalog> {
+	/**
+	 * Install / enable-toggle while a conversation runs: only the download and the
+	 * settings write happen now. Running sessions keep their loaded extensions; the
+	 * reload is deferred to the next boundary where every session is idle.
+	 */
+	private async runDeferredPluginMutation(service: SingleAgentService, request: () => Promise<UiPluginMutation>): Promise<UiPluginCatalog> {
+		// Reserve before the first await, like runPluginMutation.
+		const operation = Promise.resolve().then(async () => {
+			await service.applyPluginMutation(await request());
+			this.pluginReloadPending = true;
+			const catalog = await service.getPluginCatalog();
+			return { ...catalog, reloadPending: true, warnings: [...new Set([...catalog.warnings, ...this.pluginWarnings])] };
+		});
+		this.pluginInstallOperation = operation;
+		try { return await operation; }
+		finally {
+			if (this.pluginInstallOperation === operation) this.pluginInstallOperation = null;
+			// The run may have settled during the download.
+			this.schedulePluginReload();
+		}
+	}
+
+	private schedulePluginReload(delay = 0): void {
+		if (!this.pluginReloadPending || this.pluginReloadTimer || this.closing) return;
+		this.pluginReloadTimer = setTimeout(() => { this.pluginReloadTimer = null; void this.flushPluginReload(); }, delay);
+	}
+
+	/**
+	 * Runs the deferred reload once nothing is running. An idle status can precede
+	 * the prompt call's own bookkeeping, so a busy check re-polls instead of waiting
+	 * for another status event that may never come.
+	 */
+	private async flushPluginReload(): Promise<void> {
+		const service = this.active;
+		if (!this.pluginReloadPending || this.closing) return;
+		if (!service || this.transition || this.pluginOperation || this.pluginInstallOperation || this.credentialOperation || this.trimOperation
+			|| this.providerOperation || ![...this.contexts.values()].every((context) => context.canEvict)) {
+			this.schedulePluginReload(PLUGIN_RELOAD_RETRY_MS);
+			return;
+		}
+		// One attempt per saved change: blocker warnings are reported, not retried.
+		this.pluginReloadPending = false;
+		try {
+			const catalog = await this.runPluginMutation(service.cwd, async () => ({ cwd: service.cwd, action: 'reload' }));
+			this.fire({ type: 'plugins-reloaded', cwd: service.cwd, warnings: catalog.warnings });
+		} catch {
+			// A prompt raced the idle check: stay pending and retry at the next idle boundary.
+			this.pluginReloadPending = true;
+			this.schedulePluginReload(PLUGIN_RELOAD_RETRY_MS);
+		}
+	}
+
+	private async runPluginMutation(cwd: string, request: () => Promise<UiPluginMutation>, options?: { deferReload?: boolean }): Promise<UiPluginCatalog> {
 		const service = this.requirePluginWorkspace(cwd);
 		if (this.credentialOperation || this.trimOperation) throw new Error('会话或设置正在更新，请稍后再修改插件');
+		if (this.pluginInstallOperation) throw new Error('已有插件正在后台安装，请稍后再试');
 		const contexts = [...this.contexts.values()];
+		if (options?.deferReload && contexts.some((context) => !context.canEvict)) return this.runDeferredPluginMutation(service, request);
 		const releases: (() => void)[] = [];
 		try { for (const context of contexts) releases.push(context.lockPluginConfiguration()); }
 		catch (error) { for (const release of releases) release(); throw error; }
@@ -3230,6 +3303,8 @@ export class AgentService {
 				for (const context of contexts) {
 					for (const problem of await context.reloadPlugins()) this.pluginWarnings.push(`${context.cwd}：${problem}`);
 				}
+				// Every loaded session now runs the saved configuration.
+				this.pluginReloadPending = false;
 			}
 			const catalog = await service.getPluginCatalog();
 			return { ...catalog, warnings: [...new Set([...catalog.warnings, ...this.pluginWarnings])] };
@@ -3375,6 +3450,7 @@ export class AgentService {
 			// Busy tracking covers every context: a foreground run that the user
 			// switches away from must still light the unread dot when it settles.
 			if (event.type === 'status') {
+				if (event.status === 'idle') this.schedulePluginReload();
 				if (event.status === 'busy' || event.status === 'starting') {
 					this.backgroundBusyContexts.add(service);
 				} else if (this.backgroundBusyContexts.delete(service) && this.active !== service) {

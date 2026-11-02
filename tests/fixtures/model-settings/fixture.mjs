@@ -12,6 +12,39 @@ export function installModelSettingsFixture(options = {}) {
     delays: {}, failures: {}, pending: {},
     discovery: { models: [{ id: 'discovered-model', name: '新发现模型', contextWindow: 128000, maxTokens: 8192, input: ['text'], reasoning: false }, { id: 'metadata-missing', name: '需要核对能力的模型' }], warnings: ['模拟目录：不连接真实供应商'] },
     desktopSettings: { notificationsEnabled: false, closeBehavior: 'quit', conversationStorageDirectory: 'C:\\Users\\review\\PiDesktopWorkspace' },
+    pluginCatalog: {
+      projectTrusted: true, warnings: [],
+      packages: [
+        { source: 'npm:@review/pi-git-tools', scope: 'user', name: '@review/pi-git-tools', description: 'Git 提交、分支与 PR 辅助命令', version: '1.2.0', installed: true, path: 'C:\\Users\\review\\.pi\\agent\\packages\\pi-git-tools' },
+        { source: 'npm:@review/pi-lint-skills', scope: 'project', name: '@review/pi-lint-skills', description: '项目代码规范技能包', version: '0.4.1', installed: true, path: 'C:\\renderer-review\\project\\.pi\\packages\\pi-lint-skills' },
+      ],
+      resources: [
+        { path: 'C:\\Users\\review\\.pi\\agent\\packages\\pi-git-tools\\extensions\\git.ts', kind: 'extensions', name: 'git', description: '在对话中执行 Git 操作', enabled: true, loaded: true, canToggle: true, scope: 'user', source: 'npm:@review/pi-git-tools', origin: 'package' },
+        { path: 'C:\\Users\\review\\.pi\\agent\\extensions\\notify.ts', kind: 'extensions', name: 'notify', description: '任务完成时发送系统通知', enabled: false, loaded: false, canToggle: true, scope: 'user', source: 'local', origin: 'top-level' },
+        { path: 'C:\\renderer-review\\project\\.pi\\packages\\pi-lint-skills\\skills\\lint\\SKILL.md', kind: 'skills', name: 'lint', description: '按项目规范检查并修复代码风格', enabled: true, loaded: true, canToggle: true, scope: 'project', source: 'npm:@review/pi-lint-skills', origin: 'package' },
+        { path: 'C:\\Users\\review\\.pi\\agent\\prompts\\review.md', kind: 'prompts', name: 'review', description: '代码审查提示词', enabled: true, loaded: true, canToggle: true, scope: 'user', source: 'local', origin: 'top-level' },
+      ],
+    },
+    engineStatus: { builtinVersion: '1.4.0', selection: { mode: 'builtin', version: '1.4.0' }, active: { mode: 'builtin', version: '1.4.0' }, pendingRestart: false },
+    mcpServers: [
+      { id: 'filesystem', name: 'filesystem', enabled: true, transport: 'stdio', command: 'npx', args: ['-y', '@modelcontextprotocol/server-filesystem', '.'], requestTimeoutMs: 30000, scope: 'user', status: 'connected', tools: [{ name: 'read_file', registeredName: 'filesystem_read_file', description: '读取文件内容' }, { name: 'list_directory', registeredName: 'filesystem_list_directory', description: '列出目录' }] },
+      { id: 'docs', name: 'docs', enabled: true, transport: 'http', url: 'https://mcp.example.invalid/docs', requestTimeoutMs: 30000, scope: 'project', status: 'error', error: '连接被拒绝（ECONNREFUSED）', tools: [] },
+    ],
+    mcpCliServers: [],
+    cloudSync: { configured: false, config: null, status: { lastUploadAt: null, lastAutoSyncAt: null, lastError: null, pending: false } },
+    machineSessions: [
+      { path: 'C:\\Users\\review\\.pi\\agent\\sessions\\project\\a.jsonl', id: 'machine-a', name: '重构设置面板的卡片布局', firstMessage: '重构设置面板的卡片布局', modified: '2026-10-30T08:00:00Z', messageCount: 12, cwd: 'C:\\renderer-review\\project', registered: true, running: false, bytes: 48213 },
+      { path: 'C:\\Users\\review\\.pi\\agent\\sessions\\legacy\\b.jsonl', id: 'machine-b', firstMessage: '旧项目里的一次调试', modified: '2026-09-12T02:30:00Z', messageCount: 4, cwd: 'D:\\legacy\\tool', registered: false, running: false, bytes: 9120 },
+    ],
+    workspaceEntries: {
+      '': [{ name: 'src', path: 'src', kind: 'directory' }, { name: 'package.json', path: 'package.json', kind: 'file', size: 812 }, { name: 'README.md', path: 'README.md', kind: 'file', size: 1460 }],
+      src: [{ name: 'index.ts', path: 'src/index.ts', kind: 'file', size: 320 }],
+    },
+    workspaceFiles: { 'package.json': '{\n  "name": "review-project",\n  "private": true\n}\n', 'README.md': '# Review project\n', 'src/index.ts': 'export const ready = true;\n' },
+    gitLog: [
+      { hash: 'a1b2c3d4e5f60718293a4b5c6d7e8f9012345678', shortHash: 'a1b2c3d', author: 'Review', date: '2026-10-30T08:00:00Z', subject: 'feat: 设置面板卡片布局' },
+      { hash: 'b2c3d4e5f60718293a4b5c6d7e8f901234567890', shortHash: 'b2c3d4e', author: 'Review', date: '2026-10-29T08:00:00Z', subject: 'fix: 窄窗口横向滚动' },
+    ],
     snapshot: { sequence: 0, status: 'idle', model: 'gpt-review', modelName: 'GPT Review', modelProvider: 'openai', thinkingLevel: 'medium', availableThinkingLevels: ['off', 'low', 'medium', 'high'], contextUsage: null, cwd: 'C:\\renderer-review\\project', sessionId: 'model-review-session', sessionPath: 'C:\\renderer-review\\session.jsonl', messages: [], activities: [], queuedCount: 0, queuedMessages: [], fileChanges: [], historyTotal: 0, error: null },
   };
   const listeners = new Map();
@@ -126,8 +159,39 @@ export function installModelSettingsFixture(options = {}) {
       config: { enabled: false, historian: { model: null, thinkingLevel: null }, embedding: { provider: 'off', model: null, endpoint: null, apiKey: null, apiKeySet: false }, executeThresholdPercentage: null, historyBudgetPercentage: null },
       plugin: { installed: false, enabled: null, installedVersion: null, latestVersion: null, updateAvailable: false, error: null },
     }),
+    // Read-only surfaces behind the plugins, engine, MCP, data and workbench pages.
+    // Sample data lives on `state` so a scenario can reshape it before opening a page;
+    // every write action stays unstubbed and still reports as an unexpected call.
+    getPluginCatalog: (cwd) => ({ cwd, ...clone(state.pluginCatalog) }),
+    discoverPlugins: () => ({ items: [], total: 0 }),
+    listExtensions: () => clone(state.pluginCatalog.resources.filter((item) => item.kind === 'extensions').map(({ path, name, enabled, scope, origin, source }) => ({ path, name, enabled, scope, origin, source }))),
+    getPiEngineStatus: () => clone(state.engineStatus),
+    getMcpSnapshot: () => ({ cwd: state.snapshot.cwd, sessionId: state.snapshot.sessionId, projectTrusted: true, servers: clone(state.mcpServers), cliServers: clone(state.mcpCliServers) }),
+    getCloudSyncState: () => clone(state.cloudSync),
+    getProjectDefaults: () => ({ cwd: state.snapshot.cwd, path: `${state.snapshot.cwd}\\.pi\\settings.json`, version: 'fixture', trusted: true, reason: null, global: {}, project: {}, effective: { defaultProvider: state.snapshot.modelProvider, defaultModel: state.snapshot.model, defaultThinkingLevel: state.snapshot.thinkingLevel } }),
+    listMachineSessions: () => clone(state.machineSessions),
+    searchSessions: () => ({ sessions: [], truncated: false }),
+    searchSessionsPage: () => ({ sessions: [], total: 0, truncated: false, diagnostics: { elapsedMs: 0, filesRead: 0, bytesRead: 0, indexed: 0 } }),
+    searchProjectFiles: (request) => ({ files: [], total: 0, truncated: false, ignoredDirectories: [], skipReasons: { binary: 0, large: 0, unreadable: 0, ignored: 0 }, rules: request?.rules ?? { ignoredDirectories: [], include: [], exclude: [], maxFileBytes: 1048576 }, diagnostics: { elapsedMs: 0, filesRead: 0, bytesRead: 0, indexed: 0 } }),
+    cancelDataSearch: () => undefined,
+    peekSession: () => null,
+    getResidentSessionSnapshot: () => null,
+    getHistoryPage: (offset, limit) => ({ offset, limit, total: state.snapshot.historyTotal, messages: [], activities: [], runs: [] }),
+    getSessionTree: () => [],
+    getProjectsDirectory: () => 'C:\\Users\\review\\Projects',
+    listWorkspaceEntries: (relativePath = '') => clone(state.workspaceEntries[relativePath] ?? []),
+    searchWorkspaceFiles: () => ({ files: [], truncated: false }),
+    readWorkspaceFile: (relativePath) => state.workspaceFiles[relativePath] ?? '',
+    getWorkspaceGitLog: () => clone(state.gitLog),
+    getWorkspaceGitDiff: () => '',
+    getWorkspaceCommitContext: () => '',
+    listTaskWorktrees: () => [],
+    getWorkspaceTerminal: () => null,
+    getFileCheckpoint: () => null,
+    listProjectMemories: () => ({ items: [], total: 0, hasMore: false }),
+    listUserMemories: () => ({ items: [], total: 0, hasMore: false }),
   };
-  const subscriptions = ['onAgentEvent', 'onUpdateStateChanged', 'onAppCommand', 'onWindowChromeStateChanged', 'onExtensionDialog', 'onExtensionDialogClosed', 'onWorkspaceCommandEvent', 'onAutomationChanged', 'onWorkspaceChanged', 'onGoalChanged'];
+  const subscriptions = ['onAgentEvent', 'onUpdateStateChanged', 'onAppCommand', 'onWindowChromeStateChanged', 'onExtensionDialog', 'onExtensionDialogClosed', 'onWorkspaceCommandEvent', 'onAutomationChanged', 'onWorkspaceChanged', 'onGoalChanged', 'onCloudSyncChanged', 'onWorkspaceTerminalEvent'];
   const bridge = {};
   for (const name of subscriptions) bridge[name] = (listener) => {
     if (!listeners.has(name)) listeners.set(name, new Set());

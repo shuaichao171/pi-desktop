@@ -34,13 +34,13 @@ async function capturePages(review, theme) {
 }
 
 export default async function generalSettingsScenarios(review) {
-  await review.waitFor('window.__modelReview?.ready === true && Boolean(document.querySelector(".pd-sidebar-mode"))');
+  await review.waitFor('window.__modelReview?.ready === true && Boolean(document.querySelector(".pd-activity-bar"))');
   await review.viewport(1440, 1000);
   await review.reducedMotion(true);
   await review.evaluate(`(${installPersonalizationFixture.toString()})()`);
   await review.click('.pd-settings-entry');
 
-  await review.assert("document.querySelectorAll('.pd-settings-content .pd-settings-group').length === 4", 'General settings are grouped into four cards');
+  await review.assert("document.querySelectorAll('.pd-settings-content .pd-settings-group').length === 5", 'General settings are grouped into five cards');
   await review.assert("document.querySelector('[data-setting=\"show-reasoning\"]').getAttribute('role') === 'switch'", 'On/off settings render as switches');
   const before = await review.evaluate("document.querySelector('[data-setting=\"show-reasoning\"]').getAttribute('aria-checked')");
   await review.click('[data-setting="show-reasoning"]');

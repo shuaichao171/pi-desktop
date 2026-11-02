@@ -46,13 +46,13 @@ export default async function sidebarTitlesScenarios(review) {
   }
   async function moveAway() { await review.mouseMove(700, 600); }
   async function assertIdle() {
-    await review.assert(`['short', 'long', 'border'].every(id => { const row = document.querySelector('.pd-session-item[data-session-path$="' + id + '.jsonl"]'), title = row.querySelector('.pd-session-title'), button = row.querySelector('.pd-session-row'); const r = button.getBoundingClientRect(), t = title.getBoundingClientRect(); return r.right - t.right <= 12 && t.width > r.width - 24; })`, 'Idle titles use the full row width instead of reserving space for hidden action buttons');
+    await review.assert(`['short', 'long', 'border'].every(id => { const row = document.querySelector('.pd-session-item[data-session-path$="' + id + '.jsonl"]'), title = row.querySelector('.pd-session-title'), button = row.querySelector('.pd-session-row'); const r = button.getBoundingClientRect(), t = title.getBoundingClientRect(), lead = row.querySelector('.pd-session-leading')?.getBoundingClientRect().width ?? 0; return r.right - t.right <= 12 && t.width > r.width - lead - 24; })`, 'Idle titles use the full row width instead of reserving space for hidden action buttons');
     await review.assert(`Array.from(document.querySelectorAll('.pd-session-actions')).every(node => getComputedStyle(node).opacity === '0' && getComputedStyle(node).pointerEvents === 'none')`, 'Idle action buttons are invisible and do not intercept title clicks');
     await review.assert(`!(${animation('short')}) && !(${animation('long')}) && !(${animation('border')})`, 'No conversation title scrolls while the pointer is outside the sidebar');
   }
   async function assertHover(id) {
     await review.waitFor(`getComputedStyle(document.querySelector(${q(actions(id))})).opacity === '1'`);
-    await review.assert(`(() => { const target = document.querySelector(${q(actions(id))}), style = getComputedStyle(target), before = getComputedStyle(target, '::before'); const visible = value => value !== 'none' && value !== 'transparent' && value !== 'rgba(0, 0, 0, 0)'; return style.position === 'absolute' && style.pointerEvents !== 'none' && (visible(style.backgroundColor) || visible(style.backgroundImage) || visible(before.backgroundColor) || visible(before.backgroundImage)); })()`, 'Hovered action buttons overlay the row with a visible backing surface');
+    await review.assert(`(() => { const style = getComputedStyle(document.querySelector(${q(actions(id))})); return style.position === 'absolute' && style.pointerEvents !== 'none'; })()`, 'Hovered action buttons overlay the row and accept pointer input');
     await review.assert(`(() => { const viewport = document.querySelector(${q(title(id))}).getBoundingClientRect(), action = document.querySelector(${q(actions(id))}).getBoundingClientRect(); return viewport.right <= action.left + 1; })()`, 'The hovered title stays clear of the overlaid action buttons');
   }
   async function assertScrolling(id) {
@@ -70,7 +70,7 @@ export default async function sidebarTitlesScenarios(review) {
   await moveAway();
   // Fit one title between the idle width and the smaller hover viewport using
   // the real renderer font, so this case remains meaningful on other machines.
-  const borderTitle = await review.evaluate(`(() => { const viewport = document.querySelector(${q(title('border'))}), inner = viewport.querySelector('.pd-session-title-text'), action = document.querySelector(${q(actions('border'))}); const canvas = document.createElement('canvas'), context = canvas.getContext('2d'); context.font = getComputedStyle(inner).font; const target = viewport.clientWidth - action.getBoundingClientRect().width / 2; let value = '悬停边界标题'; while (context.measureText(value + '文字').width < target) value += '文字'; return value; })()`);
+  const borderTitle = await review.evaluate(`(() => { const viewport = document.querySelector(${q(title('border'))}), inner = viewport.querySelector('.pd-session-title-text'), action = document.querySelector(${q(actions('border'))}); const canvas = document.createElement('canvas'), context = canvas.getContext('2d'); context.font = getComputedStyle(inner).font; const target = viewport.clientWidth - 2; let value = '悬停边界标题'; while (context.measureText(value + '字').width < target) value += '字'; return value; })()`);
   await review.reloadWithFixture(`(${installSidebarTitlesFixture.toString()})(${q({ borderTitle })});`);
   await review.waitFor('document.querySelectorAll(".pd-session-title-text").length === 3');
   await moveAway();
@@ -132,7 +132,7 @@ export default async function sidebarTitlesScenarios(review) {
   await moveTo('border');
   // zcode-style inline confirm: the first click only arms the row.
   await review.click(`${row('border')} [data-session-action="archive"]`);
-  await review.waitFor(`${row('border')}.classList.contains('is-archive-confirming')`);
+  await review.waitFor(`document.querySelector(${q(row("border"))}).classList.contains("is-archive-confirming")`);
   await review.assert(`(() => { const item = document.querySelector(${q(row('border'))}); const button = item.querySelector('[data-session-action="archive"]'); return button.classList.contains('is-confirming') && button.getAttribute('aria-label').startsWith('确认归档') && getComputedStyle(item.querySelector('.pd-session-actions')).opacity === '1' && ${state}.writes.length === 1; })()`, 'The first archive click arms an inline confirm (visible without hover) and writes nothing yet');
   await review.screenshot('sidebar-titles-archive-confirming');
   await review.click(`${row('border')} [data-session-action="archive"]`);

@@ -6,7 +6,7 @@
 export default async function activityBarScenarios(review) {
   const check = async (value, message) => { if (value !== true) throw new Error(`Scenario check failed: ${message} (got ${JSON.stringify(value)})`); };
 
-  await review.waitFor('window.__modelReview?.ready === true && Boolean(document.querySelector(".pd-sidebar-mode, .pd-app-shell.is-pai"))');
+  await review.waitFor('window.__modelReview?.ready === true && Boolean(document.querySelector(".pd-activity-bar, .pd-app-shell.is-pai"))');
   await review.viewport(1440, 900);
   await review.reducedMotion(true);
 

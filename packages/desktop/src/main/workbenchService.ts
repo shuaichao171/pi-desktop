@@ -2,7 +2,7 @@ import type { App } from 'electron';
 import { execFile, spawn, type ChildProcessWithoutNullStreams, type ExecFileException } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { createRequire } from 'node:module';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync } from 'node:fs';
 import { lstat, mkdir, open, readFile, readdir, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path';
@@ -999,11 +999,12 @@ export class WorkbenchService {
 		await Promise.allSettled([...stops, ...this.stoppingCommands.values()]);
 		if (this.safeHooksPath) {
 			const target = resolve(this.safeHooksPath);
+			// Detach first: a git call during the removal creates a fresh directory.
+			this.safeHooksPath = null;
 			if (isWithin(resolve(tmpdir()), target) && basename(target).startsWith('pi-desktop-no-git-hooks-')) {
-				try { rmSync(target, { recursive: true, force: true }); }
+				try { await rm(target, { recursive: true, force: true }); }
 				catch { /* A stale empty temporary directory does not affect the workspace. */ }
 			}
-			this.safeHooksPath = null;
 		}
 	}
 

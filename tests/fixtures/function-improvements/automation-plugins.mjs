@@ -23,7 +23,7 @@ export default async function automationPluginScenarios(review) {
     bridge.saveAutomation=async input=>{state.saves.push(clone(input));if(state.failSave)throw Error('模拟状态保存失败，原配置保留');Object.assign(state.automations.automations.find(task=>task.id===input.id),clone(input));state.automations.revision++;return clone(state.automations);};
     bridge.cancelAutomationRun=async id=>{state.cancels.push(id);Object.assign(state.automations.runs.find(run=>run.id===id),{status:'cancelled',finishedAt:'2026-09-26T01:03:00Z',retryAt:null,error:'任务已停止'});state.automations.revision++;return clone(state.automations);};
   })()`);
-  await review.click('.pd-sidebar-plugins');
+  await review.click('.pd-activity-plugins');
   await review.waitFor('Boolean(document.querySelector(".pd-plugin-card-main"))');
   await review.click('.pd-plugin-card-main');
   await review.clickText('.pd-plugin-update-check button','检查更新版本');
@@ -58,7 +58,7 @@ export default async function automationPluginScenarios(review) {
   await review.waitFor('document.querySelector(".pd-plugin-card-meta")?.textContent.includes("2.1.0")');
   await review.assert('window.__automationPlugins.mutations[1].previewId==="preview-5" && window.__automationPlugins.mutations[2].previewId==="preview-5" && window.__automationPlugins.catalog.packages[0].source==="npm:fixture-review@2.1.0"','Upgrade confirmation and retry carry the exact preview identity and refreshed catalog shows its installed version');
   await review.viewport(1440,1000);
-  await review.click('.pd-sidebar-automation');
+  await review.click('.pd-activity-automations');
   await review.waitFor('document.querySelectorAll(".pd-automation-card").length===2');
   await review.assert('document.querySelectorAll(".pd-automation-card")[1].textContent.includes("已完成") && document.querySelectorAll(".pd-automation-card")[1].textContent.includes("已计划派发 3 次 / 3") && document.querySelector(".pd-automation-card").textContent.includes("等待派发重试")','Automation cards expose completion, scheduled quota and retry status separately');
   await review.assert('(() => { const card=document.querySelectorAll(".pd-automation-card")[1],enable=[...card.querySelectorAll("footer button")].find(button=>button.textContent==="启用");return card.textContent.includes("编辑计划或提高次数上限") && !card.textContent.includes("已暂停后续计划") && enable.disabled && enable.title.includes("编辑计划") && !card.querySelector(".pd-automation-card-heading button").disabled; })()','Completed automations explain how to resume and keep editing available while direct enable is disabled');

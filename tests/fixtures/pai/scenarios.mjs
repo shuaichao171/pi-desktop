@@ -41,12 +41,12 @@ function installPaiReview() {
 
 export default async function paiScenarios(review) {
   const metrics = '.pd-conversation-metrics';
-  const keys = ['speed', 'tokens', 'duration'];
+  const keys = ['speed', 'tokens', 'duration', 'balance'];
   await review.reloadWithFixture(`(${installPaiReview.toString()})()`);
   await review.viewport(920, 720);
   await review.reducedMotion(true);
   await review.waitFor(`Boolean(document.querySelector('.pd-app-shell.is-pai')) && document.querySelector('${metrics}')?.textContent.includes('55s')`);
-  await review.assert("!document.querySelector('.pd-sidebar') && !document.querySelector('.pd-sidebar-resize') && !document.querySelector('.pd-workbench-toggle') && !document.querySelector('.pd-header-sidebar-toggle') && !!document.querySelector('.pd-window-controls')", 'pai renders a standalone conversation without sidebar or workbench controls');
+  await review.assert("!document.querySelector('.pd-sidebar') && !document.querySelector('.pd-sidebar-resize') && !document.querySelector('.pd-top-bar-workspace-button') && !document.querySelector('.pd-header-sidebar-toggle') && !!document.querySelector('.pd-window-controls')", 'pai renders a standalone conversation without sidebar or workbench controls');
   await review.assert(`(() => {
     const row = document.querySelector('.pd-compact-controls'), controls = document.querySelector('.pd-pai-controls'), button = controls?.querySelector('button');
     if (!row || !button) return false;
@@ -62,7 +62,7 @@ export default async function paiScenarios(review) {
   await review.key('k', { ctrl: true });
   await review.assert("!document.querySelector('.pd-sidebar') && !document.querySelector('.pd-search-dialog')", 'Main-window sidebar and command-palette shortcuts do not expose hidden panels in pai');
   await review.click('.pd-pai-settings');
-  await review.waitFor("document.querySelectorAll('.pd-metrics-setting[role=\"switch\"]').length === 3");
+  await review.waitFor("document.querySelectorAll('.pd-metrics-setting[role=\"switch\"]').length === 4");
   await review.key('f', { ctrl: true });
   await review.assert("!document.querySelector('.pd-transcript-find') && document.querySelector('.pd-settings-dialog').contains(document.activeElement)", 'Conversation shortcuts cannot open a background finder or take focus from settings');
   await review.evaluate("document.querySelector('.pd-metrics-settings').scrollIntoView({block: 'center'})");

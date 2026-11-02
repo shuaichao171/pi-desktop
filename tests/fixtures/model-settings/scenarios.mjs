@@ -417,7 +417,7 @@ export default async function runScenarios(review) {
   await review.click('[data-action="add-provider"]');
   await waitForTemplates();
   await review.assert(`Boolean(document.querySelector(${JSON.stringify(`${templatesDialog} [data-template="custom"]`)})) && Boolean(document.querySelector(${JSON.stringify(`${templatesDialog} .pd-model-template-grid [data-template]`)}))`, 'The empty configured list still offers custom creation and provider templates');
-  await review.assert(`(() => {const listed=new Set([...document.querySelectorAll(${JSON.stringify(`${templatesDialog} [data-add-provider]`)})].map(element=>element.dataset.addProvider)); return listed.size===window.__modelReview.providers.length && window.__modelReview.providers.every(provider=>listed.has(provider.provider));})()`, 'Add provider exposes all unconfigured built-in and custom providers');
+  await review.assert(`(() => {const listed=new Set([...document.querySelectorAll(${JSON.stringify(`${templatesDialog} [data-add-provider], ${templatesDialog} [data-template]`)})].map(element=>element.dataset.addProvider ?? element.dataset.template)); return window.__modelReview.providers.every(provider=>listed.has(provider.provider));})()`, 'Add provider exposes every unconfigured built-in and custom provider as a setup or preset card');
   await review.screenshot('09-all-unconfigured-providers');
   await review.click(`${templatesDialog} .pd-model-dialog-header button`);
   await noOpenModelDialog();
@@ -442,7 +442,7 @@ export default async function runScenarios(review) {
   await review.evaluate(`window.__modelReview.discovery = ${JSON.stringify({ models: [{ id: 'discovered-model', name: '新发现模型', contextWindow: 128000, maxTokens: 8192, input: ['text'], reasoning: false }, { id: 'metadata-missing', name: '需要核对能力的模型' }], warnings: ['模拟目录：不连接真实供应商'] })}`);
   await review.click('[data-action="add-provider"]');
   await waitForTemplates();
-  await review.click(`${templatesDialog} [data-add-provider="openai"]`);
+  await review.click(`${templatesDialog} [data-template="openai"]`);
   await review.waitFor(`Boolean(document.querySelector(${JSON.stringify(credentialsDialog)}))`);
   await review.fill(`${credentialsDialog} input#pd-api-key-openai`, 'fixture-openai-key');
   await review.click(`${credentialsDialog} button[type="submit"]`);

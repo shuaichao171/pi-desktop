@@ -351,13 +351,16 @@ export function buildSidebarProjectGroups(sessions: SidebarSession[], projectPat
   for (const session of sessions) {
     if (seen.has(session.path)) continue;
     seen.add(session.path);
-    // Pinned conversations already have a shared section above the project list.
-    if (session.pinned) continue;
     const project = projectByWorkspace.get(sidebarWorkspaceKey(session.workspace));
     (project ? project.sessions : unassigned).push(session);
   }
-  for (const project of projects) project.sessions = orderSessions(project.sessions);
-  return { projects, unassigned: orderSessions(unassigned) };
+  for (const project of projects) project.sessions = pinnedFirst(project.sessions);
+  return { projects, unassigned: pinnedFirst(unassigned) };
+}
+
+/** Pinned conversations lead their own list; each part keeps its usual order. */
+function pinnedFirst(sessions: SidebarSession[]): SidebarSession[] {
+  return [...orderSessions(sessions.filter((session) => session.pinned)), ...orderSessions(sessions.filter((session) => !session.pinned))];
 }
 
 /**
