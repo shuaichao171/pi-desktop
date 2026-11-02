@@ -118,12 +118,6 @@ import { createWindowsBashToolOverride } from './winShellEncoding.ts';
 import type { UiMcpSaveRequest, UiMcpTarget } from '../../shared/src/mcpFeatures.ts';
 import type { PluginUpdateCheck } from '../../shared/src/pluginUpdates.ts';
 import { checkPluginUpdate } from './pluginUpdates.ts';
-import { CompactionSettingsService } from './compaction/compactionSettings.ts';
-import { createCompactionExtension, type CompactionExtensionServices } from './compaction/compactionExtension.ts';
-import { createMagicContextStore, MAGIC_CONTEXT_SOURCE, type MagicContextStore } from './compaction/magicContext.ts';
-import { createMemoryStore, type MemoryStore } from './compaction/memoryStore.ts';
-import type { UiCompactionSettings, UiCompactionSettingsWrite, UiDesktopCompactionPreferences, UiMagicContextSnapshot, UiMagicContextConfigWrite } from '../../shared/src/compactionFeatures.ts';
-import type { UiMemoryAvailability, UiMemoryListQuery, UiMemoryPage, UiMemoryStats, UiProjectMemory, UiProjectMemoryUpdate, UiUserMemoryPage } from '../../shared/src/memoryFeatures.ts';
 
 export interface AgentInitOptions {
 	cwd: string;
@@ -355,7 +349,6 @@ function createRuntimeFactory(
 	trackFileChanges: (session: PiRuntime['session'], tracker: SessionFileChanges) => void,
 	publishFileChanges: (sessionId: string, view: UiFileChangesView) => void,
 	mcp: McpManager,
-	compaction: CompactionExtensionServices,
 ): CreateAgentSessionRuntimeFactory {
 	return async ({ cwd, agentDir, sessionManager, sessionStartEvent }) => {
 		const nativeNeedsTrust = hasTrustRequiringProjectResources(cwd);
@@ -380,12 +373,9 @@ function createRuntimeFactory(
 			cwd,
 			agentDir,
 			settingsManager,
-		resourceLoaderOptions: { extensionFactories: [
+			resourceLoaderOptions: { extensionFactories: [
 				{ name: 'desktop-file-changes', hidden: true, factory: fileChanges.extension },
 				{ name: 'desktop-mcp', hidden: true, factory: mcp.extension(cwd, sessionManager.getSessionId()) },
-				// [喵喵喵]: 内置压缩接管扩展 —— builtin 模式下把 Pi 的压缩摘要换成 pi-desktop
-				// 自己的流式请求（snow-app 同款"压缩内容实时可见"），magicContext 模式下放行给插件
-				{ name: 'desktop-compaction', hidden: true, factory: createCompactionExtension(compaction) },
 			] },
 			resourceLoaderReloadOptions: shouldPrompt && nativeNeedsTrust ? {
 				resolveProjectTrust: async () => {
@@ -447,11 +437,6 @@ class SingleAgentService {
 	private queueMutationDepth = 0;
 	private queueRefreshSession: PiRuntime['session'] | null = null;
 	private readonly queuedPreviewIds = new WeakMap<object, string>();
-	private readonly compactionSettings = new CompactionSettingsService();
-	private readonly magicContextStore: MagicContextStore = createMagicContextStore();
-	private readonly memoryStore: MemoryStore = createMemoryStore();
-	/** 压缩扩展读取的同步偏好缓存；saveCompactionSettings 与启动加载时刷新。 */
-	private compactionPreferences: UiDesktopCompactionPreferences = { mode: 'builtin', compressModel: null };
 	private deliveredEmptyQueued = { steer: 0, followUp: 0 };
 	private inputQueue: DurableInputQueue | null = null;
 	private inputQueueSession: PiRuntime['session'] | null = null;
@@ -502,22 +487,9 @@ class SingleAgentService {
 		this.projectTrustByCwd = projectTrustByCwd;
 		this.createRuntime = createRuntimeFactory(requestProjectTrust, this.projectTrustByCwd,
 			(session, tracker) => { this.fileChangeTrackers.set(session, tracker); },
-			(sessionId, view) => { if (this.runtime?.session.sessionId === sessionId) this.fireFileChanges(view); }, mcp,
-			{ getPreferences: () => this.compactionPreferences, emit: (event) => { this.fire(event); } });
+			(sessionId, view) => { if (this.runtime?.session.sessionId === sessionId) this.fireFileChanges(view); }, mcp);
 		this.requestExtensionDialog = requestExtensionDialog;
 		this.reserveSessionSwitch = reserveSessionSwitch;
-		// [喵喵喵]: 启动时预热压缩偏好缓存 —— 扩展的 getPreferences 是同步读取，
-		// 模式与压缩模型必须先落进内存；失败保持默认（builtin + 跟随会话模型）
-		void this.loadCompactionPreferences();
-	}
-
-	private async loadCompactionPreferences(): Promise<void> {
-		try {
-			const snapshot = await this.compactionSettings.snapshot();
-			this.compactionPreferences = snapshot.preferences;
-		} catch {
-			// 读取失败不阻塞会话：压缩回落 builtin 默认行为，设置页保存时会重新校验
-		}
 	}
 
 	/** Install the event sink (the desktop IPC layer forwards these to the renderer). */
@@ -1014,78 +986,6 @@ class SingleAgentService {
 	previewPluginResource(request: { cwd: string; path: string; kind: UiPluginResourceKind; scope: UiPluginScope }): Promise<UiPluginResourcePreview> {
 		if (!this.runtime) throw new Error('Agent is not initialized');
 		return readPluginResourcePreview(this.runtime.services, request);
-	}
-
-	getCompactionSettings(): Promise<UiCompactionSettings> {
-		return this.compactionSettings.snapshot();
-	}
-
-	async saveCompactionSettings(request: UiCompactionSettingsWrite): Promise<UiCompactionSettings> {
-		const next = await this.compactionSettings.save(request);
-		this.compactionPreferences = next.preferences;
-		// Pi 全局 settings.json 已变：让 SDK 重读；读取报错说明写入值被 Pi 校验拒绝
-		if (this.runtime) {
-			await this.runtime.services.settingsManager.reload();
-			const errors = this.runtime.services.settingsManager.drainErrors();
-			if (errors.length) throw new Error(`Pi 配置读取失败：${errors.map((item) => item.error.message || String(item.error)).join('；')}`);
-		}
-		return next;
-	}
-
-	async getMagicContextSnapshot(): Promise<UiMagicContextSnapshot> {
-		const catalog = this.runtime ? await readPluginCatalog(this.runtime.services) : null;
-		return this.magicContextStore.snapshot(catalog);
-	}
-
-	async saveMagicContextConfig(request: UiMagicContextConfigWrite): Promise<UiMagicContextSnapshot> {
-		await this.magicContextStore.save(request);
-		return this.getMagicContextSnapshot();
-	}
-
-	/** 安装/更新完成后由外层调用：补默认配置并返回完整快照。 */
-	async completeMagicContextOperation(): Promise<UiMagicContextSnapshot> {
-		await this.magicContextStore.ensureDefaultConfig();
-		return this.getMagicContextSnapshot();
-	}
-
-	/** [喵喵喵]: 写插件 compaction.enabled 接管键（语义见 magicContext.ts）；boot 闭包键，写入后的插件重载由外层负责。 */
-	setMagicContextCompactionOwnership(pluginOwns: boolean): Promise<void> {
-		return this.magicContextStore.setCompactionOwnership(pluginOwns);
-	}
-
-	// [喵喵喵]: 记忆管理直接访问插件 SQLite 库（node:sqlite，读写语义见 memoryStore.ts）；
-	// 可用性以插件状态 + 库文件为准，面板据此灰色锁定
-	async getMemoryAvailability(): Promise<UiMemoryAvailability> {
-		const catalog = this.runtime ? await readPluginCatalog(this.runtime.services) : null;
-		return this.memoryStore.availability(catalog);
-	}
-
-	listProjectMemories(query: UiMemoryListQuery): Promise<UiMemoryPage> {
-		return this.memoryStore.listProjectMemories(this.cwd, query);
-	}
-
-	listUserMemories(query: UiMemoryListQuery): Promise<UiUserMemoryPage> {
-		return this.memoryStore.listUserMemories(query);
-	}
-
-	getMemoryStats(): Promise<UiMemoryStats> {
-		return this.memoryStore.stats(this.cwd);
-	}
-
-	updateProjectMemory(update: UiProjectMemoryUpdate): Promise<UiProjectMemory> {
-		return this.memoryStore.updateProjectMemory(this.cwd, update);
-	}
-
-	deleteProjectMemory(id: number): Promise<void> {
-		return this.memoryStore.deleteProjectMemory(this.cwd, id);
-	}
-
-	clearProjectMemories(): Promise<number> {
-		return this.memoryStore.clearProjectMemories(this.cwd);
-	}
-
-	dismissUserMemory(id: number): Promise<void> {
-		return this.memoryStore.dismissUserMemory(id);
 	}
 
 	/** Resolve without installing, including an installed npm version that no longer matches its specification. */
@@ -2403,12 +2303,6 @@ export class AgentService {
 	private closing = false;
 	private readonly requestProjectTrust: RequestProjectTrust;
 	private readonly requestExtensionDialog: RequestExtensionDialog;
-	/**
-	 * [喵喵喵]: Magic Context boot 键（compaction.enabled/enabled）存在一次未生效的同步 ——
-	 * 写键或重载失败时置 true，之后的任意一次保存都会重试整套同步。只靠「保存前后键值
-	 * 是否变化」判定会漏掉重试场景：失败的那次已把新值写进文件，重试时前后相等。
-	 */
-	private magicContextReloadPending = false;
 
 	constructor(
 		requestProjectTrust: RequestProjectTrust = async () => ({ trusted: false, remember: false }),
@@ -2423,125 +2317,6 @@ export class AgentService {
 	getPersonalization() { return this.personalization.list(); }
 	saveInstruction(request: UiSaveInstructionRequest) { return this.personalization.save(request); }
 	checkPluginUpdate(request: PluginUpdateCheck) { const service = this.requirePluginWorkspace(request.cwd); return service.checkPluginUpdate(request); }
-
-	getCompactionSettings() { return this.requireActive().getCompactionSettings(); }
-
-	// [喵喵喵]: 模式切换改变压缩接管权 — 插件的 compaction.enabled 是其启动闭包捕获的键，
-	// builtin 写 false（插件 compaction-off，放行 pi-desktop 接管压缩，其余功能保留），
-	// magicContext 写 true（插件接管），写入后必须重载插件才生效。
-	// 同步条件是「模式变化或有未完成的 pending」：失败的同步已把新 mode 写进文件，
-	// 重试时前后相等，只看模式变化就永远不会再重载（卡死到重启）
-	async saveCompactionSettings(request: UiCompactionSettingsWrite) {
-		const service = this.requireActive();
-		const previous = await service.getCompactionSettings();
-		const next = await service.saveCompactionSettings(request);
-		if (previous.preferences.mode !== next.preferences.mode || this.magicContextReloadPending) {
-			await this.syncMagicContextOwnership(service);
-		}
-		return next;
-	}
-
-	getMagicContextSnapshot() { return this.requireActive().getMagicContextSnapshot(); }
-
-	// [喵喵喵]: enabled 是插件 boot 键（false 时插件完全不注册），变化后重载才生效；
-	// historian/embedding/阈值走插件 LiveConfigReader 热生效，无需重载。
-	// pending（上次 boot 键同步失败）也在这里一并补上，插件未安装时由 sync 内部清掉
-	async saveMagicContextConfig(request: UiMagicContextConfigWrite) {
-		const service = this.requireActive();
-		const before = await service.getMagicContextSnapshot();
-		const result = await service.saveMagicContextConfig(request);
-		if (before.config.enabled !== result.config.enabled || this.magicContextReloadPending) {
-			await this.syncMagicContextOwnership(service);
-		}
-		return result;
-	}
-
-	refreshMagicContextPluginStatus() { return this.requireActive().getMagicContextSnapshot(); }
-
-	// [喵喵喵]: 记忆管理按当前工作区校验（clear/delete 会写库，不能错项目）
-	getMemoryAvailability(cwd: string) { const service = this.requirePluginWorkspace(cwd); return service.getMemoryAvailability(); }
-	listProjectMemories(cwd: string, query: UiMemoryListQuery) { const service = this.requirePluginWorkspace(cwd); return service.listProjectMemories(query); }
-	listUserMemories(query: UiMemoryListQuery) { return this.requireActive().listUserMemories(query); }
-	getMemoryStats(cwd: string) { const service = this.requirePluginWorkspace(cwd); return service.getMemoryStats(); }
-	updateProjectMemory(cwd: string, update: UiProjectMemoryUpdate) { const service = this.requirePluginWorkspace(cwd); return service.updateProjectMemory(update); }
-	deleteProjectMemory(cwd: string, id: number) { const service = this.requirePluginWorkspace(cwd); return service.deleteProjectMemory(id); }
-	clearProjectMemories(cwd: string) { const service = this.requirePluginWorkspace(cwd); return service.clearProjectMemories(); }
-	dismissUserMemory(id: number) { return this.requireActive().dismissUserMemory(id); }
-
-	/** Magic Context 插件安装/更新走既有插件互斥锁（占用全部会话并按需重载）。 */
-	private async runMagicContextMutation(action: 'install' | 'update'): Promise<UiMagicContextSnapshot> {
-		const service = this.requireActive();
-		const cwd = service.cwd;
-		await this.runPluginMutation(cwd, async () => {
-			const detected = await service.getMagicContextSnapshot();
-			if (action === 'update' && !detected.plugin.installed) throw new Error('Magic Context 尚未安装，无法更新');
-			return { cwd, action, source: MAGIC_CONTEXT_SOURCE, scope: 'user' as const };
-		});
-		// runPluginMutation 已对全部会话重载插件（boot 键随当前文件生效），历史 pending 就此了结
-		this.magicContextReloadPending = false;
-		const snapshot = await service.completeMagicContextOperation();
-		// [喵喵喵]: 安装后插件默认接管压缩（compaction.enabled 缺省=true）；若当前是 builtin
-		// 模式则切到 compaction-off。该写入发生在刚才的重载之后，需再重载一次让 boot 键生效
-		if (snapshot.plugin.installed) {
-			const settings = await service.getCompactionSettings();
-			if (settings.preferences.mode === 'builtin') {
-				await this.syncMagicContextOwnership(service);
-				return service.getMagicContextSnapshot();
-			}
-		}
-		return snapshot;
-	}
-
-	/**
-	 * [喵喵喵]: boot 键同步的统一入口 — 先置 pending 再写键/重载，任一步失败都保持 pending，
-	 * 让之后的任意一次保存（压缩设置或插件配置）重试整套同步；只有完整走完才清掉。
-	 * 插件未安装时接管键无意义，顺手清 pending 避免每次保存空转。
-	 */
-	private async syncMagicContextOwnership(service: SingleAgentService): Promise<void> {
-		this.magicContextReloadPending = true;
-		const magic = await service.getMagicContextSnapshot();
-		if (!magic.plugin.installed) {
-			this.magicContextReloadPending = false;
-			return;
-		}
-		const settings = await service.getCompactionSettings();
-		await service.setMagicContextCompactionOwnership(settings.preferences.mode === 'magicContext');
-		await this.reloadMagicContextPlugin();
-		this.magicContextReloadPending = false;
-	}
-
-	/**
-	 * [喵喵喵]: 插件的 enabled/compaction.enabled 在其启动闭包里判定，写入后必须重载
-	 * 全部会话的插件才生效；与 runPluginMutation 共用互斥条件，避免与安装/更新并发撕裂。
-	 */
-	private async reloadMagicContextPlugin(): Promise<void> {
-		this.requireActive();
-		if (this.credentialOperation || this.trimOperation || this.pluginOperation) throw new Error('会话或设置正在更新，请稍后再试');
-		const contexts = [...this.contexts.values()];
-		const releases: (() => void)[] = [];
-		try {
-			try {
-				for (const context of contexts) releases.push(context.lockPluginConfiguration());
-			} catch (error) {
-				for (const release of releases) release();
-				throw error;
-			}
-			const warnings: string[] = [];
-			for (const context of contexts) {
-				try {
-					for (const problem of await context.reloadPlugins()) warnings.push(`${context.cwd}：${problem}`);
-				} catch (error) {
-					warnings.push(`${context.cwd}：${errorMessage(error)}`);
-				}
-			}
-			if (warnings.length) throw new Error(`配置已保存，但插件重载存在问题：${warnings.join('；')}`);
-		} finally {
-			for (const release of releases) release();
-		}
-	}
-
-	installMagicContextPlugin() { return this.runMagicContextMutation('install'); }
-	updateMagicContextPlugin() { return this.runMagicContextMutation('update'); }
 	getMcpSnapshot() { const service = this.requireActive(); const id = service.getSnapshot().sessionId; if (!id) throw new Error('会话尚未初始化'); return this.mcp.snapshot(id); }
 	saveMcpServer(request: UiMcpSaveRequest) { this.requireMcpTarget(request); return this.mcp.save(request); }
 	removeMcpServer(request: UiMcpTarget) { this.requireMcpTarget(request); return this.mcp.remove(request); }

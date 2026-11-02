@@ -98,10 +98,6 @@ interface ChatState {
 	error: string | null;
 	/** Structured evidence for the last agent failure; text-only errors stay null. */
 	errorInfo: UiAgentError | null;
-	/** 内置压缩接管时的时间线流式预览；null=当前没有进行中的压缩。 */
-	compactionPreview: { text: string; reason: 'manual' | 'threshold' | 'overflow' } | null;
-	/** 压缩失败横线文案；成功后清空，失败保留至用户关闭或下次压缩。 */
-	compactionError: string | null;
 	appInfo: AppInfo | null;
 	/** True in a hosted pai chat window: the main-window lists must never be requested there. */
 	hostedChatWindow: boolean;
@@ -119,8 +115,6 @@ interface ChatState {
 	setBridge(bridge: AgentBridge, options?: { hostedChatWindow?: boolean }): void;
 	retryAgent(): Promise<void>;
 	handleEvent(event: AgentUiEvent): void;
-	/** 关闭压缩失败横线提示。 */
-	dismissCompactionError(): void;
 	refreshSessions(): Promise<void>;
 	/** Loads the next older slice of the active session's timeline (2.6). */
 	loadOlderMessages(pageSize?: number): Promise<boolean>;
@@ -273,8 +267,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
 	thinkingLevel: '',
 	availableThinkingLevels: [],
 	contextUsage: null,
-	compactionPreview: null,
-	compactionError: null,
 	models: [],
 	modelProviders: [],
 	providerAuth: [],
@@ -498,18 +490,16 @@ modelProviders: [...get().modelProviders],
 					sessionId: null,
 					sessionPath: pendingSelection,
 					sessions: get().sessionsByWorkspace[event.cwd] ?? [],
-				// zcode no-blank-out: reset only re-scopes the view. The previous
-				// conversation, its queue and change cards stay rendered until the
-				// paired ready replaces them wholesale — clearing here made every
-				// switch flash a blank transcript.
-				historyGeneration: get().historyGeneration + 1,
-				loadingOlder: false,
-				error: null,
-				compactionPreview: null,
-				compactionError: null,
-			});
-			return;
-		}
+					// zcode no-blank-out: reset only re-scopes the view. The previous
+					// conversation, its queue and change cards stay rendered until the
+					// paired ready replaces them wholesale — clearing here made every
+					// switch flash a blank transcript.
+					historyGeneration: get().historyGeneration + 1,
+					loadingOlder: false,
+					error: null,
+				});
+				return;
+			}
 			case 'status': {
 				const pending = currentPreparedInput();
 				if (pending?.dispatched) pending.runtimeStatus = event.status;
@@ -757,27 +747,10 @@ if (!get().modelProviders.length) void get().refreshModelProviders().catch(() =>
 			case 'subagent-inspect':
 				set({ subagentInspect: event.reply });
 				return;
-		case 'compaction-preview':
-			// snow-app 同款压缩可见化：start 显示卡片、delta 流式追加、end 让系统行摘要卡接棒、
-			// error 显示同款失败横线（保留至用户关闭或下次压缩）
-			if (event.phase === 'start') {
-				set({ compactionPreview: { text: '', reason: event.reason }, compactionError: null });
-			} else if (event.phase === 'delta') {
-				set((s) => ({ compactionPreview: { text: (s.compactionPreview?.text ?? '') + (event.delta ?? ''), reason: s.compactionPreview?.reason ?? event.reason } }));
-			} else if (event.phase === 'end') {
-				set({ compactionPreview: null, compactionError: null });
-			} else {
-				set({ compactionPreview: null, compactionError: event.message ?? '压缩失败' });
-			}
-			return;
-		case 'error':
-			set({ error: event.message, errorInfo: event.error ?? null });
-			return;
+			case 'error':
+				set({ error: event.message, errorInfo: event.error ?? null });
+				return;
 		}
-	},
-
-	dismissCompactionError() {
-		set({ compactionError: null });
 	},
 
 	async refreshSessions() {
