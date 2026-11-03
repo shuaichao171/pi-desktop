@@ -871,8 +871,6 @@ export const translations: Record<string, { 'zh-CN': string; 'en-US': string }> 
   'sidebar.barDawn': { 'zh-CN': '晨曦', 'en-US': 'Dawn' },
   'sidebar.barSynthwave': { 'zh-CN': '合成波', 'en-US': 'Synthwave' },
   'sidebar.barInk': { 'zh-CN': '水墨', 'en-US': 'Ink' },
-  'sidebar.barPorcelain': { 'zh-CN': '青花瓷', 'en-US': 'Porcelain' },
-  'sidebar.barCreed': { 'zh-CN': '刺客', 'en-US': 'Assassin' },
   'sidebar.projectReveal': { 'zh-CN': '在资源管理器中打开', 'en-US': 'Reveal in Explorer' },
   'sidebar.projectRemove': { 'zh-CN': '移除项目', 'en-US': 'Remove project' },
   'sidebar.projectRemoveTitle': { 'zh-CN': '从侧栏移除此项目？', 'en-US': 'Remove this project from the sidebar?' },
