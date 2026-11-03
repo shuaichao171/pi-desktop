@@ -874,7 +874,7 @@ export const translations: Record<string, { 'zh-CN': string; 'en-US': string }> 
   'sidebar.barLace': { 'zh-CN': '黑色蕾丝', 'en-US': 'Black Lace' },
   'sidebar.barMinecraft': { 'zh-CN': 'Minecraft', 'en-US': 'Minecraft' },
   'sidebar.barNekopara': { 'zh-CN': 'Nekopara', 'en-US': 'Nekopara' },
-  'sidebar.barAveMujica': { 'zh-CN': 'Ave Mujica', 'en-US': 'Ave Mujica' },
+  'sidebar.barAvemujica': { 'zh-CN': 'Ave Mujica', 'en-US': 'Ave Mujica' },
   'sidebar.projectReveal': { 'zh-CN': '在资源管理器中打开', 'en-US': 'Reveal in Explorer' },
   'sidebar.projectRemove': { 'zh-CN': '移除项目', 'en-US': 'Remove project' },
   'sidebar.projectRemoveTitle': { 'zh-CN': '从侧栏移除此项目？', 'en-US': 'Remove this project from the sidebar?' },
