@@ -923,7 +923,7 @@ export interface WorkspaceProjectNickname {
 }
 
 /** Background-bar preset ids for the project appearance bar (rendered as CSS in the UI layer). */
-export const PROJECT_BAR_PRESET_IDS = ['aurora', 'sunset', 'neon', 'violet', 'dawn', 'synthwave', 'ink'] as const;
+export const PROJECT_BAR_PRESET_IDS = ['aurora', 'sunset', 'neon', 'violet', 'dawn', 'synthwave', 'ink', 'lace', 'minecraft', 'nekopara', 'avemujica'] as const;
 
 /** Background-bar animation tier ids (keyframes live in the app stylesheet, never in user input). */
 export const PROJECT_BAR_ANIM_IDS = ['flow', 'pulse', 'shimmer', 'hue', 'flicker', 'slide', 'tornado'] as const;
