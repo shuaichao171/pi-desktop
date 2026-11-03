@@ -1,4 +1,5 @@
 import { lazy } from 'react';
+import { loadHighlighter } from '../codeHighlighter';
 
 /**
  * On-demand surfaces: they mount only when opened, so they ship as separate
@@ -23,6 +24,7 @@ export function preloadLazySurfaces(): () => void {
 	if (preloaded) return () => {};
 	const run = () => {
 		preloaded = true;
+		void loadHighlighter();
 		for (const load of [loadSettings, loadSearch, loadPlugins, loadAutomations, loadCommit]) void load().catch(() => {});
 	};
 	if (typeof window.requestIdleCallback === 'function') {

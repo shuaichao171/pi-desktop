@@ -20,13 +20,15 @@
 - [x] **P0 对话进行中安装插件**（2026-11-02）：安装与资源启停只下载 / 写配置，不再要求全部会话空闲；重载推迟到所有会话空闲的边界自动执行（`AgentService.flushPluginReload`，空闲状态事件触发并以 1.5 s 轮询兜底），完成后推送 `plugins-reloaded` 事件并提示。后台安装不占用主进程工作区激活队列，因此不阻止新建对话 / 切项目；更新、移除、手动重载仍需空闲。回归：`tests/plugins-lifecycle.test.mjs`、`tests/plugins-ipc.test.mjs`。
 - [x] **P1 渲染层按需 chunk（第一批）**（2026-11-02）：设置面板、搜索弹窗、自动化页、插件页、提交弹窗改为 `React.lazy`（`components/lazySurfaces.tsx`），首帧后在空闲时预取，首次打开不等待网络（本地文件）。
   - 度量：主包 JS 3,584,131 B → 3,152,240 B（−12%），主包 CSS 522,370 B → 363,186 B（−30%）；拆出的 chunk：SettingsPanel 298 KB + 106 KB CSS、PluginsPage 53 KB、AutomationPage 44 KB、SearchDialog 36 KB、ChatCommitDialog 12 KB。
+- [x] **P1 代码高亮移出主包**（2026-11-02）：`CodeBlock.tsx` 改用 `codeHighlighter.ts` 按需加载 highlight.js，未加载时渲染转义后的纯文本（语言标签沿用声明值），加载后常驻、后续渲染同步高亮不闪烁；空闲预取与其他懒面板一起触发。高亮只替换 span，不改变行高，不引起转录重排。回归：`tests/tool-renderers.test.mjs`（加载前纯文本 / 加载后高亮）。
+  - 度量：主包 JS 3,152,240 B → 2,754,742 B（再 −397 KB；相对基线累计 −23%），highlight.js 独立 chunk 349 KB。
 - [x] **P1 主进程热路径同步 IO（第一批）**（2026-11-02）：`workspaceDefault`（移除项目关联）、`sessionOpenWindow` 的 `statSync`/`mkdirSync` 与工作台 `reset()` 的 `rmSync` 改为异步；`reset()` 先摘下临时 hooks 路径再删除，避免删除期间的 git 调用复用正在删除的目录。
 
 ## 待办清单（按优先级）
 
 ### P1 渲染层
 
-- [ ] **代码高亮移出主包与主线程**：`CodeBlock.tsx` 同步 `import hljs from 'highlight.js/lib/common'` 并在渲染中高亮，是主包剩余体积的主要来源之一。方案：首屏先渲染纯文本，`readingWorkerPool` 同款 worker 返回高亮结果后替换；保留转录搜索高亮（`TranscriptSearchContext`）与复制语义。验收：主包体积、长代码块会话的切换 `painted` 时间。
+- [ ] **代码高亮移出主线程**：已移出主包（见「已落地」）。剩余：长代码块的 `hljs.highlight` 仍在渲染线程执行（上限 2000 行、按显示部分 memo）。若诊断显示含长代码块会话的切换 `painted` 偏慢，再对非流式、超过阈值的块走 `readingWorkerPool` 同款 worker；流式消息每个增量都会变，不宜走 worker（会闪烁）。
 - [ ] **工作台按首次打开挂载**：`WorkbenchSidePane` 当前始终挂载（`open` 仅控制显示），其 Git 图、文件树、终端随主包加载。需先梳理关闭时仍需响应的 `openRequest` / `terminalRequest`，再改为首次打开才挂载 + 懒 chunk。
 - [ ] Git 图（`gitGraphLayout.ts` 及其视图）、查找面板等工作台子视图随工作台一起拆分。
 - 已是按需：Mermaid（动态 import，`mermaidBudget.ts`）、KaTeX、Office 预览（`OfficeFilePreview` lazy + `officePreview.worker`）。

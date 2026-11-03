@@ -55,16 +55,16 @@ export function ActivityBar({ mainView, onOpenView, onNewSession, onOpenSettings
 	return (
 		<nav className="pd-activity-bar" aria-label={t('activity.barLabel')}>
 			<div className="pd-activity-bar-top">
-				<HoverTooltip title={t(sidebarOpen ? 'sidebar.collapse' : 'sidebar.expand')} shortcut={platform === 'darwin' ? '⌘B' : 'Ctrl+B'} align="start">
+				<HoverTooltip title={t(sidebarOpen ? 'sidebar.collapse' : 'sidebar.expand')} shortcut={platform === 'darwin' ? '⌘B' : 'Ctrl+B'}>
 					<button type="button" className={`pd-activity-item pd-activity-sessions${sidebarOpen ? ' is-active' : ''}`} aria-label={t('activity.sessionsView')} aria-current={sidebarOpen ? 'page' : undefined} onClick={onToggleSidebar}><Icon name="message" width="20" height="20" /></button>
 				</HoverTooltip>
-				<HoverTooltip title={t('sidebar.newSession')} align="start">
+				<HoverTooltip title={t('sidebar.newSession')}>
 					<button type="button" className="pd-activity-item pd-activity-new-session" disabled={navigationPending} aria-label={t('sidebar.newSession')} onClick={() => void onNewSession()}><Icon name="plus" width="20" height="20" /></button>
 				</HoverTooltip>
-				<HoverTooltip title={t('sidebar.automation')} align="start">
+				<HoverTooltip title={t('sidebar.automation')}>
 					<button type="button" className={`pd-activity-item pd-activity-automations${mainView === 'automations' ? ' is-active' : ''}`} aria-label={t('sidebar.automation')} aria-current={mainView === 'automations' ? 'page' : undefined} onClick={() => onOpenView('automations')}><Icon name="automation" width="20" height="20" /></button>
 				</HoverTooltip>
-				<HoverTooltip title={t('sidebar.plugins')} align="start">
+				<HoverTooltip title={t('sidebar.plugins')}>
 					<button type="button" className={`pd-activity-item pd-activity-plugins${mainView === 'plugins' ? ' is-active' : ''}`} aria-label={t('sidebar.plugins')} aria-current={mainView === 'plugins' ? 'page' : undefined} onClick={() => onOpenView('plugins')}><Icon name="plugins" width="20" height="20" /></button>
 				</HoverTooltip>
 				{/* Extension contribution slots render here once the plugin system
@@ -73,10 +73,10 @@ export function ActivityBar({ mainView, onOpenView, onNewSession, onOpenSettings
 			<div className="pd-activity-bar-bottom">
 				{/* A newer version gets its own entry above settings (replacing the old
 				 * red dot on the gear): it names the version and opens the updates page. */}
-				{updateAvailable && <HoverTooltip title={updateTitle} align="start">
+				{updateAvailable && <HoverTooltip title={updateTitle}>
 					<button type="button" className="pd-activity-item pd-activity-update has-notice" aria-label={updateTitle} onClick={() => onOpenUpdates()}><Icon name="update" width="20" height="20" /></button>
 				</HoverTooltip>}
-				<HoverTooltip title={t('sidebar.settings')} align="start">
+				<HoverTooltip title={t('sidebar.settings')}>
 					<button type="button" className="pd-activity-item pd-settings-entry" aria-label={t('sidebar.settings')} onClick={() => onOpenSettings()}><Icon name="settings" width="20" height="20" /></button>
 				</HoverTooltip>
 			</div>

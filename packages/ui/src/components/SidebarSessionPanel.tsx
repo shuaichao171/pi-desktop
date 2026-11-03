@@ -891,11 +891,14 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 		const menuOpen = popup?.kind === 'session' && popup.session.path === session.path;
 		const dragItem = drag?.item;
 		const isDragSource = dragItem?.kind === 'session' && dragItem.path === session.path;
-		// zcode leading-indicator priority: error > unread > loading; waiting follows last.
+		// zcode leading-indicator priority: error > unread > sub-agents > loading; waiting follows last.
 		const phase = session.runtime?.phase ?? 'idle';
 		const indicator = phase === 'failed'
 			? { kind: 'failed' as const, label: session.runtime?.message ? `${copy.failed} · ${session.runtime.message}` : copy.failed }
 			: session.unread ? { kind: 'unread' as const, label: copy.unread }
+			// Sub-agent children at work (async fleet or an in-flight subagent call): the
+			// blue ring outranks the plain spinner — it says what is actually running.
+			: session.runtime?.subagentRunning ? { kind: 'subagents' as const, label: copy.subagents }
 			: phase === 'running' ? { kind: 'running' as const, label: copy.running }
 			: phase === 'waiting-input' || phase === 'waiting-approval'
 				? { kind: 'waiting' as const, label: session.runtime?.message ? `${copy[phase]} · ${session.runtime.message}` : copy[phase] }
@@ -1005,7 +1008,7 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 			} : undefined}>
 				<HoverTooltip title={name} description={options.workspace} side="right" align="start">
 				<button type="button" className={`pd-sidebar-group-toggle${options.workspace && projectDragMode ? ' is-project-draggable' : ''}`} aria-expanded={expanded} onPointerDown={options.workspace && projectDragMode ? (event) => beginDrag({ kind: 'project', workspace: options.workspace! }, event) : options.group && dragMode && !draggingGroup ? (event) => beginDrag({ kind: 'group', id: options.group!.id }, event) : undefined} onClick={() => toggleSection(key)}>
-					<Icon name={options.icon ?? 'hash'} width="14" height="14" /><span>{name}</span><Icon name="chevronRight" width="12" height="12" className={expanded ? 'is-expanded' : ''} />{aggregateLabel && <span className="pd-session-state-counts" title={aggregateLabel} aria-label={aggregateLabel}>{aggregate.waiting > 0 && <b className="is-waiting" />}{aggregate.running > 0 && <b className="is-running" />}{aggregate.failed > 0 && <b className="is-failed" />}{aggregate.unread > 0 && <b className="is-unread" />}</span>}
+					<Icon name={options.icon ?? 'hash'} width="14" height="14" /><span>{name}</span><Icon name="chevronRight" width="12" height="12" className={expanded ? 'is-expanded' : ''} />{aggregateLabel && <span className="pd-session-state-counts" title={aggregateLabel} aria-label={aggregateLabel}>{aggregate.waiting > 0 && <b className="is-waiting" />}{aggregate.subagents > 0 && <b className="is-subagents" />}{aggregate.running > 0 && <b className="is-running" />}{aggregate.failed > 0 && <b className="is-failed" />}{aggregate.unread > 0 && <b className="is-unread" />}</span>}
 				</button>
 				</HoverTooltip>
 				{options.workspace && <HoverTooltip title={t('sidebar.projectNewChat')} side="right"><button type="button" className="pd-icon-button pd-group-more" aria-label={t('sidebar.projectNewChat')} onClick={() => {

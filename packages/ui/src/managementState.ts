@@ -8,14 +8,15 @@ export interface WorkspaceSessionRequest {
 
 export const sessionRuntimeKey = (cwd: string, path: string) => JSON.stringify([cwd, path]);
 
-export function summarizeSessionStates(sessions: UiSessionSummary[]): { running: number; waiting: number; failed: number; unread: number } {
+export function summarizeSessionStates(sessions: UiSessionSummary[]): { running: number; waiting: number; subagents: number; failed: number; unread: number } {
 	return sessions.reduce((result, session) => {
 		if (session.runtime?.phase === 'running') result.running += 1;
 		if (session.runtime?.phase === 'waiting-input' || session.runtime?.phase === 'waiting-approval') result.waiting += 1;
+		if (session.runtime?.subagentRunning) result.subagents += 1;
 		if (session.runtime?.phase === 'failed') result.failed += 1;
 		if (session.unread) result.unread += 1;
 		return result;
-	}, { running: 0, waiting: 0, failed: 0, unread: 0 });
+	}, { running: 0, waiting: 0, subagents: 0, failed: 0, unread: 0 });
 }
 
 export function mergeRuntimeStates(cwd: string, sessions: UiSessionSummary[], live: Record<string, UiSessionRuntimeState>): UiSessionSummary[] {

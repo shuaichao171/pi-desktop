@@ -602,6 +602,9 @@ modelProviders: [...get().modelProviders],
 					fileChanges: event.fileChanges ?? [],
 					fileChangeTurns: event.fileChangeTurns ?? [],
 					fileChangeActiveRunId: event.fileChangeActiveRunId ?? null,
+					// Host-side switches (extension navigation) land without an optimistic
+					// switch; a different session's ready must also retire a foreign fleet.
+					...(!sameSession ? { subagentFleet: null, subagentInspect: null } : {}),
 					error: null,
 				});
 				// agent_settled resyncs re-send only the newest window; restore pages the user already opened.
@@ -1860,6 +1863,9 @@ function restoreSettledConversation(set: (partial: Partial<ChatState>) => void):
 		fileChanges: settled?.fileChanges ?? [],
 		fileChangeTurns: settled?.fileChangeTurns ?? [],
 		fileChangeActiveRunId: settled?.fileChangeActiveRunId ?? null,
+		// Rollback returns to a conversation whose host runtime may be gone; a live-
+		// looking fleet card with dead action buttons would be worse than no card.
+		subagentFleet: null, subagentInspect: null,
 		historyTotal: settled?.historyTotal ?? 0,
 		loadingOlder: false,
 		timelineRevision: state.timelineRevision + 1,
@@ -1885,11 +1891,19 @@ function beginOptimisticSessionSwitch(set: (partial: Partial<ChatState>) => void
 	const nextSessionId = target.sessionId ?? state.sessionId;
 	const painted = target.sessionPath !== null && applySessionConversationPreview(target.sessionPath);
 	if (nextCwd === state.cwd && target.sessionPath === state.sessionPath && nextSessionId === state.sessionId && !painted) return;
+	// Selection identity is cwd + sessionPath: only a real target change retires the
+	// fleet card. Re-selecting the loaded conversation (a warm repaint of the same
+	// file) keeps its live fleet — the host never rebinds, so nothing would re-emit it.
+	const identityChanged = nextCwd !== state.cwd || target.sessionPath !== state.sessionPath;
 	set({
 		cwd: nextCwd,
 		sessionId: nextSessionId,
 		sessionPath: target.sessionPath,
 		sessions: state.sessionsByWorkspace[nextCwd] ?? [],
+		// The fleet card belongs to the conversation being left: the host re-emits the
+		// target session's fleet (if any) once its session binds, so a stale card must
+		// never survive a switch — warm-painted or cold.
+		...(identityChanged ? { subagentFleet: null, subagentInspect: null } : {}),
 		...(painted ? {} : {
 			// Cold switch: keep the conversation being left on screen so the wait
 			// never blanks the view. The painted transcript still belongs to the
@@ -1897,7 +1911,6 @@ function beginOptimisticSessionSwitch(set: (partial: Partial<ChatState>) => void
 			// disclosure state and layout scope to that owner — not to the
 			// optimistically selected target — until the paired ready replaces it.
 			conversationPreviewPath: state.conversationPreviewPath ?? state.sessionPath,
-			subagentFleet: null, subagentInspect: null,
 			queuedCount: 0, queuedMessages: [],
 			loadingOlder: false,
 		}),

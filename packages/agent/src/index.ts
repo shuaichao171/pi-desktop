@@ -256,6 +256,13 @@ function projectSubagentFleetSnapshot(raw: unknown): UiSubagentFleetSnapshot | n
 	};
 }
 
+/** True when the fleet snapshot still contains running children (any depth; queued runs do not count). */
+function subagentFleetHasRunning(fleet: UiSubagentFleetSnapshot | null): boolean {
+	if (!fleet) return false;
+	const visit = (nodes: UiSubagentFleetNode[]): boolean => nodes.some((node) => node.state === 'running' || (node.children ? visit(node.children) : false));
+	return visit(fleet.runs);
+}
+
 /** Defensive projection of an inspect reply; the requestId correlation is required. */
 function projectSubagentInspectReply(raw: unknown): UiSubagentInspectReply | null {
 	if (typeof raw !== 'object' || raw === null) return null;
@@ -451,6 +458,8 @@ class SingleAgentService {
 	private conversationRuns: ConversationRunTracker | null = null;
 	/** Latest pi-subagents fleet snapshot from the subagent-async widget; null when idle/absent. */
 	private subagentFleet: UiSubagentFleetSnapshot | null = null;
+	/** Last known subagent liveness per session file; survives session switches so background runs keep their sidebar indicator. */
+	private readonly subagentLiveSessions = new Map<string, boolean>();
 	private state: Omit<AgentSnapshot, 'sequence'> = {
 		status: 'uninitialized',
 		model: '',
@@ -513,7 +522,16 @@ class SingleAgentService {
 		const runtime: UiSessionRuntimeState = waiting ?? (this.state.status === 'busy' || this.state.status === 'starting'
 			? { phase: 'running' } : failure || this.state.status === 'error'
 				? { phase: 'failed', message: failure || this.state.statusMessage } : { phase: 'idle' });
-		return { cwd: this.cwd, path: this.state.sessionPath, runtime };
+		return { cwd: this.cwd, path: this.state.sessionPath, runtime: { ...runtime, subagentRunning: this.subagentsRunning() } };
+	}
+
+	/** True while this conversation's pi-subagents children are working: a live
+	 * async fleet (current snapshot, or remembered before a switch away) or an
+	 * in-flight subagent tool call on the loaded branch. */
+	private subagentsRunning(): boolean {
+		if (this.state.sessionPath && (subagentFleetHasRunning(this.subagentFleet)
+			|| this.subagentLiveSessions.get(sessionPathKey(this.state.sessionPath)) === true)) return true;
+		return this.state.activities.some((activity) => activity.status === 'running' && activity.subagent);
 	}
 
 	getLiveSidebarEntry(runtime: UiSessionRuntimeState): UiSessionSummary | null {
@@ -541,6 +559,7 @@ class SingleAgentService {
 					this.subagentFleet = null;
 					this.fire({ type: 'subagent-fleet', fleet: null });
 				}
+				this.rememberSubagentLiveness(false);
 				return;
 			}
 			try {
@@ -548,6 +567,7 @@ class SingleAgentService {
 				if (fleet) {
 					this.subagentFleet = fleet;
 					this.fire({ type: 'subagent-fleet', fleet });
+					this.rememberSubagentLiveness(subagentFleetHasRunning(fleet));
 				}
 			} catch {
 				// Malformed payload — keep the last known snapshot.
@@ -562,6 +582,16 @@ class SingleAgentService {
 				// Unmatched replies are dropped by design.
 			}
 		}
+	}
+
+	/** Remember subagent liveness for the loaded session so the sidebar keeps its
+	 * indicator after the user switches away (background runs outlive the switch).
+	 * Skipped while a session switch is in flight: those widget events belong to
+	 * the session being left or the one loading; the ready re-anchors the map. */
+	private rememberSubagentLiveness(running: boolean): void {
+		const path = this.state.sessionPath;
+		if (!path || this.lifecycleOperation) return;
+		this.subagentLiveSessions.set(sessionPathKey(path), running);
 	}
 
 	getSnapshot(): AgentSnapshot {
@@ -1556,8 +1586,12 @@ class SingleAgentService {
 		this.unsubscribe?.();
 		this.unsubscribe = null;
 		// The fleet widget belongs to the previous session; its runs may outlive the switch
-		// in the plugin, but the new session's widget state starts empty.
-		this.subagentFleet = null;
+		// in the plugin, but the new session's widget state starts empty. Announce the
+		// clear so a renderer that kept the old card never shows a foreign fleet.
+		if (this.subagentFleet) {
+			this.subagentFleet = null;
+			this.fire({ type: 'subagent-fleet', fleet: null });
+		}
 		await runtime.session.bindExtensions({
 			uiContext: this.createExtensionUiContext(),
 			mode: 'rpc',
@@ -1773,6 +1807,10 @@ class SingleAgentService {
 		// Long branches stream only the newest window; older entries load page-by-page.
 		const recent = trimRecentTimeline(timeline, READY_HISTORY_LIMIT);
 		this.timelineOrder = timeline.nextOrder;
+		// The plugin restored this session's async runs during load, so the fleet now
+		// reflects exactly this session: re-anchor its liveness memory before the ready
+		// publish carries the runtime summary (stale memory from a previous visit dies here).
+		if (session.sessionFile) this.subagentLiveSessions.set(sessionPathKey(session.sessionFile), subagentFleetHasRunning(this.subagentFleet));
 		this.fire({
 			type: 'ready',
 			// Pure content re-publish of the same branch: the renderer must treat it as a
@@ -3245,7 +3283,11 @@ export class AgentService {
 				// Mid-run background output only refreshes the row (title, counts).
 				if (service.getSnapshot().sessionPath) this.fire({ type: 'sessions-changed', cwd: service.cwd });
 			}
-			if (event.type === 'status' || event.type === 'ready' || event.type === 'error' || event.type === 'assistant-end') this.publishRuntime(service);
+			// Fleet snapshots and subagent tool calls flip the sidebar's subagent ring:
+			// republish the runtime summary the moment either changes.
+			const subagentTool = event.type === 'tool' && event.activity.subagent;
+			if (event.type === 'subagent-fleet' || subagentTool
+				|| event.type === 'status' || event.type === 'ready' || event.type === 'error' || event.type === 'assistant-end') this.publishRuntime(service);
 		});
 		this.contexts.set(key, service);
 		return service;

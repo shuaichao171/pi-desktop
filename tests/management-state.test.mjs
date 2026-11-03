@@ -74,7 +74,12 @@ test('runtime identity and project aggregation keep unread independent of execut
     session('3', { runtime: { phase: 'waiting-approval' } }),
     session('4', { runtime: { phase: 'failed' }, unread: true }),
     session('5', { runtime: { phase: 'idle' } }),
-  ]), { running: 1, waiting: 2, failed: 1, unread: 2 });
+  ]), { running: 1, waiting: 2, subagents: 0, failed: 1, unread: 2 });
+  assert.deepEqual(summarizeSessionStates([
+    session('6', { runtime: { phase: 'idle', subagentRunning: true } }),
+    session('7', { runtime: { phase: 'running', subagentRunning: true } }),
+    session('8', { runtime: { phase: 'idle', subagentRunning: false } }),
+  ]), { running: 1, waiting: 0, subagents: 2, failed: 0, unread: 0 }, 'sub-agent children count even while the conversation itself is idle');
 });
 
 test('latest automation result and history filtering use time rather than snapshot ordering', () => {

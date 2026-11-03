@@ -1,6 +1,6 @@
 import { isValidElement, useContext, useMemo, useState, type ReactNode } from 'react';
 import { TranscriptSearchContext } from '../transcriptSearch';
-import hljs from 'highlight.js/lib/common';
+import { useHighlighter } from '../codeHighlighter';
 import { useT } from '../i18n';
 import { MermaidDiagram } from './MermaidDiagram';
 import { useCodeWrap } from '../codeWrapPreference';
@@ -24,18 +24,20 @@ export function CodeBlock({ code, language }: { code: string; language?: string 
 	const findQuery = useContext(TranscriptSearchContext).trim().toLocaleLowerCase();
 	const collapsed = collapsible && (userCollapsed ?? true) && !(findQuery && source.toLocaleLowerCase().includes(findQuery));
 	const shown = collapsed ? lines.slice(0, COLLAPSE_LINES).join('\n') : source;
-	const resolved = language && hljs.getLanguage(language) ? language : '';
+	const isMermaid = (language ?? '').trim().toLowerCase() === 'mermaid';
+	// Plain text first: the highlighter chunk loads on demand (codeHighlighter.ts).
+	const hljs = useHighlighter(Boolean(language) && !isMermaid && lines.length <= HIGHLIGHT_LINE_LIMIT);
+	const resolved = language && hljs?.getLanguage(language) ? language : '';
 	const html = useMemo(() => {
-		if (!resolved || lines.length > HIGHLIGHT_LINE_LIMIT) return escapeHtml(shown);
+		if (!hljs || !resolved || lines.length > HIGHLIGHT_LINE_LIMIT) return escapeHtml(shown);
 		try {
 			return hljs.highlight(shown, { language: resolved, ignoreIllegals: true }).value;
 		} catch {
 			return escapeHtml(shown);
 		}
-	}, [shown, resolved, lines.length]);
+	}, [hljs, shown, resolved, lines.length]);
 	const [copied, setCopied] = useState(false);
 	const [wrap, setWrap] = useCodeWrap();
-	const isMermaid = (language ?? '').trim().toLowerCase() === 'mermaid';
 	const [view, setView] = useState<'chart' | 'source'>('chart');
 	const copy = async () => {
 		try {
@@ -49,7 +51,7 @@ export function CodeBlock({ code, language }: { code: string; language?: string 
 	return (
 		<div className="pd-code-block">
 			<div className="pd-code-block-header">
-				<span className="pd-code-block-language">{isMermaid ? 'Mermaid' : resolved || t('chat.code.plain')}</span>
+				<span className="pd-code-block-language">{isMermaid ? 'Mermaid' : resolved || (!hljs && language?.trim()) || t('chat.code.plain')}</span>
 				<div className="pd-code-block-actions">
 					{isMermaid && <button type="button" aria-pressed={view === 'source'} onClick={() => setView(current => current === 'chart' ? 'source' : 'chart')}>{t(view === 'chart' ? 'chat.diagram.showSource' : 'chat.diagram.showChart')}</button>}
 					{(!isMermaid || view === 'source') && <button type="button" aria-pressed={wrap} onClick={() => setWrap(!wrap)}>{t(wrap ? 'chat.code.noWrap' : 'chat.code.wrap')}</button>}

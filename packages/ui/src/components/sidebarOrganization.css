@@ -4,6 +4,7 @@
 .pd-session-state-counts b { width: 7px; height: 7px; border-radius: 50%; }
 .pd-session-state-counts b.is-running { background: var(--pd-warning); }
 .pd-session-state-counts b.is-waiting { background: var(--pd-brand); animation: pd-pulse 1.6s ease-in-out infinite; }
+.pd-session-state-counts b.is-subagents { background: transparent; border: 2px solid var(--pd-brand); animation: pd-pulse 1.6s ease-in-out infinite; }
 .pd-session-state-counts b.is-failed { background: var(--pd-danger); }
 .pd-session-state-counts b.is-unread { background: var(--pd-status-unread); }
 .pd-workspace-list-error { margin: 8px; padding: 8px; font-size: var(--pd-font-sm); line-height: 1.5; color: var(--pd-text-subtle); overflow-wrap: anywhere; }

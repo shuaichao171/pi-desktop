@@ -774,7 +774,7 @@ div.pd-hover-tooltip:has(.pd-update-notes-body) { max-width: min(400px, calc(100
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .pd-spinning, .pd-session-spinner, .pd-session-indicator.is-waiting, .pd-session-state-counts b.is-waiting { animation: none; }
+  .pd-spinning, .pd-session-spinner, .pd-session-indicator.is-waiting, .pd-session-indicator.is-subagents, .pd-session-state-counts b.is-waiting, .pd-session-state-counts b.is-subagents { animation: none; }
   .pd-chevron { transition: none; }
 }
 
@@ -852,6 +852,9 @@ div.pd-hover-tooltip:has(.pd-update-notes-body) { max-width: min(400px, calc(100
 .pd-session-indicator.is-failed { background: var(--pd-danger); box-shadow: 0 0 0 3px color-mix(in srgb, var(--pd-danger) 18%, transparent); }
 .pd-session-indicator.is-unread { background: var(--pd-status-unread); box-shadow: 0 0 0 3px color-mix(in srgb, var(--pd-status-unread) 18%, transparent); }
 .pd-session-indicator.is-waiting { background: var(--pd-brand); box-shadow: 0 0 0 3px color-mix(in srgb, var(--pd-brand) 20%, transparent); animation: pd-pulse 1.6s ease-in-out infinite; }
+/* Sub-agent work in progress: a hollow blue ring (圈) rather than a filled dot —
+   visibly distinct from the amber own-turn spinner and the blue waiting dot. */
+.pd-session-indicator.is-subagents { background: transparent; border: 2px solid var(--pd-brand); box-shadow: 0 0 0 3px color-mix(in srgb, var(--pd-brand) 15%, transparent); animation: pd-pulse 1.6s ease-in-out infinite; }
 .pd-session-spinner { color: var(--pd-warning); animation: pd-spin 1.2s linear infinite; }
 /* Failed and waiting rows carry a faint full-row tint so peripheral vision
    catches them before the eye reaches the leading dot. */

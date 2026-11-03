@@ -768,6 +768,8 @@ export interface UiSessionTreeNode {
 export interface UiSessionRuntimeState {
   phase: 'idle' | 'running' | 'waiting-input' | 'waiting-approval' | 'failed';
   message?: string;
+  /** True while pi-subagents children of this conversation are still running (async fleet or an in-flight subagent tool call). */
+  subagentRunning?: boolean;
 }
 
 export interface UiSessionRuntimeSummary {

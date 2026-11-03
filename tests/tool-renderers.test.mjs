@@ -18,6 +18,7 @@ test('structured tool cards, edit diffs and code blocks stay readable and access
   try {
     const { ToolActivityItem } = await server.ssrLoadModule('/src/components/ToolActivity.tsx');
     const { CodeBlock } = await server.ssrLoadModule('/src/components/CodeBlock.tsx');
+    const { loadHighlighter } = await server.ssrLoadModule('/src/codeHighlighter.ts');
     const { MessageItem } = await server.ssrLoadModule('/src/components/MessageItem.tsx');
     const { parsePiEditDiff } = await server.ssrLoadModule('/src/unifiedDiff.ts');
     const { buildTimelineLayout } = await server.ssrLoadModule('/src/timeline.ts');
@@ -64,7 +65,7 @@ test('structured tool cards, edit diffs and code blocks stay readable and access
       assert.ok(html.includes('contents'));
     });
 
-    await t.test('code blocks label, fold and highlight fenced content', () => {
+    await t.test('code blocks label, fold and highlight fenced content', async () => {
       // Digit-free rows keep hljs from splitting the text with token spans.
       const long = Array.from({ length: 40 }, (_, index) => `const ${'a'.repeat(index + 1)} = value;`).join('\n');
       const folded = renderToStaticMarkup(createElement(CodeBlock, { code: long, language: 'ts' }));
@@ -73,6 +74,13 @@ test('structured tool cards, edit diffs and code blocks stay readable and access
       assert.ok(folded.includes(`${'a'.repeat(30)} = value;`));
       assert.ok(!folded.includes(`${'a'.repeat(40)} = value;`));
       assert.ok(folded.includes(translate('chat.code.expand', { count: '40' })));
+      // highlight.js is an on-demand chunk: before it loads, code renders as escaped
+      // plain text under its declared language label.
+      const plain = renderToStaticMarkup(createElement(CodeBlock, { code: 'const value = 1 < 2;', language: 'ts' }));
+      assert.match(plain, /pd-code-block-language">ts</);
+      assert.ok(plain.includes('const value = 1 &lt; 2;'));
+      assert.doesNotMatch(plain, /hljs-/);
+      await loadHighlighter();
       const highlighted = renderToStaticMarkup(createElement(CodeBlock, { code: 'const value = 1;', language: 'ts' }));
       assert.match(highlighted, /hljs-keyword/);
       const unknown = renderToStaticMarkup(createElement(CodeBlock, { code: 'plain', language: 'no-such-lang' }));
