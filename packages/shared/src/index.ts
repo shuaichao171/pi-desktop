@@ -58,6 +58,9 @@ export const IPC_CHANNELS = {
   automationCancelRun: 'automation:cancel-run',
   automationChanged: 'automation:changed',
   rendererReady: 'window:renderer-ready',
+  splitPaneOpen: 'split-pane:open',
+  splitPaneClose: 'split-pane:close',
+  splitPaneSetBounds: 'split-pane:set-bounds',
   appInfo: 'app:info',
   appSetLocale: 'app:set-locale',
   updateState: 'update:state',
@@ -996,7 +999,7 @@ export interface AppInfo {
   nodeVersion: string;
   electronVersion: string;
   platform: string;
-  windowMode?: 'full' | 'pai' | 'multi';
+  windowMode?: 'full' | 'pai' | 'pane' | 'multi';
 }
 
 // 'available' = an update was found but nothing downloads until the user consents.
@@ -1258,6 +1261,14 @@ export interface AgentBridge extends InputFeatureBridge, DataFeaturesBridge, Wor
   forkSession(path: string, name?: string): Promise<string>;
   /** Opens a conversation in its own pai chat window (a separate app instance). */
   openSessionInNewWindow(path: string): Promise<void>;
+  /** Opens a conversation as an embedded split pane inside the main window (any project). */
+  openSplitPane(cwd: string, sessionPath?: string): Promise<void>;
+  /** Closes this window's split pane (pane renderer self-close or main window request). */
+  closeSplitPane(): Promise<void>;
+  /** Reports the pane region rect (DIP, viewport-relative) for WebContentsView positioning. */
+  setSplitPaneBounds(rect: { x: number; y: number; width: number; height: number }): Promise<void>;
+  /** Push notification: the window's split pane was closed (from inside the pane). */
+  onSplitPaneClosed(listener: () => void): () => void;
   updateSessionMeta(path: string, patch: UiSessionMetaPatch): Promise<void>;
   /** Permanently deletes a conversation file (native pi semantics) and clears its desktop metadata. */
   deleteSession(path: string): Promise<void>;

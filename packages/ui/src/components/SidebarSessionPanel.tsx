@@ -1111,6 +1111,18 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 			if (current.cwd === session.workspace && current.sessionPath === session.path) { await newSession({ cwd: session.workspace }); onNavigate(); }
 		});
 	}
+	function openInSplitPane(session: SidebarSession) {
+		setPopup(null);
+		void perform(async () => {
+			if (!bridge?.openSplitPane) return;
+			await bridge.openSplitPane(session.workspace, session.path);
+			// The pane now owns this transcript. If it was the main window's current
+			// session, leave a fresh one here (same semantic as pai windows).
+			const current = useChatStore.getState();
+			if (current.cwd === session.workspace && current.sessionPath === session.path) { await newSession({ cwd: session.workspace }); onNavigate(); }
+			window.dispatchEvent(new CustomEvent('pi-split-pane-opened'));
+		});
+	}
 	function forkFromMenu(session: SidebarSession) {
 		setPopup(null);
 		if (!bridge?.forkSession) return;
@@ -1378,9 +1390,10 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 				onPointerEnter={clearSubmenuTimer} onClose={(restore) => { const anchor = submenu.anchor; setSubmenu(null); if (restore) anchor.focus(); }}>
 				{submenu.key === 'open' && popup.kind === 'session' && <>
 					{submenuItem({ key: 'new-window', label: t('sidebar.openInNewWindow'), index: 1, icon: 'maximize', disabled: !bridge?.openSessionInNewWindow || sessionBusy(popup.session), onSelect: () => openInNewWindow(popup.session) })}
+					{submenuItem({ key: 'split-pane', label: t('sidebar.openInSplitPane'), index: 2, icon: 'panelRight', disabled: !bridge?.openSplitPane || sessionBusy(popup.session), onSelect: () => openInSplitPane(popup.session) })}
 					<hr />
-					{openerItems(popup.session.workspace, 2)}
-					{submenuItem({ key: 'explorer', label: t('sidebar.projectReveal'), index: 2 + editorOpenerCount(), icon: 'folder', onSelect: () => { const workspace = popup.session.workspace; setPopup(null); void perform(() => bridge ? bridge.openWorkspaceFolder(workspace) : Promise.resolve()); } })}
+					{openerItems(popup.session.workspace, 3)}
+					{submenuItem({ key: 'explorer', label: t('sidebar.projectReveal'), index: 3 + editorOpenerCount(), icon: 'folder', onSelect: () => { const workspace = popup.session.workspace; setPopup(null); void perform(() => bridge ? bridge.openWorkspaceFolder(workspace) : Promise.resolve()); } })}
 					<hr />
 					{submenuItem({ key: 'reveal-file', label: t('sidebar.revealSessionFile'), icon: 'file', disabled: !bridge?.revealSessionFile, onSelect: () => { const s = popup.session; setPopup(null); void perform(() => bridge!.revealSessionFile(s.path)); } })}
 					{submenuItem({ key: 'copy-path', label: t('sidebar.copySessionPath'), icon: 'copy', onSelect: () => { const s = popup.session; setPopup(null); void perform(() => navigator.clipboard.writeText(s.path)); } })}

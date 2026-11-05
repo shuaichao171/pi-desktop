@@ -70,6 +70,10 @@ export function AppShell() {
 	const windowMode = useChatStore((state) => state.appInfo?.windowMode);
 	const [paiLaunch] = useState(() => new URLSearchParams(window.location.search).get('mode') === 'pai');
 	const paiMode = windowMode === 'pai' || paiLaunch;
+	const [paneLaunch] = useState(() => new URLSearchParams(window.location.search).get('mode') === 'pane');
+	const paneMode = windowMode === 'pane' || paneLaunch;
+	const [splitPaneOpen, setSplitPaneOpen] = useState(false);
+	const paneRegionRef = useRef<HTMLDivElement | null>(null);
 	const navigation = useSessionNavigation();
 	const [sidebarOpen, setSidebarOpen] = useState(() => !window.matchMedia(NARROW_WINDOW_QUERY).matches);
 	const [projectRevealRequest, setProjectRevealRequest] = useState(0);
@@ -130,6 +134,30 @@ export function AppShell() {
 		// must not yank the user back on every render.
 		if (!previous && extensionRequestPending && !paiMode) setMainView('chat');
 	}, [extensionRequestPending, paiMode]);
+	// Split pane: report the reserved region on every layout change; collapse
+	// when the pane closes itself from inside its own header.
+	useEffect(() => {
+		if (!splitPaneOpen) return;
+		const region = paneRegionRef.current;
+		if (!region) return;
+		const report = () => {
+			const rect = region.getBoundingClientRect();
+			void useChatStore.getState().bridge?.setSplitPaneBounds?.({ x: rect.x, y: rect.y, width: rect.width, height: rect.height });
+		};
+		const observer = new ResizeObserver(() => report());
+		observer.observe(region);
+		report();
+		return () => observer.disconnect();
+	}, [splitPaneOpen]);
+	useEffect(() => {
+		const bridge = useChatStore.getState().bridge;
+		return bridge?.onSplitPaneClosed?.(() => setSplitPaneOpen(false));
+	}, []);
+	useEffect(() => {
+		const opened = () => setSplitPaneOpen(true);
+		window.addEventListener('pi-split-pane-opened', opened);
+		return () => window.removeEventListener('pi-split-pane-opened', opened);
+	}, []);
 	useEffect(() => {
 		const previous = previousAnyExtensionPendingRef.current;
 		previousAnyExtensionPendingRef.current = anyExtensionRequestPending;
@@ -397,6 +425,7 @@ export function AppShell() {
 	}
 	const navigationPending = useChatStore((state) => state.navigationPending || state.sessionLoading);
 	const conversationCwd = useChatStore((state) => state.cwd);
+	const status = useChatStore((state) => state.status);
 	const conversationId = useChatStore((state) => state.sessionId);
 	const conversationPath = useChatStore((state) => state.sessionPath);
 	const titleRef = useRef<ChatTitleHandle>(null);
@@ -407,6 +436,22 @@ export function AppShell() {
 	const firstUserText = messages.find((message) => message.role === 'user')?.text;
 	const currentTitle = activeSession?.name?.trim() || activeSession?.firstMessage?.trim().split(/\r?\n/)[0] || firstUserText?.trim().split(/\r?\n/)[0] || t('chat.newSession');
 	const [notificationTarget, setNotificationTarget] = useState<HTMLDivElement | null>(null);
+	if (paneMode) return (
+		<ExtensionDialogHost chatVisible notificationTarget={notificationTarget} globalNotices={PAI_GLOBAL_NOTICES}>
+			<div className="pd-app-shell is-pane">
+				<div className="pd-pane-header">
+					<span className="pd-pane-header-project" title={conversationCwd ?? ''}>{(conversationCwd ?? '').split(/[\\/]+/).filter(Boolean).pop() ?? ''}</span>
+					<span className="pd-pane-header-title" title={currentTitle}>{currentTitle}</span>
+					<span className={`pd-pane-header-status${status === 'busy' ? ' is-busy' : ''}`} aria-hidden="true" />
+					<HoverTooltip title={t('pane.close')}><button className="pd-icon-button" type="button" aria-label={t('pane.close')} onClick={() => { void useChatStore.getState().bridge?.closeSplitPane?.().catch(() => { /* Confirm canceled. */ }); }}><Icon name="close" width="15" height="15" /></button></HoverTooltip>
+				</div>
+				<div className="pd-main-view">
+				<div className="pd-chat-view-host"><ChatView compact navigationError={navigation.error} onOpenModelManagement={openModelManagement} /></div>
+				<div className="pd-notification-center"><div ref={setNotificationTarget} className="pd-extension-notification-slot" /></div>
+				</div>
+			</div>
+		</ExtensionDialogHost>
+	);
 	if (paiMode) return (
 		<ExtensionDialogHost chatVisible notificationTarget={notificationTarget} globalNotices={PAI_GLOBAL_NOTICES}>
 			<div className={`pd-app-shell is-pai${isWindows ? ' is-frameless' : ''}${settingsOpen ? ' is-settings-open' : ''}`}>
@@ -456,6 +501,10 @@ export function AppShell() {
 			}} />}
 			<div className="pd-main-view">
 			<div className="pd-chat-view-host" hidden={mainView !== 'chat'} inert={mainView !== 'chat'}><ScopedErrorBoundary scope="conversation" resetKeys={[conversationCwd, conversationId, conversationPath]}><ChatView onOpenModelManagement={openModelManagement} searchTarget={searchMessageTarget} navigationError={navigation.error} /></ScopedErrorBoundary></div>
+			{splitPaneOpen && <>
+			<div className="pd-split-divider" aria-hidden="true" />
+			<div ref={paneRegionRef} className="pd-split-pane-region" />
+			</>}
 			{mainView === 'automations' && <ScopedErrorBoundary scope="automation"><Suspense fallback={null}><AutomationPage onOpenSession={async (cwd, path) => { const selected = await useChatStore.getState().selectSession(cwd, path); if (selected) { setSearchMessageTarget(null); setMainView('chat'); if (narrow) setSidebarOpen(false); } return selected; }} /></Suspense></ScopedErrorBoundary>}
 			{mainView === 'plugins' && <ScopedErrorBoundary scope="plugins"><Suspense fallback={null}><PluginsPage /></Suspense></ScopedErrorBoundary>}
 			{/* Pages without a composer keep notices at the top of the view. */}

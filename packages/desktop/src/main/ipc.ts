@@ -14,7 +14,9 @@ import { mkdir, rm, stat } from 'node:fs/promises';
 import { basename, dirname, join, resolve } from 'node:path';
 import { IPC_CHANNELS, PROJECT_BAR_ANIM_IDS, isValidProjectBarValue, normalizeProjectBarValue, type AgentEventEnvelope, type AppLocale, type UiAppCommand, type UiAttachment, type UiExtensionDialogRequest, type UiInputScope, type UiSessionMetaPatch, type UiSidebarGroupChange, type UiSlashCommandRequest, type UiThinkingLevel } from '@pidesktop/shared';
 import { createIsolatedAgentService } from './agentClient';
-import { isPaiSender, isPaiWindow, paiHeldSessionPaths, paiSlotForSender, paiWindowSlots, registerPaiWindowSlot, unregisterPaiWindowSlot } from './paiWindows';
+import { hostedHeldSessionPaths, isPaiSender, isPaiWindow, paiHeldSessionPaths, paiSlotForSender, paiWindowSlots, registerPaiWindowSlot, unregisterPaiWindowSlot } from './paiWindows';
+import { isPaneSender, paneSlotForSender, paneSlots } from './paiWindows';
+import { initSplitPanes, openSplitPane, closeSplitPane, setPaneBounds, notifyPaneRendererReady, disposeAllPanes, panePendingDialogRequests, resolvePanePendingDialog } from './splitPanes';
 import { getAppLocale, setAppLocale } from './appLocale';
 import { appIconPath, destroyAppTray, invalidateAppTrayData, updateAppTrayMenu } from './tray';
 import { updateService } from './updateService';
@@ -143,13 +145,16 @@ let mainAgentBusy = false;
 
 /** Pai windows keep their own agent host; every other window shares the main service. */
 function agentFor(event: IpcMainInvokeEvent): PaiAgentService {
-	return (paiSlotForSender(event.sender)?.agent as PaiAgentService | undefined) ?? agentService;
+	return (paneSlotForSender(event.sender)?.agent as PaiAgentService | undefined)
+		?? (paiSlotForSender(event.sender)?.agent as PaiAgentService | undefined)
+		?? agentService;
 }
 
 
 function updateKeepAwakeBusy(): void {
 	let busy = mainAgentBusy;
 	for (const entry of paiWindowSlots()) busy = busy || entry.busy;
+	for (const pane of paneSlots()) busy = busy || pane.busy;
 	keepAwake?.setAgentBusy(busy);
 }
 
@@ -1084,6 +1089,8 @@ async function withBackgroundPluginMutation<T>(cwd: string, action: () => Promis
  * window's own renderer. Plugin management stays main-window-only.
  */
 function requireTrustedSender(event: IpcMainInvokeEvent): BrowserWindow {
+	const paneSlot = paneSlotForSender(event.sender);
+	if (paneSlot) return paneSlot.parentWin;
 	const paiSlot = paiSlotForSender(event.sender);
 	if (paiSlot) return paiSlot.win;
 	return requirePluginSender(event);
@@ -1153,7 +1160,20 @@ export function registerIpc(options: {
 		try { createPaiWindow(request); }
 		catch (error) { showPaiErrorDialog(undefined, error instanceof Error ? error.message : String(error)); }
 	}
-	setRendererSenderRestriction({ isPaiSender, mainOnlyChannels, hostedWorkspace: (event) => paiSlotForSender(event.sender)?.cwd });
+	initSplitPanes({
+		updateKeepAwakeBusy,
+		isAutomationRunning: (cwd, path) => automationExecutor.isSessionRunning(path),
+		markBackgroundActivity: (path) => {
+			void (async () => {
+				await withSessionMeta(async (meta) => {
+					const stamp = Math.max(Date.now(), (meta[path]?.unreadAt ?? 0) + 1);
+					meta[path] = { ...meta[path], unread: true, unreadAt: stamp };
+					await saveSessionMeta(meta);
+				});
+			})().catch((error: unknown) => console.error('Failed to save pane session activity metadata:', error));
+		},
+	});
+	setRendererSenderRestriction({ isPaiSender: (event) => isPaiSender(event) || isPaneSender(event), mainOnlyChannels, hostedWorkspace: (event) => paiSlotForSender(event.sender)?.cwd ?? paneSlotForSender(event.sender)?.cwd });
 	handleRendererInvoke(MCP_FEATURE_CHANNELS.getMcpSnapshot, (event) => agentFor(event).getMcpSnapshot());
 	handleRendererInvoke(MCP_FEATURE_CHANNELS.saveMcpServer, (event, request: Parameters<typeof agentService.saveMcpServer>[0]) => agentFor(event).saveMcpServer(request));
 	handleRendererInvoke(MCP_FEATURE_CHANNELS.removeMcpServer, (event, request: Parameters<typeof agentService.removeMcpServer>[0]) => agentFor(event).removeMcpServer(request));
@@ -1415,7 +1435,7 @@ export function registerIpc(options: {
 		return discoverPlugins(query);
 	});
 	const automationHandler = (action: (...args: any[]) => unknown) => (event: IpcMainInvokeEvent, ...args: unknown[]) => {
-		if (isPaiSender(event)) throw new Error('Automations are available in the main Pi Desktop window');
+		if (isPaiSender(event) || isPaneSender(event)) throw new Error('Automations are available in the main Pi Desktop window');
 		const owner = getDialogWindow();
 		if (disposingServices || !owner || owner.isDestroyed() || owner.webContents.isDestroyed()
 			|| event.sender !== owner.webContents || event.senderFrame !== owner.webContents.mainFrame) throw new Error('Invalid automation sender');
@@ -1439,6 +1459,12 @@ export function registerIpc(options: {
 	});
 	sessionGroupService = groups;
 	handleRendererInvoke(IPC_CHANNELS.rendererReady, (event) => {
+		const paneSlot = paneSlotForSender(event.sender);
+		if (paneSlot) {
+			if (event.senderFrame !== paneSlot.webContents.mainFrame) throw new Error('Invalid renderer-ready sender');
+			notifyPaneRendererReady(paneSlot.webContents);
+			return;
+		}
 		const win = invokingWindow(event);
 		if (event.senderFrame !== win.webContents.mainFrame) throw new Error('Invalid renderer-ready sender');
 		notifyPaiRendererReady(win);
@@ -1488,7 +1514,7 @@ export function registerIpc(options: {
 		nodeVersion: process.versions.node ?? 'unknown',
 		electronVersion: process.versions.electron ?? 'unknown',
 		platform: process.platform,
-		windowMode: isPaiSender(event) ? 'pai' as const : windowMode,
+		windowMode: isPaneSender(event) ? 'pane' as const : isPaiSender(event) ? 'pai' as const : windowMode,
 	}));
 	handleRendererInvoke(IPC_CHANNELS.appSetLocale, (_event, locale: AppLocale) => {
 		setAppLocale(locale);
@@ -1497,11 +1523,11 @@ export function registerIpc(options: {
 	handleRendererInvoke(IPC_CHANNELS.updateState, (event) => isPaiSender(event)
 		? { phase: 'unavailable', unavailableReason: 'unsupported', currentVersion: app.getVersion() } : updateService.getState());
 	handleRendererInvoke(IPC_CHANNELS.updateCheck, (event, autoInstall?: unknown) => {
-		if (isPaiSender(event)) throw new Error('Install updates from the main Pi Desktop window');
+		if (isPaiSender(event) || isPaneSender(event)) throw new Error('Install updates from the main Pi Desktop window');
 		return updateService.check(autoInstall === true);
 	});
 	handleRendererInvoke(IPC_CHANNELS.updateInstall, (event) => {
-		if (isPaiSender(event)) throw new Error('Install updates from the main Pi Desktop window');
+		if (isPaiSender(event) || isPaneSender(event)) throw new Error('Install updates from the main Pi Desktop window');
 		return updateService.install();
 	});
 	handleRendererInvoke(IPC_CHANNELS.windowChromeState, (event) => ({
@@ -1705,6 +1731,27 @@ export function registerIpc(options: {
 		const owner = await requireSessionOwner(path);
 		return agentService.forkSession(path, owner, name?.trim());
 	}));
+	handleRendererInvoke(IPC_CHANNELS.splitPaneOpen, (event, cwd: unknown, sessionPath?: unknown) => {
+		const parentWin = requireRendererSender(event);
+		openSplitPane(parentWin, {
+			cwd: typeof cwd === 'string' ? cwd : '',
+			...(typeof sessionPath === 'string' && sessionPath ? { sessionPath } : {}),
+		});
+	});
+	handleRendererInvoke(IPC_CHANNELS.splitPaneClose, (event) => {
+		const paneSlot = paneSlotForSender(event.sender);
+		if (paneSlot) return closeSplitPane(paneSlot);
+		const parentWin = requireRendererSender(event);
+		const pane = [...paneSlots()].find((slot) => slot.parentWin === parentWin);
+		if (pane) return closeSplitPane(pane);
+		throw new Error('没有可关闭的窗格');
+	});
+	handleRendererInvoke(IPC_CHANNELS.splitPaneSetBounds, (event, rect: unknown) => {
+		const parentWin = requireRendererSender(event);
+		const r = (rect ?? {}) as { x?: unknown; y?: unknown; width?: unknown; height?: unknown };
+		const num = (v: unknown) => typeof v === 'number' && Number.isFinite(v) ? v : 0;
+		setPaneBounds(parentWin, { x: num(r.x), y: num(r.y), width: num(r.width), height: num(r.height) });
+	});
 	handleRendererInvoke(IPC_CHANNELS.sessionOpenWindow, async (_event, path: string) => {
 		const target = normalizeSessionPath(path);
 		if (!/\.jsonl$/i.test(target)) throw new Error('会话路径无效');
@@ -1718,7 +1765,7 @@ export function registerIpc(options: {
 	handleRendererInvoke(IPC_CHANNELS.agentSwitchSession, (_event, path: string) => queueWorkspaceActivation(async () => {
 		path = normalizeSessionPath(path);
 		if (automationExecutor.isSessionRunning(path)) throw new Error('自动化仍在运行，请结束后再打开会话');
-		if (new Set(paiHeldSessionPaths()).has(path)) throw new Error('会话已在 pai 小窗中打开，请先关闭该小窗');
+		if (new Set(hostedHeldSessionPaths()).has(path)) throw new Error('会话已在 pai 小窗或分屏窗格中打开，请先关闭它');
 		await agentService.switchSession(path);
 		await markSessionRead(path);
 	}));
@@ -1928,11 +1975,15 @@ export function registerIpc(options: {
 		const slot = paiSlotForSender(event.sender);
 		return slot ? newPaiConversation(slot as PaiWindowEntry, options) : newConversation(options);
 	});
-	handleRendererInvoke(IPC_CHANNELS.agentExtensionDialogPending, (event) => [...pendingDialogs.values()]
-		.filter(({ owner }) => owner === invokingWindow(event)).map(({ request }) => request));
+	handleRendererInvoke(IPC_CHANNELS.agentExtensionDialogPending, (event) => {
+		if (isPaneSender(event)) return panePendingDialogRequests(event.sender);
+		return [...pendingDialogs.values()]
+			.filter(({ owner }) => owner === invokingWindow(event)).map(({ request }) => request);
+	});
 	handleRendererInvoke(IPC_CHANNELS.agentExtensionDialogResponse, (event, id: string, value: unknown) => {
 		if (typeof id !== 'string') throw new Error('交互结果无效');
-		const pending = pendingDialogs.get(id);
+		if (isPaneSender(event) && resolvePanePendingDialog(id, value)) return;
+	const pending = pendingDialogs.get(id);
 		if (pending && pending.owner.webContents === event.sender) pending.resolve(requireDialogResponse(pending.request, value));
 	});
 }
@@ -1960,6 +2011,7 @@ export function disposeServices(): Promise<void> {
 		await sessionGroupService?.flush();
 		// Hosted pai windows and their agent hosts go first: their metadata may
 		// still be queued on the shared session-meta pipeline below.
+		await disposeAllPanes();
 		await disposeAllPaiWindows();
 		inputFeatures?.dispose();
 		// Flush a pending auto-sync upload before the agent host goes away.

@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdirSync, readFileSync, realpathSync, renameSync, rmdirSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { isAbsolute, join, posix, resolve, win32 } from 'node:path';
 
-export type DesktopLaunch = { windowMode: 'full' } | { windowMode: 'multi' } | { windowMode: 'pai'; cwd: string; sessionPath?: string };
+export type DesktopLaunch = { windowMode: 'full' } | { windowMode: 'multi' } | { windowMode: 'pai'; cwd: string; sessionPath?: string } | { windowMode: 'pane'; cwd: string };
 
 /**
  * Electron appends its own Chromium switches (for example
@@ -181,8 +181,8 @@ export function reservePaiProfile(baseUserData: string, options: ProfileOptions 
 }
 
 export function rendererLaunchUrl(url: string, launch: DesktopLaunch): string {
-	if (launch.windowMode !== 'pai') return url;
+	if (launch.windowMode !== 'pai' && launch.windowMode !== 'pane') return url;
 	const target = new URL(url);
-	target.searchParams.set('mode', 'pai');
+	target.searchParams.set('mode', launch.windowMode);
 	return target.toString();
 }

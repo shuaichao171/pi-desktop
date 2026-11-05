@@ -777,6 +777,8 @@ export const translations: Record<string, { 'zh-CN': string; 'en-US': string }> 
   'sidebar.moveToGroup': { 'zh-CN': '移动到分组', 'en-US': 'Move to group' },
   'sidebar.openIn': { 'zh-CN': '打开方式', 'en-US': 'Open in' },
   'sidebar.openInNewWindow': { 'zh-CN': '新窗口', 'en-US': 'New window' },
+  'sidebar.openInSplitPane': { 'zh-CN': '在右侧窗格打开', 'en-US': 'Open in split pane' },
+  'pane.close': { 'zh-CN': '关闭窗格', 'en-US': 'Close pane' },
   'sidebar.openersLoading': { 'zh-CN': '正在检测可用应用…', 'en-US': 'Looking for apps…' },
   'sidebar.openersEmpty': { 'zh-CN': '未检测到可用应用', 'en-US': 'No apps detected' },
   'sidebar.fork': { 'zh-CN': 'Fork', 'en-US': 'Fork' },
