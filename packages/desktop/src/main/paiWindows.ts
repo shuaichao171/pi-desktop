@@ -104,7 +104,7 @@ export function isPaneSender(event: IpcMainInvokeEvent): boolean {
 /** Conversations hosted split panes are writing; other agents must not restore them. */
 export function paneHeldSessionPaths(): string[] {
 	const paths: string[] = [];
-	for (const slot of paneSlots.values()) {
+	for (const slot of paneSlotMap.values()) {
 		if (slot.liveSessionPath) paths.push(slot.liveSessionPath);
 	}
 	return paths;
