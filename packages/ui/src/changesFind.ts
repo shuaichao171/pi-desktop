@@ -32,19 +32,29 @@ export function countOccurrences(haystack: string, needle: string): number {
   return count;
 }
 
-export function findChangeMatches(changes: readonly UiFileChange[], query: string, diffs: ReadonlyMap<string, UiFileDiff> | null): ChangeFindResult {
+/**
+ * Match core over plain paths and raw diff text. Runs on the render thread and
+ * inside the diff worker, so both sides always count identically.
+ */
+export function findPathMatches(paths: readonly string[], query: string, diffs: ReadonlyMap<string, string> | null): ChangeFindResult {
   const trimmed = query.trim();
   if (!trimmed) return { files: [], total: 0 };
   const files: ChangeFindFile[] = [];
   let total = 0;
-  for (const change of changes) {
+  for (const path of paths) {
     // Binary/too-large changes carry no readable diff; their path still counts.
-    const haystack = `${change.path}\n${diffs?.get(change.path)?.diff ?? ''}`;
+    const haystack = `${path}\n${diffs?.get(path) ?? ''}`;
     const count = countOccurrences(haystack, trimmed);
     if (count > 0) {
-      files.push({ path: change.path, count });
+      files.push({ path, count });
       total += count;
     }
   }
   return { files, total };
+}
+
+export function findChangeMatches(changes: readonly UiFileChange[], query: string, diffs: ReadonlyMap<string, UiFileDiff> | null): ChangeFindResult {
+  if (!query.trim()) return { files: [], total: 0 };
+  const diffTexts = diffs ? new Map([...diffs].map(([path, diff]) => [path, diff.diff ?? ''])) : null;
+  return findPathMatches(changes.map((change) => change.path), query, diffTexts);
 }

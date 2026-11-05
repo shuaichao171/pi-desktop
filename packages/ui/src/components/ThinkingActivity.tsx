@@ -5,6 +5,7 @@ import { useDisclosureChoice } from '../conversationDisclosure';
 import { ActivityDisclosure, ActivityLabel } from './ActivityDisclosure';
 import { Icon } from './Icons';
 import { ConversationMarkdown } from './ConversationMarkdown';
+import { StreamingContentContext } from '../streamingContent';
 
 /** The collapsed summary follows the newest line, zcode-style. */
 export function thinkingPreviewLine(thinking: string): string | null {
@@ -57,7 +58,7 @@ export function ThinkingActivity({ message }: { message: UiMessage }) {
 					<div ref={outputRef} className="pd-markdown pd-thinking-markdown" onScroll={() => {
 						const node = outputRef.current;
 						if (node) followsOutput.current = node.scrollHeight - node.scrollTop - node.clientHeight < 32;
-					}}><ConversationMarkdown>{thinking}</ConversationMarkdown></div>
+					}}><StreamingContentContext.Provider value={active}><ConversationMarkdown>{thinking}</ConversationMarkdown></StreamingContentContext.Provider></div>
 					{message.thinkingTruncated && <p className="pd-activity-note">{t('message.thinking.truncated')}</p>}
 				</div>
 			</ActivityDisclosure>

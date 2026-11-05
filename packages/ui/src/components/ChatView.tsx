@@ -16,7 +16,7 @@ import { FleetCard } from './FleetCard';
 import { ChangesCard, LiveChangesSummary } from './ComposerChanges';
 import { ChangesDialog } from './ChangesDialog';
 import { useFileChangeDiffs } from '../fileChangeDiffs';
-import { findChangeMatches } from '../changesFind';
+import { useChangesFind } from '../useChangesFind';
 import { createViewportOwnership } from '../viewportOwnership';
 import { RunStatusBar } from './RunStatusBar';
 import { ComposerContextBar } from './ComposerContextBar';
@@ -229,7 +229,8 @@ export function ChatView({ onOpenModelManagement, searchTarget, historyControls,
 	const reviewDiffs = useFileChangeDiffs(changesReview?.scope ?? null);
 	const findDiffs = useFileChangeDiffs(findOpen && findScope === 'changes' ? { kind: 'conversation' } : null);
 	const changesFindable = fileChanges.length > 0;
-	const changesFind = useMemo(() => findScope === 'changes' && findOpen ? findChangeMatches(fileChanges, findQuery, findDiffs) : null, [findScope, findOpen, fileChanges, findQuery, findDiffs]);
+	// Below the size limit this stays the old synchronous memo; larger scans run in the diff worker.
+	const changesFind = useChangesFind(findScope === 'changes' && findOpen, fileChanges, findQuery, findDiffs);
 	useEffect(() => { setChangesFindFile(-1); }, [findQuery]);
 	useEffect(() => { if (changesFind && changesFindFile >= changesFind.files.length) setChangesFindFile(-1); }, [changesFind, changesFindFile]);
 	const stepChangesFind = (delta: 1 | -1, files = changesFind?.files ?? [], current = changesFindFile) => {
