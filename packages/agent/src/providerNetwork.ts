@@ -3,6 +3,7 @@ import type { ModelRuntime } from '@earendil-works/pi-coding-agent';
 import { Agent, ProxyAgent, fetch as networkFetch, type Dispatcher, type RequestInit as NetworkRequestInit } from 'undici';
 import { readProviderDocument } from './customProviders.ts';
 import { normalizeResponsesReasoningStream } from './providerResponseStream.ts';
+import { sanitizeReasoningRequest } from './thinkingLevels.ts';
 import { ProviderDiscoveryError } from './providerDiscovery.ts';
 
 type NetworkScope = { useSystemProxy: boolean } | { provider: string; api: string; modelsPath: string; policy?: Promise<boolean | undefined> };
@@ -131,12 +132,14 @@ export function bindProviderNetwork(runtime: ModelRuntime, modelsPath: string): 
   if (boundRuntimes.has(runtime)) return;
   boundRuntimes.add(runtime);
   const run = <T>(provider: string, api: string, work: () => T): T => scopes.run({ provider, api, modelsPath }, work);
+  // Reasoning efforts are normalized here so /compact, auto-compaction and chat
+  // share one guard below both SDK entry points (see thinkingLevels.ts).
   const stream = runtime.stream.bind(runtime);
-  runtime.stream = (model, context, options) => run(model.provider, model.api, () => stream(model, context, options));
+  runtime.stream = (model, context, options) => { const safe = sanitizeReasoningRequest(model, options); return run(safe.model.provider, safe.model.api, () => stream(safe.model, context, safe.options)); };
   const streamSimple = runtime.streamSimple.bind(runtime);
-  runtime.streamSimple = (model, context, options) => run(model.provider, model.api, () => streamSimple(model, context, options));
+  runtime.streamSimple = (model, context, options) => { const safe = sanitizeReasoningRequest(model, options); return run(safe.model.provider, safe.model.api, () => streamSimple(safe.model, context, safe.options)); };
   const streamDeferred = runtime.streamDeferred.bind(runtime);
-  runtime.streamDeferred = (model, handle, options) => run(model.provider, model.api, () => streamDeferred(model, handle, options));
+  runtime.streamDeferred = (model, handle, options) => { const safe = sanitizeReasoningRequest(model, options); return run(safe.model.provider, safe.model.api, () => streamDeferred(safe.model, handle, safe.options)); };
   const cancelDeferred = runtime.cancelDeferred.bind(runtime);
-  runtime.cancelDeferred = (model, handle, options) => run(model.provider, model.api, () => cancelDeferred(model, handle, options));
+  runtime.cancelDeferred = (model, handle, options) => { const safe = sanitizeReasoningRequest(model, options); return run(safe.model.provider, safe.model.api, () => cancelDeferred(safe.model, handle, safe.options)); };
 }

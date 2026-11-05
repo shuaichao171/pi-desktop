@@ -110,6 +110,7 @@ export type { DesktopApprovalOptions } from './extensionApproval.ts';
 import { requireInputQueueScope, type UiInputQueue, type UiInputQueueScope, type UiInputQueueMutation, type UiInputReceipt, type UiSubmitInput } from '../../shared/src/inputFeatures.ts';
 import type { ModelTestRequest, ProjectDefaultsWrite, UiSaveProviderUsageQueryRequest, UiUsageQueryConfig, UiUsageQueryResult } from '../../shared/src/managementFeatures.ts';
 import { runProviderUsageQuery, usageQueryInfo, normalizeUsageQueryConfig, validateUsageQueryRequest } from './providerUsageQuery.ts';
+import { applyCanonicalThinkingLevel, normalizeThinkingLevel } from './thinkingLevels.ts';
 import { clearDisabledModelsForProvider } from './customProviders.ts';
 import { ModelTestService } from './modelTest.ts';
 import { ProjectDefaultsService } from './projectDefaults.ts';
@@ -138,7 +139,6 @@ export type RequestExtensionDialog = (request: UiExtensionDialogRequest, signal?
 type EventEmitter = (event: AgentEventEnvelope) => void;
 
 type PiRuntime = Awaited<ReturnType<typeof createAgentSessionRuntime>>;
-const THINKING_LEVELS: readonly UiThinkingLevel[] = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
 const MAX_TOOL_DETAIL_CHARS = 48000;
 const MAX_THINKING_CHARS = 48000;
 const THINKING_UPDATE_INTERVAL_MS = 80;
@@ -819,8 +819,12 @@ class SingleAgentService {
 		this.activeConfigurationCalls += 1;
 		this.fire({ type: 'status', status: 'busy' });
 		try {
-			if (command.name === 'compact') await session.compact(args || undefined);
-			else await session.reload();
+			if (command.name === 'compact') {
+				// 压缩/总结请求会把会话档位写进 options.reasoning：先拉回规范集，
+				// 避免历史持久化的 none 这类档位透传成非法 effort（与 setThinkingLevel 共用归一化）。
+				applyCanonicalThinkingLevel(session);
+				await session.compact(args || undefined);
+			} else await session.reload();
 			this.fireReady();
 			this.fire({ type: 'sessions-changed', cwd: this.cwd });
 		} finally {
@@ -1118,11 +1122,14 @@ class SingleAgentService {
 		}
 	}
 
-	/** Pi clamps the requested level to the selected model's supported levels. */
+	/** Pi clamps the requested level to the selected model's supported levels; unknown values are dropped here. */
 	async setThinkingLevel(level: UiThinkingLevel, persist = true): Promise<void> {
 		const session = this.requireSessionForModelSettings();
-		if (!THINKING_LEVELS.includes(level)) throw new Error('思考级别无效');
-		session.setThinkingLevel(level, { persist });
+		// 归一化后再交给 SDK：none/disabled 折叠为 off，未知档位直接拒绝，
+		// 保证 persist 写入设置文件的只能是规范集。
+		const normalized = normalizeThinkingLevel(level);
+		if (!normalized) throw new Error('思考级别无效');
+		session.setThinkingLevel(normalized, { persist });
 		if (this.state.thinkingLevel !== session.thinkingLevel) {
 			this.fire({ type: 'thinking-level', level: session.thinkingLevel });
 		}
