@@ -8,7 +8,7 @@ import { registerDebugApiIpc } from './debugApiIpc';
  * call is a typed invoke against the contract in @pidesktop/shared. Hosted pai
  */
 
-import { app, BrowserWindow, dialog, nativeImage, shell, type IpcMainInvokeEvent } from 'electron';
+import { app, BrowserWindow, dialog, nativeImage, nativeTheme, shell, type IpcMainInvokeEvent } from 'electron';
 import { statSync } from 'node:fs';
 import { mkdir, rm, stat } from 'node:fs/promises';
 import { basename, dirname, join, resolve } from 'node:path';
@@ -38,6 +38,7 @@ import { createDesktopNotifier } from './notifications';
 import { createKeepAwakeController, type KeepAwakeController } from './keepAwake';
 import { readDesktopSettings, writeDesktopSettingsAsync, type DesktopSettings } from './desktopSettings';
 import { appearanceStatePath, isValidAppearanceState, readAppearanceState, watchAppearanceState, writeAppearanceStateAsync } from './appearance';
+import { resolveWindowTheme } from './windowTheme';
 import { readWorkspaceContext, validateContextRequest } from './contextService';
 import { createAutomationService } from './automationService';
 import { createGoalWatchService } from './goalWatchService';
@@ -285,7 +286,8 @@ function createPaiWindow(request: PaiWindowRequest): void {
 		height: 780,
 		minWidth: 680,
 		minHeight: 520,
-		backgroundColor: '#111216',
+		// Same theme source as the main and boot windows (splash theming).
+		backgroundColor: resolveWindowTheme(readAppearanceState(appearancePath), nativeTheme.shouldUseDarkColors).background,
 		title: 'pai',
 		icon: nativeImage.createFromPath(appIconPath()),
 		frame: process.platform !== 'win32',
@@ -682,6 +684,50 @@ export function defaultWorkspace(initialWorkspace?: string): string {
 	// Startup path: runs once per cold start and must return the workspace synchronously,
 	// so the sync write stays (runtime workspace saves all go through saveWorkspaceAsync).
 	writeStateFile(workspaceSettingsPath(), registerConversationWorkspace(saved, cwd, root));
+	activeWorkspace = cwd;
+	return cwd;
+}
+
+/**
+ * Cold-start twin of defaultWorkspace (audit P2): the same decisions with async
+ * state IO, so the startup workspace resolves off the main thread while the
+ * main window's renderer loads. The sync version above remains the probe for
+ * the currently active workspace (tests and the sync close path).
+ */
+export async function defaultWorkspaceAsync(initialWorkspace?: string): Promise<string> {
+	if (initialWorkspace !== undefined) {
+		// A missing launch workspace reports the actionable message instead of raw ENOENT.
+		if (!(await stat(initialWorkspace, { throwIfNoEntry: false }))?.isDirectory()) throw new Error('The launch workspace must be a directory');
+		await saveWorkspaceAsync(initialWorkspace, true);
+		activeWorkspace = initialWorkspace;
+		return initialWorkspace;
+	}
+	let saved: WorkspaceSettings;
+	try {
+		saved = await readWorkspaceSettingsAsync();
+	} catch (error) {
+		if (!(error instanceof CorruptStateFileError)) {
+			dialog.showErrorBox(getAppLocale() === 'en-US' ? 'Workspace settings could not be read' : '无法读取工作区设置', String(error));
+			throw error;
+		}
+		const backup = await backupCorruptStateFileAsync(workspaceSettingsPath());
+		const english = getAppLocale() === 'en-US';
+		dialog.showErrorBox(english ? 'Workspace settings recovered' : '工作区设置已恢复',
+			english ? `The damaged settings were saved to:\n${backup}\n\nA default workspace will open. You can restore your old workspace list from the backup.`
+				: `损坏的设置已备份到：\n${backup}\n\n将打开默认工作区。你可以从备份中恢复旧工作区列表。`);
+		saved = {};
+	}
+	try {
+		if (typeof saved.cwd === 'string' && (await stat(saved.cwd)).isDirectory()) {
+			activeWorkspace = saved.cwd;
+			return saved.cwd;
+		}
+	} catch {
+		// A saved workspace may have been moved or removed.
+	}
+	const root = readCurrentDesktopSettings().conversationStorageDirectory;
+	const cwd = await createConversationWorkspace(root);
+	await writeStateFileAsync(workspaceSettingsPath(), registerConversationWorkspace(saved, cwd, root));
 	activeWorkspace = cwd;
 	return cwd;
 }

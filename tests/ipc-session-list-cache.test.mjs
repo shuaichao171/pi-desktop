@@ -13,6 +13,7 @@ import { test } from 'node:test';
 const stubs = {
   electron: `
     export const app = { getPath: () => globalThis.__ipcUserData, getVersion: () => '0.1.7-test' };
+    export const nativeTheme = { shouldUseDarkColors: false };
     export const shell = { showItemInFolder: () => {} };
     export const Menu = { buildFromTemplate: () => ({}) };
     export const nativeImage = { createFromPath: () => ({ isEmpty: () => true }) };
