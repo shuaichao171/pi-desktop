@@ -70,3 +70,23 @@
     Pop $0
   !endif
 !macroend
+
+; Directory-page writability gate. A per-user ("install for me") run needs no
+; elevation, so pointing it at a system folder like C:\Program Files produces a
+; ghost install: HKCU registry keys succeed without admin while every file
+; write is denied — the wizard only surfaces this as raw "error opening file
+; for writing" dialogs mid-install. Probe the chosen directory up front instead;
+; an unwritable directory disables Next (the .onVerifyInstDir contract), which
+; steers the user back to the install-mode page ("install for all users", which
+; elevates and defaults to Program Files) or to a user-writable path.
+Function .onVerifyInstDir
+  ; Plain NSIS instructions only: this top-level function body compiles at the
+  ; point where electron-builder includes this file, before LogicLib (${If}) is
+  ; available — macro-based conditionals here break the makensis build.
+  ClearErrors
+  FileOpen $0 "$INSTDIR\~pi-desktop-write-test.tmp" w
+  IfErrors 0 +2
+  Abort
+  FileClose $0
+  Delete "$INSTDIR\~pi-desktop-write-test.tmp"
+FunctionEnd
