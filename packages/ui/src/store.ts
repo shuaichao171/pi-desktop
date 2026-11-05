@@ -1203,7 +1203,7 @@ if (!get().modelProviders.length) void get().refreshModelProviders().catch(() =>
 		if (bridge.focusHostedSession) {
 			const hosted = await bridge.focusHostedSession(path).catch(() => false);
 			if (hosted) {
-				operationFeedback.show({ id: 'select-hosted-session', kind: 'error', title: translate('store.hostedSessionInPane') });
+				operationFeedback.show({ id: 'select-hosted-session', kind: 'warning', title: translate('store.hostedSessionInPane') });
 				return false;
 			}
 		}

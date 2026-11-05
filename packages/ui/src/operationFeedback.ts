@@ -1,6 +1,6 @@
 export interface OperationNotice {
 	id: string;
-	kind: 'success' | 'error' | 'pending';
+	kind: 'success' | 'error' | 'pending' | 'warning';
 	title: string;
 	detail?: string;
 	retry?: () => Promise<unknown>;
