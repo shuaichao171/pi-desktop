@@ -2,13 +2,6 @@
 
 /* Split pane (embedded WebContentsView) chrome. */
 .pd-app-shell.is-pane { display: flex; flex-direction: column; }
-.pd-pane-header { display: flex; flex: 0 0 auto; align-items: center; gap: 8px; height: 40px; padding: 0 10px 0 14px; border-bottom: 1px solid var(--pd-border-soft); }
-.pd-pane-header-project { flex: 0 1 auto; min-width: 0; max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--pd-text-weak); font-size: var(--pd-font-caption); }
-.pd-pane-header-title { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--pd-text); font-size: var(--pd-font-sm); font-weight: var(--pd-weight-medium); }
-.pd-pane-header-status { flex: 0 0 auto; width: 8px; height: 8px; border-radius: 999px; background: var(--pd-text-weak); }
-.pd-pane-header-status.is-busy { background: var(--pd-brand); animation: pd-pane-busy 1.2s ease-in-out infinite; }
-@keyframes pd-pane-busy { 50% { opacity: .35; } }
-@media (prefers-reduced-motion: reduce) { .pd-pane-header-status.is-busy { animation: none; } }
 
 /* Main-window side: reserved region + divider between the two panes. */
 .pd-split-pane-region { flex: 1 1 0; min-width: 280px; position: relative; border-left: 1px solid var(--pd-border); background: var(--pd-bg); }

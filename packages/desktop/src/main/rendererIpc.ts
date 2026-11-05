@@ -1,7 +1,18 @@
 import { BrowserWindow, ipcMain, type IpcMainInvokeEvent } from 'electron';
+import { paneSlotForSender } from './paiWindows';
 
 /** Only the main frame of a live application window may invoke the preload API. */
 export function requireRendererSender(event: IpcMainInvokeEvent): BrowserWindow {
+	// Embedded split panes send from their own WebContentsView, which resolves to
+	// the parent window at best — the strict same-webContents check below would
+	// reject every single pane invoke. Route them to the parent explicitly.
+	if (senderRestriction?.isPaiSender(event)) {
+		const pane = paneSlotForSender(event?.sender);
+		if (pane) {
+			if (pane.parentWin.isDestroyed()) throw new Error('The requesting window is no longer available.');
+			return pane.parentWin;
+		}
+	}
 	const win = event?.sender ? BrowserWindow.fromWebContents(event.sender) : null;
 	if (!win || win.isDestroyed() || event.sender.isDestroyed() || win.webContents !== event.sender) {
 		throw new Error('The requesting window is no longer available.');

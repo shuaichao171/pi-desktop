@@ -2,7 +2,7 @@ import { Suspense, useEffect, useLayoutEffect, useRef, useState, type CSSPropert
 import { ExitPresence } from './ExitPresence';
 import type { UiAppearanceState, UiSessionSearchResult, WorkspaceEntry } from '@pidesktop/shared';
 import { ChatView, type SearchMessageTarget } from './ChatView';
-import type { ChatTitleHandle } from './ChatTitle';
+import { ConversationHeader } from './ConversationHeader';
 import { ScopedErrorBoundary } from './ScopedErrorBoundary';
 import { ActivityBar } from './ActivityBar';
 import { TopBar } from './TopBar';
@@ -428,7 +428,7 @@ export function AppShell() {
 	const status = useChatStore((state) => state.status);
 	const conversationId = useChatStore((state) => state.sessionId);
 	const conversationPath = useChatStore((state) => state.sessionPath);
-	const titleRef = useRef<ChatTitleHandle>(null);
+
 	const [commitOpen, setCommitOpen] = useState(false);
 	const sessions = useChatStore((state) => state.sessions ?? []);
 	const messages = useChatStore((state) => state.messages ?? []);
@@ -439,12 +439,7 @@ export function AppShell() {
 	if (paneMode) return (
 		<ExtensionDialogHost chatVisible notificationTarget={notificationTarget} globalNotices={PAI_GLOBAL_NOTICES}>
 			<div className="pd-app-shell is-pane">
-				<div className="pd-pane-header">
-					<span className="pd-pane-header-project" title={conversationCwd ?? ''}>{(conversationCwd ?? '').split(/[\\/]+/).filter(Boolean).pop() ?? ''}</span>
-					<span className="pd-pane-header-title" title={currentTitle}>{currentTitle}</span>
-					<span className={`pd-pane-header-status${status === 'busy' ? ' is-busy' : ''}`} aria-hidden="true" />
-					<HoverTooltip title={t('pane.close')}><button className="pd-icon-button" type="button" aria-label={t('pane.close')} onClick={() => { void useChatStore.getState().bridge?.closeSplitPane?.().catch(() => { /* Confirm canceled. */ }); }}><Icon name="close" width="15" height="15" /></button></HoverTooltip>
-				</div>
+				<ConversationHeader cwd={conversationCwd} title={currentTitle} busy={status === 'busy'} onClose={() => { void useChatStore.getState().bridge?.closeSplitPane?.().catch(() => { /* Confirm canceled. */ }); }} />
 				<div className="pd-main-view">
 				<div className="pd-chat-view-host"><ChatView compact navigationError={navigation.error} onOpenModelManagement={openModelManagement} /></div>
 				<div className="pd-notification-center"><div ref={setNotificationTarget} className="pd-extension-notification-slot" /></div>
@@ -473,7 +468,7 @@ export function AppShell() {
 	return (
 		<ExtensionDialogHost chatVisible={mainView === 'chat'} notificationTarget={notificationTarget} globalNotices={MAIN_GLOBAL_NOTICES}>
 		<div className={`pd-app-shell flex${isWindows ? ' is-frameless' : ''}${settingsOpen || searchOpen ? ' is-settings-open' : ''}${sidebarResizing ? ' is-sidebar-resizing' : ''}${workbenchResizing ? ' is-workbench-resizing' : ''}`} style={{ '--pd-sidebar-width': `${sidebarWidth}px`, '--pd-workbench-width': `${clampWorkbenchWidth(workbenchWidth, viewportWidth)}px` } as CSSProperties}>
-			<TopBar history={history} searchOpen={searchOpen} onOpenSearch={() => setSearchOpen(true)} mainView={mainView} title={currentTitle} sessionPath={conversationPath} cwd={conversationCwd} titleRef={titleRef} onOpenCommit={() => setCommitOpen(true)} isWindows={isWindows} workbenchOpen={workbenchOpen} onToggleWorkbench={() => setWorkbenchOpen((value) => !value)} workbenchToggleRef={workbenchToggleRef} />
+			<TopBar history={history} searchOpen={searchOpen} onOpenSearch={() => setSearchOpen(true)} mainView={mainView} title={currentTitle} sessionPath={conversationPath} cwd={conversationCwd} onOpenCommit={() => setCommitOpen(true)} isWindows={isWindows} workbenchOpen={workbenchOpen} onToggleWorkbench={() => setWorkbenchOpen((value) => !value)} workbenchToggleRef={workbenchToggleRef} />
 			<div className="pd-app-body">
 			<button type="button" className={`pd-sidebar-scrim${narrow && sidebarOpen ? ' is-open' : ''}`} aria-label={t('app.closeSidebar')} aria-hidden={!narrow || !sidebarOpen} inert={!narrow || !sidebarOpen} tabIndex={-1} onClick={() => setSidebarOpen(false)} />
 			<ActivityBar
@@ -500,7 +495,7 @@ export function AppShell() {
 				setSidebarWidth((value) => Math.max(MIN_SIDEBAR_WIDTH, Math.min(MAX_SIDEBAR_WIDTH, value + (event.key === 'ArrowRight' ? 16 : -16))));
 			}} />}
 			<div className="pd-main-view">
-			<div className="pd-chat-view-host" hidden={mainView !== 'chat'} inert={mainView !== 'chat'}><ScopedErrorBoundary scope="conversation" resetKeys={[conversationCwd, conversationId, conversationPath]}><ChatView onOpenModelManagement={openModelManagement} searchTarget={searchMessageTarget} navigationError={navigation.error} /></ScopedErrorBoundary></div>
+			<div className="pd-chat-view-host" hidden={mainView !== 'chat'} inert={mainView !== 'chat'}><ConversationHeader cwd={conversationCwd} title={currentTitle} busy={status === 'busy'} /><ScopedErrorBoundary scope="conversation" resetKeys={[conversationCwd, conversationId, conversationPath]}><ChatView onOpenModelManagement={openModelManagement} searchTarget={searchMessageTarget} navigationError={navigation.error} /></ScopedErrorBoundary></div>
 			{splitPaneOpen && <>
 			<div className="pd-split-divider" aria-hidden="true" />
 			<div ref={paneRegionRef} className="pd-split-pane-region" />

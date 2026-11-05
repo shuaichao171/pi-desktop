@@ -16,7 +16,7 @@ import { IPC_CHANNELS, PROJECT_BAR_ANIM_IDS, isValidProjectBarValue, normalizePr
 import { createIsolatedAgentService } from './agentClient';
 import { hostedHeldSessionPaths, isPaiSender, isPaiWindow, paiHeldSessionPaths, paiSlotForSender, paiWindowSlots, registerPaiWindowSlot, unregisterPaiWindowSlot } from './paiWindows';
 import { isPaneSender, paneSlotForSender, paneSlots } from './paiWindows';
-import { initSplitPanes, openSplitPane, closeSplitPane, setPaneBounds, notifyPaneRendererReady, disposeAllPanes, panePendingDialogRequests, resolvePanePendingDialog } from './splitPanes';
+import { initSplitPanes, openSplitPane, closeSplitPane, setPaneBounds, notifyPaneRendererReady, disposeAllPanes, panePendingDialogRequests, resolvePanePendingDialog, paneLog } from './splitPanes';
 import { getAppLocale, setAppLocale } from './appLocale';
 import { appIconPath, destroyAppTray, invalidateAppTrayData, updateAppTrayMenu } from './tray';
 import { updateService } from './updateService';
@@ -1459,6 +1459,7 @@ export function registerIpc(options: {
 	});
 	sessionGroupService = groups;
 	handleRendererInvoke(IPC_CHANNELS.rendererReady, (event) => {
+		paneLog(`rendererReady invoke: senderId=${event.sender.id} paneHit=${!!paneSlotForSender(event.sender)}`);
 		const paneSlot = paneSlotForSender(event.sender);
 		if (paneSlot) {
 			if (event.senderFrame !== paneSlot.webContents.mainFrame) throw new Error('Invalid renderer-ready sender');

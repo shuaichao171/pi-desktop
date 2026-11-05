@@ -41,8 +41,6 @@
 .pd-top-bar-workspace-button { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 28px; padding: 0; border: 0; border-radius: var(--pd-radius-sm); background: transparent; color: var(--pd-text-subtle); cursor: pointer; }
 .pd-top-bar-menu { flex: 0 0 30px; width: 30px; height: 28px; color: var(--pd-text); }
 .pd-top-bar-session { display: flex; flex: 1 1 auto; align-items: center; gap: 4px; min-width: 0; margin-left: 14px; }
-.pd-top-bar-session .pd-chat-title { flex: 0 1 auto; min-width: 0; max-width: min(460px, 42vw); }
-.pd-top-bar-session .pd-chat-title h1 { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pd-app-body { display: flex; flex: 1; min-height: 0; min-width: 0; }
 
 :root {
@@ -985,6 +983,18 @@ div.pd-hover-tooltip:has(.pd-update-notes-body) { max-width: min(400px, calc(100
 .pd-update-notice-secondary:hover { background: var(--pd-surface-hover); }
 .pd-update-notice-primary { padding: 5px 12px; border: none; border-radius: var(--pd-radius-sm); background: var(--pd-send-bg); color: var(--pd-send-ink); font: inherit; font-size: var(--pd-font-caption); }
 .pd-chat-title h1 { overflow: visible; }
+
+/* Conversation header: session identity above every conversation surface.
+ * The top bar no longer carries the session title (2026-11-02 用户拍板，
+ * 改名统一走左侧栏会话菜单). */
+.pd-conversation-header { display: flex; flex: 0 0 auto; align-items: center; gap: 8px; height: 44px; padding: 0 14px; border-bottom: 1px solid var(--pd-border-soft); background: var(--pd-header); }
+.pd-conversation-header-project { flex: 0 1 auto; min-width: 0; max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--pd-text-weak); font-size: var(--pd-font-sm); }
+.pd-conversation-header-sep { flex: 0 0 auto; color: var(--pd-text-weak); }
+.pd-conversation-header-title { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--pd-text); font-size: var(--pd-font-base); font-weight: var(--pd-weight-semibold); }
+.pd-conversation-header-status { flex: 0 0 auto; width: 8px; height: 8px; margin-left: auto; border-radius: 999px; background: var(--pd-text-weak); }
+.pd-conversation-header-status.is-busy { background: var(--pd-brand); animation: pd-conversation-busy 1.2s ease-in-out infinite; }
+@keyframes pd-conversation-busy { 50% { opacity: .35; } }
+@media (prefers-reduced-motion: reduce) { .pd-conversation-header-status.is-busy { animation: none; } }
 .pd-chat-title-button, .pd-chat-title-input { display: block; width: 100%; min-width: 0; height: 30px; padding: 0 6px; border: 1px solid transparent; border-radius: var(--pd-radius-sm); background: transparent; color: var(--pd-text); font: inherit; text-align: left; -webkit-app-region: no-drag; user-select: text; }
 .pd-chat-title-button { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: text; }
 .pd-chat-title-button[aria-disabled='true'] { cursor: default; }
