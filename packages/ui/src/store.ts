@@ -1202,7 +1202,12 @@ if (!get().modelProviders.length) void get().refreshModelProviders().catch(() =>
 		// 用户拍板: hosted activation must not error inside the main window).
 		if (bridge.focusHostedSession) {
 			const hosted = await bridge.focusHostedSession(path).catch(() => false);
-			if (hosted) return false;
+			if (hosted) {
+				const hostedName = get().sessions.find((session) => session.path === path)?.name?.trim()
+					|| path.split(/[\/]/).filter(Boolean).pop() || path;
+				operationFeedback.show({ id: 'select-hosted-session', kind: 'success', title: translate('store.hostedSessionFocused', { name: hostedName }) });
+				return false;
+			}
 		}
 		const request = beginSessionNavigation({ cwd, path });
 		const loadingGeneration = beginSessionLoadIndicator(set);

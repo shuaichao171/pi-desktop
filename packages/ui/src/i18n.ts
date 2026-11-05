@@ -1531,6 +1531,7 @@ export const translations: Record<string, { 'zh-CN': string; 'en-US': string }> 
   'window.controls': { 'zh-CN': '窗口控制', 'en-US': 'Window controls' },
   'store.agentNotReady': { 'zh-CN': 'Agent 尚未就绪', 'en-US': 'Agent is not ready yet' },
   'store.inputNeedsConfirmation': { 'zh-CN': '输入接收状态不确定，请先核对会话或确认恢复队列。', 'en-US': 'Input acceptance is uncertain. Check the conversation or confirm the recovered queue item.' },
+  'store.hostedSessionFocused': { 'zh-CN': '「{name}」已在右侧窗格中打开', 'en-US': '"{name}" is open in the split pane' },
   'store.sessionBusy': { 'zh-CN': '当前会话仍在运行，请等待完成后再编辑', 'en-US': 'The session is still running. Wait for it to finish before editing.' },
   'store.nothingToRegenerate': { 'zh-CN': '没有可重新生成的用户消息', 'en-US': 'There is no user message to regenerate' },
   // Strings migrated from inline zh/en ternaries in components.
