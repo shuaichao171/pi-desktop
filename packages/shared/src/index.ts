@@ -83,6 +83,7 @@ export const IPC_CHANNELS = {
   agentSessionTree: 'agent:session-tree',
   agentSwitchBranch: 'agent:switch-branch',
   agentListSessions: 'agent:list-sessions',
+  agentListSessionsPage: 'agent:list-sessions-page',
   agentSearchSessions: 'agent:search-sessions',
   agentSwitchSession: 'agent:switch-session',
   agentPeekSession: 'agent:peek-session',
@@ -832,6 +833,18 @@ export interface UiSessionSearchResult extends UiSessionSummary {
   messageId?: string;
 }
 
+/** One page of a workspace's session listing (agentListSessionsPage). Pages of one
+ *  refresh share a snapshot `revision`; a rebuilt listing changes it, so a later
+ *  continuation page that sees a different revision (or total) must be dropped
+ *  instead of spliced into a list built from another snapshot. */
+export interface UiSessionListPage {
+  sessions: UiSessionSummary[];
+  /** Session count in this workspace after the same filtering as the full listing. */
+  total: number;
+  hasMore: boolean;
+  revision: number;
+}
+
 export interface WorkspaceEntry {
   name: string;
   /** Path relative to the active workspace. */
@@ -1247,6 +1260,10 @@ export interface AgentBridge extends InputFeatureBridge, DataFeaturesBridge, Wor
   /** Moves the visible branch leaf onto another entry (zcode-style branch switch). */
   switchSessionBranch(entryId: string): Promise<void>;
   listSessions(cwd?: string): Promise<UiSessionSummary[]>;
+  /** Paged sidebar listing: the first screen arrives first and the remaining pages
+   *  stream in behind it. Optional so older bridges and test harnesses fall back
+   *  to the full listSessions. */
+  listSessionsPage?(cwd: string, offset: number, limit: number): Promise<UiSessionListPage>;
   searchSessions(query: string): Promise<{ sessions: UiSessionSearchResult[]; truncated: boolean; skipped?: number }>;
   switchSession(path: string): Promise<void>;
   /** Reads a session's content window straight from disk without loading it (seamless-switch peek).
