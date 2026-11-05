@@ -8,7 +8,7 @@ import { ActivityBar } from './ActivityBar';
 import { TopBar } from './TopBar';
 import type { SearchCommand } from './SearchDialog';
 import type { ThemePreference } from './SettingsPanel';
-import { AutomationPage, ChatCommitDialog, PluginsPage, SearchDialog, SettingsPanel, preloadLazySurfaces } from './lazySurfaces';
+import { AutomationPage, ChatCommitDialog, PluginsPage, SearchDialog, SettingsPanel, WorkbenchSidePane, preloadLazySurfaces } from './lazySurfaces';
 import { Sidebar } from './Sidebar';
 import { Icon } from './Icons';
 import { HoverTooltip } from './HoverTooltip';
@@ -21,7 +21,7 @@ import { ResultFilePreviewDialogRoot } from './ResultFilePreviewDialog';
 import { installResultFilePressRescue } from '../resultFilePressRescue';
 import { installInputModality } from '../inputModality';
 import { clampWorkbenchWidth } from '../workbenchReading';
-import { WorkbenchSidePane, type WorkbenchOpenRequest } from './WorkbenchSidePane';
+import type { WorkbenchOpenRequest } from './WorkbenchSidePane';
 import { useChatStore } from '../store';
 import { bindingKeysFor, matchesShortcut } from '../shortcuts/bindings';
 import { useT } from '../i18n';
@@ -98,6 +98,9 @@ export function AppShell() {
 	const [settingsInitialPage, setSettingsInitialPage] = useState<'general' | 'model' | 'updates'>('general');
 	const [modelManagementTarget, setModelManagementTarget] = useState<ModelManagementTarget>({ kind: 'manage' });
 	const [workbenchOpen, setWorkbenchOpen] = useState(readWorkbenchOpen);
+	// 工作台按首次打开挂载：未打开时文件树/Git 图/终端连同组件代码都不进启动渲染，
+	// 挂载一次后常驻（关闭仅隐藏，终端状态、宽度与 tab 不重置）。
+	const [workbenchMounted, setWorkbenchMounted] = useState(false);
 	const [viewportWidth, setViewportWidth] = useState(() => window.innerWidth);
 	const [workbenchWidth, setWorkbenchWidth] = useState(() => {
 		const value = Number(readStoredPreference('pi-desktop.workbench-width'));
@@ -139,6 +142,11 @@ export function AppShell() {
 	}, [anyExtensionRequestPending]);
 	useEffect(() => { if (!paiMode) writeStoredPreference('pi-desktop.workbench-width', String(workbenchWidth)); }, [paiMode, workbenchWidth]);
 	useEffect(() => { if (workbenchOpen && narrow) setSidebarOpen(false); }, [workbenchOpen, narrow]);
+	// 打开、文件定位或终端请求任一到达即挂载工作台，让 openRequest/terminalRequest
+	// 在未挂载时也照常生效（useLayoutEffect 在绘制前完成挂载，首开不闪、行为不回退）。
+	useLayoutEffect(() => {
+		if (workbenchOpen || workbenchRequest !== null || terminalRequest > 0) setWorkbenchMounted(true);
+	}, [workbenchOpen, workbenchRequest, terminalRequest]);
 	const resizeStart = useRef<{ x: number; width: number } | null>(null);
 	const workbenchToggleRef = useRef<HTMLButtonElement>(null);
 	const platform = useChatStore((state) => state.appInfo?.platform);
@@ -462,7 +470,7 @@ export function AppShell() {
 			<div className="pd-notification-center">{mainView !== 'chat' && <><OperationFeedback /><UpdateNotice /></>}<div ref={setNotificationTarget} className="pd-extension-notification-slot" /></div>
 			</div>
 			<button type="button" className={`pd-workbench-scrim${workbenchOpen && mainView === 'chat' ? ' is-open' : ''}`} aria-label={t('app.closeWorkbench')} aria-hidden={!workbenchOpen || mainView !== 'chat'} inert={!workbenchOpen || mainView !== 'chat'} tabIndex={-1} onClick={closeWorkbench} />
-			<ScopedErrorBoundary scope="workbench" resetKeys={[workbenchRequest?.cwd, workbenchRequest?.requestId]}><WorkbenchSidePane open={workbenchOpen && mainView === 'chat'} modal={workbenchOverlay && !settingsOpen && !searchOpen} suspended={settingsOpen || searchOpen} width={clampWorkbenchWidth(workbenchWidth, viewportWidth)} onWidthChange={value => setWorkbenchWidth(clampWorkbenchWidth(value, viewportWidth))} onResizing={setWorkbenchResizing} onClose={closeWorkbench} openRequest={workbenchRequest} terminalRequest={terminalRequest} onTabChange={setWorkbenchTab} /></ScopedErrorBoundary>
+			<ScopedErrorBoundary scope="workbench" resetKeys={[workbenchRequest?.cwd, workbenchRequest?.requestId]}>{workbenchMounted && <Suspense fallback={null}><WorkbenchSidePane open={workbenchOpen && mainView === 'chat'} modal={workbenchOverlay && !settingsOpen && !searchOpen} suspended={settingsOpen || searchOpen} width={clampWorkbenchWidth(workbenchWidth, viewportWidth)} onWidthChange={value => setWorkbenchWidth(clampWorkbenchWidth(value, viewportWidth))} onResizing={setWorkbenchResizing} onClose={closeWorkbench} openRequest={workbenchRequest} terminalRequest={terminalRequest} onTabChange={setWorkbenchTab} /></Suspense>}</ScopedErrorBoundary>
 			</div>
 			{commitOpen && mainView === 'chat' && <Suspense fallback={null}><ChatCommitDialog onClose={() => setCommitOpen(false)} /></Suspense>}
 			<ExitPresence show={settingsOpen} surface="pd-settings-overlay">{settingsOpen && <Suspense fallback={null}><SettingsPanel initialPage={settingsInitialPage} modelManagementTarget={settingsInitialPage === 'model' ? modelManagementTarget : undefined} onClose={() => setSettingsOpen(false)} themePreference={themePreference} onThemePreferenceChange={setThemePreference} colorPreferences={colorPreferences} onColorPreferencesChange={setColorPreferences} colorSaveFailed={colorSaveFailed} /></Suspense>}</ExitPresence>
