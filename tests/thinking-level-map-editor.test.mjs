@@ -5,7 +5,8 @@ import { advertisedThinkingMap, supportedThinkingLevels, toggleThinkingLevel } f
 
 test('advertisedThinkingMap：off 支持时不写线上值（缺省条目），绝不产生 none', () => {
 	const map = advertisedThinkingMap(['off', 'low', 'high']);
-	// off 支持 = 缺省条目：pi-ai 适配器对缺失的 off 映射不下发 reasoning_effort
+	// off 支持 = 缺省条目：openai-completions 适配器对缺失的 off 映射不下发 reasoning_effort
+	// （openai-responses 系适配器仍会兑底 'none'，见模块注释）
 	assert.equal(map.off, undefined);
 	assert.equal('off' in map, false);
 	assert.equal(map.low, 'low');

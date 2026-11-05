@@ -157,3 +157,55 @@ test('分页参数与未知工作区沿用既有错误文案', async (t) => {
   const empty = await page(project, 0, 10);
   assert.deepEqual(empty, { sessions: [], total: 0, hasMore: false, revision: empty.revision });
 });
+
+test('在途重列期间到达的 sessions-changed 失效不会被完成的重列吞掉', async (t) => {
+  const temp = await realpath(tmpdir());
+  const root = await mkdtemp(join(temp, 'pi-ipc-session-race-'));
+  const project = join(root, 'project');
+  await mkdir(project);
+  await writeFile(join(root, 'workspace.json'), JSON.stringify({ cwd: project, workspaces: [project] }));
+
+  const agentRows = [row(project, 1)];
+  let listCalls = 0;
+  let releaseList = null;
+  let agentEvents = null;
+  globalThis.__ipcUserData = root;
+  globalThis.__ipcWindows = [createIpcWindow()];
+  globalThis.__ipcHandlers = new Map();
+  globalThis.__ipcAgent = {
+    onEvent(callback) { agentEvents = callback; },
+    onBackgroundActivity() {},
+    async dispose() {},
+    getSnapshot: async () => ({ sessionPath: null }),
+    listSessions(cwd) {
+      listCalls += 1;
+      return new Promise((resolve) => { releaseList = () => resolve(cwd === project ? agentRows.map((entry) => ({ ...entry })) : []); });
+    },
+  };
+  t.after(async () => {
+    await ipc.disposeServices();
+    await rm(root, { recursive: true, force: true });
+  });
+  const ipc = await import('../packages/desktop/src/main/ipc.ts?session-race');
+  const { IPC_CHANNELS } = await import('../packages/shared/src/index.ts');
+  ipc.registerIpc();
+  const valid = { sender: globalThis.__ipcWindows[0].webContents, senderFrame: globalThis.__ipcWindows[0].webContents.mainFrame };
+  const full = (cwd) => globalThis.__ipcHandlers.get(IPC_CHANNELS.agentListSessions)(valid, cwd);
+
+  const first = full(project); // 开始在途重列（listSessions 未完成）
+  for (let i = 0; i < 1000 && !releaseList; i += 1) await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(listCalls, 1, '重列已在途');
+  agentRows.unshift(row(project, 0)); // 新会话落盘…
+  agentEvents({ sequence: 2, event: { type: 'sessions-changed', cwd: project } }); // …失效恰在重列完成前到达
+  releaseList();
+  const firstResult = await first;
+  assert.deepEqual(firstResult.map((entry) => entry.id), ['0', '1']);
+  assert.equal(listCalls, 1);
+  // 关键：在途期间到达的失效不被完成的重列吞掉——下一次服务必须重新列出（保守多列一次）。
+  const second = full(project);
+  for (let i = 0; i < 1000 && listCalls < 2; i += 1) await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(listCalls, 2, '在途期间到达的失效触发了重新列出');
+  releaseList(); // 释放第二次列表，避免悬挂
+  const secondResult = await second;
+  assert.deepEqual(secondResult.map((entry) => entry.id), ['0', '1']);
+});

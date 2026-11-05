@@ -12,7 +12,7 @@ import { randomUUID } from 'node:crypto';
 import type { IpcMainInvokeEvent } from 'electron';
 import { DEBUG_API_CHANNELS, type UiDebugApiConfig, type UiDebugApiState } from '@pidesktop/shared';
 import { handleRendererInvoke } from './rendererIpc.ts';
-import { DEFAULT_DEBUG_API_SETTINGS, isValidDesktopDebugApiSettings, readDesktopSettings, writeDesktopSettingsAsync, type DesktopDebugApiSettings } from './desktopSettings.ts';
+import { DEFAULT_DEBUG_API_SETTINGS, isValidDesktopDebugApiSettings, readDesktopSettings, withDesktopSettings, writeDesktopSettingsAsync, type DesktopDebugApiSettings } from './desktopSettings.ts';
 import { createDebugServer, type DebugServer } from './debugServer.ts';
 import type { CloudSyncService } from './cloudSync/cloudSyncService.ts';
 
@@ -57,12 +57,17 @@ export function registerDebugApiIpc(options: {
 	};
 
 	async function applyConfig(config: UiDebugApiConfig): Promise<UiDebugApiState> {
-		const settings = readDesktopSettings(settingsPath);
 		if (server) {
 			await server.stop();
 			server = null;
 		}
-		await writeDesktopSettingsAsync(settingsPath, { ...settings, debugApi: config });
+		// The read-modify-write joins the shared settings queue (desktopSettings.ts) so
+		// a concurrent Settings save cannot drop this config — and this write cannot
+		// resurrect a stale debugApi block over a just-saved one.
+		await withDesktopSettings(async () => {
+			const settings = readDesktopSettings(settingsPath);
+			await writeDesktopSettingsAsync(settingsPath, { ...settings, debugApi: config });
+		});
 		if (config.enabled) {
 			server = await createDebugServer(config, {
 				cloudSync: options.cloudSync,

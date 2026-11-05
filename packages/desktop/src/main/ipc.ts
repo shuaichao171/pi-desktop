@@ -36,7 +36,7 @@ import { createProjectCreator } from './projectCreation';
 import { createConversationWorkspace, createConversationWorkspaceSync, prepareConversationStorageDirectory } from './conversationStorage';
 import { createDesktopNotifier } from './notifications';
 import { createKeepAwakeController, type KeepAwakeController } from './keepAwake';
-import { readDesktopSettings, writeDesktopSettingsAsync, type DesktopSettings } from './desktopSettings';
+import { drainDesktopSettingsQueue, readDesktopSettings, withDesktopSettings, writeDesktopSettingsAsync, type DesktopSettings } from './desktopSettings';
 import { appearanceStatePath, isValidAppearanceState, readAppearanceState, watchAppearanceState, writeAppearanceStateAsync } from './appearance';
 import { resolveWindowTheme } from './windowTheme';
 import { readWorkspaceContext, validateContextRequest } from './contextService';
@@ -595,7 +595,6 @@ function readWorkspaceSettingsAsync(): Promise<WorkspaceSettings> {
 }
 
 let workspaceSettingsQueue: Promise<void> = Promise.resolve();
-let desktopSettingsQueue: Promise<void> = Promise.resolve();
 let appearancePath = appearanceStatePath(app.getPath('userData'));
 let stopAppearanceWatch: (() => void) | null = null;
 function withWorkspaceSettings<T>(action: (settings: WorkspaceSettings) => Promise<T> | T): Promise<T> {
@@ -619,13 +618,11 @@ export function readCurrentDesktopSettings(): DesktopSettings {
  * page shows, plus "no more asking" while tasks run. Picking a behavior in Settings asks again. */
 export function saveCloseChoice(behavior: DesktopSettings['closeBehavior']): Promise<void> {
 	// Share the settings queue so a concurrent Settings save cannot drop this choice.
-	const result = desktopSettingsQueue.then(async () => {
+	return withDesktopSettings(async () => {
 		const current = readCurrentDesktopSettings();
 		await writeDesktopSettingsAsync(desktopSettingsPath(), { ...current, closeBehavior: behavior, confirmBusyClose: false });
 		keepAwake?.settingsChanged();
 	});
-	desktopSettingsQueue = result.then(() => undefined, () => undefined);
-	return result;
 }
 
 /** Sends a main → renderer command (tray menu, notification clicks). */
@@ -727,7 +724,12 @@ export async function defaultWorkspaceAsync(initialWorkspace?: string): Promise<
 	}
 	const root = readCurrentDesktopSettings().conversationStorageDirectory;
 	const cwd = await createConversationWorkspace(root);
-	await writeStateFileAsync(workspaceSettingsPath(), registerConversationWorkspace(saved, cwd, root));
+	// The read-modify-write joins the workspace-settings queue so the parallel
+	// startup branch cannot lose a queued writer's update (hardened invariant;
+	// the re-read inside the queue replaces the possibly stale `saved` snapshot).
+	await withWorkspaceSettings(async (previous) => {
+		await writeStateFileAsync(workspaceSettingsPath(), registerConversationWorkspace(previous, cwd, root));
+	});
 	activeWorkspace = cwd;
 	return cwd;
 }
@@ -961,11 +963,14 @@ interface SessionListSnapshot {
 }
 const sessionListSnapshots = new Map<string, SessionListSnapshot>();
 const sessionListInFlight = new Map<string, Promise<SessionListSnapshot>>();
-const dirtySessionLists = new Set<string>();
+/** Presence = the workspace needs a re-list; the number is the invalidation generation,
+ *  so a load that finishes while an invalidation lands does not swallow it. */
+const dirtySessionLists = new Map<string, number>();
 let sessionListRevision = 0;
 
 function invalidateSessionListing(cwd: string): void {
-	dirtySessionLists.add(workspaceKey(cwd));
+	const key = workspaceKey(cwd);
+	dirtySessionLists.set(key, (dirtySessionLists.get(key) ?? 0) + 1);
 }
 
 /** Re-lists the workspace only when its snapshot is missing or dirty; concurrent callers share one load. */
@@ -975,12 +980,16 @@ function sessionListSnapshotFor(cwd: string): Promise<SessionListSnapshot> {
 	if (inFlight) return inFlight;
 	const cached = sessionListSnapshots.get(key);
 	if (cached && !dirtySessionLists.has(key)) return Promise.resolve(cached);
+	const generation = dirtySessionLists.get(key) ?? 0;
 	const load = (async () => {
 		const sessions = await agentService.listSessions(cwd);
 		for (const session of sessions) rememberSessionOwner(session.path, cwd);
 		const snapshot: SessionListSnapshot = { revision: ++sessionListRevision, sessions };
 		sessionListSnapshots.set(key, snapshot);
-		dirtySessionLists.delete(key);
+		// Only clear the dirty flag when no invalidation arrived while listing:
+		// that event may have landed after our directory read, so the next serve
+		// must re-list instead of trusting this snapshot.
+		if ((dirtySessionLists.get(key) ?? 0) === generation) dirtySessionLists.delete(key);
 		return snapshot;
 	})();
 	const tracked = load.finally(() => {
@@ -1421,7 +1430,7 @@ export function registerIpc(options: {
 				if (!probe.ok) throw new Error(`自定义 Pi 引擎不可用：${probe.problems.join('；')}`);
 			}
 		}
-		const result = desktopSettingsQueue.then(async () => {
+		const result = withDesktopSettings(async () => {
 			const directory = patch.conversationStorageDirectory === undefined ? undefined
 				: await prepareConversationStorageDirectory(patch.conversationStorageDirectory);
 			const previousDirectory = readCurrentDesktopSettings().conversationStorageDirectory;
@@ -1462,7 +1471,6 @@ export function registerIpc(options: {
 			}
 			return next;
 		});
-		desktopSettingsQueue = result.then(() => undefined, () => undefined);
 		return result;
 	});
 	handleRendererInvoke(IPC_CHANNELS.piEngineProbe, (_event, path: unknown) => {
@@ -2100,7 +2108,7 @@ export function disposeServices(): Promise<void> {
 	return serviceShutdown = (async () => {
 		// Finish an accepted file move before terminating its host or exiting.
 		await workspaceActivationQueue;
-		await desktopSettingsQueue;
+	await drainDesktopSettingsQueue();
 		await workspaceSettingsQueue;
 		// A pending move may still need the agent to validate session ownership.
 		await sessionGroupService?.flush();

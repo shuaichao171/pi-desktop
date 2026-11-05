@@ -113,6 +113,21 @@ export async function writeDesktopSettingsAsync(path: string, settings: DesktopS
 	await writeStateFileAsync(path, settings);
 	desktopSettingsCache.set(path, settings);
 }
+/** Serializes every desktop-settings read-modify-write across modules — Settings page
+ *  saves, the busy-close choice, and the debug API's config writes — so concurrent
+ *  writers cannot resurrect stale fields over each other. The queue lives here so
+ *  out-of-module writers (debugApiIpc) share the same chain as ipc.ts. */
+let desktopSettingsWriteQueue: Promise<void> = Promise.resolve();
+export function withDesktopSettings<T>(action: () => Promise<T> | T): Promise<T> {
+	const result = desktopSettingsWriteQueue.then(action);
+	desktopSettingsWriteQueue = result.then(() => undefined, () => undefined);
+	return result;
+}
+
+/** Resolves once every queued settings write has settled (shutdown path). */
+export function drainDesktopSettingsQueue(): Promise<void> {
+	return desktopSettingsWriteQueue;
+}
 
 /** Test hook: only tests simulate another process editing the file behind the cache. */
 export function clearDesktopSettingsCacheForTest(): void {

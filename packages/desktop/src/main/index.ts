@@ -70,6 +70,7 @@ let updateService: typeof import('./updateService').updateService | null = null;
 let mainRevealed = false;
 let pendingOpenSettings = false;
 let startupCancelled = false;
+let startupErrorShown = false;
 const pendingWindowReveals = new WeakMap<BrowserWindow, () => void>();
 const rendererWindows = new Set<BrowserWindow>();
 
@@ -145,6 +146,10 @@ function splashUrl(html: string): string {
 }
 
 function showStartupError(splash: BrowserWindow, error: unknown): void {
+	// One startup error at a time: a workspace failure keeps the renderer branch
+	// loading, and its own load failure must not stack a second error dialog.
+	if (startupErrorShown) return;
+	startupErrorShown = true;
 	startupCancelled = true;
 	startupMetrics.abort();
 	const message = error instanceof Error ? error.message : String(error);
@@ -487,6 +492,10 @@ async function bootstrap(splash: BrowserWindow): Promise<void> {
 		updateService?.start();
 		void resolveStartupWorkspace(module)
 			.then((workspace) => {
+				// The renderer branch may have failed (or the user closed the boot
+				// window) while the workspace resolved: don't fork an agent host into
+				// a startup that is already unwinding.
+				if (startupCancelled || splash.isDestroyed()) return;
 				startupMetrics.mark('workspace-ready');
 				// Load the UI and Pi history concurrently, keeping the logo until React
 				// acknowledges a committed conversation (or a required extension dialog).
@@ -511,7 +520,14 @@ async function bootstrap(splash: BrowserWindow): Promise<void> {
 		if (pendingPaiLaunch) {
 			const request = pendingPaiLaunch;
 			pendingPaiLaunch = null;
-			module.openPaiWindow(request);
+			try {
+				module.openPaiWindow(request);
+			} catch (error) {
+				// A cold pai launch validates its workspace directory; one removed during
+				// the boot gap is a pai-only failure — same handling as the handoff path,
+				// it must not take down the main instance.
+				showPaiError(error);
+			}
 		}
 	} catch (error) {
 		if (!startupCancelled) showStartupError(splash, error);
