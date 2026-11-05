@@ -61,6 +61,7 @@ export const IPC_CHANNELS = {
   splitPaneOpen: 'split-pane:open',
   splitPaneClose: 'split-pane:close',
   splitPaneSetBounds: 'split-pane:set-bounds',
+  splitPaneClosed: 'split-pane:closed',
   appInfo: 'app:info',
   appSetLocale: 'app:set-locale',
   updateState: 'update:state',
