@@ -62,6 +62,7 @@ export const IPC_CHANNELS = {
   splitPaneClose: 'split-pane:close',
   splitPaneSetBounds: 'split-pane:set-bounds',
   splitPaneClosed: 'split-pane:closed',
+  focusHostedSession: 'agent:focus-hosted-session',
   appInfo: 'app:info',
   appSetLocale: 'app:set-locale',
   updateState: 'update:state',
@@ -1270,6 +1271,8 @@ export interface AgentBridge extends InputFeatureBridge, DataFeaturesBridge, Wor
   setSplitPaneBounds(rect: { x: number; y: number; width: number; height: number }): Promise<void>;
   /** Push notification: the window's split pane was closed (from inside the pane). */
   onSplitPaneClosed(listener: () => void): () => void;
+  /** True when the session lives in a split pane or pai window; focuses that host. */
+  focusHostedSession(path: string): Promise<boolean>;
   updateSessionMeta(path: string, patch: UiSessionMetaPatch): Promise<void>;
   /** Permanently deletes a conversation file (native pi semantics) and clears its desktop metadata. */
   deleteSession(path: string): Promise<void>;

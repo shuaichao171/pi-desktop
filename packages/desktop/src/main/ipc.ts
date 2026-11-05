@@ -1739,6 +1739,27 @@ export function registerIpc(options: {
 			...(typeof sessionPath === 'string' && sessionPath ? { sessionPath } : {}),
 		});
 	});
+	handleRendererInvoke(IPC_CHANNELS.focusHostedSession, (_event, path: unknown) => {
+		if (typeof path !== 'string' || !path) return false;
+		for (const pane of paneSlots()) {
+			if (pane.sessionPath === path || pane.liveSessionPath === path) {
+				if (pane.parentWin.isDestroyed() || pane.webContents.isDestroyed()) return false;
+				pane.parentWin.focus();
+				pane.webContents.focus();
+				return true;
+			}
+		}
+		for (const slot of paiWindowSlots()) {
+			const entry = slot as PaiWindowEntry;
+			if (entry.sessionPath === path || entry.liveSessionPath === path) {
+				if (entry.win.isMinimized()) entry.win.restore();
+				entry.win.show();
+				entry.win.focus();
+				return true;
+			}
+		}
+		return false;
+	});
 	handleRendererInvoke(IPC_CHANNELS.splitPaneClose, (event) => {
 		const paneSlot = paneSlotForSender(event.sender);
 		if (paneSlot) return closeSplitPane(paneSlot);

@@ -1197,6 +1197,13 @@ if (!get().modelProviders.length) void get().refreshModelProviders().catch(() =>
 	async selectSession(cwd, path) {
 		const bridge = get().bridge;
 		if (!bridge || !cwd || !path) return false;
+		// A session hosted in a split pane or pai window cannot be activated here:
+		// focus its host instead and leave the main window untouched (2026-11-02
+		// 用户拍板: hosted activation must not error inside the main window).
+		if (bridge.focusHostedSession) {
+			const hosted = await bridge.focusHostedSession(path).catch(() => false);
+			if (hosted) return false;
+		}
 		const request = beginSessionNavigation({ cwd, path });
 		const loadingGeneration = beginSessionLoadIndicator(set);
 		const workspaceChanged = get().cwd !== cwd;

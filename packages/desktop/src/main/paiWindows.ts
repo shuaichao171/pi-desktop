@@ -105,7 +105,10 @@ export function isPaneSender(event: IpcMainInvokeEvent): boolean {
 export function paneHeldSessionPaths(): string[] {
 	const paths: string[] = [];
 	for (const slot of paneSlotMap.values()) {
-		if (slot.liveSessionPath) paths.push(slot.liveSessionPath);
+		// The requested path counts from the moment the pane opens: the agent init
+		// takes seconds and the session must not be double-activated meanwhile.
+		if (slot.sessionPath) paths.push(slot.sessionPath);
+		if (slot.liveSessionPath && slot.liveSessionPath !== slot.sessionPath) paths.push(slot.liveSessionPath);
 	}
 	return paths;
 }

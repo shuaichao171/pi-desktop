@@ -263,6 +263,7 @@ const bridge: AgentBridge = {
 	openSessionInNewWindow: (path) => invoke(IPC_CHANNELS.sessionOpenWindow, path),
 	openSplitPane: (cwd, sessionPath) => invoke(IPC_CHANNELS.splitPaneOpen, cwd, sessionPath),
 	closeSplitPane: () => invoke(IPC_CHANNELS.splitPaneClose),
+	focusHostedSession: (path) => invoke(IPC_CHANNELS.focusHostedSession, path),
 	onSplitPaneClosed,
 	setSplitPaneBounds: (rect) => invoke(IPC_CHANNELS.splitPaneSetBounds, rect),
 	updateSessionMeta: (path, patch) => invoke(IPC_CHANNELS.agentUpdateSessionMeta, path, patch),
