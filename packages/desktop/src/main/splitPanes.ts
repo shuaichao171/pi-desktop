@@ -161,7 +161,7 @@ function revealPane(entry: PaiPaneSlot): void {
 }
 
 export function notifyPaneRendererReady(webContents: WebContents): void {
-	const entry = paneSlots.get(webContents);
+	const entry = paneSlotForSender(webContents);
 	if (!entry || entry.disposed) return;
 	entry.rendererReady = true;
 	entry.firstPaintReady = true;
@@ -171,7 +171,7 @@ export function notifyPaneRendererReady(webContents: WebContents): void {
 
 /** Position/resize a pane from the main renderer's reported region (DIP, content-relative). */
 export function setPaneBounds(parentWin: BrowserWindow, rect: { x: number; y: number; width: number; height: number }): void {
-	for (const entry of paneSlots.values()) {
+	for (const entry of paneSlots()) {
 		if (entry.parentWin !== parentWin) continue;
 		if (!entry.revealed) revealPane(entry);
 		entry.view.setBounds({
@@ -307,7 +307,7 @@ function flushPaneNotices(entry: PaiPaneSlot): void {
 }
 
 export function panePendingDialogRequests(sender: WebContents): UiExtensionDialogRequest[] {
-	const entry = paneSlots.get(sender);
+	const entry = paneSlotForSender(sender);
 	if (!entry) return [];
 	return [...panePendingDialogs.values()].map(({ request }) => request);
 }
