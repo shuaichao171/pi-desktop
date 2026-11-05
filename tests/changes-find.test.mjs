@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { countOccurrences, findChangeMatches } from '../packages/ui/src/changesFind.ts';
+import { countOccurrences, findChangeMatches, findPathMatches } from '../packages/ui/src/changesFind.ts';
 
 function change(path) {
   return { path, kind: 'modified', additions: 1, deletions: 0 };
@@ -48,4 +48,18 @@ test('countOccurrences counts literal, non-overlapping hits', () => {
   assert.equal(countOccurrences('aXaXaX', 'ax'), 3);
   assert.equal(countOccurrences('www', 'ww'), 1);
   assert.equal(countOccurrences('abc', ''), 0);
+});
+
+test('the worker core counts identically to the render-thread wrapper', () => {
+  const changes = [change('src/app.ts'), change('docs/README.md'), change('lib/retry.ts')];
+  const diffMap = diffs([
+    ['src/app.ts', '+const retryCount = 2;\n-const retryCount = 1;'],
+    ['docs/README.md', 'No hits here'],
+    ['lib/retry.ts', null],
+  ]);
+  const paths = changes.map(item => item.path);
+  const diffTexts = new Map([...diffMap].map(([path, diff]) => [path, diff?.diff ?? '']));
+  for (const query of ['RETRY', 'retry', 'src/app', '   ', '']) {
+    assert.deepEqual(findPathMatches(paths, query, diffTexts), findChangeMatches(changes, query, diffMap));
+  }
 });

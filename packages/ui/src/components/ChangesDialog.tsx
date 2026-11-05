@@ -1,8 +1,8 @@
-import { useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
+import { useId, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { createPortal } from 'react-dom';
 import type { UiFileChange, UiFileDiff } from '@pidesktop/shared';
 import { useT } from '../i18n';
-import { parseUnifiedDiff } from '../unifiedDiff';
+import { useDiffParse } from '../useDiffParse';
 import { ChangeStats, FileLabel } from './FileChangePresentation';
 import { Icon } from './Icons';
 import './changesDialog.css';
@@ -10,14 +10,17 @@ import './changesDialog.css';
 function DiffPreview({ item, diff, wrap }: { item: UiFileChange; diff?: UiFileDiff; wrap: boolean }) {
   const { t } = useT();
   const raw = diff?.diff ?? '';
-  const lines = useMemo(() => parseUnifiedDiff(raw), [raw]);
+  // Oversized diffs parse in a worker; null while that answer is on its way.
+  const lines = useDiffParse('unified', raw);
   return <>
     {diff?.preview && <p className="pd-changes-notice" role="status">{t(`changes.preview.${diff.preview}`)}</p>}
-    {lines.length > 0 ? <div className={`pd-changes-code${wrap ? ' is-wrapped' : ''}`} tabIndex={0} role="region" aria-label={t('changes.diffFor', { path: item.path })}>
-      <pre>{lines.map((line, index) => <span className={`pd-diff-line is-${line.kind}`} key={index}>
-        <span className="pd-diff-number" aria-hidden="true">{line.oldLine}</span><span className="pd-diff-number" aria-hidden="true">{line.newLine}</span><span className="pd-diff-text">{line.text || ' '}</span>
-      </span>)}</pre>
-    </div> : !diff?.preview && <p className="pd-changes-notice">{t('changes.emptyFile')}</p>}
+    {lines === null
+      ? <p className="pd-changes-notice" role="status">{t('changes.loadingDiff')}</p>
+      : lines.length > 0 ? <div className={`pd-changes-code${wrap ? ' is-wrapped' : ''}`} tabIndex={0} role="region" aria-label={t('changes.diffFor', { path: item.path })}>
+        <pre>{lines.map((line, index) => <span className={`pd-diff-line is-${line.kind}`} key={index}>
+          <span className="pd-diff-number" aria-hidden="true">{line.oldLine}</span><span className="pd-diff-number" aria-hidden="true">{line.newLine}</span><span className="pd-diff-text">{line.text || ' '}</span>
+        </span>)}</pre>
+      </div> : !diff?.preview && <p className="pd-changes-notice">{t('changes.emptyFile')}</p>}
   </>;
 }
 
