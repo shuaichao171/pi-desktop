@@ -8,7 +8,6 @@
  * own agent host, never touching the main window's workspace.
  */
 import { app, BrowserWindow, dialog, WebContentsView, type WebContents } from 'electron';
-import { appendFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { IPC_CHANNELS, type AgentEventEnvelope, type UiExtensionDialogRequest, type UiExtensionDialogResponse } from '@pidesktop/shared';
 import { getAppLocale } from './appLocale';
@@ -26,14 +25,6 @@ const panePendingDialogs = new Map<string, PaneExtensionDialog>();
 const paneStartupNotices = new Map<WebContents, UiExtensionDialogRequest[]>();
 const paneNotificationReady = new WeakSet<WebContents>();
 const pendingUnreadPaths = new Set<string>();
-
-const PANE_BUILD_MARKER = 'build-2026-11-02T16:40';
-const PANE_DEBUG_LOG = 'D:/ai/.pigit/pane-debug.log';
-export function paneLog(line: string): void {
-	try { appendFileSync(PANE_DEBUG_LOG, new Date().toISOString().slice(11, 23) + ' ' + line + '\n'); } catch { /* Debug logging must never break the pane. */ }
-}
-
-paneLog('splitPanes module loaded, build=' + PANE_BUILD_MARKER);
 
 let hooks: {
 	updateKeepAwakeBusy(): void;
@@ -63,6 +54,8 @@ function paneErrorDialog(parentWin: BrowserWindow | undefined, message: string):
 }
 
 export function openSplitPane(parentWin: BrowserWindow, request: { cwd: string; sessionPath?: string }): void {
+	// 最终形态即主窗右侧一个窗格：已占用时明确拒绝，避免多视图重叠。
+	if (paneSlots().length > 0) throw new Error('右侧窗格已占用，请先关闭当前窗格');
 	const cwd = validatePaiWorkspace(request.cwd);
 	const sessionPath = request.sessionPath === undefined ? undefined : validatePaiSession(request.sessionPath);
 	if (sessionPath && hooks?.isAutomationRunning(cwd, sessionPath)) throw new Error('自动化仍在运行，请结束后再打开窗格');
@@ -100,7 +93,6 @@ export function openSplitPane(parentWin: BrowserWindow, request: { cwd: string; 
 		},
 	});
 	registerPaneSlot(entry);
-	paneLog(`registered pane webContentsId=${entry.webContents.id} parentWinId=${parentWin.id}`);
 	// Attach immediately: an unattached WebContentsView does not advance page
 	// loads in Electron 44 — the zero-sized view is invisible until first bounds.
 	if (!parentWin.isDestroyed()) parentWin.contentView.addChildView(view);
@@ -119,7 +111,6 @@ export function openSplitPane(parentWin: BrowserWindow, request: { cwd: string; 
 		if (isMainFrame && code !== -3) reportFailure(description);
 	});
 	entry.webContents.on('console-message', (_event, _level, message, line, sourceId) => {
-		paneLog(`renderer-console: ${message} (${sourceId.split(/[\\/]/).pop() ?? '?'}:${line})`);
 	});
 	entry.webContents.setWindowOpenHandler(({ url }) => {
 		try {
@@ -148,8 +139,6 @@ export function openSplitPane(parentWin: BrowserWindow, request: { cwd: string; 
 	// the agent can serve a real one (same ordering as pai windows).
 	const startLoad = (): void => {
 		if (entry.disposed) return;
-		paneLog('startLoad');
-		setTimeout(() => { if (!entry.loaded && !entry.disposed) paneLog(`STILL LOADING after 8s url=${entry.webContents.getURL()} isLoading=${entry.webContents.isLoading()}`); }, 8000);
 		const load = !app.isPackaged && process.env.ELECTRON_RENDERER_URL
 			? view.webContents.loadURL(rendererLaunchUrl(process.env.ELECTRON_RENDERER_URL, { windowMode: 'pane', cwd }))
 			: view.webContents.loadFile(join(app.getAppPath(), 'out', 'renderer', 'index.html'), { query: { mode: 'pane' } });
@@ -159,9 +148,7 @@ export function openSplitPane(parentWin: BrowserWindow, request: { cwd: string; 
 			revealPane(entry);
 		}).catch((error: unknown) => reportFailure(error instanceof Error ? error.message : String(error)));
 	};
-	paneLog(`agent init started, session=${sessionPath ?? '(fresh)'} cwd=${cwd}`);
 	void entry.agent.init({ cwd, ...(sessionPath ? { sessionPath } : { fresh: true }) })
-		.then(() => { paneLog('agent init resolved'); startLoad(); })
 		.catch((error: unknown) => {
 			console.error('split pane agent failed to initialize:', error);
 			paneErrorDialog(parentWin, error instanceof Error ? error.message : String(error));
@@ -170,20 +157,16 @@ export function openSplitPane(parentWin: BrowserWindow, request: { cwd: string; 
 }
 
 function revealPane(entry: PaiPaneSlot): void {
-	paneLog(`reveal check ${JSON.stringify({ loaded: entry.loaded, firstPaint: entry.firstPaintReady, rendererReady: entry.rendererReady, revealed: entry.revealed })}`);
 	if (entry.revealed || !entry.loaded || !entry.firstPaintReady || !entry.rendererReady) return;
 	if (!entry.parentWin.isDestroyed() && !entry.webContents.isDestroyed()) {
 		// Attach on first reveal; bounds arrive from the main renderer's region
 		// reporter, so an unpositioned view stays zero-sized until then.
-		paneLog(`revealed, children=${entry.parentWin.contentView.children.length}`);
 		entry.revealed = true;
 		entry.webContents.setBackgroundThrottling(true);
-		if (!app.isPackaged) entry.webContents.openDevTools({ mode: 'detach' });
 	}
 }
 
 export function notifyPaneRendererReady(webContents: WebContents): void {
-	paneLog('renderer ready signal');
 	const entry = paneSlotForSender(webContents);
 	if (!entry || entry.disposed) return;
 	entry.rendererReady = true;
@@ -194,7 +177,6 @@ export function notifyPaneRendererReady(webContents: WebContents): void {
 
 /** Position/resize a pane from the main renderer's reported region (DIP, content-relative). */
 export function setPaneBounds(parentWin: BrowserWindow, rect: { x: number; y: number; width: number; height: number }): void {
-	paneLog(`setBounds ${JSON.stringify(rect)}`);
 	for (const entry of paneSlots()) {
 		if (entry.parentWin !== parentWin) continue;
 		if (!entry.revealed) revealPane(entry);
