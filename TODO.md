@@ -6,25 +6,23 @@
 
 - [ ] 全局排查：把所有能懒加载 / 异步化的地方都处理掉。清单、优先级与度量见 [docs/specs/LAZY_ASYNC_AUDIT.md](docs/specs/LAZY_ASYNC_AUDIT.md)（2026-11-01 提出）
   - 已落地（2026-11-02）：设置 / 搜索 / 自动化 / 插件页 / 提交弹窗与代码高亮（highlight.js）改为按需 chunk 并空闲预取，启动主包 JS 3.58 MB → 2.75 MB（−23%）、CSS 522 KB → 352 KB（−33%）；主进程热路径 `workspaceDefault`、`sessionOpenWindow`、工作台 `reset()` 的同步 IO 改为异步。
-  - 待办：工作台首次打开才挂载、长代码块高亮按需下沉 worker、`readCurrentDesktopSettings` / `writeStateFile` 运行期异步化、会话列表 / 目录 / Git 状态分页或增量、diff 与全文搜索下沉 worker、冷启动打点与启动并行化。
+  - 已落地（2026-11-06）：工作台首开才挂载（含 Git 图/终端拆 chunk）、长代码块高亮/diff 解析/全文变更搜索下沉 worker、`readCurrentDesktopSettings` 缓存化与 `writeStateFile` 运行期异步化（含跨模块 RMW 入队）、会话列表分页增量与插件目录缓存、冷启动打点与启动并行化；主包 JS 累计 3.58 MB → 2.24 MB（−37.5%）、CSS → 331 KB（−35.1%），经三轮独立复审全部修复后合入。
+  - 待办：目录 / Git 状态流式化（现状 MAX_ENTRIES=400 有界单发）、模型 / 供应商目录缓存、文本大预览下沉 worker（Office 已有）；详见审计文档待办与「遗留与备查」。
+
+- [ ] 启动窗口与启动后主窗口无缝衔接（2026-11-02 提出；boot→主窗段 2026-11-06 已落地，转入收尾）
+  - 已落地（2026-11-06）：`windowTheme.ts` 单一背景色源消除主窗/splash/pai 窗三处硬编码 `#111216`，splash 深浅双主题（boot/错误页同背景不闪）；`startupSwap` 主窗 `show` 确认后才关 boot 窗（250ms 兜底），无双窗重叠/空窗帧；换窗时窗框/标题栏一次性出现为固有行为（两窗 frame 一致非 bug）。详见 [docs/specs/LAZY_ASYNC_AUDIT.md](docs/specs/LAZY_ASYNC_AUDIT.md)。
+  - 待办：便携版「原生位图 → boot 窗」段（224×224 透明图标页 vs 全尺寸 boot 页）的画面衔接（`scripts/make-portable-splash.mjs`）；运行期切主题不跟随已建窗口 `backgroundColor`（仅重绘/缩放瞬间预绘制底色，视觉影响极小）。
+  - 验收（留给用户）：便携版冷启动录屏逐帧比对背景色、logo 位置尺寸、窗框出现时机，深浅主题各跑一遍；计时从双击到主窗首帧（可用 `PI_STARTUP_LOG=1` 打点对照）。
 
 ## 计划中
 
-- [ ] 启动窗口与启动后主窗口无缝衔接：消除「便携版原生位图 → boot 窗 → 主窗」三段之间的可见跳变（现在三段画面、配色与尺寸都不一致）（2026-11-02 提出）
-  - 位图段与 boot 段不同：便携版启动位图是 224×224 透明图标页（`scripts/make-portable-splash.mjs` 渲染 `splash.ts` 的图标版 → `packages/desktop/electron-builder.yml:94` 的 `splashImage`），而紧接的 boot 页是全尺寸深色壳（`splash.ts` 的 `renderBoot`：居中 96px logo + 标题 + 进度条 +「正在启动 Pi Desktop…」），logo 位置与尺寸、背景范围都不同。
-  - boot 页配色写死深色：`splash.ts` 固定 `#111216` / `color-scheme: dark`，主窗与 splash 窗的 `backgroundColor` 也硬编码（`index.ts:171`、`index.ts:524`、`ipc.ts:288`），浅色主题或自定义配色的用户会先看到一屏深色再突变。
-  - 窗框与窗口状态：boot 窗 `resizable/maximizable: false`、主窗可缩放 / 最大化，win32 两者都是 `frame: false` 且标题栏由渲染层绘制，换窗时标题栏、窗口按钮、圆角与阴影会凭空出现（已确认两窗 `frame` 一致，不是 bug，但会看到一次性跳变）。
-  - 换窗时序：`reveal()` 内 `win.show()` → `onReady()` → `splash.close()`，位置靠 `mirror` 仅跟随 boot 窗位置（不同步尺寸 / 最大化变化），并且 boot 窗开启有 `ready-to-show` 与 800ms 兜底两条路径（`index.ts:341-360`、`index.ts:509-560`）；需保证同帧替换、无双窗重叠 / 空窗、任务栏图标与焦点不闪。
-  - 启动失败路径 `showStartupError` 在同一 boot 窗内换成错误页，也要保持不闪。
-  - 验收：对便携版冷启动录屏（或逐帧截图）逐个阶段比对背景色、logo 位置与尺寸、窗框出现时机，深浅主题各跑一遍；计时从双击到主窗首帧，明确还剩几帧跳变、分别在哪一段（开发模式无原生位图段，需单独标注）。
-- [ ] 修复压缩 / 总结请求发错推理档位：`Summarization failed: 400: {"message":"gpt-6.1-sol does not support reasoning effort \"none\"; use low, medium, high, xhigh or max"}`（2026-11-02 提出）
-  - 链路：Pi SDK 的总结请求把 `thinkingLevel` 原样放进 `options.reasoning`（`@earendil-works/pi-coding-agent/dist/core/compaction/compaction.js:463-467`，只排除 `off`），OpenAI 兼容适配器再直接写成 provider 的 `reasoning_effort`（`dist/bundle/chunks/openai-completions-*.js`：`model.thinkingLevelMap?.[level] ?? level`）；于是 `none` 这类非规范档位被原样发出，被只支持 low…max 的模型 400 拒绝，再由 `getSummarizationFailure`（同文件 533 行）包成「Summarization failed」。
-  - 档位来源候选：provider 目录里出现 `none`（`packages/agent/src/providerDiscovery.ts:94-100` 已在读 provider 的 `none`，目前只用于把 UI 选项归一成 `off`）、模型自带的 `thinkingLevelMap`（`off` 被映射成 `none`）、以及压缩插件 / historian.pi 的 `thinking_level`（内置压缩被扩展接管时见 i18n `composer.compactionTakenOver`）。
-  - 修复方向：进入压缩前统一归一化并 clamp 档位：`none / disabled / off` → `off`，未知值直接丢弃（宁可不传 reasoning，也不要透传非法 effort），再按模型 supported levels 与 `thinkingLevelMap` 校验；`/compact` 与自动压缩共用同一入口（`packages/agent/src/index.ts:822`），写入侧（设置项 / historian.pi）也只能落规范档位（规范集见 `packages/shared/src/index.ts:198`）。
-  - 验证：用只接受 low…max 的模型（如 gpt-6.1-sol）作压缩模型，手动 `/compact` 与自动压缩都要成功；补单测覆盖 `none` 归一化、未知档位丢弃、`thinkingLevelMap.off = "none"` 时不再发出非法 effort。
-  - 备注：`04d66b1 chore: 撤销许愿在当前主线的功能与修复改动` 把 compaction / historian 功能从当前主干撤掉了（现在没有 `packages/agent/src/compaction` 与 `CompactionSettingsPanel`）；若问题复现于带该功能的构建，修复要同时落在压缩功能侧与请求前归一化处。
 
 ## 已完成
+
+- [x] 修复压缩 / 总结请求发错推理档位（400 `reasoning effort "none"`）（2026-11-02 提出；2026-11-06 完成）
+  - 根因：UI 模型设置页把 off 档线上值 `'none'` 写进 models.json 的 `thinkingLevelMap`（手动勾选处理器），会话档位为 off 时 OpenAI 兼容适配器把 `reasoning_effort:'none'` 发给只接受 low…max 的端点（如 gpt-6.1-sol）被 400 拒绝；providerDiscovery 目录归一化与持久化设置两个候选已排除。
+  - 修复（双层防线）：请求层 `packages/agent/src/thinkingLevels.ts` 归一化 + `providerNetwork.ts` 四处 runtime 请求包装（手动 /compact、自动压缩、普通对话、分支总结全覆盖；off 档不发 reasoning、非法档位丢弃）；写侧 `packages/ui/src/thinkingLevelMapEditor.ts`（off 支持不再写 `'none'`，重建映射丢弃遗留非法值）。models.json 存量 `off:'none'` 无需迁移（请求层已剥离）。回归：`tests/thinking-levels.test.mjs`、`tests/thinking-level-map-editor.test.mjs`（含 compaction 400 场景）。
+  - 遗留：openai-responses / azure-openai-responses 适配器（上游 pi-ai）对缺失的 off 映射仍兜底发送 `effort:'none'`，该协议下需取消勾选 off 才不发——彻底修法在上游（见审计文档「遗留与备查」）；真实模型（gpt-6.1-sol）压缩验收留给用户。
 
 - [x] 修复：左侧活动栏按钮悬停提示不居中：气泡仍在按钮上方，去掉 align="start" 改用默认居中对齐，横向相对按钮中心居中（超出窗口左缘时按视口钳制尽量居中）（2026-11-02）
 - [x] 子代理适配：侧栏对话行在子代理运行时显示蓝色圈（优先级 失败 > 未读 > 子代理 > 自身运行，悬停文案「子代理运行中」，项目分组计数同步新增蓝色圈）；修复两个进行中对话切换时子代理 FleetCard 不消失：主机在会话重绑时广播 `subagent-fleet: null`，渲染端乐观切换 / 就绪 / 回滚三条路径都会清掉旧会话的 fleet（`UiSessionRuntimeState.subagentRunning` 由主机按会话记忆并在切换后保留）（2026-11-02）
