@@ -1203,9 +1203,7 @@ if (!get().modelProviders.length) void get().refreshModelProviders().catch(() =>
 		if (bridge.focusHostedSession) {
 			const hosted = await bridge.focusHostedSession(path).catch(() => false);
 			if (hosted) {
-				const hostedName = get().sessions.find((session) => session.path === path)?.name?.trim()
-					|| path.split(/[\/]/).filter(Boolean).pop() || path;
-				operationFeedback.show({ id: 'select-hosted-session', kind: 'success', title: translate('store.hostedSessionFocused', { name: hostedName }) });
+				operationFeedback.show({ id: 'select-hosted-session', kind: 'error', title: translate('store.hostedSessionInPane') });
 				return false;
 			}
 		}
