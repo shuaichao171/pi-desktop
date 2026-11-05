@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
-import { mkdtemp, mkdir, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { registerHooks } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -8,15 +8,16 @@ import { test } from 'node:test';
 
 let harnessId = 0;
 const stubs = {
-  './diagnostics.ts': `export const initializeDiagnostics=()=>({}); export const recordDiagnostic=()=>{};`,
+  './diagnostics.ts': `export const initializeDiagnostics=()=>({}); export const recordDiagnostic=(event)=>{ globalThis.__startupTest.calls.diagnostics.push(event); };`,
   electron: `
     const env = globalThis.__startupTest;
     export const { app, BrowserWindow, dialog, ipcMain, Menu, session, shell } = env;
     export const nativeImage = { createFromPath: () => ({ isEmpty: () => false }) };
+    export const nativeTheme = { shouldUseDarkColors: env.prefersDark ?? true };
   `,
   './ipc': `
     const env = globalThis.__startupTest;
-    export const { agentService, updateService, registerIpc, defaultWorkspace, disposeServices, readCurrentDesktopSettings, isAgentWorkActive, saveCloseChoice, sendAppCommand, openPaiWindow } = env;
+    export const { agentService, updateService, registerIpc, defaultWorkspaceAsync, disposeServices, readCurrentDesktopSettings, isAgentWorkActive, saveCloseChoice, sendAppCommand, openPaiWindow } = env;
   `,
   './appLocale': `export const getAppLocale = () => 'en-US';`,
   './tray': `export const appIconPath = () => ''; export const createAppTray = (options) => { globalThis.__startupTest.calls.trays += 1; globalThis.__startupTest.calls.trayOptions = options; }; export const destroyAppTray = () => {};`,
@@ -42,6 +43,12 @@ registerHooks({
     if (stubs[specifier]) {
       return { url: `data:text/javascript,${encodeURIComponent(stubs[specifier])}#${harnessId}`, shortCircuit: true };
     }
+    // Real modules behind the stubs (appearance, state files, startup helpers)
+    // use extensionless relative imports; resolve them the way the other
+    // harnesses do so the real module graph can load under this stub set.
+    if (specifier.startsWith('./') && context.parentURL && new URL(context.parentURL).pathname.endsWith('.ts') && !/\.[cm]?[jt]s$/.test(specifier)) {
+      return nextResolve(`${specifier}.ts`, context);
+    }
     return nextResolve(specifier, context);
   },
 });
@@ -54,18 +61,19 @@ function deferred() {
 }
 
 async function settle() {
-  // Native module imports can cross event-loop turns; this does not advance
-  // the fake startup timers controlled by each test.
-  await new Promise((resolve) => setImmediate(resolve));
-  await new Promise((resolve) => setImmediate(resolve));
+  // Native module imports and threadpool stat calls can cross several event-loop
+  // turns; this advances real I/O without touching the fake startup timers
+  // controlled by each test.
+  for (let i = 0; i < 25; i++) await new Promise((resolve) => setImmediate(resolve));
 }
 
-async function createStartupHarness(t, { workspaceError, initialization = deferred(), shutdown = async () => {}, closeBehavior = 'quit', confirmBusyClose = true, busy = false, closeChoice = 1, checkboxChecked = false, launchArgs, userData = 'test-user-data' } = {}) {
+async function createStartupHarness(t, { workspaceError, workspace, initialization = deferred(), shutdown = async () => {}, closeBehavior = 'quit', confirmBusyClose = true, busy = false, closeChoice = 1, checkboxChecked = false, launchArgs, userData = 'test-user-data', startupLog, prefersDark = true, expectedSplashBackground } = {}) {
   t.mock.timers.enable({ apis: ['setTimeout'] });
   const windows = [];
-  const calls = { init: [], startUpdates: 0, dispose: 0, quit: 0, errors: [], logs: [], registered: 0, trays: 0, trayOptions: null, appCommands: [], singleInstanceLocks: 0, paths: {}, windowMode: null, messageBoxes: [], closeChoices: [], paiWindows: [], pipeStarts: 0 };
+  const calls = { init: [], startUpdates: 0, dispose: 0, quit: 0, errors: [], logs: [], consoleLogs: [], diagnostics: [], registered: 0, trays: 0, trayOptions: null, appCommands: [], singleInstanceLocks: 0, paths: {}, windowMode: null, messageBoxes: [], closeChoices: [], paiWindows: [], pipeStarts: 0, workspaces: 0 };
   const desktopSettingsState = { notificationsEnabled: true, closeBehavior, confirmBusyClose };
   t.mock.method(console, 'error', (...args) => calls.logs.push(args));
+  t.mock.method(console, 'log', (...args) => calls.consoleLogs.push(args));
   let rendererReady;
   let getDialogWindow;
   let beforeInstall;
@@ -99,7 +107,7 @@ async function createStartupHarness(t, { workspaceError, initialization = deferr
     isVisible() { return this.visible; }
     isMinimized() { return this.minimized; }
     isMaximized() { return false; }
-    show() { assert.equal(this.destroyed, false); this.visible = true; this.showCount += 1; }
+    show() { assert.equal(this.destroyed, false); this.visible = true; this.showCount += 1; this.emit('show'); }
     hide() { this.visible = false; }
     restore() { this.minimized = false; }
     close() { this.destroy(); }
@@ -129,6 +137,7 @@ async function createStartupHarness(t, { workspaceError, initialization = deferr
   globalThis.__startupTest = {
     calls,
     app,
+    prefersDark,
     BrowserWindow: TestWindow,
     ipcMain,
     dialog: {
@@ -144,7 +153,12 @@ async function createStartupHarness(t, { workspaceError, initialization = deferr
       rendererReady = options?.onRendererReady;
       getDialogWindow = options?.getDialogWindow;
     },
-    defaultWorkspace: (initial) => { if (workspaceError) throw workspaceError; return initial ?? process.cwd(); },
+    defaultWorkspaceAsync: async (initial) => {
+      calls.workspaces += 1;
+      if (workspaceError) throw workspaceError;
+      if (workspace) { const cwd = await workspace.promise; return initial ?? cwd; }
+      return initial ?? process.cwd();
+    },
     disposeServices: async () => { calls.dispose += 1; await shutdown(); },
     readCurrentDesktopSettings: () => ({ ...desktopSettingsState }),
     isAgentWorkActive: async () => busy,
@@ -162,18 +176,24 @@ async function createStartupHarness(t, { workspaceError, initialization = deferr
   harnessId += 1;
   t.after(() => { t.mock.timers.reset(); delete globalThis.__startupTest; });
   const originalArgv = process.argv;
+  const originalStartupLog = process.env.PI_STARTUP_LOG;
   const originalExitListeners = new Set(process.listeners('exit'));
+  if (startupLog !== undefined) process.env.PI_STARTUP_LOG = startupLog;
   try {
     if (launchArgs) process.argv = [process.execPath, ...launchArgs];
     await import(`../packages/desktop/src/main/index.ts?startup-test=${harnessId}`);
   } finally {
     process.argv = originalArgv;
+    if (startupLog !== undefined) {
+      if (originalStartupLog === undefined) delete process.env.PI_STARTUP_LOG;
+      else process.env.PI_STARTUP_LOG = originalStartupLog;
+    }
     const ownedExitListeners = process.listeners('exit').filter(listener => !originalExitListeners.has(listener));
     t.after(() => { for (const listener of ownedExitListeners) { process.removeListener('exit', listener); listener(); } });
   }
   await settle();
   const splash = windows[0];
-  assert.equal(splash.options.backgroundColor, '#111216', 'the first window is the dark boot splash');
+  assert.equal(splash.options.backgroundColor, expectedSplashBackground ?? (prefersDark === false ? '#f8f8f8' : '#161616'), 'the boot splash follows the resolved window theme');
   assert.equal(splash.options.width, 1280, 'the boot splash matches the main window size');
   assert.equal(splash.options.transparent, undefined, 'the boot splash is opaque');
   return {
@@ -510,3 +530,99 @@ test('Windows close stops asking once the busy-close prompt was dismissed', { sk
 // the busy-close confirm for a pai window now lives in ipc.ts (closePaiWindow)
 // and never offers a remembered choice; the process here always boots the
 // main window, whose close policy is covered by the tests above.
+
+test('the renderer starts loading while the startup workspace is still resolving', async (t) => {
+  const workspace = deferred();
+  const harness = await createStartupHarness(t, { workspace });
+  const main = await harness.start();
+  assert.ok(main, 'the main window exists before the workspace resolves');
+  assert.equal(harness.calls.workspaces, 1, 'the workspace branch runs exactly once');
+  assert.equal(harness.calls.init.length, 0, 'the agent boot waits for its workspace');
+  assert.equal(main.options.backgroundColor, '#161616', 'the main window shares the boot splash background');
+  workspace.resolve(process.cwd());
+  await settle();
+  assert.deepEqual(harness.calls.init, [[{ cwd: process.cwd() }]], 'the agent boots once the workspace resolves');
+  main.load.resolve();
+  main.emit('ready-to-show');
+  harness.initialization.resolve();
+  await harness.rendererReady(main);
+  assert.equal(main.showCount, 1);
+});
+
+test('the boot window disappears only once the main window is on screen', async (t) => {
+  const harness = await createStartupHarness(t);
+  const main = await harness.start();
+  let showCountWhenSplashClosed = -1;
+  harness.splash.on('closed', () => { showCountWhenSplashClosed = main.showCount; });
+  main.load.resolve();
+  main.emit('ready-to-show');
+  assert.equal(harness.splash.isDestroyed(), false, 'a painted but unacknowledged shell keeps the boot window');
+  harness.initialization.resolve();
+  await harness.rendererReady(main);
+  assert.equal(main.showCount, 1);
+  assert.equal(harness.splash.isDestroyed(), true);
+  assert.equal(showCountWhenSplashClosed, 1, 'the swap never leaves a gap with neither window visible');
+});
+
+test('cold-start phases are recorded once, in order, with monotonic durations', async (t) => {
+  const harness = await createStartupHarness(t);
+  const main = await harness.start();
+  main.load.resolve();
+  await settle();
+  main.emit('ready-to-show');
+  harness.initialization.resolve();
+  await harness.rendererReady(main);
+  const events = harness.calls.diagnostics.filter((event) => event.action.startsWith('boot-'));
+  assert.deepEqual(events.map((event) => event.action), [
+    'boot-main-start', 'boot-app-ready', 'boot-splash-created', 'boot-splash-shown',
+    'boot-ipc-ready', 'boot-window-created', 'boot-workspace-ready',
+    'boot-renderer-loaded', 'boot-ready-to-show', 'boot-renderer-ready', 'boot-first-frame',
+  ]);
+  assert.ok(events.every((event) => event.stage === 'startup' && event.outcome === 'success'));
+  const durations = events.map((event) => event.durationMs);
+  assert.ok(durations.every((value) => Number.isFinite(value) && value >= 0));
+  assert.deepEqual([...durations].sort((a, b) => a - b), durations, 'phase times are monotonic from process start');
+  assert.equal(harness.calls.consoleLogs.length, 0, 'packaged builds stay silent without PI_STARTUP_LOG');
+});
+
+test('a startup failure records the phases reached with a failure outcome', async (t) => {
+  const harness = await createStartupHarness(t, { workspaceError: new Error('Workspace is inaccessible') });
+  await harness.start();
+  await settle();
+  const events = harness.calls.diagnostics.filter((event) => event.action.startsWith('boot-'));
+  assert.deepEqual(events.map((event) => event.action), [
+    'boot-main-start', 'boot-app-ready', 'boot-splash-created', 'boot-splash-shown', 'boot-ipc-ready', 'boot-window-created',
+  ]);
+  assert.ok(events.every((event) => event.outcome === 'failure'));
+  assert.equal(harness.calls.consoleLogs.length, 0);
+});
+
+test('PI_STARTUP_LOG prints a single one-line cold-start summary', async (t) => {
+  const harness = await createStartupHarness(t, { startupLog: '1' });
+  const main = await harness.start();
+  main.load.resolve();
+  await settle();
+  main.emit('ready-to-show');
+  harness.initialization.resolve();
+  await harness.rendererReady(main);
+  assert.equal(harness.calls.consoleLogs.length, 1, 'exactly one summary line for the whole cold start');
+  assert.match(String(harness.calls.consoleLogs[0][0]), /^\[pi-startup\] cold start \d+ms main-start=\d+ app-ready=\d+.*first-frame=\d+$/);
+});
+
+test('a light system preference themes the boot and main windows light', async (t) => {
+  const harness = await createStartupHarness(t, { prefersDark: false });
+  const main = await harness.start();
+  assert.equal(harness.splash.options.backgroundColor, '#f8f8f8');
+  assert.equal(main.options.backgroundColor, '#f8f8f8');
+});
+
+test('a saved appearance surface drives the boot window background', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'pi-startup-appearance-'));
+  t.after(async () => { await rm(root, { recursive: true, force: true }); });
+  const colors = { light: { preset: 'default', accent: '#4a5fc1', surface: '#f8f8f8', ink: '#262626', contrast: 50 }, dark: { preset: 'custom', accent: '#8aa4f8', surface: '#101c26', ink: '#e5e5e5', contrast: 50 } };
+  await writeFile(join(root, 'appearance.json'), JSON.stringify({ theme: 'dark', colors }));
+  const harness = await createStartupHarness(t, { userData: root, expectedSplashBackground: '#101c26' });
+  const main = await harness.start();
+  assert.equal(harness.splash.options.backgroundColor, '#101c26', 'the boot window uses the saved dark surface');
+  assert.equal(main.options.backgroundColor, '#101c26', 'the main window uses the same constant');
+});

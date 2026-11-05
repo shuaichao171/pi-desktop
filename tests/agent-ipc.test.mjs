@@ -10,6 +10,7 @@ import { test } from 'node:test';
 const stubs = {
   electron: `
     export const app = { getPath: () => globalThis.__ipcUserData, getVersion: () => '0.1.7-test' };
+    export const nativeTheme = { shouldUseDarkColors: false };
     export const shell = { showItemInFolder: () => {} };
     export const Menu = { buildFromTemplate: () => ({}) };
     export const nativeImage = { createFromPath: () => ({ isEmpty: () => true }) };
@@ -942,4 +943,39 @@ test('unread settles stamp a rising watermark and clears only against the matchi
   activeSession = sessionPath;
   await backgroundActivity(null, sessionPath);
   assert.notEqual((await listRow()).unread, true, 'settle for the open session never lights the dot');
+});
+
+test('the async startup workspace twin restores or creates without blocking the main thread', async (t) => {
+  const temp = await realpath(tmpdir());
+  const root = await mkdtemp(join(temp, 'pi-ipc-workspace-async-'));
+  const project = join(root, 'project');
+  await mkdir(project);
+  const settingsPath = join(root, 'workspace.json');
+  await writeFile(settingsPath, JSON.stringify({ cwd: project, workspaces: [project] }));
+  globalThis.__ipcUserData = root;
+  globalThis.__ipcWindows = [];
+  globalThis.__ipcHandlers = new Map();
+  globalThis.__ipcAgent = { onEvent() {}, onBackgroundActivity() {}, async dispose() {} };
+  const ipc = await import('../packages/desktop/src/main/ipc.ts?workspace-async');
+  ipc.registerIpc();
+  t.after(async () => {
+    await ipc.disposeServices();
+    await rm(root, { recursive: true, force: true });
+  });
+
+  assert.equal(await ipc.defaultWorkspaceAsync(), project, 'a saved workspace resolves without creating anything');
+  await writeFile(settingsPath, JSON.stringify({}));
+  const created = await ipc.defaultWorkspaceAsync();
+  assert.equal(dirname(created), join(root, 'PiDesktopWorkspace'), 'a first launch creates the private conversation folder');
+  assert.equal((await stat(created)).isDirectory(), true);
+  const persisted = JSON.parse(await readFile(settingsPath, 'utf8'));
+  assert.equal(persisted.cwd, created);
+  assert.deepEqual(persisted.conversationWorkspaces, [created]);
+  assert.ok(persisted.conversationStorageDirectories.includes(join(root, 'PiDesktopWorkspace')));
+
+  const launch = join(root, 'launch');
+  await mkdir(launch);
+  assert.equal(await ipc.defaultWorkspaceAsync(launch), launch, 'an explicit launch workspace is saved and returned');
+  assert.equal(JSON.parse(await readFile(settingsPath, 'utf8')).cwd, launch);
+  await assert.rejects(ipc.defaultWorkspaceAsync(join(root, 'missing')), /must be a directory/);
 });

@@ -8,6 +8,7 @@ import { test } from 'node:test';
 const stubs = {
   electron: `
     export const app = { getPath: () => globalThis.__automationRoot };
+    export const nativeTheme = { shouldUseDarkColors: false };
     export const powerSaveBlocker = { start: () => 1, stop: () => {} };
     export const shell = { showItemInFolder: () => {} };
     export const Menu = { buildFromTemplate: () => ({}) };
