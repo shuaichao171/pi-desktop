@@ -820,7 +820,7 @@ div.pd-hover-tooltip:has(.pd-update-notes-body) { max-width: min(400px, calc(100
   .is-frameless .pd-sidebar.is-open .pd-sidebar-toolbar { flex-basis: 88px; flex-wrap: wrap; align-content: center; row-gap: 0; }
   .is-frameless .pd-sidebar.is-open .pd-sidebar-brand-group { flex-basis: 100%; }
 }
-.pd-brand-mark { display: grid; flex: 0 0 24px; place-items: center; width: 24px; height: 24px; border: 1px solid var(--pd-mark-border); border-radius: var(--pd-radius-sm); background: var(--pd-brand-mark-bg); color: var(--pd-brand); font: 19px/1 Georgia, serif; }
+.pd-brand-mark { display: block; flex: 0 0 24px; width: 24px; height: 24px; }
 .pd-sidebar-navigation { gap: 4px; padding: 7px 9px 4px; }
 .pd-project-section { padding-top: 3px; }
 .pd-project-heading { flex-basis: 34px; padding-left: 18px; padding-right: 12px; text-transform: uppercase; }

@@ -8,7 +8,7 @@ import { registerDebugApiIpc } from './debugApiIpc';
  * call is a typed invoke against the contract in @pidesktop/shared. Hosted pai
  */
 
-import { app, BrowserWindow, dialog, shell, type IpcMainInvokeEvent } from 'electron';
+import { app, BrowserWindow, dialog, nativeImage, shell, type IpcMainInvokeEvent } from 'electron';
 import { statSync } from 'node:fs';
 import { mkdir, rm, stat } from 'node:fs/promises';
 import { basename, dirname, join, resolve } from 'node:path';
@@ -16,7 +16,7 @@ import { IPC_CHANNELS, PROJECT_BAR_ANIM_IDS, isValidProjectBarValue, normalizePr
 import { createIsolatedAgentService } from './agentClient';
 import { isPaiSender, isPaiWindow, paiHeldSessionPaths, paiSlotForSender, paiWindowSlots, registerPaiWindowSlot, unregisterPaiWindowSlot } from './paiWindows';
 import { getAppLocale, setAppLocale } from './appLocale';
-import { destroyAppTray, invalidateAppTrayData, updateAppTrayMenu } from './tray';
+import { appIconPath, destroyAppTray, invalidateAppTrayData, updateAppTrayMenu } from './tray';
 import { updateService } from './updateService';
 export { updateService } from './updateService';
 import { registerWorkbenchIpc } from './workbenchIpc';
@@ -287,6 +287,7 @@ function createPaiWindow(request: PaiWindowRequest): void {
 		minHeight: 520,
 		backgroundColor: '#111216',
 		title: 'pai',
+		icon: nativeImage.createFromPath(appIconPath()),
 		frame: process.platform !== 'win32',
 		autoHideMenuBar: process.platform === 'win32',
 		show: false,

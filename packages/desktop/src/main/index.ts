@@ -1,6 +1,6 @@
 import { initializeDiagnostics, recordDiagnostic } from './diagnostics.ts';
 import { userInfo } from 'node:os';
-import { app, BrowserWindow, dialog, Menu, session, shell } from 'electron';
+import { app, BrowserWindow, dialog, Menu, nativeImage, session, shell } from 'electron';
 import { mkdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -8,7 +8,7 @@ import { IPC_CHANNELS } from '@pidesktop/shared';
 import { getAppLocale } from './appLocale';
 import { createBootErrorHtml, createBootHtml } from './splash';
 import { showEditContextMenu } from './editContextMenu.ts';
-import { createAppTray, destroyAppTray } from './tray';
+import { appIconPath, createAppTray, destroyAppTray } from './tray';
 import { paiPipeName, startPaiPipeServer } from './paiPipe.ts';
 import { parseDesktopLaunch, reservePaiProfile, validatePaiSession, validatePaiWorkspace, type DesktopLaunch, type PaiProfile } from './desktopLaunch.ts';
 import {
@@ -170,6 +170,9 @@ function createWindow(options: CreateMainWindowOptions): BrowserWindow {
 		minHeight: MAIN_WINDOW_MIN_HEIGHT,
 		backgroundColor: '#111216',
 		title: 'Pi Desktop',
+		// Deterministic taskbar/alt-tab icon in dev (electron.exe would show the
+		// Electron default) and packaged alike; same ico the tray uses.
+		icon: nativeImage.createFromPath(appIconPath()),
 		// Match ZCode's Windows chrome: the renderer draws the title bar and controls.
 		// Keep the native title bar on macOS and Linux.
 		frame: process.platform !== 'win32',
@@ -523,6 +526,7 @@ if (!hasSingleInstanceLock) {
 		hasShadow: true,
 		backgroundColor: '#111216',
 		title: 'Pi Desktop',
+		icon: nativeImage.createFromPath(appIconPath()),
 		webPreferences: {
 			contextIsolation: true,
 			sandbox: true,

@@ -12,13 +12,14 @@ const stubs = {
   electron: `
     const env = globalThis.__startupTest;
     export const { app, BrowserWindow, dialog, ipcMain, Menu, session, shell } = env;
+    export const nativeImage = { createFromPath: () => ({ isEmpty: () => false }) };
   `,
   './ipc': `
     const env = globalThis.__startupTest;
     export const { agentService, updateService, registerIpc, defaultWorkspace, disposeServices, readCurrentDesktopSettings, isAgentWorkActive, saveCloseChoice, sendAppCommand, openPaiWindow } = env;
   `,
   './appLocale': `export const getAppLocale = () => 'en-US';`,
-  './tray': `export const createAppTray = (options) => { globalThis.__startupTest.calls.trays += 1; globalThis.__startupTest.calls.trayOptions = options; }; export const destroyAppTray = () => {};`,
+  './tray': `export const appIconPath = () => ''; export const createAppTray = (options) => { globalThis.__startupTest.calls.trays += 1; globalThis.__startupTest.calls.trayOptions = options; }; export const destroyAppTray = () => {};`,
   './windowState': `
     export const MAIN_WINDOW_MIN_WIDTH = 680;
     export const MAIN_WINDOW_MIN_HEIGHT = 520;

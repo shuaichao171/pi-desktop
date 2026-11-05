@@ -30,7 +30,21 @@ export function TopBar({ history, searchOpen, onOpenSearch, mainView, title, ses
 	const { t } = useT();
 	return (
 		<header className="pd-top-bar" aria-label={t('sidebar.main')}>
-			<span className="pd-brand-mark" aria-hidden="true">π</span>
+			{/* Brand tile: same art as the packaged icon (deep-navy gradient tile, cyan-gradient π mark, orange dot). */}
+			<svg className="pd-brand-mark" viewBox="0 0 224 224" aria-hidden="true" focusable="false">
+				<defs>
+					<linearGradient id="pd-brand-bg" x1="0" x2="1" y1="0" y2="1">
+						<stop stop-color="#343081"/><stop offset="1" stop-color="#171729"/>
+					</linearGradient>
+					<linearGradient id="pd-brand-fill" x1="0" x2="1" y1="0" y2="1">
+						<stop stop-color="#a4fff0"/><stop offset="1" stop-color="#60ddf4"/>
+					</linearGradient>
+				</defs>
+				<rect x="4" y="4" width="216" height="216" rx="48" fill="url(#pd-brand-bg)"/>
+				<rect x="4.5" y="4.5" width="215" height="215" rx="47.5" fill="none" stroke="#7774b0" stroke-width="1"/>
+				<path d="M52 72h120v24H52zM68 92h24v76c0 12-8 20-20 20h-4V92zm72 0h24v76c0 12-8 20-20 20h-4V92z" fill="url(#pd-brand-fill)"/>
+				<circle cx="168" cy="164" r="12" fill="#ffb36a"/>
+			</svg>
 			<div className="pd-top-bar-navigation">
 				<HistoryNavigation {...history} />
 				<SearchButton open={searchOpen} onClick={onOpenSearch} />

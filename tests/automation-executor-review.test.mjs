@@ -196,6 +196,7 @@ test('automation IPC accepts only its current main renderer and starts schedulin
     electron: `
       const env=globalThis.__automationIpcReview;
       export const app={getPath:()=>'/automation-review'};
+    export const nativeImage = { createFromPath: () => ({}) };
     export const shell = { showItemInFolder: () => {} };
     export const powerSaveBlocker = { start: () => 1, stop: () => {} };
       export const BrowserWindow={getAllWindows:()=>[env.owner],fromWebContents:sender=>sender===env.owner.webContents?env.owner:undefined};
@@ -211,7 +212,7 @@ test('automation IPC accepts only its current main renderer and starts schedulin
     }`,
     './workbenchIpc': `export const registerWorkbenchIpc=()=>({async reset(){},async dispose(){}});`,
     './updateService': `export const updateService={stop(){},setAutoInstallSource(){}};`,
-    './tray': `export const createAppTray=()=>null;export const destroyAppTray=()=>{};export const updateAppTrayMenu=()=>{};export const invalidateAppTrayData=()=>{};`,
+    './tray': `export const appIconPath=()=>'./icon.ico';export const createAppTray=()=>null;export const destroyAppTray=()=>{};export const updateAppTrayMenu=()=>{};export const invalidateAppTrayData=()=>{};`,
     './notifications': `export const createDesktopNotifier=()=>({handleAgentEvent(){},handleAutomationRun(){},handleInputRequest(){}});`,
   };
   const hook = registerHooks({ resolve(specifier, context, nextResolve) {

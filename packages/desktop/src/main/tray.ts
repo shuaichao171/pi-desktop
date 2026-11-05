@@ -27,7 +27,10 @@ let refreshedRevision = -1;
 let refreshedAt = 0;
 const REFRESH_INTERVAL_MS = 5 * 60 * 1_000;
 
-function trayIconPath(): string {
+/** The app icon shared by the tray and every app window: the packaged
+ * resource in production, the build asset in dev (dev otherwise falls back to
+ * electron.exe's default icon in the taskbar). */
+export function appIconPath(): string {
 	return app.isPackaged ? join(process.resourcesPath, 'icon.ico') : join(here, '../../build/icon.ico');
 }
 
@@ -67,9 +70,9 @@ export function createAppTray(options: AppTrayOptions): Tray | null {
 	try {
 		// An empty image would register an invisible (ghost) tray entry, so bail
 		// out explicitly instead of creating a tray nobody can see or click.
-		const image = nativeImage.createFromPath(trayIconPath());
+		const image = nativeImage.createFromPath(appIconPath());
 		if (image.isEmpty()) {
-			console.error('Pi Desktop tray icon not found:', trayIconPath());
+			console.error('Pi Desktop tray icon not found:', appIconPath());
 			return null;
 		}
 		appTray = new Tray(image);
