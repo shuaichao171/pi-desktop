@@ -18,7 +18,7 @@ registerHooks({
 test('desktop settings default, persist and survive corruption (4.1/4.2)', async (t) => {
   const temp = mkdtempSync(join(tmpdir(), 'pi-desktop-settings-'));
   t.after(async () => { rmSync(temp, { recursive: true, force: true }); });
-  const { readDesktopSettings, writeDesktopSettings, writeDesktopSettingsAsync, DEFAULT_DESKTOP_SETTINGS } = await import('../packages/desktop/src/main/desktopSettings.ts');
+  const { readDesktopSettings, writeDesktopSettings, writeDesktopSettingsAsync, clearDesktopSettingsCacheForTest, DEFAULT_DESKTOP_SETTINGS } = await import('../packages/desktop/src/main/desktopSettings.ts');
   const path = join(temp, 'desktop-settings.json');
 
   await t.test('missing files fall back to defaults', () => {
@@ -47,6 +47,7 @@ test('desktop settings default, persist and survive corruption (4.1/4.2)', async
     writeDesktopSettings(path, { ...DEFAULT_DESKTOP_SETTINGS, piEngine: { mode: 'custom', path: customEngine } });
     assert.deepEqual(readDesktopSettings(path).piEngine, { mode: 'custom', path: customEngine });
     writeFileSync(path, JSON.stringify({ notificationsEnabled: true, closeBehavior: 'tray' }), 'utf8');
+    clearDesktopSettingsCacheForTest(); // 外部手改的文件需要重新读盘
     assert.deepEqual(readDesktopSettings(path).piEngine, { mode: 'builtin' });
   });
 
@@ -66,6 +67,7 @@ test('desktop settings default, persist and survive corruption (4.1/4.2)', async
   await t.test('legacy preferences gain the default directory without losing existing choices', () => {
     const configuredDefault = join(temp, 'legacy-default');
     writeFileSync(path, JSON.stringify({ notificationsEnabled: false, closeBehavior: 'quit' }));
+    clearDesktopSettingsCacheForTest(); // 外部手改的文件需要重新读盘
     assert.deepEqual(readDesktopSettings(path, configuredDefault), {
       notificationsEnabled: false, closeBehavior: 'quit', confirmBusyClose: true, conversationStorageDirectory: configuredDefault,
       keepAwakeWhileRunning: false, autoInstallUpdates: false,
@@ -79,6 +81,7 @@ test('desktop settings default, persist and survive corruption (4.1/4.2)', async
 
   await t.test('corrupt or invalid content is preserved before falling back to defaults', () => {
     writeFileSync(path, '{ not json', 'utf8');
+    clearDesktopSettingsCacheForTest();
     assert.deepEqual(readDesktopSettings(path), DEFAULT_DESKTOP_SETTINGS);
     const backup = readdirSync(temp).find((name) => name.endsWith('.bak'));
     assert.ok(backup);
@@ -87,6 +90,7 @@ test('desktop settings default, persist and survive corruption (4.1/4.2)', async
     writeDesktopSettings(path, { notificationsEnabled: false, closeBehavior: 'quit' });
     assert.equal(readFileSync(join(temp, backup), 'utf8'), '{ not json');
     writeFileSync(path, JSON.stringify({ notificationsEnabled: 'yes', closeBehavior: 'maybe' }), 'utf8');
+    clearDesktopSettingsCacheForTest();
     assert.deepEqual(readDesktopSettings(path), DEFAULT_DESKTOP_SETTINGS);
     assert.equal(readdirSync(temp).filter((name) => name.endsWith('.bak')).length, 2);
     assert.equal(recoveries.length, 2);
@@ -96,5 +100,53 @@ test('desktop settings default, persist and survive corruption (4.1/4.2)', async
     const directory = join(temp, 'settings-directory');
     mkdirSync(directory);
     assert.throws(() => readDesktopSettings(directory));
+  });
+});
+
+test('desktop settings reads hit the in-process cache and writes keep it consistent', async (t) => {
+  const temp = mkdtempSync(join(tmpdir(), 'pi-desktop-settings-cache-'));
+  t.after(async () => { rmSync(temp, { recursive: true, force: true }); });
+  const { readDesktopSettings, writeDesktopSettings, writeDesktopSettingsAsync, clearDesktopSettingsCacheForTest, DEFAULT_DESKTOP_SETTINGS } = await import('../packages/desktop/src/main/desktopSettings.ts');
+
+  await t.test('a read right after a write observes the new value (sync and async)', async () => {
+    const path = join(temp, 'read-after-write.json');
+    writeDesktopSettings(path, { ...DEFAULT_DESKTOP_SETTINGS, closeBehavior: 'quit' });
+    assert.equal(readDesktopSettings(path).closeBehavior, 'quit', '同步写后立即读一致');
+    await writeDesktopSettingsAsync(path, { ...DEFAULT_DESKTOP_SETTINGS, notificationsEnabled: false, closeBehavior: 'tray' });
+    assert.equal(readDesktopSettings(path).notificationsEnabled, false, '异步写后立即读一致');
+    assert.equal(readDesktopSettings(path).closeBehavior, 'tray');
+  });
+
+  await t.test('cached reads skip the disk until the cache is cleared', () => {
+    const path = join(temp, 'cache.json');
+    writeDesktopSettings(path, { ...DEFAULT_DESKTOP_SETTINGS, closeBehavior: 'quit' });
+    // 模拟另一个进程手改文件：主进程内的缓存读不到，清缓存后重新读盘。
+    writeFileSync(path, JSON.stringify({ ...DEFAULT_DESKTOP_SETTINGS, closeBehavior: 'tray' }), 'utf8');
+    assert.equal(readDesktopSettings(path).closeBehavior, 'quit', '进程内缓存优先于磁盘');
+    clearDesktopSettingsCacheForTest();
+    assert.equal(readDesktopSettings(path).closeBehavior, 'tray', '清缓存后读到磁盘内容');
+  });
+
+  await t.test('concurrent async writes never interleave into a damaged file', async () => {
+    const path = join(temp, 'concurrent.json');
+    // 每次写入的全部字段由同一个分组决定，交叉损坏或解析失败都能被识别。
+    const writes = Array.from({ length: 16 }, (_, index) => {
+      const group = index % 2;
+      return writeDesktopSettingsAsync(path, {
+        ...DEFAULT_DESKTOP_SETTINGS,
+        closeBehavior: group ? 'quit' : 'tray',
+        notificationsEnabled: group === 1,
+        keepAwakeWhileRunning: group === 1,
+        autoInstallUpdates: group === 1,
+      });
+    });
+    await Promise.all(writes);
+    const stored = JSON.parse(readFileSync(path, 'utf8')); // 损坏文件在这里拖出解析错误
+    const merged = readDesktopSettings(path);
+    const group = stored.closeBehavior === 'quit' ? 1 : 0;
+    assert.equal(stored.notificationsEnabled, group === 1, '字段属于同一次写入');
+    assert.equal(stored.autoInstallUpdates, group === 1, '字段属于同一次写入');
+    assert.equal(merged.closeBehavior, stored.closeBehavior, '缓存与磁盘一致');
+    assert.equal(readdirSync(temp).filter((name) => name.includes('concurrent.json') && name.endsWith('.tmp')).length, 0, '无残留临时文件');
   });
 });

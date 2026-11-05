@@ -36,8 +36,8 @@ import { createProjectCreator } from './projectCreation';
 import { createConversationWorkspace, createConversationWorkspaceSync, prepareConversationStorageDirectory } from './conversationStorage';
 import { createDesktopNotifier } from './notifications';
 import { createKeepAwakeController, type KeepAwakeController } from './keepAwake';
-import { readDesktopSettings, writeDesktopSettings, type DesktopSettings } from './desktopSettings';
-import { appearanceStatePath, isValidAppearanceState, readAppearanceState, watchAppearanceState, writeAppearanceState } from './appearance';
+import { readDesktopSettings, writeDesktopSettingsAsync, type DesktopSettings } from './desktopSettings';
+import { appearanceStatePath, isValidAppearanceState, readAppearanceState, watchAppearanceState, writeAppearanceStateAsync } from './appearance';
 import { readWorkspaceContext, validateContextRequest } from './contextService';
 import { createAutomationService } from './automationService';
 import { createGoalWatchService } from './goalWatchService';
@@ -601,7 +601,9 @@ function desktopSettingsPath(): string {
 	return join(app.getPath('userData'), 'desktop-settings.json');
 }
 
-/** Sync read for the close-policy handler (4.2); corrupt files fall back to defaults. */
+/** Sync read for the close-policy handler (4.2); corrupt files fall back to defaults.
+ * Served from the in-process cache in desktopSettings after the first disk load; every
+ * settings write updates that cache, so a read right after a write stays consistent. */
 export function readCurrentDesktopSettings(): DesktopSettings {
 	return readDesktopSettings(desktopSettingsPath(), join(app.getPath('home'), 'PiDesktopWorkspace'));
 }
@@ -610,9 +612,9 @@ export function readCurrentDesktopSettings(): DesktopSettings {
  * page shows, plus "no more asking" while tasks run. Picking a behavior in Settings asks again. */
 export function saveCloseChoice(behavior: DesktopSettings['closeBehavior']): Promise<void> {
 	// Share the settings queue so a concurrent Settings save cannot drop this choice.
-	const result = desktopSettingsQueue.then(() => {
+	const result = desktopSettingsQueue.then(async () => {
 		const current = readCurrentDesktopSettings();
-		writeDesktopSettings(desktopSettingsPath(), { ...current, closeBehavior: behavior, confirmBusyClose: false });
+		await writeDesktopSettingsAsync(desktopSettingsPath(), { ...current, closeBehavior: behavior, confirmBusyClose: false });
 		keepAwake?.settingsChanged();
 	});
 	desktopSettingsQueue = result.then(() => undefined, () => undefined);
@@ -672,11 +674,14 @@ export function defaultWorkspace(initialWorkspace?: string): string {
 	}
 	const root = readCurrentDesktopSettings().conversationStorageDirectory;
 	const cwd = createConversationWorkspaceSync(root);
+	// Startup path: runs once per cold start and must return the workspace synchronously,
+	// so the sync write stays (runtime workspace saves all go through saveWorkspaceAsync).
 	writeStateFile(workspaceSettingsPath(), registerConversationWorkspace(saved, cwd, root));
 	activeWorkspace = cwd;
 	return cwd;
 }
 
+/** Startup-only sync twin of saveWorkspaceAsync (defaultWorkspace must return the cwd). */
 function saveWorkspace(cwd: string, explicit = false): void {
 	const previous = readWorkspaceSettings();
 	const workspaces = [...new Set([...(Array.isArray(previous.workspaces) ? previous.workspaces : []), previous.cwd, cwd]
@@ -1265,9 +1270,9 @@ export function registerIpc(options: {
 		if (state) sendAppCommand({ type: 'appearance-changed', appearance: state });
 	});
 	handleRendererInvoke(IPC_CHANNELS.appearanceGet, () => readAppearanceState(appearancePath));
-	handleRendererInvoke(IPC_CHANNELS.appearanceSet, (_event, state: unknown) => {
+	handleRendererInvoke(IPC_CHANNELS.appearanceSet, async (_event, state: unknown) => {
 		if (!isValidAppearanceState(state)) throw new Error('外观设置无效');
-		writeAppearanceState(appearancePath, state);
+		await writeAppearanceStateAsync(appearancePath, state);
 		sendAppCommand({ type: 'appearance-changed', appearance: state });
 	});
 	handleRendererInvoke(IPC_CHANNELS.desktopSettingsSet, (event, patch: unknown) => {
@@ -1315,7 +1320,7 @@ export function registerIpc(options: {
 				// stored config over keeps a running server and its token alive across unrelated saves.
 				debugApi: current.debugApi,
 			};
-			writeDesktopSettings(desktopSettingsPath(), next);
+			await writeDesktopSettingsAsync(desktopSettingsPath(), next); // 缓存在写入完成后更新，后续读立即拿到 next
 			keepAwake?.settingsChanged();
 			// Enabling auto-install is explicit consent: chain straight into download +
 			// silent install for an already-known version, or start an auto-install check.
@@ -1490,8 +1495,8 @@ export function registerIpc(options: {
 		platform: process.platform,
 		windowMode: isPaiSender(event) ? 'pai' as const : windowMode,
 	}));
-	handleRendererInvoke(IPC_CHANNELS.appSetLocale, (_event, locale: AppLocale) => {
-		setAppLocale(locale);
+	handleRendererInvoke(IPC_CHANNELS.appSetLocale, async (_event, locale: AppLocale) => {
+		await setAppLocale(locale);
 		updateAppTrayMenu();
 	});
 	handleRendererInvoke(IPC_CHANNELS.updateState, (event) => isPaiSender(event)

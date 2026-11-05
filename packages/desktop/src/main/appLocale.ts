@@ -1,7 +1,7 @@
 import { app, dialog } from 'electron';
 import { join } from 'node:path';
 import type { AppLocale } from '@pidesktop/shared';
-import { backupCorruptStateFile, CorruptStateFileError, readStateFile, writeStateFile } from './stateFiles';
+import { backupCorruptStateFile, CorruptStateFileError, readStateFile, writeStateFileAsync } from './stateFiles';
 
 let cachedLocale: AppLocale | null = null;
 let localeRecoveryFailed = false;
@@ -36,9 +36,9 @@ export function getAppLocale(): AppLocale {
 	return cachedLocale;
 }
 
-export function setAppLocale(locale: AppLocale): void {
+export async function setAppLocale(locale: AppLocale): Promise<void> {
 	if (locale !== 'zh-CN' && locale !== 'en-US') throw new Error('Invalid application locale');
 	if (localeRecoveryFailed) throw new Error('语言设置文件无法备份，请先手动检查 locale.json');
-	writeStateFile(localePath(), { locale });
+	await writeStateFileAsync(localePath(), { locale });
 	cachedLocale = locale;
 }
