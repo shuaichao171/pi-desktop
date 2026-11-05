@@ -1,6 +1,6 @@
 import { screen } from 'electron';
 import { join } from 'node:path';
-import { readStateFile, writeStateFile } from './stateFiles';
+import { readStateFile, writeStateFile, writeStateFileAsync } from './stateFiles';
 
 /**
  * Placement persistence for the main window. The boot window and the main
@@ -79,6 +79,11 @@ export function writeWindowState(path: string, state: WindowState): void {
 	writeStateFile(path, state);
 }
 
+/** Debounced runtime saves go through the async writer; the close path keeps the sync one. */
+export function writeWindowStateAsync(path: string, state: WindowState): Promise<void> {
+	return writeStateFileAsync(path, state);
+}
+
 /**
  * True when enough of the window is on a connected display to see and drag
  * it. Rejects placements from a monitor that is no longer attached.
@@ -154,28 +159,72 @@ export function windowStateFromWindow(win: Pick<TrackedWindow, 'getNormalBounds'
  * Persist the window's placement: debounced during interactive move/resize,
  * then once more when the window closes — including the Windows tray hide,
  * which keeps the window alive with its final bounds.
+ *
+ * Debounced saves are async; each rename still swaps in a whole file, so
+ * overlapping writes never interleave bytes. Saves converge onto the newest
+ * snapshot so a slow earlier write cannot rename a stale placement over a
+ * newer one, and closing keeps its synchronous write to survive an immediate
+ * quit while the async loop catches up afterwards.
  */
 export function trackWindowState(win: TrackedWindow, path: string): void {
 	let timer: ReturnType<typeof setTimeout> | null = null;
-	const save = (): void => {
-		if (win.isDestroyed()) return;
+	/** Newest placement yet to reach disk; async saves keep writing until they land it. */
+	let latest: WindowState | null = null;
+	let saving = false;
+	const saveNow = (state: WindowState): void => {
 		try {
-			writeWindowState(path, windowStateFromWindow(win));
+			writeWindowState(path, state);
 		} catch (error) {
 			console.error('Failed to save window placement:', error);
 		}
 	};
+	const saveAsync = (): void => {
+		if (saving || latest === null) return;
+		saving = true;
+		void (async () => {
+			try {
+				while (latest !== null) {
+					const state: WindowState = latest;
+					try {
+						await writeWindowStateAsync(path, state);
+					} catch (error) {
+						console.error('Failed to save window placement:', error);
+					}
+					// A newer snapshot (or the close write) replaced `latest` meanwhile.
+					if (latest === state) {
+						latest = null;
+						break;
+					}
+				}
+			} finally {
+				saving = false;
+			}
+			// Something arrived while this loop unwound; converge onto it too.
+			if (latest !== null) saveAsync();
+		})();
+	};
 	const schedule = (): void => {
 		if (win.isDestroyed()) return;
 		if (timer) clearTimeout(timer);
-		timer = setTimeout(save, SAVE_DEBOUNCE_MS);
+		timer = setTimeout(() => {
+			timer = null;
+			if (win.isDestroyed()) return;
+			latest = windowStateFromWindow(win);
+			saveAsync();
+		}, SAVE_DEBOUNCE_MS);
 	};
 	win.on('resize', schedule);
 	win.on('move', schedule);
 	win.on('close', () => {
 		if (timer) clearTimeout(timer);
 		timer = null;
-		save();
+		if (win.isDestroyed()) return;
+		const state = windowStateFromWindow(win);
+		// The sync write survives an immediate quit; repointing `latest` at it stops
+		// an in-flight earlier save from leaving a stale placement behind.
+		saveNow(state);
+		latest = state;
+		saveAsync();
 	});
 	win.on('closed', () => {
 		if (timer) clearTimeout(timer);

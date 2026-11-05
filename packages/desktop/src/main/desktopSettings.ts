@@ -74,11 +74,24 @@ export const DEFAULT_DESKTOP_SETTINGS: DesktopSettings = {
 	debugApi: DEFAULT_DEBUG_API_SETTINGS,
 };
 
-/** Reads desktop-level preferences; corrupt or missing files fall back to defaults (4.1/4.2). */
+/**
+ * Reads desktop-level preferences; corrupt or missing files fall back to defaults (4.1/4.2).
+ *
+ * The main process is the only writer of this file, so the parsed contents are
+ * cached per path and every write (including the debug API's) swaps in the
+ * value it just persisted: repeated reads from IPC handlers stop touching the
+ * disk while a read right after a write still observes the new value.
+ */
+const desktopSettingsCache = new Map<string, DesktopSettings | null>();
+
 export function readDesktopSettings(path: string, defaultStorageDirectory = DEFAULT_DESKTOP_SETTINGS.conversationStorageDirectory): DesktopSettings {
 	const defaults = { ...DEFAULT_DESKTOP_SETTINGS, conversationStorageDirectory: defaultStorageDirectory, debugApi: DEFAULT_DEBUG_API_SETTINGS };
+	const cached = desktopSettingsCache.get(path);
+	if (cached !== undefined) return cached === null ? defaults : { ...defaults, ...cached, debugApi: cached.debugApi ?? DEFAULT_DEBUG_API_SETTINGS };
 	try {
 		const stored = readStateFile(path, () => defaults, isValidDesktopSettings);
+		// null keeps "nothing valid on disk yet" distinct from a stored object.
+		desktopSettingsCache.set(path, stored === defaults ? null : stored);
 		return { ...defaults, ...stored, debugApi: stored.debugApi ?? DEFAULT_DEBUG_API_SETTINGS };
 	} catch (error) {
 		if (!(error instanceof CorruptStateFileError)) throw error;
@@ -86,14 +99,22 @@ export function readDesktopSettings(path: string, defaultStorageDirectory = DEFA
 		const backup = backupCorruptStateFile(path);
 		dialog.showErrorBox('Pi Desktop 桌面设置已恢复 / Desktop settings recovered',
 			`损坏的桌面设置已备份到 / Damaged settings were saved to:\n${backup}`);
+		desktopSettingsCache.set(path, null);
 		return defaults;
 	}
 }
 
 export function writeDesktopSettings(path: string, settings: DesktopSettings): void {
 	writeStateFile(path, settings);
+	desktopSettingsCache.set(path, settings);
 }
 
-export function writeDesktopSettingsAsync(path: string, settings: DesktopSettings): Promise<void> {
-	return writeStateFileAsync(path, settings);
+export async function writeDesktopSettingsAsync(path: string, settings: DesktopSettings): Promise<void> {
+	await writeStateFileAsync(path, settings);
+	desktopSettingsCache.set(path, settings);
+}
+
+/** Test hook: only tests simulate another process editing the file behind the cache. */
+export function clearDesktopSettingsCacheForTest(): void {
+	desktopSettingsCache.clear();
 }

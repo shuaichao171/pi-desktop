@@ -76,27 +76,81 @@ export function writeStateFile(path: string, value: unknown): void {
 		} finally {
 			closeSync(fd);
 		}
-		renameSync(temporary, path);
+		renameSyncWithRetry(temporary, path);
 	} finally {
 		rmSync(temporary, { force: true });
 	}
 }
 
+/**
+ * Async writes to the same destination are serialized in call order, so overlapping
+ * saves replace each other instead of racing their final renames.
+ */
+const stateFileWriteQueues = new Map<string, Promise<void>>();
+
 export async function writeStateFileAsync(path: string, value: unknown): Promise<void> {
 	const contents = JSON.stringify(value);
 	if (contents === undefined) throw new Error(`无法序列化状态文件：${path}`);
-	await mkdir(dirname(path), { recursive: true });
-	const temporary = `${path}.${process.pid}.${randomUUID()}.tmp`;
-	try {
-		const file = await open(temporary, 'wx', 0o600);
+	const previous = stateFileWriteQueues.get(path) ?? Promise.resolve();
+	const write = previous.then(async () => {
+		await mkdir(dirname(path), { recursive: true });
+		const temporary = `${path}.${process.pid}.${randomUUID()}.tmp`;
 		try {
-			await file.writeFile(contents, 'utf8');
-			await file.sync();
+			const file = await open(temporary, 'wx', 0o600);
+			try {
+				await file.writeFile(contents, 'utf8');
+				await file.sync();
+			} finally {
+				await file.close();
+			}
+			await renameWithRetry(temporary, path);
 		} finally {
-			await file.close();
+			await rm(temporary, { force: true });
 		}
-		await rename(temporary, path);
-	} finally {
-		await rm(temporary, { force: true });
+	});
+	const tail = write.then(() => undefined, () => undefined);
+	stateFileWriteQueues.set(path, tail);
+	// Drop the queue entry once idle so settled promises do not accumulate.
+	void tail.then(() => {
+		if (stateFileWriteQueues.get(path) === tail) stateFileWriteQueues.delete(path);
+	});
+	return write;
+}
+
+/**
+ * Windows can transiently deny a rename that replaces the destination while another
+ * writer or a scanner holds it (EPERM/EACCES); a short bounded retry keeps concurrent
+ * saves from failing spuriously without hiding real, persistent errors.
+ */
+const RENAME_RETRIES = 5;
+const RENAME_RETRY_DELAY_MS = 10;
+
+function isTransientRenameError(error: unknown): boolean {
+	return error instanceof Error && 'code' in error && (error.code === 'EPERM' || error.code === 'EACCES');
+}
+
+const syncSleepCell = new Int32Array(new SharedArrayBuffer(4));
+
+function renameSyncWithRetry(from: string, to: string): void {
+	for (let attempt = 0; ; attempt += 1) {
+		try {
+			renameSync(from, to);
+			return;
+		} catch (error) {
+			if (attempt >= RENAME_RETRIES || !isTransientRenameError(error)) throw error;
+			Atomics.wait(syncSleepCell, 0, 0, RENAME_RETRY_DELAY_MS);
+		}
+	}
+}
+
+async function renameWithRetry(from: string, to: string): Promise<void> {
+	for (let attempt = 0; ; attempt += 1) {
+		try {
+			await rename(from, to);
+			return;
+		} catch (error) {
+			if (attempt >= RENAME_RETRIES || !isTransientRenameError(error)) throw error;
+			await new Promise((resolve) => { setTimeout(resolve, RENAME_RETRY_DELAY_MS); });
+		}
 	}
 }

@@ -793,7 +793,10 @@ test('standalone conversations get independent folders and retain discoverable h
   // settings file, silently disabling a configured debug server on the next save.
   const desktopSettingsFile = join(root, 'desktop-settings.json');
   const debugApi = { enabled: true, port: 47899, authEnabled: true, token: 'debug-token-keep' };
-  await writeFile(desktopSettingsFile, JSON.stringify({ ...JSON.parse(await readFile(desktopSettingsFile, 'utf8')), debugApi }));
+  // 调试接口在生产中经 writeDesktopSettingsAsync 写入（同时更新进程内设置缓存）；
+  // 测试沿用同一条路径，而不是绕过 API 直接改文件。
+  const { writeDesktopSettingsAsync } = await import('../packages/desktop/src/main/desktopSettings.ts');
+  await writeDesktopSettingsAsync(desktopSettingsFile, { ...JSON.parse(await readFile(desktopSettingsFile, 'utf8')), debugApi });
   await call(IPC_CHANNELS.desktopSettingsSet, { notificationsEnabled: true });
   assert.deepEqual(call(IPC_CHANNELS.desktopSettingsGet).debugApi, debugApi, 'an unrelated settings save keeps the debug-API configuration');
   assert.deepEqual(JSON.parse(await readFile(desktopSettingsFile, 'utf8')).debugApi, debugApi, 'the debug-API configuration stays on disk');

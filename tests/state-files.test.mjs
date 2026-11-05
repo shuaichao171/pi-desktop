@@ -48,6 +48,21 @@ test('state writes replace a complete file and clean up failed temporary writes'
   }
 });
 
+test('concurrent async writes serialize per destination in call order', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'pi-state-'));
+  try {
+    const path = join(dir, 'concurrent.json');
+    // 同一目标的并发异步写（例如调试接口与设置页同时保存）必须按调用顺序依次落盘。
+    const writes = [];
+    for (let index = 0; index < 12; index += 1) writes.push(writeStateFileAsync(path, { cwd: `value-${index}` }));
+    await Promise.all(writes);
+    assert.deepEqual(await readStateFileAsync(path, () => ({}), isSettings), { cwd: 'value-11' }, '最后一次调用最终落盘');
+    assert.deepEqual(readdirSync(dir), ['concurrent.json'], '无临时文件残留');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('async state I/O preserves corrupt data and atomically replaces complete values', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'pi-state-'));
   try {
