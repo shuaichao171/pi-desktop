@@ -249,6 +249,7 @@ const bridge: AgentBridge = {
 	getSessionTree: () => invoke(IPC_CHANNELS.agentSessionTree),
 	switchSessionBranch: (entryId) => invoke(IPC_CHANNELS.agentSwitchBranch, entryId),
 	listSessions: (cwd) => invoke(IPC_CHANNELS.agentListSessions, cwd),
+	listSessionsPage: (cwd, offset, limit) => invoke(IPC_CHANNELS.agentListSessionsPage, cwd, offset, limit),
 	searchSessions: (query) => invoke(IPC_CHANNELS.agentSearchSessions, query),
 	switchSession: (path) => invoke(IPC_CHANNELS.agentSwitchSession, path),
 	peekSession: (cwd, path) => invoke(IPC_CHANNELS.agentPeekSession, cwd, path),

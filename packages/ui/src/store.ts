@@ -1613,6 +1613,10 @@ async function updateCustomProvider(action: (bridge: AgentBridge) => Promise<voi
 	}
 }
 
+/** Sidebar listing pages: the first page covers the initial viewport, continuation pages stream the rest in the background. */
+const SESSION_LIST_FIRST_PAGE = 100;
+const SESSION_LIST_CONTINUATION_PAGE = 500;
+
 async function refreshSessionCache(cwd: string, reportError = true): Promise<void> {
 	const { bridge, hostedChatWindow, navigationRequestId } = useChatStore.getState();
 	// Session lists only feed the sidebar and the @-mention picker; a hosted pai
@@ -1620,20 +1624,47 @@ async function refreshSessionCache(cwd: string, reportError = true): Promise<voi
 	if (!bridge || !cwd || hostedChatWindow) return;
 	const request = (sessionListRequests.get(cwd) ?? 0) + 1;
 	sessionListRequests.set(cwd, request);
-	useChatStore.setState((state) => ({ workspaceSessionRequests: { ...state.workspaceSessionRequests,
-		[cwd]: { phase: Object.hasOwn(state.sessionsByWorkspace, cwd) ? 'refreshing' : 'loading', requestId: request } } }));
-	try {
-		const sessions = await bridge.listSessions(cwd);
-		if (useChatStore.getState().bridge !== bridge || sessionListRequests.get(cwd) !== request) return;
+	// A newer request (a new refresh or a bridge swap) supersedes every pending
+	// page of this one; late pages are dropped instead of written back.
+	const superseded = () => useChatStore.getState().bridge !== bridge || sessionListRequests.get(cwd) !== request;
+	const applySessions = (sessions: UiSessionSummary[], phase: WorkspaceSessionRequest['phase']) => {
 		useChatStore.setState((state) => {
 			const visible = pendingSessionDeletions.size ? sessions.filter((session) => !pendingSessionDeletions.has(session.path)) : sessions;
 			const merged = mergeRuntimeStates(cwd, visible, state.sessionRuntimes);
 			return { sessionsByWorkspace: { ...state.sessionsByWorkspace, [cwd]: merged },
-				workspaceSessionRequests: { ...state.workspaceSessionRequests, [cwd]: { phase: 'idle', requestId: request } },
+				workspaceSessionRequests: { ...state.workspaceSessionRequests, [cwd]: { phase, requestId: request } },
 				...(state.cwd === cwd ? { sessions: merged } : {}) };
 		});
+	};
+	useChatStore.setState((state) => ({ workspaceSessionRequests: { ...state.workspaceSessionRequests,
+		[cwd]: { phase: Object.hasOwn(state.sessionsByWorkspace, cwd) ? 'refreshing' : 'loading', requestId: request } } }));
+	try {
+		if (!bridge.listSessionsPage) {
+			// Older bridges and test harnesses keep the single full listing.
+			const sessions = await bridge.listSessions(cwd);
+			if (superseded()) return;
+			applySessions(sessions, 'idle');
+			return;
+		}
+		const first = await bridge.listSessionsPage(cwd, 0, SESSION_LIST_FIRST_PAGE);
+		if (superseded()) return;
+		applySessions(first.sessions, first.hasMore ? 'refreshing' : 'idle');
+		let accumulated: UiSessionSummary[] = first.sessions;
+		let offset = accumulated.length;
+		// Continuation pages must come from the same listing snapshot (revision and
+		// total); a rebuilt snapshot means a newer refresh is already re-pulling from
+		// page 0, so this one stops instead of splicing mixed snapshots together.
+		while (offset < first.total) {
+			const page = await bridge.listSessionsPage(cwd, offset, SESSION_LIST_CONTINUATION_PAGE);
+			if (superseded()) return;
+			if (page.revision !== first.revision || page.total !== first.total) return;
+			if (!page.sessions.length) break;
+			accumulated = [...accumulated, ...page.sessions];
+			offset += page.sessions.length;
+			applySessions(accumulated, page.hasMore ? 'refreshing' : 'idle');
+		}
 	} catch (error) {
-		if (useChatStore.getState().bridge !== bridge || sessionListRequests.get(cwd) !== request) return;
+		if (superseded()) return;
 		useChatStore.setState((state) => ({ workspaceSessionRequests: { ...state.workspaceSessionRequests, [cwd]: { phase: 'error', requestId: request, error: errorMessage(error) } } }));
 		if (reportError && currentSessionNavigation(bridge, navigationRequestId) && sessionListRequests.get(cwd) === request) useChatStore.setState({ error: errorMessage(error) });
 	}

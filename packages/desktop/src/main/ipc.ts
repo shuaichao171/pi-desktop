@@ -12,7 +12,7 @@ import { app, BrowserWindow, dialog, nativeImage, shell, type IpcMainInvokeEvent
 import { statSync } from 'node:fs';
 import { mkdir, rm, stat } from 'node:fs/promises';
 import { basename, dirname, join, resolve } from 'node:path';
-import { IPC_CHANNELS, PROJECT_BAR_ANIM_IDS, isValidProjectBarValue, normalizeProjectBarValue, type AgentEventEnvelope, type AppLocale, type UiAppCommand, type UiAttachment, type UiExtensionDialogRequest, type UiInputScope, type UiSessionMetaPatch, type UiSidebarGroupChange, type UiSlashCommandRequest, type UiThinkingLevel } from '@pidesktop/shared';
+import { IPC_CHANNELS, PROJECT_BAR_ANIM_IDS, isValidProjectBarValue, normalizeProjectBarValue, type AgentEventEnvelope, type AppLocale, type UiAppCommand, type UiAttachment, type UiExtensionDialogRequest, type UiInputScope, type UiSessionMetaPatch, type UiSessionSummary, type UiSidebarGroupChange, type UiSlashCommandRequest, type UiThinkingLevel } from '@pidesktop/shared';
 import { createIsolatedAgentService } from './agentClient';
 import { isPaiSender, isPaiWindow, paiHeldSessionPaths, paiSlotForSender, paiWindowSlots, registerPaiWindowSlot, unregisterPaiWindowSlot } from './paiWindows';
 import { getAppLocale, setAppLocale } from './appLocale';
@@ -359,6 +359,11 @@ function createPaiWindow(request: PaiWindowRequest): void {
 	entry.agent.onEvent((envelope: AgentEventEnvelope) => {
 		const event = envelope.event;
 		if (event.type === 'ready') entry.liveSessionPath = event.sessionPath;
+		// A conversation persisted by a hosted window lands in the same session
+		// directory as the main agent's listing; its per-cwd change event must
+		// invalidate the shared listing cache too, or the sidebar would keep
+		// serving the stale snapshot.
+		if (event.type === 'sessions-changed') invalidateSessionListing(entry.cwd);
 		if (event.type === 'status') {
 			entry.busy = event.status === 'busy';
 			updateKeepAwakeBusy();
@@ -859,14 +864,25 @@ async function readSessionMeta(): Promise<Record<string, SessionMeta>> {
 }
 function saveSessionMeta(meta: Record<string, SessionMeta>): Promise<void> {
 	invalidateAppTrayData();
-	return writeStateFileAsync(sessionMetaPath(), meta);
+	const saved = writeStateFileAsync(sessionMetaPath(), meta);
+	// Cached only after the write landed: a failed save drops the snapshot (the
+	// queued action may already have mutated it in place) so the next read goes
+	// back to disk, and queued saves resolve in order so the last one wins.
+	void saved.then(() => { sessionMetaSnapshot = meta; }, () => { sessionMetaSnapshot = null; });
+	return saved;
+}
+/** Last written metadata, kept in memory: paged listings merge it on every page serve,
+ *  so the sidebar's per-page reads must not re-read the file each time. */
+let sessionMetaSnapshot: Record<string, SessionMeta> | null = null;
+async function currentSessionMeta(): Promise<Record<string, SessionMeta>> {
+	return sessionMetaSnapshot ??= await readSessionMeta();
 }
 
 // Serialize every metadata read and mutation so simultaneous background events,
 // pin changes, and read receipts cannot overwrite one another.
 let sessionMetaQueue: Promise<void> = Promise.resolve();
 function withSessionMeta<T>(action: (meta: Record<string, SessionMeta>) => Promise<T> | T): Promise<T> {
-	const result = sessionMetaQueue.then(async () => action(await readSessionMeta()));
+	const result = sessionMetaQueue.then(async () => action(await currentSessionMeta()));
 	sessionMetaQueue = result.then(() => undefined, () => undefined);
 	return result;
 }
@@ -878,6 +894,75 @@ function rememberSessionOwner(path: string, cwd: string): void {
 		const oldest = sessionOwnerByPath.keys().next().value;
 		if (oldest !== undefined) sessionOwnerByPath.delete(oldest);
 	}
+}
+
+// Sidebar session listings are paged (agentListSessionsPage): every page of one
+// refresh is served from one rebuilt snapshot instead of re-listing the workspace
+// per page. A snapshot is rebuilt only after an explicit invalidation — the
+// agent's per-cwd `sessions-changed`, host-side mutations (rename / fork / delete),
+// or an automation finishing in that workspace — while metadata (pins, unread,
+// order) merges live on every serve, so flag flips never re-list at all.
+interface SessionListSnapshot {
+	/** Monotonic per-process version; changes whenever this workspace is re-listed. */
+	revision: number;
+	/** Raw agent listing rows (unfiltered); filtering and metadata merge at serve time. */
+	sessions: UiSessionSummary[];
+}
+const sessionListSnapshots = new Map<string, SessionListSnapshot>();
+const sessionListInFlight = new Map<string, Promise<SessionListSnapshot>>();
+const dirtySessionLists = new Set<string>();
+let sessionListRevision = 0;
+
+function invalidateSessionListing(cwd: string): void {
+	dirtySessionLists.add(workspaceKey(cwd));
+}
+
+/** Re-lists the workspace only when its snapshot is missing or dirty; concurrent callers share one load. */
+function sessionListSnapshotFor(cwd: string): Promise<SessionListSnapshot> {
+	const key = workspaceKey(cwd);
+	const inFlight = sessionListInFlight.get(key);
+	if (inFlight) return inFlight;
+	const cached = sessionListSnapshots.get(key);
+	if (cached && !dirtySessionLists.has(key)) return Promise.resolve(cached);
+	const load = (async () => {
+		const sessions = await agentService.listSessions(cwd);
+		for (const session of sessions) rememberSessionOwner(session.path, cwd);
+		const snapshot: SessionListSnapshot = { revision: ++sessionListRevision, sessions };
+		sessionListSnapshots.set(key, snapshot);
+		dirtySessionLists.delete(key);
+		return snapshot;
+	})();
+	const tracked = load.finally(() => {
+		if (sessionListInFlight.get(key) === tracked) sessionListInFlight.delete(key);
+	});
+	sessionListInFlight.set(key, tracked);
+	return tracked;
+}
+
+/** One authoritative serve pass shared by the full and paged listings: snapshot rows,
+ *  live metadata (with the bounded periodic prune), automation sessions excluded. */
+async function serveWorkspaceSessions(cwd: string): Promise<{ snapshot: SessionListSnapshot; sessions: UiSessionSummary[] }> {
+	const snapshot = await sessionListSnapshotFor(cwd);
+	const meta = await withSessionMeta(async (value) => {
+		if (Date.now() - lastSessionMetaPrune >= 5 * 60_000) {
+			const livePaths = new Set(snapshot.sessions.map((session) => session.path));
+			if (activeSessionPath) livePaths.add(activeSessionPath);
+			for (const path of Object.keys(value)) if (automationExecutor.isSessionRunning(path)) livePaths.add(path);
+			if (await pruneMissingSessionMeta(value, livePaths)) await saveSessionMeta(value);
+			lastSessionMetaPrune = Date.now();
+		}
+		return value;
+	});
+	return { snapshot, sessions: snapshot.sessions
+		.filter((session) => !automationExecutor.isSessionRunning(session.path))
+		// Same normalization as the search pipeline (order ?? undefined): persisted
+		// metadata never carries null, and the row keeps its own order otherwise.
+		.map((session) => {
+			const flags = meta[session.path];
+			if (!flags) return session;
+			const { order, ...rest } = flags;
+			return { ...session, ...rest, ...(order !== null && order !== undefined ? { order } : {}) };
+		}) };
 }
 
 function likelySessionOwners(path: string, workspaces: string[]): string[] {
@@ -1101,7 +1186,7 @@ function requireTrustedSender(event: IpcMainInvokeEvent): BrowserWindow {
 const mainOnlyChannels = new Set<string>([
 	IPC_CHANNELS.agentInit, IPC_CHANNELS.agentResidentSnapshot, IPC_CHANNELS.agentActivateResident,
 	IPC_CHANNELS.agentListWorkspaces, IPC_CHANNELS.workspaceListConversations, IPC_CHANNELS.conversationStoragePick,
-	IPC_CHANNELS.agentListSessions, IPC_CHANNELS.agentSearchSessions, IPC_CHANNELS.agentSwitchSession, IPC_CHANNELS.agentPeekSession,
+	IPC_CHANNELS.agentListSessions, IPC_CHANNELS.agentListSessionsPage, IPC_CHANNELS.agentSearchSessions, IPC_CHANNELS.agentSwitchSession, IPC_CHANNELS.agentPeekSession,
 	IPC_CHANNELS.sessionRevealFile, IPC_CHANNELS.sessionFork, IPC_CHANNELS.sessionOpenWindow, IPC_CHANNELS.sessionDelete,
 	IPC_CHANNELS.agentUpdateSessionMeta, IPC_CHANNELS.agentUpdateSessionOrders, IPC_CHANNELS.agentListSessionGroups, IPC_CHANNELS.agentUpdateSessionGroups,
 	IPC_CHANNELS.appRelaunch,
@@ -1258,7 +1343,7 @@ export function registerIpc(options: {
 			keepAwake?.setAutomationActive(snapshot.runs.some((run) => run.status === 'running' || run.status === 'retrying'));
 		},
 		onError: (error) => console.error('Automation scheduler failed:', error),
-		onRunFinished: (entry, task) => { notifier.handleAutomationRun(entry, task.name, task.cwd); },
+		onRunFinished: (entry, task) => { notifier.handleAutomationRun(entry, task.name, task.cwd); invalidateSessionListing(task.cwd); },
 	});
 	handleRendererInvoke(IPC_CHANNELS.desktopSettingsGet, () => readCurrentDesktopSettings());
 	stopAppearanceWatch = watchAppearanceState(appearancePath, (state) => {
@@ -1457,6 +1542,8 @@ export function registerIpc(options: {
 	agentService.onEvent((event: AgentEventEnvelope) => {
 		if (event.event.type === 'ready') activeSessionPath = event.event.sessionPath;
 		if (event.event.type === 'ready' || event.event.type === 'status' || event.event.type === 'sessions-changed') invalidateAppTrayData();
+		// The per-cwd change event is the listing cache's invalidation signal.
+		if (event.event.type === 'sessions-changed') invalidateSessionListing(event.event.cwd);
 		if (event.event.type === 'status') {
 			mainAgentBusy = event.event.status === 'busy';
 			updateKeepAwakeBusy();
@@ -1654,19 +1741,18 @@ export function registerIpc(options: {
 	handleRendererInvoke(IPC_CHANNELS.agentListSessions, async (_event, cwd?: string) => {
 		const targetCwd = cwd ?? activeWorkspace;
 		if (targetCwd && !(await listWorkspaces()).includes(targetCwd)) throw new Error('未知工作区');
-		const sessions = (await agentService.listSessions(targetCwd)).filter((session) => !automationExecutor.isSessionRunning(session.path));
-		for (const session of sessions) rememberSessionOwner(session.path, targetCwd);
-		const meta = await withSessionMeta(async (value) => {
-			if (Date.now() - lastSessionMetaPrune >= 5 * 60_000) {
-				const livePaths = new Set(sessions.map((session) => session.path));
-				if (activeSessionPath) livePaths.add(activeSessionPath);
-				for (const path of Object.keys(value)) if (automationExecutor.isSessionRunning(path)) livePaths.add(path);
-				if (await pruneMissingSessionMeta(value, livePaths)) await saveSessionMeta(value);
-				lastSessionMetaPrune = Date.now();
-			}
-			return value;
-		});
-		return sessions.map((session) => ({ ...session, ...meta[session.path] }));
+		return (await serveWorkspaceSessions(targetCwd)).sessions;
+	});
+	// Paged sidebar listing: the first screen renders from page 0 while the
+	// remaining pages stream in behind it, all served from one snapshot.
+	handleRendererInvoke(IPC_CHANNELS.agentListSessionsPage, async (_event, cwd: unknown, offset: unknown, limit: unknown) => {
+		const pageOffset = typeof offset === 'number' ? offset : Number.NaN;
+		const pageLimit = typeof limit === 'number' ? limit : Number.NaN;
+		if (typeof cwd !== 'string' || !cwd || !Number.isInteger(pageOffset) || !Number.isInteger(pageLimit) || pageOffset < 0 || pageLimit < 1 || pageLimit > 500) throw new Error('会话分页参数无效');
+		if (!(await listWorkspaces()).includes(cwd)) throw new Error('未知工作区');
+		const { snapshot, sessions } = await serveWorkspaceSessions(cwd);
+		const page = sessions.slice(pageOffset, pageOffset + pageLimit);
+		return { sessions: page, total: sessions.length, hasMore: pageOffset + page.length < sessions.length, revision: snapshot.revision };
 	});
 	handleRendererInvoke(IPC_CHANNELS.agentSearchSessions, async (_event, query: string) => {
 		const request = ++sessionSearchRequest;
@@ -1703,7 +1789,10 @@ export function registerIpc(options: {
 		path = normalizeSessionPath(path);
 		if (name !== undefined && (typeof name !== 'string' || !name.trim() || name.trim().length > 200 || /[\u0000-\u001f\u007f]/u.test(name))) throw new Error('会话名称无效');
 		const owner = await requireSessionOwner(path);
-		return agentService.forkSession(path, owner, name?.trim());
+		const forked = await agentService.forkSession(path, owner, name?.trim());
+		// A fork writes a new transcript beside the source; the owner's listing must re-list.
+		invalidateSessionListing(owner);
+		return forked;
 	}));
 	handleRendererInvoke(IPC_CHANNELS.sessionOpenWindow, async (_event, path: string) => {
 		const target = normalizeSessionPath(path);
@@ -1740,7 +1829,12 @@ export function registerIpc(options: {
 		if (patch.order !== undefined && patch.order !== null && (!Number.isInteger(patch.order) || Math.abs(patch.order) > 1e9)) throw new Error('会话顺序无效');
 		if (patch.expectedUnreadAt !== undefined && (!Number.isSafeInteger(patch.expectedUnreadAt) || patch.expectedUnreadAt < 0)) throw new Error('会话状态无效');
 		const owner = await requireSessionOwner(path, patch.name !== undefined);
-		if (patch.name !== undefined) await agentService.renameSession(path, patch.name, owner);
+		if (patch.name !== undefined) {
+			await agentService.renameSession(path, patch.name, owner);
+			// A rename rewrites the header the listing's name comes from; flag flips
+			// alone merge from live metadata and never need a re-list.
+			invalidateSessionListing(owner);
+		}
 		if (!metaKeys.some((key) => patch[key] !== undefined) && patch.order === undefined) return;
 		await withSessionMeta(async (meta) => {
 			const next: SessionMeta = { ...meta[path] };
@@ -1817,6 +1911,7 @@ export function registerIpc(options: {
 			// There is no app trash and no recovery; only the file itself is removed.
 			await rm(target, { force: true });
 			sessionOwnerByPath.delete(target);
+			invalidateSessionListing(owner);
 			await withSessionMeta(async (meta) => {
 				delete meta[target];
 				await saveSessionMeta(meta);
