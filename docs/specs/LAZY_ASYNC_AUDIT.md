@@ -62,6 +62,9 @@
 - **持久化「工作台默认打开」的首帧 pane 短暂缺席**：懒 chunk 到位前 pane 区域为空（本地文件通常几十 ms、一次性）；如在意可在 boot 阶段对 stored-open 情形预取 chunk 或给 fallback 占位骨架。
 - **windowState close 同步写不经 `writeStateFileAsync` 按路径队列**：极端退出时序下磁盘可能残留旧窗口位置（纯摆放数据，收敛循环随后会再写，有测试覆盖）。
 - **测试环境备注**：本机全局 `~/.pi/agent/npm` 缺 `marked-cjk-friendly.min.js` 会导致 `session-capabilities` 导出 HTML 用例失败（环境预存，与代码无关）。
+- **退出时序窄口（终审 RX，仅记录）**：`disposeServices` 的 drain 若在 `defaultWorkspaceAsync` 入队前捕获队列尾，该注册写入可逃过排空；写入为临时文件+原子 rename 且 dispose 后续仍有多个 await，最坏仅注册条目落盘与否，无用户可见错误。
+- **debugApi getState 瞬态（终审 RX，仅记录）**：getState 在队外读 config+server，动作进行中（写盘后 create 前 / stop 后写盘前）可短暂呈现 enabled=true+running=false；自愈，由 setConfig 返回值立即纠正。
+- **设置队列可被对话框阻塞（终审 RX，仅记录）**：损坏设置恢复框的同步 `showErrorBox` 会阻塞 withDesktopSettings 直至用户关闭；属既有设计余量，正常路径不触发。
 
 ## 约束
 

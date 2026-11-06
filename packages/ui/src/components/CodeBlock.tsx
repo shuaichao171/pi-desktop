@@ -30,10 +30,11 @@ export function CodeBlock({ code, language }: { code: string; language?: string 
 	const streaming = useContext(StreamingContentContext);
 	// Plain text first: the highlighter chunk loads on demand (codeHighlighter.ts).
 	const hljs = useHighlighter(Boolean(language) && !isMermaid && lines.length <= HIGHLIGHT_LINE_LIMIT);
-	const resolved = language && hljs?.getLanguage(language) ? language : '';
+	const trimmedLanguage = (language ?? '').trim();
+	const resolved = trimmedLanguage && hljs?.getLanguage(trimmedLanguage) ? trimmedLanguage : '';
 	// Over-limit blocks highlight in a worker — but only once the message stopped
 	// streaming; re-highlighting every streamed token would flicker.
-	const workerHtml = useWorkerHighlight(shown, (language ?? '').trim(), !streaming && Boolean(language) && !isMermaid && lines.length > HIGHLIGHT_LINE_LIMIT && lines.length <= WORKER_HIGHLIGHT_LINE_LIMIT);
+	const workerHtml = useWorkerHighlight(shown, trimmedLanguage, !streaming && Boolean(language) && !isMermaid && lines.length > HIGHLIGHT_LINE_LIMIT && lines.length <= WORKER_HIGHLIGHT_LINE_LIMIT);
 	const html = useMemo(() => {
 		if (!hljs || !resolved || lines.length > HIGHLIGHT_LINE_LIMIT) {
 			// Worker markup wraps the same text in spans, so replacing the escaped
