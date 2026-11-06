@@ -1263,14 +1263,14 @@ export interface AgentBridge extends InputFeatureBridge, DataFeaturesBridge, Wor
   forkSession(path: string, name?: string): Promise<string>;
   /** Opens a conversation in its own pai chat window (a separate app instance). */
   openSessionInNewWindow(path: string): Promise<void>;
-  /** Opens a conversation as an embedded split pane inside the main window (any project). */
-  openSplitPane(cwd: string, sessionPath?: string): Promise<void>;
-  /** Closes this window's split pane (pane renderer self-close or main window request). */
-  closeSplitPane(): Promise<void>;
-  /** Reports the pane region rect (DIP, viewport-relative) for WebContentsView positioning. */
-  setSplitPaneBounds(rect: { x: number; y: number; width: number; height: number }): Promise<void>;
+  /** Opens a conversation as an embedded split pane inside the main window (any project); resolves with the new pane id. */
+  openSplitPane(cwd: string, sessionPath?: string): Promise<number>;
+  /** Closes a pane of this window by id (pane renderer self-close or main window request). */
+  closeSplitPane(paneId?: number): Promise<void>;
+  /** Reports one pane's region rect (DIP, viewport-relative) for WebContentsView positioning. */
+  setSplitPaneBounds(paneId: number, rect: { x: number; y: number; width: number; height: number }): Promise<void>;
   /** Push notification: the window's split pane was closed (from inside the pane). */
-  onSplitPaneClosed(listener: () => void): () => void;
+  onSplitPaneClosed(listener: (paneId: number) => void): () => void;
   /** True when the session lives in a split pane or pai window; focuses that host. */
   focusHostedSession(path: string): Promise<boolean>;
   updateSessionMeta(path: string, patch: UiSessionMetaPatch): Promise<void>;

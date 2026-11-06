@@ -60,6 +60,7 @@ export function paiHeldSessionPaths(): string[] {
 
 /** WebContents keyed pane slot — a split pane is a WebContentsView, not a BrowserWindow. */
 export interface PaiPaneSlot {
+	paneId: number;
 	view: WebContentsView;
 	parentWin: BrowserWindow;
 	webContents: WebContents;

@@ -22,7 +22,7 @@ async function invoke(channel: string, ...args: unknown[]) {
 }
 
 const onSplitPaneClosed: AgentBridge['onSplitPaneClosed'] = (listener) => {
-	const wrapped = () => listener();
+	const wrapped = (paneId: number) => listener(paneId);
 	ipcRenderer.on(IPC_CHANNELS.splitPaneClosed, wrapped);
 	return () => ipcRenderer.removeListener(IPC_CHANNELS.splitPaneClosed, wrapped);
 };
@@ -262,10 +262,10 @@ const bridge: AgentBridge = {
 	forkSession: (path, name) => invoke(IPC_CHANNELS.sessionFork, path, name),
 	openSessionInNewWindow: (path) => invoke(IPC_CHANNELS.sessionOpenWindow, path),
 	openSplitPane: (cwd, sessionPath) => invoke(IPC_CHANNELS.splitPaneOpen, cwd, sessionPath),
-	closeSplitPane: () => invoke(IPC_CHANNELS.splitPaneClose),
+	closeSplitPane: (paneId) => invoke(IPC_CHANNELS.splitPaneClose, paneId),
 	focusHostedSession: (path) => invoke(IPC_CHANNELS.focusHostedSession, path),
 	onSplitPaneClosed,
-	setSplitPaneBounds: (rect) => invoke(IPC_CHANNELS.splitPaneSetBounds, rect),
+	setSplitPaneBounds: (paneId, rect) => invoke(IPC_CHANNELS.splitPaneSetBounds, paneId, rect),
 	updateSessionMeta: (path, patch) => invoke(IPC_CHANNELS.agentUpdateSessionMeta, path, patch),
 	deleteSession: (path) => invoke(IPC_CHANNELS.sessionDelete, path),
 	listSessionGroups: () => invoke(IPC_CHANNELS.agentListSessionGroups),

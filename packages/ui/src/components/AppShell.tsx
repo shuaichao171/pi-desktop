@@ -72,8 +72,10 @@ export function AppShell() {
 	const paiMode = windowMode === 'pai' || paiLaunch;
 	const [paneLaunch] = useState(() => new URLSearchParams(window.location.search).get('mode') === 'pane');
 	const paneMode = windowMode === 'pane' || paneLaunch;
-	const [splitPaneOpen, setSplitPaneOpen] = useState(false);
-	const paneRegionRef = useRef<HTMLDivElement | null>(null);
+	// Each entry is one hosted pane: { paneId } from the main process. A region
+	// element with data-pane-id reports its own rect; panes close by id.
+	const [paneIds, setPaneIds] = useState<number[]>([]);
+	const regionHostRef = useRef<HTMLDivElement | null>(null);
 	const navigation = useSessionNavigation();
 	const [sidebarOpen, setSidebarOpen] = useState(() => !window.matchMedia(NARROW_WINDOW_QUERY).matches);
 	const [projectRevealRequest, setProjectRevealRequest] = useState(0);
@@ -134,27 +136,37 @@ export function AppShell() {
 		// must not yank the user back on every render.
 		if (!previous && extensionRequestPending && !paiMode) setMainView('chat');
 	}, [extensionRequestPending, paiMode]);
-	// Split pane: report the reserved region on every layout change; collapse
-	// when the pane closes itself from inside its own header.
+	// Split panes: each region reports its own rect on every layout change;
+	// a pane closing itself (header ✕) removes its slot by id.
 	useEffect(() => {
-		if (!splitPaneOpen) return;
-		const region = paneRegionRef.current;
-		if (!region) return;
-		const report = () => {
+		if (paneIds.length === 0) return;
+		const bridge = useChatStore.getState().bridge;
+		const report = (paneId: number, region: Element) => {
 			const rect = region.getBoundingClientRect();
-			void useChatStore.getState().bridge?.setSplitPaneBounds?.({ x: rect.x, y: rect.y, width: rect.width, height: rect.height });
+			void bridge?.setSplitPaneBounds?.(paneId, { x: rect.x, y: rect.y, width: rect.width, height: rect.height });
 		};
-		const observer = new ResizeObserver(() => report());
-		observer.observe(region);
-		report();
-		return () => observer.disconnect();
-	}, [splitPaneOpen]);
+		const observers: ResizeObserver[] = [];
+		for (const paneId of paneIds) {
+			const region = regionHostRef.current?.querySelector<HTMLElement>(`[data-pane-id="${paneId}"]`);
+			if (!region) continue;
+			report(paneId, region);
+			const observer = new ResizeObserver(() => report(paneId, region));
+			observer.observe(region);
+			observers.push(observer);
+		}
+		return () => { for (const observer of observers) observer.disconnect(); };
+	}, [paneIds]);
 	useEffect(() => {
 		const bridge = useChatStore.getState().bridge;
-		return bridge?.onSplitPaneClosed?.(() => setSplitPaneOpen(false));
+		return bridge?.onSplitPaneClosed?.((paneId) => {
+			setPaneIds((current) => current.filter((id) => id !== paneId));
+		});
 	}, []);
 	useEffect(() => {
-		const opened = () => setSplitPaneOpen(true);
+		const opened = (event: Event) => {
+			const paneId = (event as CustomEvent<number | undefined>).detail;
+			setPaneIds((current) => (typeof paneId === 'number' && !current.includes(paneId) ? [...current, paneId] : current));
+		};
 		window.addEventListener('pi-split-pane-opened', opened);
 		return () => window.removeEventListener('pi-split-pane-opened', opened);
 	}, []);
@@ -496,9 +508,11 @@ export function AppShell() {
 			}} />}
 			<div className="pd-main-view">
 			<div className="pd-chat-view-host" hidden={mainView !== 'chat'} inert={mainView !== 'chat'}><ConversationHeader cwd={conversationCwd} title={currentTitle} busy={status === 'busy'} /><ScopedErrorBoundary scope="conversation" resetKeys={[conversationCwd, conversationId, conversationPath]}><ChatView onOpenModelManagement={openModelManagement} searchTarget={searchMessageTarget} navigationError={navigation.error} /></ScopedErrorBoundary></div>
-			{splitPaneOpen && <>
+			{paneIds.length > 0 && <>
 			<div className="pd-split-divider" aria-hidden="true" />
-			<div ref={paneRegionRef} className="pd-split-pane-region" />
+			<div ref={regionHostRef} className="pd-split-pane-host">
+				{paneIds.map((paneId) => <div key={paneId} data-pane-id={paneId} className="pd-split-pane-region" />)}
+			</div>
 			</>}
 			{mainView === 'automations' && <ScopedErrorBoundary scope="automation"><Suspense fallback={null}><AutomationPage onOpenSession={async (cwd, path) => { const selected = await useChatStore.getState().selectSession(cwd, path); if (selected) { setSearchMessageTarget(null); setMainView('chat'); if (narrow) setSidebarOpen(false); } return selected; }} /></Suspense></ScopedErrorBoundary>}
 			{mainView === 'plugins' && <ScopedErrorBoundary scope="plugins"><Suspense fallback={null}><PluginsPage /></Suspense></ScopedErrorBoundary>}

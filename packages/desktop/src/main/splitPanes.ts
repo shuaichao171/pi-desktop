@@ -53,9 +53,9 @@ function paneErrorDialog(parentWin: BrowserWindow | undefined, message: string):
 	void shown.catch(() => {});
 }
 
-export function openSplitPane(parentWin: BrowserWindow, request: { cwd: string; sessionPath?: string }): void {
-	// 最终形态即主窗右侧一个窗格：已占用时明确拒绝，避免多视图重叠。
-	if (paneSlots().length > 0) throw new Error('右侧窗格已占用，请先关闭当前窗格');
+let nextPaneId = 1;
+
+export function openSplitPane(parentWin: BrowserWindow, request: { cwd: string; sessionPath?: string }): number {
 	const cwd = validatePaiWorkspace(request.cwd);
 	const sessionPath = request.sessionPath === undefined ? undefined : validatePaiSession(request.sessionPath);
 	if (sessionPath && hooks?.isAutomationRunning(cwd, sessionPath)) throw new Error('自动化仍在运行，请结束后再打开窗格');
@@ -71,6 +71,7 @@ export function openSplitPane(parentWin: BrowserWindow, request: { cwd: string; 
 	});
 	view.setBackgroundColor('#111216');
 	const entry: PaiPaneSlot = {
+		paneId: nextPaneId++,
 		view, parentWin,
 		webContents: view.webContents,
 		cwd,
@@ -166,6 +167,10 @@ function revealPane(entry: PaiPaneSlot): void {
 	}
 }
 
+export function paneIdForWebContents(webContents: WebContents): number | null {
+	return paneSlotForSender(webContents)?.paneId ?? null;
+}
+
 export function notifyPaneRendererReady(webContents: WebContents): void {
 	const entry = paneSlotForSender(webContents);
 	if (!entry || entry.disposed) return;
@@ -175,18 +180,21 @@ export function notifyPaneRendererReady(webContents: WebContents): void {
 	flushPaneNotices(entry);
 }
 
-/** Position/resize a pane from the main renderer's reported region (DIP, content-relative). */
-export function setPaneBounds(parentWin: BrowserWindow, rect: { x: number; y: number; width: number; height: number }): void {
-	for (const entry of paneSlots()) {
-		if (entry.parentWin !== parentWin) continue;
-		if (!entry.revealed) revealPane(entry);
-		entry.view.setBounds({
-			x: Math.max(0, Math.round(rect.x)),
-			y: Math.max(0, Math.round(rect.y)),
-			width: Math.max(0, Math.round(rect.width)),
-			height: Math.max(0, Math.round(rect.height)),
-		});
-	}
+/** Position/resize one pane by id from the main renderer's reported region (DIP, viewport-relative). */
+export function setPaneBounds(parentWin: BrowserWindow, paneId: number, rect: { x: number; y: number; width: number; height: number }): void {
+	const entry = paneSlots().find((slot) => slot.paneId === paneId && slot.parentWin === parentWin);
+	if (!entry) return;
+	if (!entry.revealed) revealPane(entry);
+	entry.view.setBounds({
+		x: Math.max(0, Math.round(rect.x)),
+		y: Math.max(0, Math.round(rect.y)),
+		width: Math.max(0, Math.round(rect.width)),
+		height: Math.max(0, Math.round(rect.height)),
+	});
+}
+
+export function paneById(parentWin: BrowserWindow, paneId: number): PaiPaneSlot | undefined {
+	return paneSlots().find((slot) => slot.paneId === paneId && slot.parentWin === parentWin);
 }
 
 export async function closeSplitPane(entry: PaiPaneSlot, options?: { skipConfirm?: boolean }): Promise<void> {
@@ -211,7 +219,7 @@ export async function closeSplitPane(entry: PaiPaneSlot, options?: { skipConfirm
 		}
 	} catch { /* The parent may already be gone. */ }
 	unregisterPaneSlot(entry.webContents);
-	if (!entry.parentWin.isDestroyed()) entry.parentWin.webContents.send(IPC_CHANNELS.splitPaneClosed);
+	if (!entry.parentWin.isDestroyed()) entry.parentWin.webContents.send(IPC_CHANNELS.splitPaneClosed, entry.paneId);
 	await disposePaneEntry(entry);
 	try { if (!entry.view.webContents.isDestroyed()) entry.view.webContents.close(); } catch { /* Already gone. */ }
 }

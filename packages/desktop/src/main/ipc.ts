@@ -1733,7 +1733,7 @@ export function registerIpc(options: {
 	}));
 	handleRendererInvoke(IPC_CHANNELS.splitPaneOpen, (event, cwd: unknown, sessionPath?: unknown) => {
 		const parentWin = requireRendererSender(event);
-		openSplitPane(parentWin, {
+		return openSplitPane(parentWin, {
 			cwd: typeof cwd === 'string' ? cwd : '',
 			...(typeof sessionPath === 'string' && sessionPath ? { sessionPath } : {}),
 		});
