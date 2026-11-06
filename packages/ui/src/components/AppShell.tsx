@@ -165,6 +165,7 @@ export function AppShell() {
 	useEffect(() => {
 		const opened = (event: Event) => {
 			const paneId = (event as CustomEvent<number | undefined>).detail;
+			console.error('[split][renderer] opened event detail=', paneId);
 			setPaneIds((current) => (typeof paneId === 'number' && !current.includes(paneId) ? [...current, paneId] : current));
 			console.log('[split] opened event, paneId=', paneId, '→ paneIds');
 		};

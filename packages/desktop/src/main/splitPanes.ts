@@ -8,6 +8,7 @@
  * own agent host, never touching the main window's workspace.
  */
 import { app, BrowserWindow, dialog, WebContentsView, type WebContents } from 'electron';
+import { appendFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { IPC_CHANNELS, type AgentEventEnvelope, type UiExtensionDialogRequest, type UiExtensionDialogResponse } from '@pidesktop/shared';
 import { getAppLocale } from './appLocale';
@@ -21,10 +22,16 @@ interface PaneExtensionDialog {
 	cleanup(): void;
 }
 
+const PANE_TRACE = 'D:/ai/.pigit/pane-trace.log';
+export function trace(line: string): void {
+	try { appendFileSync(PANE_TRACE, new Date().toISOString().slice(11, 23) + ' ' + line + '\n'); } catch { /* tracing never breaks the pane. */ }
+}
+
 const panePendingDialogs = new Map<string, PaneExtensionDialog>();
 const paneStartupNotices = new Map<WebContents, UiExtensionDialogRequest[]>();
 const paneNotificationReady = new WeakSet<WebContents>();
 const pendingUnreadPaths = new Set<string>();
+const parentWindowConsoleHooked = new Map<BrowserWindow, true>();
 
 let hooks: {
 	updateKeepAwakeBusy(): void;
@@ -108,10 +115,22 @@ export function openSplitPane(parentWin: BrowserWindow, request: { cwd: string; 
 		},
 	});
 	registerPaneSlot(entry);
-	console.error('[split] pane created, paneId=', entry.paneId, 'cwd=', cwd);
+	trace('pane created paneId=' + entry.paneId + ' cwd=' + cwd);
+	return entry.paneId;
 	// Attach immediately: an unattached WebContentsView does not advance page
 	// loads in Electron 44 — the zero-sized view is invisible until first bounds.
-	if (!parentWin.isDestroyed()) parentWin.contentView.addChildView(view);
+	if (!parentWin.isDestroyed()) {
+		parentWin.contentView.addChildView(view);
+		parentWin.removeAllListeners('resize');
+		parentWin.on('resize', () => layoutPanesFor(parentWin));
+		layoutPanesFor(parentWin);
+	}
+	if (!parentWindowConsoleHooked.has(parentWin) && !parentWin.isDestroyed()) {
+		parentWindowConsoleHooked.set(parentWin, true);
+		parentWin.webContents.on('console-message', (_event, _level, message) => {
+			if (typeof message === 'string' && message.includes('[split][renderer]')) trace('main-rdr ' + message);
+		});
+	}
 	let failureReported = false;
 	const reportFailure = (reason: string): void => {
 		if (failureReported || entry.disposed) return;
@@ -158,14 +177,16 @@ export function openSplitPane(parentWin: BrowserWindow, request: { cwd: string; 
 		const load = !app.isPackaged && process.env.ELECTRON_RENDERER_URL
 			? view.webContents.loadURL(rendererLaunchUrl(process.env.ELECTRON_RENDERER_URL, { windowMode: 'pane', cwd }))
 			: view.webContents.loadFile(join(app.getAppPath(), 'out', 'renderer', 'index.html'), { query: { mode: 'pane' } });
-		entry.webContents.once('did-finish-load', () => console.error('[split] did-finish-load paneId=' + entry.paneId));
-		entry.webContents.once('did-fail-load', (_e, code, desc) => console.error('[split] did-fail-load paneId=' + entry.paneId + ' code=' + code + ' ' + desc));
+		entry.webContents.once('did-finish-load', () => trace('did-finish-load paneId=' + entry.paneId));
+		entry.webContents.once('did-fail-load', (_e, code, desc) => trace('did-fail-load paneId=' + entry.paneId + ' code=' + code + ' ' + desc));
 		const loadWatch = setTimeout(() => {
-			if (!entry.loaded && !entry.disposed) console.error('[split] STILL LOADING paneId=' + entry.paneId + ' url=' + entry.webContents.getURL() + ' isLoading=' + entry.webContents.isLoading() + ' canGoBack=' + entry.webContents.navigationHistory.length());
+			if (!entry.loaded && !entry.disposed) trace('STILL LOADING paneId=' + entry.paneId + ' url=' + entry.webContents.getURL() + ' isLoading=' + entry.webContents.isLoading());
 		}, 8000);
 		void load.then(() => {
-			console.error('[split] pane load done, paneId=' + entry.paneId + ' url=' + entry.webContents.getURL());
+			trace('pane load done paneId=' + entry.paneId + ' url=' + entry.webContents.getURL());
+			layoutPanesFor(entry.parentWin);
 		clearTimeout(loadWatch);
+		setTimeout(() => { if (!entry.disposed && !entry.firstPaintReady) console.error('[split] paneId=' + entry.paneId + ' loaded but no region report yet — renderer effect did not fire'); }, 5000);
 			entry.loaded = true;
 			revealPane(entry);
 		}).catch((error: unknown) => reportFailure(error instanceof Error ? error.message : String(error)));
@@ -177,6 +198,26 @@ export function openSplitPane(parentWin: BrowserWindow, request: { cwd: string; 
 			paneErrorDialog(parentWin, error instanceof Error ? error.message : String(error));
 			void closeSplitPane(entry, { skipConfirm: true });
 		});
+}
+
+
+/** Right-side stack: each pane owns an equal column of the right overlay area. */
+function layoutPanesFor(parentWin: BrowserWindow): void {
+	const panes = paneSlots().filter((slot) => slot.parentWin === parentWin && !slot.disposed);
+	trace('layout panes=' + panes.length + ' for win=' + parentWin.id + ' content=' + JSON.stringify(parentWin.contentView.getBounds()));
+	if (panes.length === 0) return;
+	const content = parentWin.contentView.getBounds();
+	const columnWidth = Math.max(280, Math.floor(content.width * 0.5 / panes.length));
+	panes.forEach((entry, index) => {
+		if (entry.webContents.isDestroyed()) return;
+		if (!entry.revealed) revealPane(entry);
+		entry.view.setBounds({
+			x: content.width - columnWidth * (panes.length - index),
+			y: 0,
+			width: columnWidth,
+			height: content.height,
+		});
+	});
 }
 
 function revealPane(entry: PaiPaneSlot): void {
@@ -204,6 +245,7 @@ export function notifyPaneRendererReady(webContents: WebContents): void {
 
 /** Position/resize one pane by id from the main renderer's reported region (DIP, viewport-relative). */
 export function setPaneBounds(parentWin: BrowserWindow, paneId: number, rect: { x: number; y: number; width: number; height: number }): void {
+	trace('renderer-reported bounds paneId=' + paneId + ' rect=' + JSON.stringify(rect));
 	const entry = paneSlots().find((slot) => slot.paneId === paneId && slot.parentWin === parentWin);
 	if (!entry) return;
 	if (!entry.revealed) revealPane(entry);
@@ -242,7 +284,10 @@ export async function closeSplitPane(entry: PaiPaneSlot, options?: { skipConfirm
 		}
 	} catch { /* The parent may already be gone. */ }
 	unregisterPaneSlot(entry.webContents);
-	if (!entry.parentWin.isDestroyed()) entry.parentWin.webContents.send(IPC_CHANNELS.splitPaneClosed, entry.paneId);
+	if (!entry.parentWin.isDestroyed()) {
+		entry.parentWin.webContents.send(IPC_CHANNELS.splitPaneClosed, entry.paneId);
+		layoutPanesFor(entry.parentWin);
+	}
 	await disposePaneEntry(entry);
 	try { if (!entry.view.webContents.isDestroyed()) entry.view.webContents.close(); } catch { /* Already gone. */ }
 }

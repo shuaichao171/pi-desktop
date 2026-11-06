@@ -1124,6 +1124,7 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 			// focuses the existing pane (its transcript already lives there).
 			if (!existedBefore && current.cwd === session.workspace && current.sessionPath === session.path) { await newSession({ cwd: session.workspace }); onNavigate(); }
 			const paneId = result;
+			console.error('[split][renderer] openSplitPane resolved paneId=', paneId);
 			window.dispatchEvent(new CustomEvent('pi-split-pane-opened', { detail: paneId }));
 			console.log('[split] openSplitPane resolved, paneId=', paneId);
 		});

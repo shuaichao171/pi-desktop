@@ -16,7 +16,7 @@ import { IPC_CHANNELS, PROJECT_BAR_ANIM_IDS, isValidProjectBarValue, normalizePr
 import { createIsolatedAgentService } from './agentClient';
 import { hostedHeldSessionPaths, isPaiSender, isPaiWindow, paiHeldSessionPaths, paiSlotForSender, paiWindowSlots, registerPaiWindowSlot, unregisterPaiWindowSlot } from './paiWindows';
 import { isPaneSender, paneSlotForSender, paneSlots } from './paiWindows';
-import { initSplitPanes, openSplitPane, closeSplitPane, setPaneBounds, notifyPaneRendererReady, disposeAllPanes, panePendingDialogRequests, resolvePanePendingDialog } from './splitPanes';
+import { initSplitPanes, openSplitPane, closeSplitPane, setPaneBounds, notifyPaneRendererReady, disposeAllPanes, panePendingDialogRequests, resolvePanePendingDialog, trace } from './splitPanes';
 import { getAppLocale, setAppLocale } from './appLocale';
 import { appIconPath, destroyAppTray, invalidateAppTrayData, updateAppTrayMenu } from './tray';
 import { updateService } from './updateService';
@@ -1732,7 +1732,7 @@ export function registerIpc(options: {
 		return agentService.forkSession(path, owner, name?.trim());
 	}));
 	handleRendererInvoke(IPC_CHANNELS.splitPaneOpen, (event, cwd: unknown, sessionPath?: unknown) => {
-		console.error('[split] splitPaneOpen invoke received, cwd=', cwd, 'session=', sessionPath);
+		trace('invoke received session=' + (sessionPath ?? '(fresh)') + ' cwd=' + cwd);
 		const parentWin = requireRendererSender(event);
 		return openSplitPane(parentWin, {
 			cwd: typeof cwd === 'string' ? cwd : '',
