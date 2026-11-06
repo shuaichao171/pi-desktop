@@ -13,7 +13,7 @@ import { IPC_CHANNELS, type AgentEventEnvelope, type UiExtensionDialogRequest, t
 import { getAppLocale } from './appLocale';
 import { rendererLaunchUrl, validatePaiSession, validatePaiWorkspace } from './desktopLaunch';
 import { createIsolatedAgentService } from './agentClient';
-import { paneHeldSessionPaths, paneSlots, registerPaneSlot, unregisterPaneSlot, type PaiPaneSlot } from './paiWindows';
+import { paneHeldSessionPaths, paneSlots, registerPaneSlot, unregisterPaneSlot, type PaiPaneSlot } from './paneRegistry';
 
 interface PaneExtensionDialog {
 	request: UiExtensionDialogRequest;
@@ -155,13 +155,20 @@ export function openSplitPane(parentWin: BrowserWindow, request: { cwd: string; 
 		const load = !app.isPackaged && process.env.ELECTRON_RENDERER_URL
 			? view.webContents.loadURL(rendererLaunchUrl(process.env.ELECTRON_RENDERER_URL, { windowMode: 'pane', cwd }))
 			: view.webContents.loadFile(join(app.getAppPath(), 'out', 'renderer', 'index.html'), { query: { mode: 'pane' } });
+		entry.webContents.once('did-finish-load', () => console.error('[split] did-finish-load paneId=' + entry.paneId));
+		entry.webContents.once('did-fail-load', (_e, code, desc) => console.error('[split] did-fail-load paneId=' + entry.paneId + ' code=' + code + ' ' + desc));
+		const loadWatch = setTimeout(() => {
+			if (!entry.loaded && !entry.disposed) console.error('[split] STILL LOADING paneId=' + entry.paneId + ' url=' + entry.webContents.getURL() + ' isLoading=' + entry.webContents.isLoading() + ' canGoBack=' + entry.webContents.navigationHistory.length());
+		}, 8000);
 		void load.then(() => {
-			console.log('[pane] renderer loaded');
+			console.error('[split] pane load done, paneId=' + entry.paneId + ' url=' + entry.webContents.getURL());
+		clearTimeout(loadWatch);
 			entry.loaded = true;
 			revealPane(entry);
 		}).catch((error: unknown) => reportFailure(error instanceof Error ? error.message : String(error)));
 	};
 	void entry.agent.init({ cwd, ...(sessionPath ? { sessionPath } : { fresh: true }) })
+		.then(() => { startLoad(); })
 		.catch((error: unknown) => {
 			console.error('split pane agent failed to initialize:', error);
 			paneErrorDialog(parentWin, error instanceof Error ? error.message : String(error));
@@ -197,6 +204,7 @@ export function setPaneBounds(parentWin: BrowserWindow, paneId: number, rect: { 
 	const entry = paneSlots().find((slot) => slot.paneId === paneId && slot.parentWin === parentWin);
 	if (!entry) return;
 	if (!entry.revealed) revealPane(entry);
+	console.error('[split] setBounds paneId=' + paneId + ' rect=' + JSON.stringify(rect));
 	entry.view.setBounds({
 		x: Math.max(0, Math.round(rect.x)),
 		y: Math.max(0, Math.round(rect.y)),
