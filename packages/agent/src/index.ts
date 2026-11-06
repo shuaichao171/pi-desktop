@@ -115,7 +115,7 @@ import { clearDisabledModelsForProvider } from './customProviders.ts';
 import { ModelTestService } from './modelTest.ts';
 import { ProjectDefaultsService } from './projectDefaults.ts';
 import { McpManager } from './mcpManager.ts';
-import { createWindowsBashToolOverride } from './winShellEncoding.ts';
+import { createInterruptibleShellTools, shellRunRegistry } from './shellInterrupt.ts';
 import type { UiMcpSaveRequest, UiMcpTarget } from '../../shared/src/mcpFeatures.ts';
 import type { PluginUpdateCheck } from '../../shared/src/pluginUpdates.ts';
 import { checkPluginUpdate } from './pluginUpdates.ts';
@@ -396,14 +396,15 @@ function createRuntimeFactory(
 		});
 		bindProviderNetwork(services.modelRuntime, join(agentDir, 'models.json'));
 		void loadModelPrefs(agentDir).catch(() => {});
-		// Windows GBK console output would otherwise decode as U+FFFD mojibake;
-		// the override keeps pi's local shell but re-encodes non-UTF-8 lines.
-		const bashToolOverride = await createWindowsBashToolOverride(cwd, settingsManager);
+		// Interruptible bash/powershell overrides: the desktop owns the child
+		// processes so the UI can kill a running command without aborting the
+		// turn (plus the Windows GBK line re-encoding on top).
+		const shellToolOverrides = await createInterruptibleShellTools(cwd, settingsManager);
 		const created = await createAgentSessionFromServices({
 			services,
 			sessionManager,
 			sessionStartEvent,
-			customTools: bashToolOverride ? [bashToolOverride] : undefined,
+			customTools: shellToolOverrides.length ? shellToolOverrides : undefined,
 		});
 		trackFileChanges(created.session, fileChanges);
 		return {
@@ -1455,6 +1456,17 @@ class SingleAgentService {
 		await this.runtime?.session.abort();
 		this.finishInterruptedAssistant();
 		this.conversationRuns?.finish('cancelled');
+	}
+
+	/**
+	 * Kill the session's running bash/powershell commands (exit 130 + marker)
+	 * without aborting the agent turn; queued steering then delivers naturally.
+	 * Returns how many running commands were interrupted.
+	 */
+	interruptShellTools(toolCallId?: string): number {
+		const sessionId = this.runtime?.session?.sessionId;
+		if (!sessionId) return 0;
+		return shellRunRegistry.interrupt(sessionId, toolCallId);
 	}
 
 	/** Start a fresh conversation in the same working directory. */
@@ -3005,6 +3017,10 @@ export class AgentService {
 	updateQueuedMessage(id: string, action: 'edit' | 'remove' | 'steer', text?: string): Promise<void> {
 		if (this.pluginOperation) return Promise.reject(new Error('插件设置正在更新，请稍后再试'));
 		return this.requireActive().updateQueuedMessage(id, action, text);
+	}
+
+	interruptShellTools(toolCallId?: string): number {
+		return this.requireActive().interruptShellTools(toolCallId);
 	}
 
 	generateCommitMessage(context: string): Promise<string> {

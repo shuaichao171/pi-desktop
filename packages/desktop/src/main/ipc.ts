@@ -2086,6 +2086,11 @@ export function registerIpc(options: {
 		await agentFor(event).updateQueuedMessage(id, action, action === 'edit' ? text : undefined);
 	});
 
+	handleRendererInvoke(IPC_CHANNELS.agentInterruptShellTools, (event, toolCallId?: string) => {
+		if (toolCallId !== undefined && (typeof toolCallId !== 'string' || !toolCallId.trim() || toolCallId.length > 512 || toolCallId.includes('\0'))) throw new Error('工具调用标识无效');
+		return agentFor(event).interruptShellTools(toolCallId);
+	});
+
 	handleRendererInvoke(IPC_CHANNELS.agentGenerateCommitMessage, (event, context: string) => {
 		if (typeof context !== 'string' || !context.trim() || context.length > 256 * 1024) throw new Error('提交上下文无效或过长');
 		return agentFor(event).generateCommitMessage(context);

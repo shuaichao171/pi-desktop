@@ -282,6 +282,7 @@ const bridge: AgentBridge = {
 		editMessage: (entryId, text, attachments) => invoke(IPC_CHANNELS.agentEditMessage, entryId, text, attachments),
 		forkAssistantMessage: (entryId) => invoke(IPC_CHANNELS.agentForkMessage, entryId),
 		updateQueuedMessage: (id, action, text) => invoke(IPC_CHANNELS.agentUpdateQueuedMessage, id, action, text),
+		interruptShellTools: (toolCallId) => invoke(IPC_CHANNELS.agentInterruptShellTools, toolCallId),
 		generateCommitMessage: (context) => invoke(IPC_CHANNELS.agentGenerateCommitMessage, context),
 	abort: () => invoke(IPC_CHANNELS.agentAbort),
 	newSession: (options) => invoke(IPC_CHANNELS.agentNewSession, options),

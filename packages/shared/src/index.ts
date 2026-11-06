@@ -69,6 +69,7 @@ export const IPC_CHANNELS = {
   agentEditMessage: 'agent:edit-message',
   agentForkMessage: 'agent:fork-message',
   agentUpdateQueuedMessage: 'agent:update-queued-message',
+  agentInterruptShellTools: 'agent:interrupt-shell-tools',
   agentGenerateCommitMessage: 'agent:generate-commit-message',
   agentAbort: 'agent:abort',
   agentNewSession: 'agent:new-session',
@@ -1318,6 +1319,8 @@ export interface AgentBridge extends InputFeatureBridge, DataFeaturesBridge, Wor
   forkAssistantMessage(entryId: string): Promise<void>;
   /** Edit, remove, or steer-early a queued instruction while the agent is busy (Codex-style queue management). */
   updateQueuedMessage(id: string, action: 'edit' | 'remove' | 'steer', text?: string): Promise<void>;
+  /** Kill the conversation's running bash/powershell commands (exit 130 + marker) without aborting the turn. Returns how many were interrupted. */
+  interruptShellTools(toolCallId?: string): Promise<number>;
   abort(): Promise<void>;
   /** Omitted cwd creates an independent folder. The returned scope remains valid for draft persistence after navigation. */
   newSession(options?: { cwd?: string }): Promise<UiInputScope | void>;

@@ -69,6 +69,7 @@ export const AGENT_HOST_METHODS = [
 	'editUserMessage',
 	'forkAssistantMessage',
 	'updateQueuedMessage',
+	'interruptShellTools',
 	'generateCommitMessage',
 	'abort',
 	'newSession',

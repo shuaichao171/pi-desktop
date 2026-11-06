@@ -154,6 +154,8 @@ interface ChatState {
 	forkMessage(entryId: string): Promise<void>;
 	/** Edit, remove, or steer-early a queued instruction while the agent is busy (Codex-style queue management). */
 	updateQueuedMessage(id: string, action: 'edit' | 'remove' | 'steer', text?: string): Promise<void>;
+	/** Kill the conversation's running bash/powershell commands without aborting the turn. Returns how many were interrupted. */
+	interruptShellTools(toolCallId?: string): Promise<number>;
 	abort(): Promise<void>;
 	newSession(options?: { cwd?: string }): Promise<void>;
 	detachProject(): Promise<void>;
@@ -1360,6 +1362,18 @@ if (!get().modelProviders.length) void get().refreshModelProviders().catch(() =>
 		} catch (error) {
 			if (get().bridge === bridge && get().cwd === cwd && get().sessionId === sessionId) set({ error: errorMessage(error) });
 			throw error;
+		}
+	},
+
+	async interruptShellTools(toolCallId) {
+		const { bridge, cwd, sessionId, navigationPending, sessionLoading } = get();
+		if (!bridge || navigationPending || sessionLoading) return 0;
+		set({ error: null });
+		try {
+			return await bridge.interruptShellTools(toolCallId);
+		} catch (error) {
+			if (get().bridge === bridge && get().cwd === cwd && get().sessionId === sessionId) set({ error: errorMessage(error) });
+			return 0;
 		}
 	},
 

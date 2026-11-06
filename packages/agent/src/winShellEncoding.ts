@@ -20,12 +20,25 @@
  * tool instead of failing to load the whole agent host.
  */
 
-import type { BashOperations, ToolDefinition } from '@earendil-works/pi-coding-agent';
+import type { BashOperations } from '@earendil-works/pi-coding-agent';
 
 /** Settings surface consumed from the session's SettingsManager. */
 export interface ShellEncodingSettings {
 	getShellPath(): string | undefined;
 	getShellCommandPrefix(): string | undefined;
+}
+
+/** Whether this Node build can decode GBK (full ICU); memoized probe. */
+export function hasGbkSupport(): boolean {
+	if (gbkDecoder === undefined) {
+		try {
+			gbkDecoder = new TextDecoder('gbk');
+		} catch {
+			// Builds without full ICU have no GBK decoder; keep legacy behavior.
+			gbkDecoder = null;
+		}
+	}
+	return gbkDecoder !== null;
 }
 
 const strictUtf8 = new TextDecoder('utf-8', { fatal: true });
@@ -143,40 +156,3 @@ export function wrapOperationsWithTranscoding(local: BashOperations): BashOperat
 	};
 }
 
-/**
- * Builds the Windows-only `bash` tool override, or null when transcoding is
- * not applicable (non-Windows, or a custom engine without the required SDK
- * exports). Shell path and command prefix are read at execution time so
- * settings changes keep working after session reloads, matching the
- * built-in tool's behavior.
- */
-export async function createWindowsBashToolOverride(
-	cwd: string,
-	settings: ShellEncodingSettings,
-): Promise<ToolDefinition | null> {
-	if (process.platform !== 'win32') return null;
-	const sdk = await import('@earendil-works/pi-coding-agent');
-	const { createBashToolDefinition, createLocalBashOperations } = sdk as {
-		createBashToolDefinition?: typeof import('@earendil-works/pi-coding-agent')['createBashToolDefinition'];
-		createLocalBashOperations?: typeof import('@earendil-works/pi-coding-agent')['createLocalBashOperations'];
-	};
-	if (typeof createBashToolDefinition !== 'function' || typeof createLocalBashOperations !== 'function') {
-		return null;
-	}
-	if (gbkDecoder === undefined) {
-		try {
-			gbkDecoder = new TextDecoder('gbk');
-		} catch {
-			gbkDecoder = null;
-		}
-	}
-	if (gbkDecoder === null) return null; // no ICU GBK support; keep built-in tool
-	const operations = wrapOperationsWithTranscoding({
-		exec: (command, execCwd, options) => {
-			const prefix = settings.getShellCommandPrefix();
-			const resolved = prefix ? `${prefix}\n${command}` : command;
-			return createLocalBashOperations({ shellPath: settings.getShellPath() ?? undefined }).exec(resolved, execCwd, options);
-		},
-	});
-	return createBashToolDefinition(cwd, { operations }) as ToolDefinition;
-}
