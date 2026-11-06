@@ -1,7 +1,7 @@
 import { realpathSync, watch, type FSWatcher } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import type { UiAppearanceState } from '@pidesktop/shared';
-import { readStateFile, writeStateFile, writeStateFileAsync } from './stateFiles';
+import { readStateFile, readStateFileAsync, writeStateFile, writeStateFileAsync } from './stateFiles';
 
 /**
 * Appearance lives in the base user data directory so pai chat windows, which
@@ -28,6 +28,15 @@ export function readAppearanceState(path: string): UiAppearanceState | null {
 	} catch {
 		// A damaged appearance file is cosmetic: keep local preferences instead of
 		// blocking startup or erasing the unreadable bytes until the next save.
+		return null;
+	}
+}
+
+/** Async twin of readAppearanceState for the cold-start prefetch (same fallbacks). */
+export async function readAppearanceStateAsync(path: string): Promise<UiAppearanceState | null> {
+	try {
+		return await readStateFileAsync(path, () => null, isValidAppearanceState);
+	} catch {
 		return null;
 	}
 }

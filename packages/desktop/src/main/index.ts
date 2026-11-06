@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { IPC_CHANNELS } from '@pidesktop/shared';
 import { getAppLocale } from './appLocale';
-import { appearanceStatePath, readAppearanceState } from './appearance.ts';
+import { appearanceStatePath, readAppearanceState, readAppearanceStateAsync } from './appearance.ts';
 import { createBootErrorHtml, createBootHtml } from './splash';
 import { showEditContextMenu } from './editContextMenu.ts';
 import { appIconPath, createAppTray, destroyAppTray } from './tray';
@@ -18,6 +18,7 @@ import { resolveWindowTheme } from './windowTheme.ts';
 import {
 	MAIN_WINDOW_MIN_HEIGHT,
 	MAIN_WINDOW_MIN_WIDTH,
+	readWindowStateAsync,
 	resolveStartupWindowState,
 	trackWindowState,
 	windowStateFromWindow,
@@ -83,6 +84,17 @@ const startupMetrics = createStartupMetrics({
 	record: (record) => recordDiagnostic({ stage: 'startup', action: `boot-${record.phase}`, outcome: record.outcome, durationMs: record.atMs }),
 });
 startupMetrics.mark('main-start');
+
+// Cold-start prefetch (audit P2): the boot window needs the saved placement and
+// the appearance before it can be built. Read both now, concurrently and off the
+// main thread's critical path, so they overlap Electron's own ready wait instead
+// of running as sync reads after it. Display geometry needs `ready`, so only
+// the raw saved state is prefetched; both readers fall back to null exactly
+// like their sync twins.
+const startupStatePrefetch = Promise.all([
+	readWindowStateAsync(windowStatePath(app.getPath('userData'))),
+	readAppearanceStateAsync(appearanceStatePath(baseUserData ?? app.getPath('userData'))),
+]);
 
 /** The colors the boot window, the main window and the pai windows share (splash theming). */
 function currentWindowTheme(): ReturnType<typeof resolveWindowTheme> {
@@ -549,7 +561,7 @@ if (!hasSingleInstanceLock) {
 		openPaiHandoff(commandLine);
 	});
 
-	void app.whenReady().then(() => {
+	void app.whenReady().then(async () => {
 		initializeDiagnostics(join(app.getPath('userData'), 'diagnostics'));
 		recordDiagnostic({ stage: 'startup', action: 'app-ready', outcome: 'success' });
 		startupMetrics.mark('app-ready');
@@ -585,7 +597,11 @@ if (!hasSingleInstanceLock) {
 	// with the main window's background color so the swap is invisible. It
 	// opens at the main window's saved placement (centered on first run) so
 	// the finished window appears exactly where loading started.
-	const startupState = resolveStartupWindowState(windowStatePath(app.getPath('userData')));
+	const [savedWindowState, savedAppearance] = await startupStatePrefetch;
+	startupMetrics.mark('state-read');
+	const startupState = resolveStartupWindowState(windowStatePath(app.getPath('userData')), undefined, savedWindowState);
+	// One theme for the boot window and its page (one read, not two).
+	const bootTheme = resolveWindowTheme(savedAppearance, nativeTheme.shouldUseDarkColors);
 	const splash = new BrowserWindow({
 		width: startupState.bounds.width,
 		height: startupState.bounds.height,
@@ -600,7 +616,7 @@ if (!hasSingleInstanceLock) {
 		hasShadow: true,
 		// The user's appearance preference decides the boot window's color; the
 		// same constant feeds the boot page and the main window (splash theming).
-		backgroundColor: currentWindowTheme().background,
+		backgroundColor: bootTheme.background,
 		title: 'Pi Desktop',
 		icon: nativeImage.createFromPath(appIconPath()),
 		webPreferences: {
@@ -629,7 +645,7 @@ if (!hasSingleInstanceLock) {
 		}, 100);
 	};
 	splash.once('ready-to-show', showAndStart);
-	void splash.loadURL(splashUrl(createBootHtml(getAppLocale(), currentWindowTheme())))
+	void splash.loadURL(splashUrl(createBootHtml(getAppLocale(), bootTheme)))
 		.then(() => {
 			// A fallback for environments that never emit ready-to-show.
 			setTimeout(showAndStart, 800);

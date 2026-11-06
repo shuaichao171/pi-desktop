@@ -23,6 +23,7 @@ const {
 	isValidWindowState,
 	isVisibleOnDisplays,
 	readWindowState,
+	readWindowStateAsync,
 	resolveStartupWindowState,
 	trackWindowState,
 	windowStateFromWindow,
@@ -206,6 +207,28 @@ test('closing while an async save is in flight still leaves the final placement 
 			return saved !== null && saved.bounds.x === 999 && saved.bounds.width === 1300;
 		});
 		assert.deepEqual(readWindowState(path), { bounds: { x: 999, y: 88, width: 1300, height: 900 }, maximized: false }, 'the final placement survives the late async save');
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+test('the cold-start prefetch reads placement async with the sync reader fallbacks', async () => {
+	const root = tempRoot('prefetch');
+	try {
+		const path = windowStatePath(root);
+		assert.equal(await readWindowStateAsync(path), null, 'missing file');
+		const saved = { bounds: { x: 2100, y: 40, width: 1000, height: 700 }, maximized: true };
+		writeWindowState(path, saved);
+		assert.deepEqual(await readWindowStateAsync(path), saved);
+		assert.deepEqual(await readWindowStateAsync(path), readWindowState(path), 'same value as the sync reader');
+		writeFileSync(path, '{broken', 'utf8');
+		assert.equal(await readWindowStateAsync(path), null, 'corrupt file falls back');
+		assert.equal(readFileSync(path, 'utf8'), '{broken', 'unreadable bytes are left for the next save');
+
+		// A prefetched value is used as-is (no second read); null means "nothing saved".
+		writeWindowState(path, { bounds: { x: -5000, y: 0, width: 1000, height: 700 }, maximized: false });
+		assert.deepEqual(resolveStartupWindowState(path, { displays, primaryWorkArea }, saved), saved, 'preloaded placement wins over the file');
+		assert.deepEqual(resolveStartupWindowState(path, { displays, primaryWorkArea }, null), defaultWindowState(primaryWorkArea), 'preloaded null centers');
 	} finally {
 		rmSync(root, { recursive: true, force: true });
 	}

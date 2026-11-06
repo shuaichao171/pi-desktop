@@ -1,7 +1,8 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { useT } from '../i18n';
-import { literalMatches, readingRows } from '../workbenchReading';
+import { readingRows } from '../workbenchReading';
+import { useReadingFind } from '../useReadingFind';
 
 import { useReadingAnalysis } from '../useReadingAnalysis';
 import { WordDiffText } from './WordDiffText';
@@ -45,7 +46,8 @@ export function WorkbenchTextView({ text, path = '', diff = false, command = fal
   };
   useEffect(() => () => { if (topFrame.current !== null) cancelAnimationFrame(topFrame.current); }, []);
   const rows = useMemo(() => readingRows(text, diff), [text, diff]);
-  const matches = useMemo(() => literalMatches(text, query), [text, query]);
+  // Large previews search in the diff worker (audit P2); small ones stay sync.
+  const matches = useReadingFind(text, query);
   const matchesByRow = useMemo(() => {
     const result = new Map<number, typeof matches>(); let cursor = 0;
     for (const row of rows) {

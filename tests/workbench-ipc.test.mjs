@@ -170,4 +170,8 @@ test('a hosted pai window previews and lists files in its own folder instead of 
   // The composer's file picker lists the folder the requesting window belongs to.
   assert.deepEqual((await send(hostedWebContents, IPC_CHANNELS.workspaceListEntries)).map(entry => entry.name), ['pai.txt']);
   assert.deepEqual((await send(mainWebContents, IPC_CHANNELS.workspaceListEntries)).map(entry => entry.name), ['main.txt']);
+  // The paged listing is scoped the same way and validates its arguments.
+  assert.deepEqual(await send(hostedWebContents, IPC_CHANNELS.workspaceListEntriesPage, '', 0), { entries: [{ name: 'pai.txt', path: 'pai.txt', kind: 'file', size: 'pai note'.length }], nextOffset: null, total: 1 });
+  assert.deepEqual((await send(mainWebContents, IPC_CHANNELS.workspaceListEntriesPage, '', 0)).entries.map(entry => entry.name), ['main.txt']);
+  await assert.rejects(async () => send(mainWebContents, IPC_CHANNELS.workspaceListEntriesPage, '', '0'), /列表参数无效/);
 });

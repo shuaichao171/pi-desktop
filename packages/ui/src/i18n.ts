@@ -1464,6 +1464,7 @@ export const translations: Record<string, { 'zh-CN': string; 'en-US': string }> 
   'workbench.fileSearchEmpty': { 'zh-CN': '没有匹配的文件。', 'en-US': 'No matching files.' },
   'workbench.folderEmpty': { 'zh-CN': '此文件夹为空。', 'en-US': 'This folder is empty.' },
   'workbench.entryLimit': { 'zh-CN': '仅显示前 400 项。', 'en-US': 'Showing the first 400 items.' },
+  'workbench.folderLimit': { 'zh-CN': '文件夹内容过多，仅显示前 {count} 项；可用上方搜索查找其余文件。', 'en-US': 'This folder is large; showing the first {count} items. Use search above to find the rest.' },
   'workbench.preview': { 'zh-CN': '文件预览', 'en-US': 'File preview' },
   'workbench.closePreview': { 'zh-CN': '关闭文件预览', 'en-US': 'Close file preview' },
   'workbench.loadingFile': { 'zh-CN': '正在读取文件…', 'en-US': 'Loading file…' },
