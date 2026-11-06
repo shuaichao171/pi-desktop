@@ -1133,6 +1133,30 @@ html.pd-popover-open :is(.pd-sidebar-toolbar, .pd-chat-header, .pd-chat-heading,
   .pd-composer-control { padding-inline: 4px; }
   .pd-composer-actions { gap: 3px; }
 }
+
+/* Chat pane width adaptation. Panes (split view) and small hosts (pai windows)
+ * resize independently of the OS window, so tiers are container queries keyed
+ * to the .pd-chat-view-host container (named "pane", declared in
+ * automationPage.css) — never media queries. Transcript content already
+ * degrades on its own: code blocks and markdown tables scroll horizontally,
+ * long tokens wrap (overflow-wrap: anywhere), images cap at 100%. These tiers
+ * only cover what content cannot self-handle. */
+
+/* ≤720px — the hover jump rail would hug the text column; drop it. */
+@container pane (max-width: 720px) {
+  .pd-conv-rail { display: none; }
+}
+
+/* ≤480px — reclaim chrome width for content. */
+@container pane (max-width: 480px) {
+  .pd-message-list { padding: 16px 12px 8px; }
+  /* "both-edges" reserves a scrollbar gutter on each side to keep the column
+   * symmetric; at pane widths the left one is pure waste. */
+  .pd-transcript { scrollbar-gutter: stable; }
+  /* Pane-width counterpart of the window-width @media rule in
+   * conversationMetrics.css — keeps metric groups tight inside narrow panes. */
+  .pd-conversation-metrics .pd-metric-group { padding: 0 7px; }
+}
 @container (max-width: 280px) {
   .pd-model-trigger-icon { display: block; }
   .pd-composer-model-trigger > span { display: none; }
