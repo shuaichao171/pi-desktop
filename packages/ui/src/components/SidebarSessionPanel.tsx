@@ -1115,13 +1115,17 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 		setPopup(null);
 		void perform(async () => {
 			if (!bridge?.openSplitPane) return;
+			const existedBefore = await bridge.focusHostedSession?.(session.path).catch(() => false);
 			const result = await bridge.openSplitPane(session.workspace, session.path);
 			// The pane now owns this transcript. If it was the main window's current
 			// session, leave a fresh one here (same semantic as pai windows).
 			const current = useChatStore.getState();
-			if (current.cwd === session.workspace && current.sessionPath === session.path) { await newSession({ cwd: session.workspace }); onNavigate(); }
+			// Only vacate the main window on a brand-new pane: a repeat click just
+			// focuses the existing pane (its transcript already lives there).
+			if (!existedBefore && current.cwd === session.workspace && current.sessionPath === session.path) { await newSession({ cwd: session.workspace }); onNavigate(); }
 			const paneId = result;
 			window.dispatchEvent(new CustomEvent('pi-split-pane-opened', { detail: paneId }));
+			console.log('[split] openSplitPane resolved, paneId=', paneId);
 		});
 	}
 	function forkFromMenu(session: SidebarSession) {

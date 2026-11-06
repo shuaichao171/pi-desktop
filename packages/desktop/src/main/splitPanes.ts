@@ -59,7 +59,18 @@ export function openSplitPane(parentWin: BrowserWindow, request: { cwd: string; 
 	const cwd = validatePaiWorkspace(request.cwd);
 	const sessionPath = request.sessionPath === undefined ? undefined : validatePaiSession(request.sessionPath);
 	if (sessionPath && hooks?.isAutomationRunning(cwd, sessionPath)) throw new Error('自动化仍在运行，请结束后再打开窗格');
-	if (sessionPath && paneHeldSessionPaths().includes(sessionPath)) throw new Error('会话已在分屏窗格中打开');
+	// 同一会话已在某窗格 → 不重复创建，聚焦已有窗格并返回其 id（多窗格下
+	// 重复点是「回到那个窗格」，不是错误）。
+	if (sessionPath) {
+		const existing = paneSlots().find((slot) => slot.sessionPath === sessionPath || slot.liveSessionPath === sessionPath);
+		if (existing) {
+			if (!existing.parentWin.isDestroyed() && !existing.webContents.isDestroyed()) {
+				existing.parentWin.focus();
+				existing.webContents.focus();
+			}
+			return existing.paneId;
+		}
+	}
 	const view = new WebContentsView({
 		webPreferences: {
 			preload: join(app.getAppPath(), 'out', 'preload', 'index.mjs'),
@@ -94,6 +105,7 @@ export function openSplitPane(parentWin: BrowserWindow, request: { cwd: string; 
 		},
 	});
 	registerPaneSlot(entry);
+	console.error('[split] pane created, paneId=', entry.paneId, 'cwd=', cwd);
 	// Attach immediately: an unattached WebContentsView does not advance page
 	// loads in Electron 44 — the zero-sized view is invisible until first bounds.
 	if (!parentWin.isDestroyed()) parentWin.contentView.addChildView(view);

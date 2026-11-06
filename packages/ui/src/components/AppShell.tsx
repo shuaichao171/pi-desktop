@@ -166,6 +166,7 @@ export function AppShell() {
 		const opened = (event: Event) => {
 			const paneId = (event as CustomEvent<number | undefined>).detail;
 			setPaneIds((current) => (typeof paneId === 'number' && !current.includes(paneId) ? [...current, paneId] : current));
+			console.log('[split] opened event, paneId=', paneId, '→ paneIds');
 		};
 		window.addEventListener('pi-split-pane-opened', opened);
 		return () => window.removeEventListener('pi-split-pane-opened', opened);

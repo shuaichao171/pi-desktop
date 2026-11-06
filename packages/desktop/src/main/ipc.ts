@@ -1732,6 +1732,7 @@ export function registerIpc(options: {
 		return agentService.forkSession(path, owner, name?.trim());
 	}));
 	handleRendererInvoke(IPC_CHANNELS.splitPaneOpen, (event, cwd: unknown, sessionPath?: unknown) => {
+		console.error('[split] splitPaneOpen invoke received, cwd=', cwd, 'session=', sessionPath);
 		const parentWin = requireRendererSender(event);
 		return openSplitPane(parentWin, {
 			cwd: typeof cwd === 'string' ? cwd : '',
