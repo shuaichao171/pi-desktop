@@ -1,5 +1,5 @@
 import type { BrowserWindow, IpcMainInvokeEvent, WebContents, WebContentsView } from 'electron';
-import { paneHeldSessionPaths, hostedHeldSessionPaths, type PaiPaneSlot, type PaneAgentService } from './paneRegistry';
+import { paneHeldSessionPaths, type PaiPaneSlot, type PaneAgentService } from './paneRegistry';
 import { createIsolatedAgentService } from './agentClient';
 
 /**
@@ -61,4 +61,8 @@ export function paiHeldSessionPaths(): string[] {
 
 /** WebContents keyed pane slot — a split pane is a WebContentsView, not a BrowserWindow. */
 
-export { paneSlots, paneSlotForSender, isPaneSender, registerPaneSlot, unregisterPaneSlot, paneHeldSessionPaths, hostedHeldSessionPaths, type PaiPaneSlot, type PaneAgentService } from './paneRegistry';
+export function hostedHeldSessionPaths(): string[] {
+	return [...paiHeldSessionPaths(), ...paneHeldSessionPaths()];
+}
+
+export { paneSlots, paneSlotForSender, isPaneSender, registerPaneSlot, unregisterPaneSlot, paneHeldSessionPaths, type PaiPaneSlot, type PaneAgentService } from './paneRegistry';

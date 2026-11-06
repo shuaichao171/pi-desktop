@@ -57,7 +57,4 @@ export function paneHeldSessionPaths(): string[] {
 }
 
 /** Union held-session check: a session in any hosted pane or pai window. */
-export function hostedHeldSessionPaths(): string[] {
-	return [...paiHeldSessionPaths(), ...paneHeldSessionPaths()];
-}
 
