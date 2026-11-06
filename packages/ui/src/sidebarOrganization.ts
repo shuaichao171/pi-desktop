@@ -134,6 +134,26 @@ export function assignProjectToGroup(groups: SidebarProjectGroup[], project: str
   return groups.map(group => ({ ...group, projects: group.projects.filter(path => sidebarWorkspaceKey(path) !== key).concat(group.id === groupId ? [project] : []) }));
 }
 
+/**
+ * Drag placement for project groups: removes the project from every group, then
+ * inserts it before/after an anchor member of the target group. A null anchor
+ * appends to the end; a null groupId only removes (the ungrouped position
+ * comes from the saved global project order).
+ */
+export function moveProjectToGroupPosition(groups: SidebarProjectGroup[], project: string, groupId: string | null, anchor: string | null, edge: 'before' | 'after'): SidebarProjectGroup[] {
+  const key = sidebarWorkspaceKey(project);
+  const cleaned = groups.map(group => ({ ...group, projects: group.projects.filter(path => sidebarWorkspaceKey(path) !== key) }));
+  if (groupId === null) return cleaned;
+  const anchorKey = anchor === null ? null : sidebarWorkspaceKey(anchor);
+  return cleaned.map(group => {
+    if (group.id !== groupId) return group;
+    const projects = [...group.projects];
+    const anchorIndex = anchorKey === null ? -1 : projects.findIndex(path => sidebarWorkspaceKey(path) === anchorKey);
+    projects.splice(anchorIndex < 0 ? projects.length : anchorIndex + Number(edge === 'after'), 0, project);
+    return { ...group, projects };
+  });
+}
+
 export function groupSidebarProjects(projects: readonly string[], groups: SidebarProjectGroup[]): { groups: { id: string; name: string; projects: string[] }[]; ungrouped: string[] } {
   const available = new Map(sidebarProjectPaths(projects, null).map(project => [sidebarWorkspaceKey(project), project]));
   const claimed = new Set<string>();
