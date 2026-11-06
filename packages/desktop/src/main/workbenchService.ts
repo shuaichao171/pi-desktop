@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
 import { detectEditors, launchEditor, type DetectedEditor } from './editorCatalog.ts';
-import type { WorkspaceBranches, WorkspaceCommandEvent, WorkspaceEntry, WorkspaceGitCheckoutIssue, WorkspaceGitCheckoutResult, WorkspaceGitGraphCommit, WorkspaceGitLogEntry, WorkspaceGitStatus, WorkspaceOpener, WorkspaceProjectNickname } from '@pidesktop/shared';
+import type { WorkspaceBranches, WorkspaceCommandEvent, WorkspaceEntry, WorkspaceEntryPage, WorkspaceGitCheckoutIssue, WorkspaceGitCheckoutResult, WorkspaceGitGraphCommit, WorkspaceGitLogEntry, WorkspaceGitStatus, WorkspaceOpener, WorkspaceProjectNickname } from '@pidesktop/shared';
 
 const execFileAsync = promisify(execFile);
 const MAX_PREVIEW_BYTES = 1024 * 1024;
@@ -353,6 +353,19 @@ export class WorkbenchService {
 
 	/** Hosted pai windows list from their own folder root instead of the active workspace. */
 	async listEntries(relativePath = '', cwd?: string): Promise<WorkspaceEntry[]> {
+		return (await this.listEntriesPage(relativePath, cwd)).entries;
+	}
+
+	/**
+	 * One page of a directory (audit P2: large folders render their first page,
+	 * then the rest streams in). Children are ordered folders-first by name from
+	 * the cheap dirent pass, so offsets are stable while the folder is unchanged;
+	 * only the page being returned pays for lstat. A child that vanishes or turns
+	 * out to be a link between the two passes is skipped, so a page may hold
+	 * fewer than MAX_ENTRIES entries while nextOffset still advances.
+	 */
+	async listEntriesPage(relativePath = '', cwd?: string, offset = 0): Promise<WorkspaceEntryPage> {
+		if (!Number.isSafeInteger(offset) || offset < 0) throw new Error('列表偏移无效');
 		const { root, path } = await this.resolveEntry(relativePath, cwd === undefined ? undefined : await this.workspaceRoot(cwd));
 		if (!(await stat(path)).isDirectory()) throw new Error('不是文件夹');
 		const children = await readdir(path, { withFileTypes: true });
@@ -361,8 +374,9 @@ export class WorkbenchService {
 			? a.name.localeCompare(b.name)
 			: a.isDirectory() ? -1 : 1);
 		const candidates = children.filter((child) => !child.isSymbolicLink() && (child.isFile() || child.isDirectory()));
-		for (let offset = 0; offset < candidates.length && entries.length < MAX_ENTRIES; offset += 16) {
-			const batch = await Promise.all(candidates.slice(offset, offset + 16).map(async (child): Promise<WorkspaceEntry | null> => {
+		const page = candidates.slice(offset, offset + MAX_ENTRIES);
+		for (let index = 0; index < page.length; index += 16) {
+			const batch = await Promise.all(page.slice(index, index + 16).map(async (child): Promise<WorkspaceEntry | null> => {
 				const childPath = join(path, child.name);
 				try {
 					const details = await lstat(childPath);
@@ -374,9 +388,14 @@ export class WorkbenchService {
 					throw error;
 				}
 			}));
-			entries.push(...batch.filter((entry): entry is WorkspaceEntry => entry !== null).slice(0, MAX_ENTRIES - entries.length));
+			entries.push(...batch.filter((entry): entry is WorkspaceEntry => entry !== null));
 		}
-		return entries.sort((a, b) => a.kind === b.kind ? a.name.localeCompare(b.name) : a.kind === 'directory' ? -1 : 1);
+		const end = offset + page.length;
+		return {
+			entries: entries.sort((a, b) => a.kind === b.kind ? a.name.localeCompare(b.name) : a.kind === 'directory' ? -1 : 1),
+			nextOffset: end < candidates.length ? end : null,
+			total: candidates.length,
+		};
 	}
 
 	async readFile(relativePath: string): Promise<string> {

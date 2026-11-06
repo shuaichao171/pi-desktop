@@ -24,7 +24,8 @@ const stubs = {
   './windowState': `
     export const MAIN_WINDOW_MIN_WIDTH = 680;
     export const MAIN_WINDOW_MIN_HEIGHT = 520;
-    export const resolveStartupWindowState = () => ({ bounds: { x: 40, y: 30, width: 1280, height: 820 }, maximized: false });
+    export const resolveStartupWindowState = (_path, _environment, preloaded) => { globalThis.__startupTest.calls.windowStatePreloaded = preloaded; return { bounds: { x: 40, y: 30, width: 1280, height: 820 }, maximized: false }; };
+    export const readWindowStateAsync = async () => globalThis.__startupTest.savedWindowState ?? null;
     export const windowStateFromWindow = () => ({ bounds: { x: 40, y: 30, width: 1280, height: 820 }, maximized: false });
     export const windowStatePath = (dir) => dir + '/window-state.json';
     export const trackWindowState = () => {};
@@ -574,7 +575,7 @@ test('cold-start phases are recorded once, in order, with monotonic durations', 
   await harness.rendererReady(main);
   const events = harness.calls.diagnostics.filter((event) => event.action.startsWith('boot-'));
   assert.deepEqual(events.map((event) => event.action), [
-    'boot-main-start', 'boot-app-ready', 'boot-splash-created', 'boot-splash-shown',
+    'boot-main-start', 'boot-app-ready', 'boot-state-read', 'boot-splash-created', 'boot-splash-shown',
     'boot-ipc-ready', 'boot-window-created', 'boot-workspace-ready',
     'boot-renderer-loaded', 'boot-ready-to-show', 'boot-renderer-ready', 'boot-first-frame',
   ]);
@@ -591,7 +592,7 @@ test('a startup failure records the phases reached with a failure outcome', asyn
   await settle();
   const events = harness.calls.diagnostics.filter((event) => event.action.startsWith('boot-'));
   assert.deepEqual(events.map((event) => event.action), [
-    'boot-main-start', 'boot-app-ready', 'boot-splash-created', 'boot-splash-shown', 'boot-ipc-ready', 'boot-window-created',
+    'boot-main-start', 'boot-app-ready', 'boot-state-read', 'boot-splash-created', 'boot-splash-shown', 'boot-ipc-ready', 'boot-window-created',
   ]);
   assert.ok(events.every((event) => event.outcome === 'failure'));
   assert.equal(harness.calls.consoleLogs.length, 0);

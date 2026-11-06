@@ -5,9 +5,12 @@ import type { DiffLine, EditDiffLine } from './unifiedDiff';
 export type DiffRequest =
   | { type: 'unified'; text: string }
   | { type: 'pi-edit'; text: string }
-  | { type: 'changes-find'; paths: string[]; query: string; diffTexts: Array<[path: string, diff: string]> };
+  | { type: 'changes-find'; paths: string[]; query: string; diffTexts: Array<[path: string, diff: string]> }
+  | { type: 'reading-find'; text: string; query: string };
 
 export type DiffResponse =
   | { type: 'unified'; lines: DiffLine[] }
   | { type: 'pi-edit'; lines: EditDiffLine[] }
-  | { type: 'changes-find'; result: ChangeFindResult };
+  | { type: 'changes-find'; result: ChangeFindResult }
+  /** Packed [start, end] pairs (see literalMatchRanges). */
+  | { type: 'reading-find'; ranges: Int32Array };

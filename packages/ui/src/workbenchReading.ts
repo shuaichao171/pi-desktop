@@ -26,9 +26,33 @@ export function readingRows(text: string, diff = false): ReadingRow[] {
 }
 
 export function literalMatches(text: string, query: string): Array<{ start: number; end: number }> {
-  if (!query) return [];
+  return expandMatchRanges(literalMatchRanges(text, query));
+}
+
+/**
+ * The same matches as literalMatches, packed as [start0, end0, start1, end1, …].
+ * A typed array crosses the worker boundary as one memcpy instead of a
+ * structured clone of one object per match (a one-letter query on a 1 MB
+ * preview is ~100k matches).
+ */
+export function literalMatchRanges(text: string, query: string): Int32Array {
+  if (!query) return new Int32Array(0);
   const escaped = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  return [...text.matchAll(new RegExp(escaped, 'giu'))].map(match => ({ start: match.index, end: match.index + match[0].length }));
+  const pattern = new RegExp(escaped, 'giu');
+  let ranges = new Int32Array(64), length = 0;
+  for (let match = pattern.exec(text); match; match = pattern.exec(text)) {
+    if (length + 2 > ranges.length) { const grown = new Int32Array(ranges.length * 2); grown.set(ranges); ranges = grown; }
+    ranges[length++] = match.index; ranges[length++] = match.index + match[0].length;
+    // A non-empty literal never matches zero-width, but never spin regardless.
+    if (match[0].length === 0) pattern.lastIndex += 1;
+  }
+  return ranges.slice(0, length);
+}
+
+export function expandMatchRanges(ranges: Int32Array): Array<{ start: number; end: number }> {
+  const result = new Array<{ start: number; end: number }>(ranges.length >> 1);
+  for (let i = 0; i < result.length; i++) result[i] = { start: ranges[2 * i]!, end: ranges[2 * i + 1]! };
+  return result;
 }
 
 export function groupGitEntries(entries: WorkspaceGitStatus['entries']): Record<DiffSource, WorkspaceGitStatus['entries']> {

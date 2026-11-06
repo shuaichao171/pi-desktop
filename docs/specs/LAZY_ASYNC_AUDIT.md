@@ -6,7 +6,7 @@
 
 | 指标 | 来源 | 基线（2026-11-02） | 当前（2026-11-06） |
 |---|---|---|---|
-| 启动主包 JS | `pnpm build` 后 `packages/desktop/out/renderer/assets/index-*.js` | 3,584,131 B | **2,240,547 B（累计 −37.5%）** |
+| 启动主包 JS | `pnpm build` 后 `packages/desktop/out/renderer/assets/index-*.js` | 3,584,131 B | **2,245,938 B（累计 −37.3%；2026-11-06 收口批次新增目录分页 / 模型缓存 / 预览查找约 +5 KB）** |
 | 启动主包 CSS | 同上 `index-*.css` | 522,370 B | **338,788 B（累计 −35.1%）** |
 | 会话切换 / 首屏绘制 | `sessionOpenMetrics`（`begin → rpc → snapshot → rendered → painted`，经 `recordUiDiagnostic` 写入诊断日志） | 以本机诊断导出为准 | 不变 |
 | 冷启动 | `startupMetrics`（`main-start → … → first-frame`，diagnostics 结构化 + `PI_STARTUP_LOG=1` 单行） | 原无统一打点 | 打点已落地，以本机诊断导出为准 |
@@ -33,26 +33,21 @@
 - [x] **P2 插件目录缓存**（2026-11-06，ipc-data 车道）：`pluginCatalogCache.ts` LRU（16 条）缓存上次结果先渲染，插件变更 revision 触发重取。回归：`tests/plugins-ipc.test.mjs`。
 - [x] **P2 diff 与全文变更搜索下沉 worker**（2026-11-06，heavy-worker 车道）：`diff.worker` 承接 unified / pi-edit diff 解析（>200k 字符主线程；微基准 15 万字符 ≈1.5 ms）；`useChangesFind` 全文变更搜索 >400k 总字符走 worker，等待期返回路径匹配过渡态；`useDiffParse` / `useChangesFind` 身份校验丢弃迟到结果。wordDiff 仍在渲染线程（词级 diff 粒度小）。回归：`tests/diff-worker-pool.test.mjs`。
 - [x] **P2 冷启动打点 + 启动并行化**（2026-11-06，startup 车道）：`startupMetrics.ts` 冷启动时间线（`main-start → app-ready → splash-created → splash-shown → ipc-ready → window-created ∥ workspace-ready → renderer-loaded → ready-to-show → renderer-ready → first-frame`），diagnostics 每阶段一条结构化事件 + `PI_STARTUP_LOG=1` / dev 单行输出（打包默认静默）；`bootstrap()` 重构为「主窗创建 + 渲染层加载 ∥ 异步工作区解析」双并行分支，agent 初始化在工作区就绪后启动，更新检查移到主窗创建后；`defaultWorkspaceAsync` 取代启动路径同步 IO（行为与同步版逐条对齐，注册写入并入工作区设置队列）；防御性 stat/mkdir 改异步（盘符根不 mkdir 语义保留）。复审后追加：工作区分支取消短路、`showStartupError` 重入保护、冷启动 pai 请求失败隔离。回归：`tests/startup*.test.mjs`（45 项）、`tests/agent-ipc.test.mjs`。
-- [x] **P2 启动窗口配色统一（部分）**（2026-11-06，startup 车道）：`windowTheme.ts` 单一背景色源（默认对齐渲染层 surface：dark `#161616` / light `#f8f8f8`，用户外观取 `colors[mode].surface` 带 hex 校验回退），主窗 / splash / pai 窗三处硬编码 `#111216` 全部消除；splash 深浅双主题渲染，boot 页与错误页同背景切换不闪；`startupSwap.ts` 主窗 `show` 确认后才关 boot 窗（250 ms 兜底），杜绝两窗皆不可见空帧。对应 TODO「启动窗口与主窗无缝衔接」的 boot→主窗段；便携版位图段见遗留。
+- [x] **P2 启动窗口配色统一（部分）**（2026-11-06，startup 车道）：`windowTheme.ts` 单一背景色源（默认对齐渲染层 surface：dark `#161616` / light `#f8f8f8`，用户外观取 `colors[mode].surface` 带 hex 校验回退），主窗 / splash / pai 窗三处硬编码 `#111216` 全部消除；splash 深浅双主题渲染，boot 页与错误页同背景切换不闪；`startupSwap.ts` 主窗 `show` 确认后才关 boot 窗（250 ms 兜底），杜绝两窗皆不可见空帧。对应 TODO「启动窗口与主窗无缝衔接」的 boot→主窗段；便携版位图段见下方同日条目。
+- [x] **P2 工作台目录分页增量**（2026-11-06）：`workbenchService.listEntriesPage(relativePath, cwd, offset)` 按「文件夹优先 + 名称」排序后分页（每页 `MAX_ENTRIES=400`，只对当页做 lstat，偏移在目录不变时稳定），新增通道 `workspaceListEntriesPage`（托管 pai 窗按自身文件夹作用域，参数校验）；`listEntries` 仍返回首页（输入框上下文选择器等旧调用方不变）。渲染层 `workbenchListing.streamDirectoryListing` 首页立即渲染、续页后台追加（按 path 去重防跨页位移重复、导航代次丢弃迟到页、续页失败保留已显示行并报错），上限 `WORKBENCH_LISTING_CAP=2000` 项后停止并提示「可用搜索查找其余文件」；静默自动刷新等全量回齐后一次替换，大目录不会缩回首页。旧桥（无分页方法）回退单发。修复了原先单目录超过 400 项时其余条目被静默截断的问题。回归：`tests/workbench-listing.test.mjs`、`tests/workbench-ipc.test.mjs`。
+- [x] **P2 模型 / 供应商目录跨启动缓存**（2026-11-06）：`modelCatalogCache.ts` 把最近一次成功拉取的 `models` / `modelProviders` 写入 localStorage（逐项结构校验、损坏整半丢弃、>1,000,000 字符不写并清旧缓存、主机未就绪时返回的空列表不冲掉旧缓存）；`store.refreshModels` / `refreshModelProviders` 在当前列表为空时先用缓存垫底渲染，响应到达后整体替换并回写（stale-while-revalidate）。只在刷新时读取，不进启动主路径。会话内本就由 store 保留上次结果，此项补的是冷启动 / 切工作区后首次打开模型选择器的空列表。`UiModelProvider` 不含密钥（主机侧只暴露 header 名与非密字段）。回归：`tests/model-catalog-cache.test.mjs`、`tests/store.test.mjs`。
+- [x] **P2 文本预览查找下沉 worker**（2026-11-06）：微基准（1 MB 预览上限、约 1.4 万行）：`readingRows` 3.6 ms；查找单字母 113k 处匹配 19 ms + 分行 2.5 ms，超出一帧预算；语法高亮早已在 `reading.worker`。`literalMatchRanges` 以 `Int32Array` 打包 [start,end] 对（跨 worker 一次 memcpy，免逐对象结构化克隆），`diff.worker` 新增 `reading-find` 请求；`useReadingFind` 在 >200k 字符时走 worker（等待期保留同文本的上次匹配，不闪 0/0；迟到结果按文本+查询丢弃），以下保持同步。`readingRows` 3.6 ms 留在渲染线程（低于 worker 往返收益）。回归：`tests/reading-find.test.mjs`（与旧实现逐例对拍）。
+- [x] **P2 启动期状态文件首读预取**（2026-11-06）：boot 窗构建所需的 windowState 与 appearance 改为 `readWindowStateAsync` / `readAppearanceStateAsync` 在主模块求值时并发发起，与 Electron 自身的 ready 等待重叠，ready 后直接取结果（回退语义与同步版一致）；boot 窗与 boot 页共用一次解析出的主题（原先读两次）。新增打点阶段 `state-read`（`app-ready → state-read` 即预取剩余等待）。`desktopLaunch.ts` 的同步 IO 是 ready 前的单实例/配置文件独占声明（`wx` 原子创建 + rename），顺序语义依赖同步，保留；`piEngine.ts` 只在 agent host 子进程与设置页探测时运行，不在主进程冷启动路径；desktopSettings / workspaceSettings 首读已在 state-io 车道缓存化。回归：`tests/window-state.test.mjs`、`tests/appearance-sync.test.mjs`、`tests/startup.test.mjs`。
+- [x] **P2 运行期切主题同步已建窗口底色**（2026-11-06）：`windowTheme.syncWindowBackgrounds` 对全部存活窗口 `setBackgroundColor`；在 `appearanceSet`、跨进程 appearance 文件变更（pai 窗）与 `nativeTheme 'updated'`（system 偏好下 OS 切深浅）三处触发，dispose 时摘除监听。回归：`tests/startup-theme.test.mjs`。
+- [x] **P2 便携版「原生位图 → boot 窗」衔接**（2026-11-06）：位图改为 boot 页静帧的居中 224×224 裁切（`createPortableSplashHtml` + `portableSplashCrop`，640×480 渲染后 `capturePage(rect)`）：底色 `#161616` 与首启深色 boot 窗一致（原 `#111216` 遗留硬编码消除），logo 96 px 且与 boot 页同一相对中心位置，标题与进度条轨道同位；进度条停在动画首帧（轨道外），boot 窗出现时从首帧起播；随语言变化的状态文字只占位不绘制（位图打包时生成、语言在运行时决定）。回归：`tests/startup-theme.test.mjs`。限制：位图为打包期静态资源，浅色主题用户仍是深色位图 → 浅色 boot 窗；BgImage 居中于主屏，boot 窗恢复到其他位置/显示器时 logo 不重合；非 100% 缩放下 boot 页 logo 按 DPI 放大而位图按原生像素显示。
 
-## 待办清单（按优先级）
+## 审计结论（2026-11-06 收口）
 
-### P2 IPC 与数据
+清单全部处理完毕。以下为有意保留、不再列为待办的项（按诊断再决定）：
 
-- [ ] 目录扫描、Git 状态：大仓库首包先返回首屏所需层级，其余流式补齐（现状 `workbenchService.ts` 单发截断 `MAX_ENTRIES=400`，有界但无增量）。
-- [ ] 模型 / 供应商目录：缓存上次结果先渲染，后台刷新（插件目录半句已落地，见上）。
-- 已有范例：历史分页 `getHistoryPage`、会话 peek、搜索分页 `searchSessionsPage`、会话列表分页 `agentListSessionsPage`。
-
-### P2 重活移出主线程
-
-- [ ] 大文件预览的文本部分下沉 worker（Office 预览已有 `officePreview.worker`；`WorkbenchTextView` 文本预览仍在渲染线程）。
-- 渲染线程剩余阻塞点（审计即如此设计，按诊断再决定）：≤2000 行块的同步 hljs、wordDiff、文本大预览。
-
-### P2 启动路径（剩余）
-
-- [ ] 便携版「原生位图 → boot 窗」段跳变：224×224 透明图标页与全尺寸 boot 页的画面衔接（`scripts/make-portable-splash.mjs` 边界）。
-- [ ] 启动期各状态文件首读（desktopSettings / workspaceSettings / appearance / windowState 各一次）与 `desktopLaunch.ts` / `piEngine.ts` 的启动参数解析仍有同步 IO（冷启动一次，`startupMetrics` 已可度量其占比）。
-- [ ] 运行期切换主题不跟随已建窗口 `backgroundColor`（仅影响重绘 / 调整大小瞬间的预绘制底色；如需可监听 appearance 变更重建常量）。
+- **Git 状态不流式化**：`git status --porcelain` 须在比对完整个索引后才产出结果，管线化读取对首包时间几乎无收益；现状已是异步子进程 + 2 MB 有界读取 + `truncated` 标记与 UI 提示，变更类操作拒绝基于截断结果执行。若需更快，方向是 `core.fsmonitor`/`untrackedCache` 等 git 侧加速，而非 IPC 流式。
+- **渲染线程剩余同步点**：≤2000 行代码块的同步 hljs（2000 行封顶 ≈110 ms）、wordDiff（词级粒度小）、`readingRows`（1 MB ≈3.6 ms）、≤200k 字符的预览查找——均低于 worker 往返收益。
+- 已有分页/增量范例：历史分页 `getHistoryPage`、会话 peek、搜索分页 `searchSessionsPage`、会话列表分页 `agentListSessionsPage`、工作台目录分页 `workspaceListEntriesPage`。
 
 ## 遗留与备查（2026-11-06 三轮独立复审，均 PASS-WITH-NOTES）
 

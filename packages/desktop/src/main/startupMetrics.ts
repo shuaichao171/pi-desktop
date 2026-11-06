@@ -13,6 +13,7 @@
 export type StartupPhase =
 	| 'main-start'       // the main bundle was evaluated (≈ process start)
 	| 'app-ready'        // Electron finished initializing
+	| 'state-read'       // the prefetched window placement + appearance are in hand
 	| 'splash-created'   // the boot window exists
 	| 'splash-shown'     // the boot window is visible and bootstrap is scheduled
 	| 'ipc-ready'        // the heavy host bridge import + IPC registration finished

@@ -1,4 +1,9 @@
-/** Render the same SVG used by Electron straight to the native splash bitmap. */
+/**
+ * Render the boot page's still frame straight to the native splash bitmap.
+ * The bitmap is the centered crop of the default (dark) boot page, so the
+ * portable extraction splash hands over to the boot window without the logo
+ * changing size or the background changing color around it.
+ */
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
@@ -6,9 +11,13 @@ import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createSplashHtml } from '../packages/desktop/src/main/splash.ts';
+import { PORTABLE_SPLASH_SIZE as SIZE, createPortableSplashHtml, portableSplashCrop } from '../packages/desktop/src/main/splash.ts';
+import { WINDOW_BACKGROUND_DEFAULTS } from '../packages/desktop/src/main/windowTheme.ts';
 
-const SIZE = 224;
+// Larger than the bitmap so the boot page lays out as it does in a real window
+// (its 32px padding would otherwise squeeze the content); only the centered
+// square is kept.
+const PAGE = { width: 640, height: 480 };
 const require = createRequire(new URL('../packages/desktop/package.json', import.meta.url));
 
 if (!process.versions.electron) {
@@ -47,10 +56,10 @@ if (!process.versions.electron) {
     try {
       await app.whenReady();
       window = new BrowserWindow({
-        width: SIZE, height: SIZE, show: false, frame: false, backgroundColor: '#111216',
+        ...PAGE, useContentSize: true, show: false, frame: false, backgroundColor: WINDOW_BACKGROUND_DEFAULTS.dark,
         webPreferences: { sandbox: true, contextIsolation: true, offscreen: true, backgroundThrottling: false },
       });
-      await window.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(createSplashHtml())}`);
+      await window.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(createPortableSplashHtml())}`);
       // Hidden offscreen windows do not reliably schedule requestAnimationFrame.
       // capturePage obtains the rendered SVG without opening a visible window.
       // Chromium's viz compositor can transiently fail captures of hidden
@@ -58,7 +67,7 @@ if (!process.versions.electron) {
       // runners; retry until a frame is produced instead of failing the build.
       let screenshot;
       for (let attempt = 0; ; attempt += 1) {
-        try { screenshot = await window.webContents.capturePage(); break; }
+        try { screenshot = await window.webContents.capturePage(portableSplashCrop(PAGE.width, PAGE.height)); break; }
         catch (error) {
           if (attempt >= 5) throw error;
           await new Promise((resolve) => setTimeout(resolve, 250 * (attempt + 1)));
@@ -86,7 +95,7 @@ if (!process.versions.electron) {
         }
       }
       await writeFile(new URL('../packages/desktop/build/portable-splash.bmp', import.meta.url), bmp);
-      console.log(`Generated ${SIZE}×${SIZE} portable splash directly from the startup SVG.`);
+      console.log(`Generated ${SIZE}×${SIZE} portable splash from the boot page's still frame.`);
     } catch (error) {
       console.error(error);
       process.exitCode = 1;

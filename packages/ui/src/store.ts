@@ -13,6 +13,7 @@ import { parseSlashCommand } from './composerSlash.ts';
 import { mergeRuntimeStates, sessionRuntimeKey, type WorkspaceSessionRequest } from './managementState.ts';
 import { mergeConversationRuns } from './conversationRuns.ts';
 import { operationFeedback } from './operationFeedback.ts';
+import { readModelCatalogCache, writeModelCatalogCache, type ModelCatalogSnapshot } from './modelCatalogCache.ts';
 import type { UiAgentError } from '@pidesktop/shared';
 import type {
 	AgentBridge,
@@ -167,6 +168,15 @@ let settingsRequestCount = 0;
 let settingsGeneration = 0;
 let modelsRequest = 0;
 let modelProvidersRequest = 0;
+// Cross-launch model catalog (audit P2): read only when a refresh finds an
+// empty list (cold start, or models after a workspace reset) — never on the
+// startup path — and written after every accepted response.
+function cachedCatalog(): ModelCatalogSnapshot {
+	return readModelCatalogCache();
+}
+function rememberCatalog(patch: Partial<ModelCatalogSnapshot>): void {
+	writeModelCatalogCache(patch);
+}
 let providerAuthRequest = 0;
 let unsubscribeAgentEvent: (() => void) | null = null;
 let bridgeGeneration = 0;
@@ -1015,9 +1025,18 @@ if (!get().modelProviders.length) void get().refreshModelProviders().catch(() =>
 		if (!bridge) return;
 		const generation = beginSettingsRequest();
 		const request = ++modelsRequest;
+		// Render the last known catalog while the host answers; the response
+		// replaces it wholesale (stale-while-revalidate).
+		if (!get().models.length) {
+			const cached = cachedCatalog().models;
+			if (cached.length) set({ models: cached });
+		}
 		try {
 			const models = await bridge.listModels();
-			if (generation === settingsGeneration && request === modelsRequest) set({ models });
+			if (generation === settingsGeneration && request === modelsRequest) {
+				set({ models });
+				rememberCatalog({ models });
+			}
 		} catch (error) {
 			if (generation === settingsGeneration && request === modelsRequest) set({ settingsError: errorMessage(error) });
 			throw error;
@@ -1031,9 +1050,16 @@ if (!get().modelProviders.length) void get().refreshModelProviders().catch(() =>
 		if (!bridge) return;
 		const generation = beginSettingsRequest();
 		const request = ++modelProvidersRequest;
+		if (!get().modelProviders.length) {
+			const cached = cachedCatalog().modelProviders;
+			if (cached.length) set({ modelProviders: cached });
+		}
 		try {
 			const modelProviders = await bridge.listModelProviders();
-			if (generation === settingsGeneration && request === modelProvidersRequest) set({ modelProviders });
+			if (generation === settingsGeneration && request === modelProvidersRequest) {
+				set({ modelProviders });
+				rememberCatalog({ modelProviders });
+			}
 		} catch (error) {
 			if (generation === settingsGeneration && request === modelProvidersRequest) set({ settingsError: errorMessage(error) });
 			throw error;

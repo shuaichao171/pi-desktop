@@ -33,3 +33,29 @@ export function resolveWindowTheme(appearance: UiAppearanceState | null | undefi
 	const surface = appearance?.colors?.[mode]?.surface;
 	return { mode, background: isHexColor(surface) ? surface : WINDOW_BACKGROUND_DEFAULTS[mode] };
 }
+
+/** The slice of BrowserWindow the background sync needs (kept narrow for tests). */
+export interface BackgroundTarget {
+	isDestroyed(): boolean;
+	setBackgroundColor(color: string): void;
+}
+
+/**
+ * Re-apply the resolved background to windows that already exist. A
+ * BrowserWindow's `backgroundColor` is fixed at construction, so without this
+ * a runtime theme switch would leave the previous surface showing through on
+ * the frames Chromium paints before the page (resize, un-minimize, reload).
+ * Returns the background applied so callers can skip redundant work.
+ */
+export function syncWindowBackgrounds(
+	windows: readonly BackgroundTarget[],
+	appearance: UiAppearanceState | null | undefined,
+	systemPrefersDark: boolean,
+): string {
+	const { background } = resolveWindowTheme(appearance, systemPrefersDark);
+	for (const win of windows) {
+		if (win.isDestroyed()) continue;
+		try { win.setBackgroundColor(background); } catch { /* window torn down mid-loop */ }
+	}
+	return background;
+}

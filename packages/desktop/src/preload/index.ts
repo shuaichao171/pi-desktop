@@ -195,6 +195,7 @@ const bridge: AgentBridge = {
 	openPath: (path, cwd) => invoke(IPC_CHANNELS.workspaceOpenPath, path, cwd),
 	pickPath: (mode, cwd) => invoke(IPC_CHANNELS.workspacePickPath, mode, cwd),
 	listWorkspaceEntries: (relativePath) => invoke(IPC_CHANNELS.workspaceListEntries, relativePath),
+	listWorkspaceEntriesPage: (relativePath, offset) => invoke(IPC_CHANNELS.workspaceListEntriesPage, relativePath, offset),
 	searchWorkspaceFiles: (query, options) => invoke(IPC_CHANNELS.workspaceSearchFiles, query, options),
 	readWorkspaceFile: (relativePath) => invoke(IPC_CHANNELS.workspaceReadFile, relativePath),
 	createWorkspaceEntry: (parentPath, name, kind) => invoke(IPC_CHANNELS.workspaceCreateEntry, parentPath, name, kind),

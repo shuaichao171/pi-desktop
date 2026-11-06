@@ -11,7 +11,7 @@ registerHooks({ resolve(specifier, context, nextResolve) {
   return nextResolve(specifier, context);
 } });
 
-const { appearanceStatePath, isValidAppearanceState, readAppearanceState, watchAppearanceState, writeAppearanceState, writeAppearanceStateAsync } =
+const { appearanceStatePath, isValidAppearanceState, readAppearanceState, readAppearanceStateAsync, watchAppearanceState, writeAppearanceState, writeAppearanceStateAsync } =
   await import('../packages/desktop/src/main/appearance.ts');
 
 const colors = {
@@ -68,5 +68,23 @@ test('watching the shared file reports only real external changes', async () => 
     }
   } finally {
     rmSync(root, { recursive: true, force: true, maxRetries: 4 });
+  }
+});
+
+test('the cold-start prefetch reads appearance async with the sync reader fallbacks', async () => {
+  const root = mkdtempSync(join(realpathSync.native(tmpdir()), 'pi-desktop-appearance-prefetch-'));
+  try {
+    const path = appearanceStatePath(root);
+    assert.equal(await readAppearanceStateAsync(path), null, 'missing file');
+    const state = { theme: 'dark', colors };
+    writeAppearanceState(path, state);
+    assert.deepEqual(await readAppearanceStateAsync(path), state);
+    writeFileSync(path, JSON.stringify({ theme: 'neon', colors }), 'utf8');
+    assert.equal(await readAppearanceStateAsync(path), null, 'an invalid state falls back like the sync reader');
+    writeFileSync(path, '{', 'utf8');
+    assert.equal(await readAppearanceStateAsync(path), null, 'corrupt file falls back');
+    assert.equal(readFileSync(path, 'utf8'), '{', 'unreadable bytes are left untouched');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
   }
 });

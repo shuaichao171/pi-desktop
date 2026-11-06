@@ -140,6 +140,7 @@ export const IPC_CHANNELS = {
   workspaceOpenPath: 'workspace:open-path',
   workspacePickPath: 'workspace:pick-path',
   workspaceListEntries: 'workspace:list-entries',
+  workspaceListEntriesPage: 'workspace:list-entries-page',
   workspaceSearchFiles: 'workspace:search-files',
   workspaceReadFile: 'workspace:read-file',
   workspaceCreateEntry: 'workspace:create-entry',
@@ -853,6 +854,15 @@ export interface WorkspaceEntry {
   size?: number;
 }
 
+/** One page of a directory listing: folders first, then files, by name. */
+export interface WorkspaceEntryPage {
+  entries: WorkspaceEntry[];
+  /** Offset for the next page; null when the directory is exhausted. */
+  nextOffset: number | null;
+  /** Listable children (files and folders, symlinks excluded) in the directory. */
+  total: number;
+}
+
 export interface WorkspaceGitChange {
   path: string;
   /** Git porcelain XY status, e.g. M, ??, A, D. */
@@ -1172,6 +1182,8 @@ export interface AgentBridge extends InputFeatureBridge, DataFeaturesBridge, Wor
   /** 弹出原生选择器挑选文件或文件夹；取消返回 null。 */
   pickPath(mode: 'file' | 'folder', cwd: string): Promise<string | null>;
   listWorkspaceEntries(relativePath?: string): Promise<WorkspaceEntry[]>;
+  /** Paged listing for large folders; older bridges only have listWorkspaceEntries (first page). */
+  listWorkspaceEntriesPage?(relativePath: string, offset: number): Promise<WorkspaceEntryPage>;
   searchWorkspaceFiles(query: string, options?: { includeDirectories?: boolean }): Promise<{ files: WorkspaceEntry[]; truncated: boolean; skipped?: number; ignoredDirectories?: string[] }>;
   readWorkspaceFile(relativePath: string): Promise<string>;
   /** Creates an empty file or folder inside a workspace directory (4.6). */

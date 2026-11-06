@@ -2,12 +2,16 @@
  * Standalone pages that Electron can display before the renderer bundle is
  * ready. Keep them free of external files, scripts, and runtime dependencies.
  *
- * Two layouts live here:
- * - the icon page (224×224, transparent) feeds the portable executable's
- *   native splash bitmap (scripts/make-portable-splash.mjs);
+ * Layouts that live here:
  * - the boot page fills a full-size window that matches the main window, so
  *   startup looks like the application itself (ZCode-style) instead of a
- *   small floating logo.
+ *   small floating logo;
+ * - the portable page is a still frame of that boot page; its centered
+ *   224×224 crop is the portable executable's native splash bitmap
+ *   (scripts/make-portable-splash.mjs), so the extraction splash and the boot
+ *   window that replaces it share background, logo size and logo position;
+ * - the icon page (224×224, transparent) is the bare mark, kept for callers
+ *   that want only the logo.
  */
 import type { AppLocale } from '@pidesktop/shared';
 import { WINDOW_BACKGROUND_DEFAULTS, type WindowTheme } from './windowTheme.ts';
@@ -68,7 +72,7 @@ export function createSplashHtml(locale: AppLocale = 'zh-CN'): string {
 </html>`;
 }
 
-function renderBoot(locale: AppLocale, theme: WindowTheme, error?: string): string {
+function renderBoot(locale: AppLocale, theme: WindowTheme, error?: string, still = false): string {
   const failed = error !== undefined;
   const english = locale === 'en-US';
   // The page's palette follows the resolved window theme so light-mode users
@@ -111,7 +115,13 @@ function renderBoot(locale: AppLocale, theme: WindowTheme, error?: string): stri
     .label { margin: 0; color: ${palette.label}; font-size: 12.5px; line-height: 1.5; }
     .error { display: grid; gap: 10px; width: min(100%, 560px); padding: 18px 20px; border: 1px solid ${palette.errorBorder}; border-radius: 14px; background: ${palette.errorBackground}; color: ${palette.errorHeading}; font-size: 12.5px; line-height: 1.6; text-align: left; }
     .error strong { font-size: 13px; font-weight: 600; }
-    .error span { max-height: 42vh; overflow: auto; color: ${palette.errorText}; overflow-wrap: anywhere; -webkit-app-region: no-drag; user-select: text; }
+    .error span { max-height: 42vh; overflow: auto; color: ${palette.errorText}; overflow-wrap: anywhere; -webkit-app-region: no-drag; user-select: text; }${still ? `
+    /* Still frame for the native bitmap: the bar rests at its first keyframe
+       (off-track, so only the track shows) and the label keeps its space but
+       is not drawn — the bitmap is built once, while the boot window's label
+       follows the user's locale. */
+    .bar { animation: none; transform: translateX(-110%); }
+    .label { visibility: hidden; }` : ''}
   </style>
 </head>
 <body>
@@ -131,4 +141,29 @@ export function createBootHtml(locale: AppLocale, theme: WindowTheme = { mode: '
 
 export function createBootErrorHtml(message: string, locale: AppLocale, theme: WindowTheme = { mode: 'dark', background: WINDOW_BACKGROUND_DEFAULTS.dark }): string {
   return renderBoot(locale, theme, message);
+}
+
+/** Side of the portable executable's native splash bitmap, in pixels. */
+export const PORTABLE_SPLASH_SIZE = 224;
+
+/**
+ * The portable page: a still frame of the default (dark, first-run) boot page.
+ * Render it in any window at least PORTABLE_SPLASH_SIZE on each side and crop
+ * the centered square — the boot content (logo, title, track, label slot) is
+ * centered in the window, so the crop holds all of it at the same offsets the
+ * boot window will show around its own center.
+ */
+export function createPortableSplashHtml(): string {
+  return renderBoot('zh-CN', { mode: 'dark', background: WINDOW_BACKGROUND_DEFAULTS.dark }, undefined, true);
+}
+
+/** Centered PORTABLE_SPLASH_SIZE square inside a rendered page of the given size. */
+export function portableSplashCrop(width: number, height: number): { x: number; y: number; width: number; height: number } {
+  if (width < PORTABLE_SPLASH_SIZE || height < PORTABLE_SPLASH_SIZE) throw new Error('Portable splash page is smaller than the bitmap.');
+  return {
+    x: Math.floor((width - PORTABLE_SPLASH_SIZE) / 2),
+    y: Math.floor((height - PORTABLE_SPLASH_SIZE) / 2),
+    width: PORTABLE_SPLASH_SIZE,
+    height: PORTABLE_SPLASH_SIZE,
+  };
 }

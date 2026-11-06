@@ -1,6 +1,6 @@
 import { screen } from 'electron';
 import { join } from 'node:path';
-import { readStateFile, writeStateFile, writeStateFileAsync } from './stateFiles';
+import { readStateFile, readStateFileAsync, writeStateFile, writeStateFileAsync } from './stateFiles';
 
 /**
  * Placement persistence for the main window. The boot window and the main
@@ -75,6 +75,15 @@ export function readWindowState(path: string): WindowState | null {
 	}
 }
 
+/** Async twin of readWindowState for the cold-start prefetch (same fallbacks). */
+export async function readWindowStateAsync(path: string): Promise<WindowState | null> {
+	try {
+		return await readStateFileAsync(path, () => null, isValidWindowState);
+	} catch {
+		return null;
+	}
+}
+
 export function writeWindowState(path: string, state: WindowState): void {
 	writeStateFile(path, state);
 }
@@ -117,8 +126,10 @@ export function defaultWindowState(workArea: DisplayArea): WindowState {
 export function resolveStartupWindowState(
 	path: string,
 	environment?: { displays?: readonly DisplayArea[]; primaryWorkArea?: DisplayArea },
+	/** The saved state when the caller already read it (cold-start prefetch); read here otherwise. */
+	preloaded?: WindowState | null,
 ): WindowState {
-	const saved = readWindowState(path);
+	const saved = preloaded === undefined ? readWindowState(path) : preloaded;
 	const displays = environment?.displays ?? screen.getAllDisplays().map((display) => display.workArea);
 	if (saved && isVisibleOnDisplays(saved.bounds, displays)) {
 		// A window larger than the whole virtual desktop is damaged data (for

@@ -38,7 +38,7 @@ import { createDesktopNotifier } from './notifications';
 import { createKeepAwakeController, type KeepAwakeController } from './keepAwake';
 import { drainDesktopSettingsQueue, readDesktopSettings, withDesktopSettings, writeDesktopSettingsAsync, type DesktopSettings } from './desktopSettings';
 import { appearanceStatePath, isValidAppearanceState, readAppearanceState, watchAppearanceState, writeAppearanceStateAsync } from './appearance';
-import { resolveWindowTheme } from './windowTheme';
+import { resolveWindowTheme, syncWindowBackgrounds } from './windowTheme';
 import { readWorkspaceContext, validateContextRequest } from './contextService';
 import { createAutomationService } from './automationService';
 import { createGoalWatchService } from './goalWatchService';
@@ -1406,13 +1406,28 @@ export function registerIpc(options: {
 		onRunFinished: (entry, task) => { notifier.handleAutomationRun(entry, task.name, task.cwd); invalidateSessionListing(task.cwd); },
 	});
 	handleRendererInvoke(IPC_CHANNELS.desktopSettingsGet, () => readCurrentDesktopSettings());
-	stopAppearanceWatch = watchAppearanceState(appearancePath, (state) => {
-		if (state) sendAppCommand({ type: 'appearance-changed', appearance: state });
+	// Keep every live window's pre-paint background on the current theme
+	// surface: appearance edits (here or from another instance via the watch)
+	// and OS light/dark flips under a 'system' preference both change it.
+	const syncBackgrounds = (appearance = readAppearanceState(appearancePath)) => {
+		syncWindowBackgrounds(BrowserWindow.getAllWindows(), appearance, nativeTheme.shouldUseDarkColors);
+	};
+	const onNativeThemeUpdated = () => syncBackgrounds();
+	nativeTheme.on?.('updated', onNativeThemeUpdated);
+	const stopFileWatch = watchAppearanceState(appearancePath, (state) => {
+		if (!state) return;
+		syncBackgrounds(state);
+		sendAppCommand({ type: 'appearance-changed', appearance: state });
 	});
+	stopAppearanceWatch = () => {
+		nativeTheme.removeListener?.('updated', onNativeThemeUpdated);
+		stopFileWatch();
+	};
 	handleRendererInvoke(IPC_CHANNELS.appearanceGet, () => readAppearanceState(appearancePath));
 	handleRendererInvoke(IPC_CHANNELS.appearanceSet, async (_event, state: unknown) => {
 		if (!isValidAppearanceState(state)) throw new Error('外观设置无效');
 		await writeAppearanceStateAsync(appearancePath, state);
+		syncBackgrounds(state);
 		sendAppCommand({ type: 'appearance-changed', appearance: state });
 	});
 	handleRendererInvoke(IPC_CHANNELS.desktopSettingsSet, (event, patch: unknown) => {
