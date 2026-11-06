@@ -81,6 +81,9 @@ export function openSplitPane(parentWin: BrowserWindow, request: { cwd: string; 
 		},
 	});
 	view.setBackgroundColor('#111216');
+	// 创建即给非零 bounds：0 尺寸 view 在 Electron 44 下页面加载事件会被冻结
+	// （loadURL 永不 settle），真实 bounds 由主窗区域上报后覆盖。
+	view.setBounds({ x: 0, y: 0, width: 480, height: 640 });
 	const entry: PaiPaneSlot = {
 		paneId: nextPaneId++,
 		view, parentWin,
