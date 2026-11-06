@@ -50,9 +50,11 @@ const ILLEGAL_EFFORTS: ReadonlySet<string> = new Set(['none', 'disabled']);
  * - `options.reasoning` 只保留规范的非 off 档位；off 与未知值一律不传
  *   （与 SDK「off 即不下发 reasoning」语义一致，非法档位绝不透传）；
  * - `thinkingLevelMap` 中映射为 `none`/`disabled` 的线上值被移除：
- *   openai-completions 适配器对缺失的 off 映射不会下发 reasoning_effort，
- *   其余档位则回退为规范档位本身（openai-responses 系适配器对缺失的 off
- *   仍兜底 'none'，为上游 pi-ai 已知行为，只能靠 off:null 显式关闭）。
+ *   openai-completions 适配器的默认分支对缺失的 off 映射不会下发
+ *   reasoning_effort，其余档位则回退为规范档位本身（openai-responses 系
+ *   及 openai-completions 内 openrouter/string-thinking/deepseek 兼容分支
+ *   对缺失的 off 仍兜底 'none'，为上游 pi-ai 已知行为，只能靠 off:null
+ *   显式关闭）。
  */
 export function sanitizeReasoningRequest<M extends ThinkingLevelMappedModel, O>(model: M, options: O): { model: M; options: O } {
 	const reasoning = options !== null && typeof options === 'object' ? (options as ReasoningRequestOptions).reasoning : undefined;

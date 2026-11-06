@@ -11,10 +11,12 @@ const ILLEGAL_OFF_VALUES: ReadonlySet<string> = new Set(['none', 'disabled']);
 
 /**
  * 按声明档位生成默认映射。off 受支持时【不写条目】而不是写 'none'：
- * openai-completions 适配器对缺失的 off 映射不会下发 reasoning_effort（缺失即
- * 「不发参数、推理关闭」）；'none' 则会被只接受 low…max 的端点以 400 拒绝。
- * 注意：openai-responses / azure-openai-responses 适配器（上游 pi-ai 行为）对
- * 缺失的 off 映射仍兜底发送 effort:'none'——该协议下只有显式 off:null 才不发。
+ * openai-completions 适配器的默认分支对缺失的 off 映射不会下发
+ * reasoning_effort（缺失即「不发参数、推理关闭」）；'none' 则会被只接受
+ * low…max 的端点以 400 拒绝。注意（上游 pi-ai 行为）：openai-responses /
+ * azure-openai-responses，以及 openai-completions 内 openrouter /
+ * string-thinking / deepseek 兼容分支，对缺失的 off 映射仍兜底发送
+ * effort:'none'——这些协议下只有显式 off:null 才不发。
  */
 export function advertisedThinkingMap(levels: readonly UiThinkingLevel[]): ThinkingLevelMap {
 	const map: Record<string, string | null> = {};

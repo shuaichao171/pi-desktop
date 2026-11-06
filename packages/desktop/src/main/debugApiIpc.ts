@@ -57,23 +57,23 @@ export function registerDebugApiIpc(options: {
 	};
 
 	async function applyConfig(config: UiDebugApiConfig): Promise<UiDebugApiState> {
-		if (server) {
-			await server.stop();
-			server = null;
-		}
-		// The read-modify-write joins the shared settings queue (desktopSettings.ts) so
-		// a concurrent Settings save cannot drop this config — and this write cannot
-		// resurrect a stale debugApi block over a just-saved one.
+		// stop / 写盘 / create 全部收进共享设置队列（desktopSettings.ts）：
+		// 并发 setConfig 交错时后到调用不可能跳过对先建服务器的 stop
+		// （否则会遗留监听直到 dispose），并发设置保存也不会互相回滚字段。
 		await withDesktopSettings(async () => {
+			if (server) {
+				await server.stop();
+				server = null;
+			}
 			const settings = readDesktopSettings(settingsPath);
 			await writeDesktopSettingsAsync(settingsPath, { ...settings, debugApi: config });
+			if (config.enabled) {
+				server = await createDebugServer(config, {
+					cloudSync: options.cloudSync,
+					appVersion: options.appVersion,
+				});
+			}
 		});
-		if (config.enabled) {
-			server = await createDebugServer(config, {
-				cloudSync: options.cloudSync,
-				appVersion: options.appVersion,
-			});
-		}
 		return snapshot();
 	}
 
