@@ -4,22 +4,20 @@
 
 ## 进行中
 
-- [ ] 【交接中】分屏多窗格会话监控（feat/split-panes；2026-11-07 已在该分支合入最新 main，含 store 工厂重构，无需再 rebase）（2026-11-02 提出，当前由 b1inkie 侧 AI 交接）
-  - 目标：侧栏右键任意项目任意会话 →「在右侧窗格打开」→ 主窗右侧出现嵌入窗格（WebContentsView），可同时监控多个会话、都能打字；多窗格横向均分、主窗内容收缩让位、关闭后剩余重排。
-  - 架构：每 pane = WebContentsView 嵌主窗 contentView，复用 pai 小窗隔离基建（独立 agent host/cwd/信任态/按 sender IPC 路由）。核心文件：`packages/desktop/src/main/splitPanes.ts`（生命周期+layoutPanesFor 主进程均分布局）、`paneRegistry.ts`（pane 注册表，斩断 paiWindows↔splitPanes 循环依赖）、`paiWindows.ts`、`ipc.ts`（splitPaneOpen/Close/SetBounds 三通道）、`AppShell.tsx`（paneIds 状态 + .pd-split-pane-host）。
-  - 已验证可用：pane 创建/agent init/页面加载（did-finish-load）/主进程均分定位/dedup 聚焦（重复打开同一会话聚焦已有 pane）/主窗激活 hosted 会话红警+聚焦宿主。
-  - 卡点（未解）：主窗 renderer 的 paneIds 链不工作——①新建 pane 的 invoke 曾漏 return（已修未验证：splitPanes.ts 新建分支补 return entry.paneId）；②窗格加载成功后主窗区域从不上报 bounds（setSplitPaneBounds 从未被调用），pane 以 overlay 形式盖在主窗右半而非挤压并排；③AppShell paneIds.length>0 区域渲染分支疑似未生效，renderer console 不进主进程 stdout 无法直接观测。
-  - 证据链与工具：`D:/ai/.pigit/pane-trace.log`（trace() 写文件：invoke/created/layout/load done/STILL LOADING；主窗 renderer console 经 console-message 桥接进同文件，前缀 main-rdr）；`dev-ai.cmd`（仓库根，已 ignore）= 冷启动+全量日志重定向到 `D:/ai/.pigit/dev-ai.log`。
-  - 环境陷阱（会严重误导调试）：electron-vite dev 的 watcher 常静默死亡（改码后 electron 不重启，测的是旧代码）；dev 模式运行的是 watcher 内存转换代码而非 out/ 产物（手动 build 不影响运行实例）；验证改动生效必须查 electron 进程 StartTime 晚于改动时间。
-  - 接手建议：用 trace 文件复现（点拆分→读 pane-trace.log）；优先查 AppShell paneIds 区域为何不渲染（renderer 侧 DevTools 或 console-message 桥）；布局可考虑彻底主进程化（当前 layoutPanesFor 已是，renderer 只需视觉占位）。
-  - 交互规范（用户已拍板）：多窗格均分；重复打开=聚焦已有 pane；主窗激活 hosted 会话=红警「该会话已在分屏窗格中打开」+聚焦宿主；改名只在左侧栏；顶栏无会话标题（ConversationHeader 在会话区顶部）。
-
 ## 计划中
 
 - [ ] 项目的聚焦悬浮框不要挡住右侧按钮：悬浮框弹出时若盖住右侧操作按钮（如展开/菜单/箭头），需错位或翻转方向（2026-11-06 提出）
 - [ ] 支持渲染 LaTeX 公式：会话内容中的 LaTeX（$...$ / $$...$$）渲染为公式（候选方案 KaTeX，注意与现有 markdown 管线的集成与转义冲突）（2026-11-06 提出）
 
 ## 已完成
+
+- [x] 分屏多窗格会话监控（2026-11-02 提出；b1inkie 交接，2026-11-07 完成）
+  - 目标：侧栏右键任意项目任意会话 →「打开方式 › 在右侧窗格打开」→ 主窗右侧嵌入窗格（WebContentsView），可同时监控多个会话、都能打字；会话区与各窗格横向均分，关闭后剩余重排。
+  - 架构：每 pane = WebContentsView 嵌主窗 contentView，复用 pai 小窗隔离基建（独立 agent host/cwd/信任态/按 sender IPC 路由）。主进程 `splitPanes.ts`（生命周期、按 id 定位/隐藏）+ `paneRegistry.ts`（注册表，避免与 `paiWindows.ts` 循环依赖）；渲染层 `splitPaneRegions.ts`（占位区上报 rect、主窗重载后经 `listSplitPanes` 重新同步）。
+  - 交接卡点的根因：`openSplitPane` 中途多了一行 `return entry.paneId`，其后挂载/加载/事件注册全是死代码；另有 `setSplitPaneBounds` 漏传 paneId、preload `onSplitPaneClosed` 回调签名错、desktop 15 处 tsc 错误。均已修复，调试探针（写 `D:/ai/.pigit/pane-trace.log`）已整体移除。
+  - 补齐：原生视图盖在整页之上，设置/搜索/提交弹窗、非会话页、窄窗抽屉、工作台浮层打开时隐藏窗格，body 级弹层（菜单、对话框）与窗格相交时该窗格让位；窗格内新建对话走窗格自己的 agent；pai 小窗与窗格互斥占用同一会话；主窗关闭时释放其窗格。
+  - 验证：`tests/agent-ipc.test.mjs` 新增窗格路由/主窗专用通道/按 id 定位隐藏关闭/占用拦截用例；全量 1105 通过；隔离 profile 实机截图验证单窗格、跨项目双窗格均分、设置遮挡让位、主窗重载重同步、激活已托管会话红警、窗格自关后重排、顶栏菜单让位。
+  - 遗留：窗格会话头标题取首条用户消息而非会话名（托管窗口不拉会话列表，pai 小窗同样如此）；需要 agent ready 事件携带会话名并处理改名同步。
 
 - [x] 全局排查：把所有能懒加载 / 异步化的地方都处理掉。清单、优先级与度量见 [docs/specs/LAZY_ASYNC_AUDIT.md](docs/specs/LAZY_ASYNC_AUDIT.md)（2026-11-01 提出；2026-11-06 完成）
   - 已落地（2026-11-02）：设置 / 搜索 / 自动化 / 插件页 / 提交弹窗与代码高亮（highlight.js）改为按需 chunk 并空闲预取，启动主包 JS 3.58 MB → 2.75 MB（−23%）、CSS 522 KB → 352 KB（−33%）；主进程热路径 `workspaceDefault`、`sessionOpenWindow`、工作台 `reset()` 的同步 IO 改为异步。

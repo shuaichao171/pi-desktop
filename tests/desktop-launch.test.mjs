@@ -72,6 +72,8 @@ test('pai requires an existing directory and its renderer starts directly in com
     assert.equal(url.searchParams.get('existing'), '1');
     assert.equal(url.hash, '#chat');
     assert.equal(rendererLaunchUrl('http://localhost:5173/', { windowMode: 'full' }), 'http://localhost:5173/');
+    // Split panes load the same renderer in their own hosted mode.
+    assert.equal(new URL(rendererLaunchUrl('http://localhost:5173/', { windowMode: 'pane', cwd: 'D:\\project' })).searchParams.get('mode'), 'pane');
   });
 });
 

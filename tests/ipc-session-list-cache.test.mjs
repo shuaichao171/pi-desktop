@@ -18,6 +18,7 @@ const stubs = {
     export const Menu = { buildFromTemplate: () => ({}) };
     export const nativeImage = { createFromPath: () => ({ isEmpty: () => true }) };
     export const Tray = class {};
+    export const WebContentsView = class {};
     export const BrowserWindow = {
       getAllWindows: () => globalThis.__ipcWindows ?? [],
       fromWebContents: (sender) => globalThis.__ipcWindows?.find((win) => win.webContents === sender),

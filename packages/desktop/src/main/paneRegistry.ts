@@ -1,5 +1,5 @@
 import type { BrowserWindow, IpcMainInvokeEvent, WebContents, WebContentsView } from 'electron';
-import { createIsolatedAgentService } from './agentClient';
+import type { createIsolatedAgentService } from './agentClient';
 
 export interface PaiPaneSlot {
 	paneId: number;
@@ -36,8 +36,9 @@ export function paneSlots(): PaiPaneSlot[] {
 }
 
 export function paneSlotForSender(sender: WebContents | undefined): PaiPaneSlot | undefined {
-	if (!sender || sender.isDestroyed()) return undefined;
-	return paneSlotMap.get(sender);
+	// Registry lookup first: unknown senders are not panes, whatever their shape.
+	const slot = sender ? paneSlotMap.get(sender) : undefined;
+	return slot && !sender!.isDestroyed() ? slot : undefined;
 }
 
 export function isPaneSender(event: IpcMainInvokeEvent): boolean {
@@ -55,6 +56,4 @@ export function paneHeldSessionPaths(): string[] {
 	}
 	return paths;
 }
-
-/** Union held-session check: a session in any hosted pane or pai window. */
 

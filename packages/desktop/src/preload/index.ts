@@ -22,7 +22,7 @@ async function invoke(channel: string, ...args: unknown[]) {
 }
 
 const onSplitPaneClosed: AgentBridge['onSplitPaneClosed'] = (listener) => {
-	const wrapped = (paneId: number) => listener(paneId);
+	const wrapped = (_e: Electron.IpcRendererEvent, paneId: number): void => listener(paneId);
 	ipcRenderer.on(IPC_CHANNELS.splitPaneClosed, wrapped);
 	return () => ipcRenderer.removeListener(IPC_CHANNELS.splitPaneClosed, wrapped);
 };
@@ -265,6 +265,7 @@ const bridge: AgentBridge = {
 	openSessionInNewWindow: (path) => invoke(IPC_CHANNELS.sessionOpenWindow, path),
 	openSplitPane: (cwd, sessionPath) => invoke(IPC_CHANNELS.splitPaneOpen, cwd, sessionPath),
 	closeSplitPane: (paneId) => invoke(IPC_CHANNELS.splitPaneClose, paneId),
+	listSplitPanes: () => invoke(IPC_CHANNELS.splitPaneList),
 	focusHostedSession: (path) => invoke(IPC_CHANNELS.focusHostedSession, path),
 	onSplitPaneClosed,
 	setSplitPaneBounds: (paneId, rect) => invoke(IPC_CHANNELS.splitPaneSetBounds, paneId, rect),

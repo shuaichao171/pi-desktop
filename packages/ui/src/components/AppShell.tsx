@@ -3,6 +3,7 @@ import { ExitPresence } from './ExitPresence';
 import type { UiAppearanceState, UiSessionSearchResult, WorkspaceEntry } from '@pidesktop/shared';
 import { ChatView, type SearchMessageTarget } from './ChatView';
 import { ConversationHeader } from './ConversationHeader';
+import { useSplitPaneRegions } from './splitPaneRegions';
 import { ScopedErrorBoundary } from './ScopedErrorBoundary';
 import { ActivityBar } from './ActivityBar';
 import { TopBar } from './TopBar';
@@ -72,10 +73,6 @@ export function AppShell() {
 	const paiMode = windowMode === 'pai' || paiLaunch;
 	const [paneLaunch] = useState(() => new URLSearchParams(window.location.search).get('mode') === 'pane');
 	const paneMode = windowMode === 'pane' || paneLaunch;
-	// Each entry is one hosted pane: { paneId } from the main process. A region
-	// element with data-pane-id reports its own rect; panes close by id.
-	const [paneIds, setPaneIds] = useState<number[]>([]);
-	const regionHostRef = useRef<HTMLDivElement | null>(null);
 	const navigation = useSessionNavigation();
 	const [sidebarOpen, setSidebarOpen] = useState(() => !window.matchMedia(NARROW_WINDOW_QUERY).matches);
 	const [projectRevealRequest, setProjectRevealRequest] = useState(0);
@@ -139,42 +136,6 @@ export function AppShell() {
 		// must not yank the user back on every render.
 		if (!previous && extensionRequestPending && !paiMode) setMainView('chat');
 	}, [extensionRequestPending, paiMode]);
-	// Split panes: each region reports its own rect on every layout change;
-	// a pane closing itself (header ✕) removes its slot by id.
-	useEffect(() => {
-		if (paneIds.length === 0) return;
-		const bridge = useChatStore.getState().bridge;
-		const report = (paneId: number, region: Element) => {
-			const rect = region.getBoundingClientRect();
-			void bridge?.setSplitPaneBounds?.(paneId, { x: rect.x, y: rect.y, width: rect.width, height: rect.height });
-		};
-		const observers: ResizeObserver[] = [];
-		for (const paneId of paneIds) {
-			const region = regionHostRef.current?.querySelector<HTMLElement>(`[data-pane-id="${paneId}"]`);
-			if (!region) continue;
-			report(paneId, region);
-			const observer = new ResizeObserver(() => report(paneId, region));
-			observer.observe(region);
-			observers.push(observer);
-		}
-		return () => { for (const observer of observers) observer.disconnect(); };
-	}, [paneIds]);
-	useEffect(() => {
-		const bridge = useChatStore.getState().bridge;
-		return bridge?.onSplitPaneClosed?.((paneId) => {
-			setPaneIds((current) => current.filter((id) => id !== paneId));
-		});
-	}, []);
-	useEffect(() => {
-		const opened = (event: Event) => {
-			const paneId = (event as CustomEvent<number | undefined>).detail;
-			console.error('[split][renderer] opened event detail=', paneId);
-			setPaneIds((current) => (typeof paneId === 'number' && !current.includes(paneId) ? [...current, paneId] : current));
-			console.log('[split] opened event, paneId=', paneId, '→ paneIds');
-		};
-		window.addEventListener('pi-split-pane-opened', opened);
-		return () => window.removeEventListener('pi-split-pane-opened', opened);
-	}, []);
 	useEffect(() => {
 		const previous = previousAnyExtensionPendingRef.current;
 		previousAnyExtensionPendingRef.current = anyExtensionRequestPending;
@@ -452,6 +413,10 @@ export function AppShell() {
 	const conversationPath = useChatStore((state) => state.sessionPath);
 
 	const [commitOpen, setCommitOpen] = useState(false);
+	// Split panes are native views stacked above this page: they show only while
+	// the chat is the visible page and nothing of the main window overlays them.
+	const { paneIds, hostRef: splitPaneHostRef } = useSplitPaneRegions(!paneMode && !paiMode,
+		mainView === 'chat' && !settingsOpen && !searchOpen && !commitOpen && !(narrow && sidebarOpen) && !(workbenchOverlay && workbenchOpen));
 	const sessions = useChatStore((state) => state.sessions ?? []);
 	const messages = useChatStore((state) => state.messages ?? []);
 	const activeSession = sessions.find((session) => session.path === conversationPath);
@@ -518,12 +483,14 @@ export function AppShell() {
 			}} />}
 			<div className="pd-main-view">
 			<div className="pd-chat-view-host" hidden={mainView !== 'chat'} inert={mainView !== 'chat'}><ConversationHeader cwd={conversationCwd} title={currentTitle} busy={status === 'busy'} /><ScopedErrorBoundary scope="conversation" resetKeys={[conversationCwd, conversationId, conversationPath]}><ChatView onOpenModelManagement={openModelManagement} searchTarget={searchMessageTarget} navigationError={navigation.error} /></ScopedErrorBoundary></div>
-			{paneIds.length > 0 && <>
-			<div className="pd-split-divider" aria-hidden="true" />
-			<div ref={regionHostRef} className="pd-split-pane-host">
-				{paneIds.map((paneId) => <div key={paneId} data-pane-id={paneId} className="pd-split-pane-region" />)}
-			</div>
-			</>}
+			{/* Split pane placeholders: the chat and every pane share the row evenly;
+			   each native pane view is glued to its region by useSplitPaneRegions. */}
+			{paneIds.length > 0 && mainView === 'chat' && <div ref={splitPaneHostRef} className="pd-split-pane-host">
+				{paneIds.flatMap((paneId) => [
+					<div key={`divider-${paneId}`} className="pd-split-divider" aria-hidden="true" />,
+					<div key={paneId} data-pane-id={paneId} className="pd-split-pane-region" />,
+				])}
+			</div>}
 			{mainView === 'automations' && <ScopedErrorBoundary scope="automation"><Suspense fallback={null}><AutomationPage onOpenSession={async (cwd, path) => { const selected = await useChatStore.getState().selectSession(cwd, path); if (selected) { setSearchMessageTarget(null); setMainView('chat'); if (narrow) setSidebarOpen(false); } return selected; }} /></Suspense></ScopedErrorBoundary>}
 			{mainView === 'plugins' && <ScopedErrorBoundary scope="plugins"><Suspense fallback={null}><PluginsPage /></Suspense></ScopedErrorBoundary>}
 			{/* Pages without a composer keep notices at the top of the view. */}

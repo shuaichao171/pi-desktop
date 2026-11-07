@@ -15,6 +15,7 @@ const stubs = {
     export const Menu = { buildFromTemplate: () => ({}) };
     export const nativeImage = { createFromPath: () => ({ isEmpty: () => true }) };
     export const Tray = class {};
+    export const WebContentsView = class {};
     export const BrowserWindow = {
       getAllWindows: () => globalThis.__ipcWindows ?? [],
       fromWebContents: (sender) => globalThis.__ipcWindows?.find((win) => win.webContents === sender),
@@ -300,6 +301,97 @@ test('hosted pai windows route to their own agent and lose main-window-only feat
   unregisterPaiWindowSlot(pai);
   // Without a registered slot the same window is treated like a full window again.
   assert.equal(call(paiSender, channels.appInfo).windowMode, 'full');
+});
+
+test('split panes route to their own agent, stay out of main-window features, and are positioned by id', async (t) => {
+  const temp = await realpath(tmpdir());
+  const root = await mkdtemp(join(temp, 'pi-pane-ipc-'));
+  const main = createIpcWindow();
+  main.contentView = { children: [], removeChildView(view) { this.children = this.children.filter((child) => child !== view); } };
+  globalThis.__ipcUserData = root;
+  globalThis.__ipcWindows = [main];
+  globalThis.__ipcHandlers = new Map();
+  globalThis.__ipcAgent = {
+    onEvent() {}, onBackgroundActivity() {}, async dispose() {},
+    async getSnapshot() { return { cwd: 'main', sessionPath: null }; },
+  };
+  const paneFolder = join(root, 'pane-project');
+  await mkdir(paneFolder, { recursive: true });
+  const heldPath = join(paneFolder, 'one.jsonl');
+  let paneSessionPath = heldPath;
+  let paneNewSessions = 0;
+  let paneDisposed = 0;
+  const paneAgent = {
+    async getSnapshot() { return { cwd: paneFolder, sessionPath: paneSessionPath }; },
+    async newSession() { paneNewSessions += 1; paneSessionPath = join(paneFolder, 'two.jsonl'); },
+    async dispose() { paneDisposed += 1; },
+  };
+  // A pane is a WebContentsView inside the main window: its sender resolves to
+  // no BrowserWindow of its own, only to the registered pane slot.
+  const paneContents = { mainFrame: {}, destroyed: false, isDestroyed() { return this.destroyed; }, close() { this.destroyed = true; }, send() {} };
+  const viewCalls = [];
+  const view = {
+    webContents: paneContents,
+    setVisible: (visible) => viewCalls.push(['visible', visible]),
+    setBounds: (bounds) => viewCalls.push(['bounds', bounds]),
+  };
+  main.contentView.children.push(view);
+  const ipc = await import('../packages/desktop/src/main/ipc.ts?split-pane-hosted');
+  const { registerPaneSlot, unregisterPaneSlot } = await import('../packages/desktop/src/main/paiWindows.ts');
+  const { IPC_CHANNELS: channels } = await import('../packages/shared/src/index.ts');
+  t.after(async () => {
+    unregisterPaneSlot(paneContents);
+    await ipc.disposeServices();
+    await rm(root, { recursive: true, force: true });
+  });
+  ipc.registerIpc({ windowMode: 'full', getDialogWindow: () => main });
+  const slot = {
+    paneId: 7, view, parentWin: main, webContents: paneContents, cwd: paneFolder, sessionPath: heldPath, agent: paneAgent,
+    liveSessionPath: heldPath, busy: false, loaded: true, firstPaintReady: true, rendererReady: true, revealed: true, closing: false, disposed: false,
+  };
+  registerPaneSlot(slot);
+  const mainSender = { sender: main.webContents, senderFrame: main.webContents.mainFrame };
+  const paneSender = { sender: paneContents, senderFrame: paneContents.mainFrame };
+  const call = (sender, channel, ...args) => globalThis.__ipcHandlers.get(channel)(sender, ...args);
+
+  assert.equal(call(paneSender, channels.appInfo).windowMode, 'pane');
+  assert.equal(call(mainSender, channels.appInfo).windowMode, 'full');
+  // Only the pane's main frame may speak for it.
+  assert.throws(() => call({ sender: paneContents, senderFrame: {} }, channels.appInfo), /Invalid renderer sender/);
+  // Main-window-only surfaces, including opening and placing panes, are refused centrally.
+  for (const channel of [channels.workspaceSwitch, channels.agentInit, channels.splitPaneOpen, channels.splitPaneSetBounds, channels.splitPaneList]) {
+    assert.throws(() => call(paneSender, channel, paneFolder), /主窗口/);
+  }
+  assert.deepEqual(call(paneSender, channels.updateState), { phase: 'unavailable', unavailableReason: 'unsupported', currentVersion: '0.1.7-test' });
+  // Agent calls and "new conversation" stay on the pane's own agent host.
+  assert.deepEqual(await call(paneSender, channels.agentSnapshot), { cwd: paneFolder, sessionPath: heldPath });
+  assert.deepEqual(await call(mainSender, channels.agentSnapshot), { cwd: 'main', sessionPath: null });
+  assert.deepEqual(await call(paneSender, channels.agentNewSession), { cwd: paneFolder, sessionPath: join(paneFolder, 'two.jsonl') });
+  assert.equal(paneNewSessions, 1);
+  await assert.rejects(() => call(paneSender, channels.agentNewSession, { cwd: join(root, 'elsewhere') }), /打开它的文件夹/);
+  // The main window cannot activate a conversation a pane owns.
+  await assert.rejects(() => call(mainSender, channels.agentSwitchSession, heldPath), /分屏窗格/);
+
+  // The main renderer resyncs its regions and positions panes by id.
+  assert.deepEqual(call(mainSender, channels.splitPaneList), [7]);
+  call(mainSender, channels.splitPaneSetBounds, 7, { x: 600.4, y: 48, width: 599.6, height: 700 });
+  assert.deepEqual(viewCalls.splice(0), [['visible', true], ['bounds', { x: 600, y: 48, width: 600, height: 700 }]]);
+  // An empty rect hides the pane (an overlay of the main window is above it).
+  call(mainSender, channels.splitPaneSetBounds, 7, { x: 0, y: 0, width: 0, height: 0 });
+  assert.deepEqual(viewCalls.splice(0), [['visible', false]]);
+  // Unknown ids are ignored for placement and refused for closing.
+  call(mainSender, channels.splitPaneSetBounds, 99, { x: 0, y: 0, width: 10, height: 10 });
+  assert.deepEqual(viewCalls, []);
+  assert.throws(() => call(mainSender, channels.splitPaneSetBounds, 'x', {}), /窗格 id/);
+  assert.throws(() => call(mainSender, channels.splitPaneClose, 99), /没有可关闭的窗格/);
+
+  // Closing by id detaches the view, tells the main renderer, and disposes the pane's agent.
+  await call(mainSender, channels.splitPaneClose, 7);
+  assert.deepEqual(main.contentView.children, []);
+  assert.deepEqual(main.sent.filter(([channel]) => channel === channels.splitPaneClosed), [[channels.splitPaneClosed, 7]]);
+  assert.equal(paneDisposed, 1);
+  assert.equal(paneContents.isDestroyed(), true);
+  assert.deepEqual(call(mainSender, channels.splitPaneList), []);
 });
 
 test('composer workspace selection creates a fresh session, including the first detach to home, while normal selection restores history', async (t) => {

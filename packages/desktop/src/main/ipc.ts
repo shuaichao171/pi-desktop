@@ -14,9 +14,8 @@ import { mkdir, rm, stat } from 'node:fs/promises';
 import { basename, dirname, join, resolve } from 'node:path';
 import { IPC_CHANNELS, PROJECT_BAR_ANIM_IDS, isValidProjectBarValue, normalizeProjectBarValue, type AgentEventEnvelope, type AppLocale, type UiAppCommand, type UiAttachment, type UiExtensionDialogRequest, type UiInputScope, type UiSessionMetaPatch, type UiSessionSummary, type UiSidebarGroupChange, type UiSlashCommandRequest, type UiThinkingLevel } from '@pidesktop/shared';
 import { createIsolatedAgentService } from './agentClient';
-import { hostedHeldSessionPaths, isPaiSender, isPaiWindow, paiHeldSessionPaths, paiSlotForSender, paiWindowSlots, registerPaiWindowSlot, unregisterPaiWindowSlot } from './paiWindows';
-import { isPaneSender, paneSlotForSender, paneSlots } from './paiWindows';
-import { initSplitPanes, openSplitPane, closeSplitPane, setPaneBounds, notifyPaneRendererReady, disposeAllPanes, panePendingDialogRequests, resolvePanePendingDialog, trace } from './splitPanes';
+import { hostedHeldSessionPaths, isPaiSender, isPaiWindow, isPaneSender, paiHeldSessionPaths, paiSlotForSender, paiWindowSlots, paneHeldSessionPaths, paneSlotForSender, paneSlots, registerPaiWindowSlot, unregisterPaiWindowSlot } from './paiWindows';
+import { initSplitPanes, openSplitPane, closeSplitPane, setPaneBounds, notifyPaneRendererReady, disposeAllPanes, panePendingDialogRequests, paneById, paneIdsFor, resolvePanePendingDialog } from './splitPanes';
 import { getAppLocale, setAppLocale } from './appLocale';
 import { appIconPath, destroyAppTray, invalidateAppTrayData, updateAppTrayMenu } from './tray';
 import { updateService } from './updateService';
@@ -273,6 +272,7 @@ function createPaiWindow(request: PaiWindowRequest): void {
 	const sessionPath = request.sessionPath === undefined ? undefined : validatePaiSession(request.sessionPath);
 	// A conversation the user asks for twice focuses its existing window.
 	if (sessionPath) {
+		if (new Set(paneHeldSessionPaths()).has(sessionPath)) throw new Error('会话已在分屏窗格中打开，请先关闭该窗格');
 		for (const slot of paiWindowSlots()) {
 			const entry = slot as PaiWindowEntry;
 			if (entry.sessionPath === sessionPath || entry.liveSessionPath === sessionPath) {
@@ -831,7 +831,8 @@ function newConversation(options?: unknown): Promise<UiInputScope> {
  * window keeps the folder it was opened for and never touches the main window's
  * workspace activation or its active conversation (see newConversation).
  */
-async function newPaiConversation(entry: PaiWindowEntry, options?: unknown): Promise<UiInputScope> {
+/** New conversation inside a hosted surface (pai window or split pane): it stays in the folder it was opened for. */
+async function newPaiConversation(entry: { cwd: string; sessionPath?: string; agent: Pick<PaiAgentService, 'newSession' | 'getSnapshot'> }, options?: unknown): Promise<UiInputScope> {
 	if (options !== undefined && (!isRecord(options) || (options.cwd !== undefined && typeof options.cwd !== 'string'))) {
 		throw new Error('新对话选项无效');
 	}
@@ -1257,6 +1258,7 @@ const mainOnlyChannels = new Set<string>([
 	IPC_CHANNELS.sessionRevealFile, IPC_CHANNELS.sessionFork, IPC_CHANNELS.sessionOpenWindow, IPC_CHANNELS.sessionDelete,
 	IPC_CHANNELS.agentUpdateSessionMeta, IPC_CHANNELS.agentUpdateSessionOrders, IPC_CHANNELS.agentListSessionGroups, IPC_CHANNELS.agentUpdateSessionGroups,
 	IPC_CHANNELS.appRelaunch,
+	IPC_CHANNELS.splitPaneOpen, IPC_CHANNELS.splitPaneSetBounds, IPC_CHANNELS.splitPaneList,
 	IPC_CHANNELS.workspacePick, IPC_CHANNELS.workspaceProjectsDirectory, IPC_CHANNELS.workspaceCreateProject, IPC_CHANNELS.workspaceAddDropped,
 	IPC_CHANNELS.workspaceSwitch, IPC_CHANNELS.workspaceDefault, IPC_CHANNELS.workspaceRemove, IPC_CHANNELS.workspaceListPinned, IPC_CHANNELS.workspaceSetPinned,
 	IPC_CHANNELS.pluginCatalog, IPC_CHANNELS.pluginMutate, IPC_CHANNELS.pluginPreview, IPC_CHANNELS.pluginPickDirectory, IPC_CHANNELS.pluginDiscover,
@@ -1307,7 +1309,8 @@ export function registerIpc(options: {
 	}
 	initSplitPanes({
 		updateKeepAwakeBusy,
-		isAutomationRunning: (cwd, path) => automationExecutor.isSessionRunning(path),
+		isAutomationRunning: (_cwd, path) => automationExecutor.isSessionRunning(path),
+		isHeldElsewhere: (path) => new Set(paiHeldSessionPaths()).has(path),
 		markBackgroundActivity: (path) => {
 			void (async () => {
 				await withSessionMeta(async (meta) => {
@@ -1681,7 +1684,7 @@ export function registerIpc(options: {
 		await setAppLocale(locale);
 		updateAppTrayMenu();
 	});
-	handleRendererInvoke(IPC_CHANNELS.updateState, (event) => isPaiSender(event)
+	handleRendererInvoke(IPC_CHANNELS.updateState, (event) => isPaiSender(event) || isPaneSender(event)
 		? { phase: 'unavailable', unavailableReason: 'unsupported', currentVersion: app.getVersion() } : updateService.getState());
 	handleRendererInvoke(IPC_CHANNELS.updateCheck, (event, autoInstall?: unknown) => {
 		if (isPaiSender(event) || isPaneSender(event)) throw new Error('Install updates from the main Pi Desktop window');
@@ -1895,13 +1898,14 @@ export function registerIpc(options: {
 		return forked;
 	}));
 	handleRendererInvoke(IPC_CHANNELS.splitPaneOpen, (event, cwd: unknown, sessionPath?: unknown) => {
-		trace('invoke received session=' + (sessionPath ?? '(fresh)') + ' cwd=' + cwd);
 		const parentWin = requireRendererSender(event);
 		return openSplitPane(parentWin, {
 			cwd: typeof cwd === 'string' ? cwd : '',
 			...(typeof sessionPath === 'string' && sessionPath ? { sessionPath } : {}),
+			background: resolveWindowTheme(readAppearanceState(appearancePath), nativeTheme.shouldUseDarkColors).background,
 		});
 	});
+	handleRendererInvoke(IPC_CHANNELS.splitPaneList, (event) => paneIdsFor(requireRendererSender(event)));
 	handleRendererInvoke(IPC_CHANNELS.focusHostedSession, (_event, path: unknown) => {
 		if (typeof path !== 'string' || !path) return false;
 		for (const pane of paneSlots()) {
@@ -1923,19 +1927,20 @@ export function registerIpc(options: {
 		}
 		return false;
 	});
-	handleRendererInvoke(IPC_CHANNELS.splitPaneClose, (event) => {
+	handleRendererInvoke(IPC_CHANNELS.splitPaneClose, (event, paneId?: unknown) => {
+		// A pane closes itself; the main window closes one of its panes by id.
 		const paneSlot = paneSlotForSender(event.sender);
 		if (paneSlot) return closeSplitPane(paneSlot);
-		const parentWin = requireRendererSender(event);
-		const pane = [...paneSlots()].find((slot) => slot.parentWin === parentWin);
-		if (pane) return closeSplitPane(pane);
-		throw new Error('没有可关闭的窗格');
+		const pane = typeof paneId === 'number' ? paneById(requireRendererSender(event), paneId) : undefined;
+		if (!pane) throw new Error('没有可关闭的窗格');
+		return closeSplitPane(pane);
 	});
-	handleRendererInvoke(IPC_CHANNELS.splitPaneSetBounds, (event, rect: unknown) => {
+	handleRendererInvoke(IPC_CHANNELS.splitPaneSetBounds, (event, paneId: unknown, rect: unknown) => {
 		const parentWin = requireRendererSender(event);
+		if (typeof paneId !== 'number' || !Number.isInteger(paneId)) throw new Error('窗格 id 无效');
 		const r = (rect ?? {}) as { x?: unknown; y?: unknown; width?: unknown; height?: unknown };
 		const num = (v: unknown) => typeof v === 'number' && Number.isFinite(v) ? v : 0;
-		setPaneBounds(parentWin, { x: num(r.x), y: num(r.y), width: num(r.width), height: num(r.height) });
+		setPaneBounds(parentWin, paneId, { x: num(r.x), y: num(r.y), width: num(r.width), height: num(r.height) });
 	});
 	handleRendererInvoke(IPC_CHANNELS.sessionOpenWindow, async (_event, path: string) => {
 		const target = normalizeSessionPath(path);
@@ -2168,8 +2173,8 @@ export function registerIpc(options: {
 	handleRendererInvoke(IPC_CHANNELS.agentAbort, (event) => agentFor(event).abort());
 
 	handleRendererInvoke(IPC_CHANNELS.agentNewSession, (event, options?: unknown) => {
-		const slot = paiSlotForSender(event.sender);
-		return slot ? newPaiConversation(slot as PaiWindowEntry, options) : newConversation(options);
+		const slot = (paiSlotForSender(event.sender) as PaiWindowEntry | undefined) ?? paneSlotForSender(event.sender);
+		return slot ? newPaiConversation(slot, options) : newConversation(options);
 	});
 	handleRendererInvoke(IPC_CHANNELS.agentExtensionDialogPending, (event) => {
 		if (isPaneSender(event)) return panePendingDialogRequests(event.sender);
@@ -2179,7 +2184,7 @@ export function registerIpc(options: {
 	handleRendererInvoke(IPC_CHANNELS.agentExtensionDialogResponse, (event, id: string, value: unknown) => {
 		if (typeof id !== 'string') throw new Error('交互结果无效');
 		if (isPaneSender(event) && resolvePanePendingDialog(id, value)) return;
-	const pending = pendingDialogs.get(id);
+		const pending = pendingDialogs.get(id);
 		if (pending && pending.owner.webContents === event.sender) pending.resolve(requireDialogResponse(pending.request, value));
 	});
 }

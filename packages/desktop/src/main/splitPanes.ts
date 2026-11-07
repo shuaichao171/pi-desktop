@@ -8,13 +8,12 @@
  * own agent host, never touching the main window's workspace.
  */
 import { app, BrowserWindow, dialog, WebContentsView, type WebContents } from 'electron';
-import { appendFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { IPC_CHANNELS, type AgentEventEnvelope, type UiExtensionDialogRequest, type UiExtensionDialogResponse } from '@pidesktop/shared';
 import { getAppLocale } from './appLocale';
 import { rendererLaunchUrl, validatePaiSession, validatePaiWorkspace } from './desktopLaunch';
 import { createIsolatedAgentService } from './agentClient';
-import { paneHeldSessionPaths, paneSlots, registerPaneSlot, unregisterPaneSlot, type PaiPaneSlot } from './paneRegistry';
+import { paneHeldSessionPaths, paneSlotForSender, paneSlots, registerPaneSlot, unregisterPaneSlot, type PaiPaneSlot } from './paneRegistry';
 
 interface PaneExtensionDialog {
 	request: UiExtensionDialogRequest;
@@ -22,21 +21,17 @@ interface PaneExtensionDialog {
 	cleanup(): void;
 }
 
-const PANE_TRACE = 'D:/ai/.pigit/pane-trace.log';
-export function trace(line: string): void {
-	try { appendFileSync(PANE_TRACE, new Date().toISOString().slice(11, 23) + ' ' + line + '\n'); } catch { /* tracing never breaks the pane. */ }
-}
-
 const panePendingDialogs = new Map<string, PaneExtensionDialog>();
 const paneStartupNotices = new Map<WebContents, UiExtensionDialogRequest[]>();
 const paneNotificationReady = new WeakSet<WebContents>();
 const pendingUnreadPaths = new Set<string>();
-const parentWindowConsoleHooked = new Map<BrowserWindow, true>();
+const parentWindowsWatched = new WeakSet<BrowserWindow>();
 
 let hooks: {
 	updateKeepAwakeBusy(): void;
 	isAutomationRunning(cwd: string, path: string): boolean;
 	markBackgroundActivity(path: string): void;
+	isHeldElsewhere(path: string): boolean;
 } | null = null;
 
 /** Called from ipc.ts once: injects the main-process collaborators so this
@@ -45,6 +40,8 @@ export function initSplitPanes(collaborators: {
 	updateKeepAwakeBusy(): void;
 	isAutomationRunning(cwd: string, path: string): boolean;
 	markBackgroundActivity(path: string): void;
+	/** True when a pai window already owns the session (a second host must not open it). */
+	isHeldElsewhere(path: string): boolean;
 }): void {
 	hooks = collaborators;
 }
@@ -62,7 +59,7 @@ function paneErrorDialog(parentWin: BrowserWindow | undefined, message: string):
 
 let nextPaneId = 1;
 
-export function openSplitPane(parentWin: BrowserWindow, request: { cwd: string; sessionPath?: string }): number {
+export function openSplitPane(parentWin: BrowserWindow, request: { cwd: string; sessionPath?: string; background?: string }): number {
 	const cwd = validatePaiWorkspace(request.cwd);
 	const sessionPath = request.sessionPath === undefined ? undefined : validatePaiSession(request.sessionPath);
 	if (sessionPath && hooks?.isAutomationRunning(cwd, sessionPath)) throw new Error('自动化仍在运行，请结束后再打开窗格');
@@ -77,6 +74,7 @@ export function openSplitPane(parentWin: BrowserWindow, request: { cwd: string; 
 			}
 			return existing.paneId;
 		}
+		if (hooks?.isHeldElsewhere(sessionPath)) throw new Error('会话已在 pai 小窗中打开，请先关闭该小窗');
 	}
 	const view = new WebContentsView({
 		webPreferences: {
@@ -87,10 +85,11 @@ export function openSplitPane(parentWin: BrowserWindow, request: { cwd: string; 
 			nodeIntegration: false,
 		},
 	});
-	view.setBackgroundColor('#111216');
+	view.setBackgroundColor(request.background ?? '#111216');
 	// 创建即给非零 bounds：0 尺寸 view 在 Electron 44 下页面加载事件会被冻结
-	// （loadURL 永不 settle），真实 bounds 由主窗区域上报后覆盖。
-	view.setBounds({ x: 0, y: 0, width: 480, height: 640 });
+	// （loadURL 永不 settle）。先按「右侧均分」估算落位，主窗占位区上报真实
+	// rect 后立即覆盖（renderer 拿到 paneId 后才渲染占位区）。
+	view.setBounds(estimatedPaneBounds(parentWin, paneIdsFor(parentWin).length + 1));
 	const entry: PaiPaneSlot = {
 		paneId: nextPaneId++,
 		view, parentWin,
@@ -115,22 +114,10 @@ export function openSplitPane(parentWin: BrowserWindow, request: { cwd: string; 
 		},
 	});
 	registerPaneSlot(entry);
-	trace('pane created paneId=' + entry.paneId + ' cwd=' + cwd);
-	return entry.paneId;
 	// Attach immediately: an unattached WebContentsView does not advance page
-	// loads in Electron 44 — the zero-sized view is invisible until first bounds.
-	if (!parentWin.isDestroyed()) {
-		parentWin.contentView.addChildView(view);
-		parentWin.removeAllListeners('resize');
-		parentWin.on('resize', () => layoutPanesFor(parentWin));
-		layoutPanesFor(parentWin);
-	}
-	if (!parentWindowConsoleHooked.has(parentWin) && !parentWin.isDestroyed()) {
-		parentWindowConsoleHooked.set(parentWin, true);
-		parentWin.webContents.on('console-message', (_event, _level, message) => {
-			if (typeof message === 'string' && message.includes('[split][renderer]')) trace('main-rdr ' + message);
-		});
-	}
+	// loads in Electron 44.
+	parentWin.contentView.addChildView(view);
+	watchParentWindow(parentWin);
 	let failureReported = false;
 	const reportFailure = (reason: string): void => {
 		if (failureReported || entry.disposed) return;
@@ -144,8 +131,6 @@ export function openSplitPane(parentWin: BrowserWindow, request: { cwd: string; 
 	});
 	entry.webContents.on('did-fail-load', (_event, code, description, _url, isMainFrame) => {
 		if (isMainFrame && code !== -3) reportFailure(description);
-	});
-	entry.webContents.on('console-message', (_event, _level, message, line, sourceId) => {
 	});
 	entry.webContents.setWindowOpenHandler(({ url }) => {
 		try {
@@ -177,16 +162,7 @@ export function openSplitPane(parentWin: BrowserWindow, request: { cwd: string; 
 		const load = !app.isPackaged && process.env.ELECTRON_RENDERER_URL
 			? view.webContents.loadURL(rendererLaunchUrl(process.env.ELECTRON_RENDERER_URL, { windowMode: 'pane', cwd }))
 			: view.webContents.loadFile(join(app.getAppPath(), 'out', 'renderer', 'index.html'), { query: { mode: 'pane' } });
-		entry.webContents.once('did-finish-load', () => trace('did-finish-load paneId=' + entry.paneId));
-		entry.webContents.once('did-fail-load', (_e, code, desc) => trace('did-fail-load paneId=' + entry.paneId + ' code=' + code + ' ' + desc));
-		const loadWatch = setTimeout(() => {
-			if (!entry.loaded && !entry.disposed) trace('STILL LOADING paneId=' + entry.paneId + ' url=' + entry.webContents.getURL() + ' isLoading=' + entry.webContents.isLoading());
-		}, 8000);
 		void load.then(() => {
-			trace('pane load done paneId=' + entry.paneId + ' url=' + entry.webContents.getURL());
-			layoutPanesFor(entry.parentWin);
-		clearTimeout(loadWatch);
-		setTimeout(() => { if (!entry.disposed && !entry.firstPaintReady) console.error('[split] paneId=' + entry.paneId + ' loaded but no region report yet — renderer effect did not fire'); }, 5000);
 			entry.loaded = true;
 			revealPane(entry);
 		}).catch((error: unknown) => reportFailure(error instanceof Error ? error.message : String(error)));
@@ -198,33 +174,38 @@ export function openSplitPane(parentWin: BrowserWindow, request: { cwd: string; 
 			paneErrorDialog(parentWin, error instanceof Error ? error.message : String(error));
 			void closeSplitPane(entry, { skipConfirm: true });
 		});
+	return entry.paneId;
 }
 
 
-/** Right-side stack: each pane owns an equal column of the right overlay area. */
-function layoutPanesFor(parentWin: BrowserWindow): void {
-	const panes = paneSlots().filter((slot) => slot.parentWin === parentWin && !slot.disposed);
-	trace('layout panes=' + panes.length + ' for win=' + parentWin.id + ' content=' + JSON.stringify(parentWin.contentView.getBounds()));
-	if (panes.length === 0) return;
+/** Pre-report placement: the right half of the window, split evenly. The main
+ * renderer's region report replaces it as soon as the pane id reaches it. */
+function estimatedPaneBounds(parentWin: BrowserWindow, count: number): { x: number; y: number; width: number; height: number } {
 	const content = parentWin.contentView.getBounds();
-	const columnWidth = Math.max(280, Math.floor(content.width * 0.5 / panes.length));
-	panes.forEach((entry, index) => {
-		if (entry.webContents.isDestroyed()) return;
-		if (!entry.revealed) revealPane(entry);
-		entry.view.setBounds({
-			x: content.width - columnWidth * (panes.length - index),
-			y: 0,
-			width: columnWidth,
-			height: content.height,
-		});
+	const columnWidth = Math.max(280, Math.floor(content.width * 0.5 / Math.max(1, count)));
+	return { x: Math.max(0, content.width - columnWidth), y: 0, width: columnWidth, height: Math.max(1, content.height) };
+}
+
+/** Panes live and die with their parent window. */
+function watchParentWindow(parentWin: BrowserWindow): void {
+	if (parentWindowsWatched.has(parentWin)) return;
+	parentWindowsWatched.add(parentWin);
+	parentWin.once('closed', () => {
+		for (const entry of paneSlots().filter((slot) => slot.parentWin === parentWin)) {
+			entry.closing = true;
+			unregisterPaneSlot(entry.webContents);
+			void disposePaneEntry(entry).finally(() => {
+				try { if (!entry.webContents.isDestroyed()) entry.webContents.close(); } catch { /* Already gone. */ }
+			});
+		}
 	});
 }
 
 function revealPane(entry: PaiPaneSlot): void {
 	if (entry.revealed || !entry.loaded || !entry.firstPaintReady || !entry.rendererReady) return;
 	if (!entry.parentWin.isDestroyed() && !entry.webContents.isDestroyed()) {
-		// Attach on first reveal; bounds arrive from the main renderer's region
-		// reporter, so an unpositioned view stays zero-sized until then.
+		// Loaded and painted: from here on the pane may throttle like any
+		// background page while it is hidden.
 		entry.revealed = true;
 		entry.webContents.setBackgroundThrottling(true);
 	}
@@ -243,13 +224,18 @@ export function notifyPaneRendererReady(webContents: WebContents): void {
 	flushPaneNotices(entry);
 }
 
-/** Position/resize one pane by id from the main renderer's reported region (DIP, viewport-relative). */
+/**
+ * Position/resize one pane by id from the main renderer's reported region (DIP,
+ * viewport-relative). An empty rect hides the pane: the native view sits above
+ * all page content, so the main window hides its panes while a dialog, overlay
+ * or non-chat page would otherwise end up underneath them.
+ */
 export function setPaneBounds(parentWin: BrowserWindow, paneId: number, rect: { x: number; y: number; width: number; height: number }): void {
-	trace('renderer-reported bounds paneId=' + paneId + ' rect=' + JSON.stringify(rect));
-	const entry = paneSlots().find((slot) => slot.paneId === paneId && slot.parentWin === parentWin);
-	if (!entry) return;
-	if (!entry.revealed) revealPane(entry);
-	console.error('[split] setBounds paneId=' + paneId + ' rect=' + JSON.stringify(rect));
+	const entry = paneById(parentWin, paneId);
+	if (!entry || entry.webContents.isDestroyed()) return;
+	const visible = rect.width >= 1 && rect.height >= 1;
+	entry.view.setVisible(visible);
+	if (!visible) return;
 	entry.view.setBounds({
 		x: Math.max(0, Math.round(rect.x)),
 		y: Math.max(0, Math.round(rect.y)),
@@ -259,7 +245,12 @@ export function setPaneBounds(parentWin: BrowserWindow, paneId: number, rect: { 
 }
 
 export function paneById(parentWin: BrowserWindow, paneId: number): PaiPaneSlot | undefined {
-	return paneSlots().find((slot) => slot.paneId === paneId && slot.parentWin === parentWin);
+	return paneSlots().find((slot) => slot.paneId === paneId && slot.parentWin === parentWin && !slot.disposed);
+}
+
+/** Open pane ids of a window, oldest first (a reloaded main renderer resyncs from it). */
+export function paneIdsFor(parentWin: BrowserWindow): number[] {
+	return paneSlots().filter((slot) => slot.parentWin === parentWin && !slot.disposed && !slot.closing).map((slot) => slot.paneId);
 }
 
 export async function closeSplitPane(entry: PaiPaneSlot, options?: { skipConfirm?: boolean }): Promise<void> {
@@ -284,9 +275,8 @@ export async function closeSplitPane(entry: PaiPaneSlot, options?: { skipConfirm
 		}
 	} catch { /* The parent may already be gone. */ }
 	unregisterPaneSlot(entry.webContents);
-	if (!entry.parentWin.isDestroyed()) {
+	if (!entry.parentWin.isDestroyed() && !entry.parentWin.webContents.isDestroyed()) {
 		entry.parentWin.webContents.send(IPC_CHANNELS.splitPaneClosed, entry.paneId);
-		layoutPanesFor(entry.parentWin);
 	}
 	await disposePaneEntry(entry);
 	try { if (!entry.view.webContents.isDestroyed()) entry.view.webContents.close(); } catch { /* Already gone. */ }

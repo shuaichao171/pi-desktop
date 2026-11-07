@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import { ExitPresence } from './ExitPresence';
+import { SPLIT_PANE_OPENED_EVENT } from './splitPaneRegions';
 import { isValidProjectBarValue, normalizeProjectBarValue, projectBarLeavesMachine, type UiSessionGroup, type UiSidebarGroupChange, type WorkspaceOpener, type WorkspaceProjectNickname } from '@pidesktop/shared';
 import { PROJECT_BAR_ANIMS, PROJECT_BAR_PRESETS, readUserBarPresets, saveUserBarPresets, suggestBarLight, USER_BAR_PRESET_LIMIT, projectBarStyle, type UserBarPreset } from '../sidebarAppearance';
 import { projectCustomEntryDisplayName, readProjectCustomEntries, saveProjectCustomEntries, PROJECT_CUSTOM_ENTRY_LIMIT, type ProjectCustomEntry } from '../projectCustomEntries';
@@ -1168,18 +1169,15 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 		setPopup(null);
 		void perform(async () => {
 			if (!bridge?.openSplitPane) return;
-			const existedBefore = await bridge.focusHostedSession?.(session.path).catch(() => false);
-			const result = await bridge.openSplitPane(session.workspace, session.path);
-			// The pane now owns this transcript. If it was the main window's current
-			// session, leave a fresh one here (same semantic as pai windows).
+			// Already hosted (split pane or pai window): that host was just focused.
+			if (await bridge.focusHostedSession?.(session.path).catch(() => false)) return;
+			// The pane takes over this transcript. When it is the main window's
+			// current session, leave it first so two agents never write the same
+			// conversation file (same semantic as pai windows).
 			const current = useChatStore.getState();
-			// Only vacate the main window on a brand-new pane: a repeat click just
-			// focuses the existing pane (its transcript already lives there).
-			if (!existedBefore && current.cwd === session.workspace && current.sessionPath === session.path) { await newSession({ cwd: session.workspace }); onNavigate(); }
-			const paneId = result;
-			console.error('[split][renderer] openSplitPane resolved paneId=', paneId);
-			window.dispatchEvent(new CustomEvent('pi-split-pane-opened', { detail: paneId }));
-			console.log('[split] openSplitPane resolved, paneId=', paneId);
+			if (current.cwd === session.workspace && current.sessionPath === session.path) { await newSession({ cwd: session.workspace }); onNavigate(); }
+			const paneId = await bridge.openSplitPane(session.workspace, session.path);
+			window.dispatchEvent(new CustomEvent(SPLIT_PANE_OPENED_EVENT, { detail: paneId }));
 		});
 	}
 	function forkFromMenu(session: SidebarSession) {

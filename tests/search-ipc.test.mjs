@@ -15,6 +15,7 @@ const stubs = {
     export const Menu = { buildFromTemplate: () => ({}) };
     export const nativeImage = { createFromPath: () => ({ isEmpty: () => true }) };
     export const Tray = class {};
+    export const WebContentsView = class {};
     export const dialog = { showErrorBox: () => {} };
     export const Notification = class { static isSupported() { return false; } on() { return this; } show() {} };
     export const ipcMain = { handle: (channel, handler) => globalThis.__searchHandlers.set(channel, handler) };

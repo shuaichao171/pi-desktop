@@ -62,6 +62,7 @@ export const IPC_CHANNELS = {
   splitPaneClose: 'split-pane:close',
   splitPaneSetBounds: 'split-pane:set-bounds',
   splitPaneClosed: 'split-pane:closed',
+  splitPaneList: 'split-pane:list',
   focusHostedSession: 'agent:focus-hosted-session',
   appInfo: 'app:info',
   appSetLocale: 'app:set-locale',
@@ -1297,9 +1298,11 @@ export interface AgentBridge extends InputFeatureBridge, DataFeaturesBridge, Wor
   openSplitPane(cwd: string, sessionPath?: string): Promise<number>;
   /** Closes a pane of this window by id (pane renderer self-close or main window request). */
   closeSplitPane(paneId?: number): Promise<void>;
-  /** Reports one pane's region rect (DIP, viewport-relative) for WebContentsView positioning. */
+  /** Ids of this window's open panes, oldest first (a reloaded main renderer resyncs its regions). */
+  listSplitPanes(): Promise<number[]>;
+  /** Reports one pane's region rect (DIP, viewport-relative) for WebContentsView positioning; an empty rect hides the pane. */
   setSplitPaneBounds(paneId: number, rect: { x: number; y: number; width: number; height: number }): Promise<void>;
-  /** Push notification: the window's split pane was closed (from inside the pane). */
+  /** Push notification: one of the window's split panes was closed. */
   onSplitPaneClosed(listener: (paneId: number) => void): () => void;
   /** True when the session lives in a split pane or pai window; focuses that host. */
   focusHostedSession(path: string): Promise<boolean>;

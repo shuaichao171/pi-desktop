@@ -4,8 +4,12 @@
 .pd-app-shell.is-pane { display: flex; flex-direction: column; }
 
 /* Main-window side: reserved region + divider between the two panes. */
-.pd-split-pane-host { display: flex; flex: 1 1 0; min-width: 0; }
-.pd-split-pane-region { flex: 1 1 0; min-width: 280px; position: relative; border-left: 1px solid var(--pd-border); background: var(--pd-bg); }
+/* The host only groups the regions in the DOM: the chat and each region are
+   sibling columns of .pd-main-view, so N panes split the row N+1 ways evenly and
+   can never push past the window edge. The native view covers its whole region,
+   so separators are their own 1px columns. */
+.pd-split-pane-host { display: contents; }
+.pd-split-pane-region { flex: 1 1 0; min-width: 0; background: var(--pd-bg); }
 .pd-split-divider { flex: 0 0 1px; background: var(--pd-border); }
 /* The full window drags by its top bar; the pai window has no top bar, so its
    compact controls row is the drag handle. The controls must hug their buttons
