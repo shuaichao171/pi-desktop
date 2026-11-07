@@ -908,14 +908,22 @@ if (!get().modelProviders.length) void get().refreshModelProviders().catch(() =>
 		// and a failed write restores the captured rows (runtime events merge
 		// onto cached entries, so an in-flight overlay survives them).
 		const overlay = applySessionMetaOverlay(path, patch);
+		// Boolean flips stay protected until their IPC settles: a listing landing in
+		// between re-plays the pending flip instead of wiping it with stale rows.
+		const hasFlags = (['pinned', 'archived', 'unread'] as const).some((key) => typeof patch[key] === 'boolean');
+		const forget = hasFlags ? registerSessionMetaOverlay(path, patch) : null;
 		try {
 			// Editors own mutation errors and retain their drafts. Do not turn a
 			// failed title/metadata edit into a chat failure, especially after switching.
 			await bridge.updateSessionMeta(path, patch);
 		} catch (error) {
+			forget?.();
 			restoreSessionMetaOverlay(overlay);
+			// The restore above may have clobbered a newer in-flight flip of the same row.
+			if (pendingSessionMetaOverlays.has(path)) applySessionMetaOverlay(path, composePendingSessionPatch(path));
 			throw error;
 		}
+		forget?.();
 		if (get().bridge !== bridge) return;
 		if (workspace) await refreshSessionCache(workspace, isCurrent());
 	},
@@ -1689,7 +1697,8 @@ async function refreshSessionCache(cwd: string, reportError = true): Promise<voi
 	const applySessions = (sessions: UiSessionSummary[], phase: WorkspaceSessionRequest['phase']) => {
 		store.setState((state) => {
 			const visible = pendingSessionDeletions.size ? sessions.filter((session) => !pendingSessionDeletions.has(session.path)) : sessions;
-			const merged = mergeRuntimeStates(cwd, visible, state.sessionRuntimes);
+			const overlaid = replayPendingSessionOverlays(visible);
+			const merged = mergeRuntimeStates(cwd, overlaid, state.sessionRuntimes);
 			return { sessionsByWorkspace: { ...state.sessionsByWorkspace, [cwd]: merged },
 				workspaceSessionRequests: { ...state.workspaceSessionRequests, [cwd]: { phase, requestId: request } },
 				...(state.cwd === cwd ? { sessions: merged } : {}) };
@@ -1815,6 +1824,54 @@ function restoreSessionMetaOverlay(overlay: SessionMetaOverlay): void {
 		if (!changed) return state;
 		return { sessionsByWorkspace, ...(state.cwd && sessionsByWorkspace[state.cwd] ? { sessions: sessionsByWorkspace[state.cwd] } : {}) };
 	});
+}
+
+/** In-flight optimistic flag flips, keyed by session path. A refresh landing
+ * between the overlay and the IPC completion serves a snapshot read before the
+ * commit and would wipe the flip (rows bounce back into the unarchived list);
+ * every applied listing re-plays the still-pending patches on top. */
+const pendingSessionMetaOverlays = new Map<string, { patch: UiSessionMetaPatch }[]>();
+
+function registerSessionMetaOverlay(path: string, patch: UiSessionMetaPatch): () => void {
+	const entry = { patch };
+	const list = pendingSessionMetaOverlays.get(path) ?? [];
+	list.push(entry);
+	pendingSessionMetaOverlays.set(path, list);
+	return () => {
+		const current = pendingSessionMetaOverlays.get(path);
+		if (!current) return;
+		const index = current.indexOf(entry);
+		if (index >= 0) current.splice(index, 1);
+		if (!current.length) pendingSessionMetaOverlays.delete(path);
+	};
+}
+
+/** Compose the boolean flags of every still-pending flip for one path (later wins). */
+function composePendingSessionPatch(path: string): UiSessionMetaPatch {
+	const composed: UiSessionMetaPatch = {};
+	for (const { patch } of pendingSessionMetaOverlays.get(path) ?? []) {
+		for (const key of ['pinned', 'archived', 'unread'] as const) {
+			if (typeof patch[key] === 'boolean') composed[key] = patch[key];
+		}
+	}
+	return composed;
+}
+
+/** Re-apply in-flight flag flips to a freshly listed row set: rows absent from
+ * the set are left alone (deleted meanwhile); a set with no pending rows is kept as-is. */
+function replayPendingSessionOverlays(sessions: UiSessionSummary[]): UiSessionSummary[] {
+	if (!pendingSessionMetaOverlays.size) return sessions;
+	let changed = false;
+	const result = sessions.map((session) => {
+		const composed = composePendingSessionPatch(session.path);
+		const flags = (['pinned', 'archived', 'unread'] as const).filter((key) => typeof composed[key] === 'boolean');
+		if (!flags.length) return session;
+		const entry: UiSessionSummary = { ...session };
+		for (const key of flags) entry[key] = composed[key];
+		changed = true;
+		return entry;
+	});
+	return changed ? result : sessions;
 }
 
 
