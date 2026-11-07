@@ -110,11 +110,12 @@ export type { DesktopApprovalOptions } from './extensionApproval.ts';
 import { requireInputQueueScope, type UiInputQueue, type UiInputQueueScope, type UiInputQueueMutation, type UiInputReceipt, type UiSubmitInput } from '../../shared/src/inputFeatures.ts';
 import type { ModelTestRequest, ProjectDefaultsWrite, UiSaveProviderUsageQueryRequest, UiUsageQueryConfig, UiUsageQueryResult } from '../../shared/src/managementFeatures.ts';
 import { runProviderUsageQuery, usageQueryInfo, normalizeUsageQueryConfig, validateUsageQueryRequest } from './providerUsageQuery.ts';
+import { applyCanonicalThinkingLevel, normalizeThinkingLevel } from './thinkingLevels.ts';
 import { clearDisabledModelsForProvider } from './customProviders.ts';
 import { ModelTestService } from './modelTest.ts';
 import { ProjectDefaultsService } from './projectDefaults.ts';
 import { McpManager } from './mcpManager.ts';
-import { createWindowsBashToolOverride } from './winShellEncoding.ts';
+import { createInterruptibleShellTools, shellRunRegistry } from './shellInterrupt.ts';
 import type { UiMcpSaveRequest, UiMcpTarget } from '../../shared/src/mcpFeatures.ts';
 import type { PluginUpdateCheck } from '../../shared/src/pluginUpdates.ts';
 import { checkPluginUpdate } from './pluginUpdates.ts';
@@ -138,7 +139,6 @@ export type RequestExtensionDialog = (request: UiExtensionDialogRequest, signal?
 type EventEmitter = (event: AgentEventEnvelope) => void;
 
 type PiRuntime = Awaited<ReturnType<typeof createAgentSessionRuntime>>;
-const THINKING_LEVELS: readonly UiThinkingLevel[] = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
 const MAX_TOOL_DETAIL_CHARS = 48000;
 const MAX_THINKING_CHARS = 48000;
 const THINKING_UPDATE_INTERVAL_MS = 80;
@@ -396,14 +396,15 @@ function createRuntimeFactory(
 		});
 		bindProviderNetwork(services.modelRuntime, join(agentDir, 'models.json'));
 		void loadModelPrefs(agentDir).catch(() => {});
-		// Windows GBK console output would otherwise decode as U+FFFD mojibake;
-		// the override keeps pi's local shell but re-encodes non-UTF-8 lines.
-		const bashToolOverride = await createWindowsBashToolOverride(cwd, settingsManager);
+		// Interruptible bash/powershell overrides: the desktop owns the child
+		// processes so the UI can kill a running command without aborting the
+		// turn (plus the Windows GBK line re-encoding on top).
+		const shellToolOverrides = await createInterruptibleShellTools(cwd, settingsManager);
 		const created = await createAgentSessionFromServices({
 			services,
 			sessionManager,
 			sessionStartEvent,
-			customTools: bashToolOverride ? [bashToolOverride] : undefined,
+			customTools: shellToolOverrides.length ? shellToolOverrides : undefined,
 		});
 		trackFileChanges(created.session, fileChanges);
 		return {
@@ -819,8 +820,12 @@ class SingleAgentService {
 		this.activeConfigurationCalls += 1;
 		this.fire({ type: 'status', status: 'busy' });
 		try {
-			if (command.name === 'compact') await session.compact(args || undefined);
-			else await session.reload();
+			if (command.name === 'compact') {
+				// 压缩/总结请求会把会话档位写进 options.reasoning：先拉回规范集，
+				// 避免历史持久化的 none 这类档位透传成非法 effort（与 setThinkingLevel 共用归一化）。
+				applyCanonicalThinkingLevel(session);
+				await session.compact(args || undefined);
+			} else await session.reload();
 			this.fireReady();
 			this.fire({ type: 'sessions-changed', cwd: this.cwd });
 		} finally {
@@ -1118,11 +1123,14 @@ class SingleAgentService {
 		}
 	}
 
-	/** Pi clamps the requested level to the selected model's supported levels. */
+	/** Pi clamps the requested level to the selected model's supported levels; unknown values are dropped here. */
 	async setThinkingLevel(level: UiThinkingLevel, persist = true): Promise<void> {
 		const session = this.requireSessionForModelSettings();
-		if (!THINKING_LEVELS.includes(level)) throw new Error('思考级别无效');
-		session.setThinkingLevel(level, { persist });
+		// 归一化后再交给 SDK：none/disabled 折叠为 off，未知档位直接拒绝，
+		// 保证 persist 写入设置文件的只能是规范集。
+		const normalized = normalizeThinkingLevel(level);
+		if (!normalized) throw new Error('思考级别无效');
+		session.setThinkingLevel(normalized, { persist });
 		if (this.state.thinkingLevel !== session.thinkingLevel) {
 			this.fire({ type: 'thinking-level', level: session.thinkingLevel });
 		}
@@ -1448,6 +1456,17 @@ class SingleAgentService {
 		await this.runtime?.session.abort();
 		this.finishInterruptedAssistant();
 		this.conversationRuns?.finish('cancelled');
+	}
+
+	/**
+	 * Kill the session's running bash/powershell commands (exit 130 + marker)
+	 * without aborting the agent turn; queued steering then delivers naturally.
+	 * Returns how many running commands were interrupted.
+	 */
+	interruptShellTools(toolCallId?: string): number {
+		const sessionId = this.runtime?.session?.sessionId;
+		if (!sessionId) return 0;
+		return shellRunRegistry.interrupt(sessionId, toolCallId);
 	}
 
 	/** Start a fresh conversation in the same working directory. */
@@ -2998,6 +3017,10 @@ export class AgentService {
 	updateQueuedMessage(id: string, action: 'edit' | 'remove' | 'steer', text?: string): Promise<void> {
 		if (this.pluginOperation) return Promise.reject(new Error('插件设置正在更新，请稍后再试'));
 		return this.requireActive().updateQueuedMessage(id, action, text);
+	}
+
+	interruptShellTools(toolCallId?: string): number {
+		return this.requireActive().interruptShellTools(toolCallId);
 	}
 
 	generateCommitMessage(context: string): Promise<string> {

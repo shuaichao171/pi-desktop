@@ -10,6 +10,7 @@ import { Icon } from './Icons';
 import { HoverTooltip } from './HoverTooltip';
 import { providerInitial, providerMarkStyle } from '../providerMark';
 import './modelSettingsPanel.css';
+import { advertisedThinkingMap, supportedThinkingLevels, THINKING_LEVELS, toggleThinkingLevel } from '../thinkingLevelMapEditor';
 
 const PROTOCOLS: { value: UiProviderApi; label: string }[] = [
 	{ value: 'openai-completions', label: 'OpenAI Chat Completions' },
@@ -29,7 +30,6 @@ const PROVIDER_TEMPLATES: ProviderTemplate[] = [
 	{ id: 'minimax', name: 'MiniMax', baseUrl: 'https://api.minimax.chat/v1', api: 'openai-completions' },
 ];
 
-const THINKING_LEVELS: UiThinkingLevel[] = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
 const DEFAULT_CONTEXT = 128000;
 const DEFAULT_OUTPUT = 8192;
 type ModelDraft = { id: string; name: string; contextWindow: string; maxTokens: string; reasoning: boolean; image: boolean; thinkingLevelMap?: UiCustomProviderModel['thinkingLevelMap']; thinkingLevels?: UiThinkingLevel[] };
@@ -71,9 +71,6 @@ function modelDraft(model?: UiCustomProviderModel & { thinkingLevels?: UiThinkin
 	return { id: model?.id ?? '', name: model?.name ?? '', contextWindow: String(contextWindow), maxTokens: String(model?.maxTokens ?? Math.min(DEFAULT_OUTPUT, contextWindow)), reasoning: model?.reasoning ?? false, image: model?.input?.includes('image') ?? false, ...(model?.thinkingLevelMap ? { thinkingLevelMap: { ...model.thinkingLevelMap } } : {}), thinkingLevels: model?.thinkingLevels };
 }
 
-function advertisedThinkingMap(levels: UiThinkingLevel[]): NonNullable<UiCustomProviderModel['thinkingLevelMap']> {
-	return Object.fromEntries(THINKING_LEVELS.map((level) => [level, levels.includes(level) ? level === 'off' ? 'none' : level : null]));
-}
 
 function discoveredDraft(model: UiDiscoveredProviderModel): ImportedDraft {
 	const draft = modelDraft({ ...model, ...(model.thinkingLevels ? { thinkingLevelMap: advertisedThinkingMap(model.thinkingLevels), reasoning: model.reasoning ?? model.thinkingLevels.some((level) => level !== 'off') } : {}) });
@@ -106,7 +103,7 @@ function modelSize(value: number): string {
 
 function ModelFields({ draft, onChange, disabled, t, idReadOnly = false }: { draft: ModelDraft; onChange(value: ModelDraft): void; disabled: boolean; t: Translate; idReadOnly?: boolean }) {
 	const change = <K extends keyof ModelDraft>(key: K, value: ModelDraft[K]) => onChange({ ...draft, [key]: value });
-	const supportedLevels = THINKING_LEVELS.filter((level) => draft.thinkingLevelMap?.[level] !== undefined ? draft.thinkingLevelMap[level] !== null : draft.thinkingLevels?.includes(level));
+	const supportedLevels = supportedThinkingLevels(draft.thinkingLevelMap, draft.thinkingLevels);
 	const customThinking = Boolean(draft.thinkingLevelMap && Object.keys(draft.thinkingLevelMap).length);
 	return <>
 		<label className="pd-model-settings-field">{t('settings.customModelId')}<input data-field="model.id" required value={draft.id} onChange={(event) => change('id', event.target.value)} spellCheck={false} autoComplete="off" disabled={disabled} readOnly={idReadOnly} placeholder="my-model" /></label>
@@ -123,10 +120,7 @@ function ModelFields({ draft, onChange, disabled, t, idReadOnly = false }: { dra
 			<legend>{t('settings.modelThinkingLevels')}</legend>
 			<label className="pd-model-settings-check"><input type="checkbox" checked={customThinking} onChange={(event) => change('thinkingLevelMap', event.target.checked ? advertisedThinkingMap(draft.thinkingLevels ?? []) : {})} />{t('settings.modelThinkingCustomize')}</label>
 			{customThinking ? <div className="pd-model-settings-toggles">{THINKING_LEVELS.map((level) => <label key={level}><input type="checkbox" checked={supportedLevels.includes(level)} onChange={(event) => {
-				const next = advertisedThinkingMap(supportedLevels);
-				for (const supported of supportedLevels) if (draft.thinkingLevelMap?.[supported] != null) next[supported] = draft.thinkingLevelMap[supported];
-				next[level] = event.target.checked ? level === 'off' ? 'none' : level : null;
-				change('thinkingLevelMap', next);
+				change('thinkingLevelMap', toggleThinkingLevel(draft.thinkingLevelMap, level, event.target.checked, supportedLevels));
 			}} />{t(`composer.thinking.${level}`)}</label>)}</div> : <p className="pd-model-settings-notice">{t('settings.modelThinkingInherited')}</p>}
 			<p className="pd-model-settings-notice">{t('settings.modelThinkingHint')}</p>
 		</fieldset>}

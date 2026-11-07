@@ -8,11 +8,11 @@ import { registerDebugApiIpc } from './debugApiIpc';
  * call is a typed invoke against the contract in @pidesktop/shared. Hosted pai
  */
 
-import { app, BrowserWindow, dialog, nativeImage, shell, type IpcMainInvokeEvent } from 'electron';
+import { app, BrowserWindow, dialog, nativeImage, nativeTheme, shell, type IpcMainInvokeEvent } from 'electron';
 import { statSync } from 'node:fs';
 import { mkdir, rm, stat } from 'node:fs/promises';
 import { basename, dirname, join, resolve } from 'node:path';
-import { IPC_CHANNELS, PROJECT_BAR_ANIM_IDS, isValidProjectBarValue, normalizeProjectBarValue, type AgentEventEnvelope, type AppLocale, type UiAppCommand, type UiAttachment, type UiExtensionDialogRequest, type UiInputScope, type UiSessionMetaPatch, type UiSidebarGroupChange, type UiSlashCommandRequest, type UiThinkingLevel } from '@pidesktop/shared';
+import { IPC_CHANNELS, PROJECT_BAR_ANIM_IDS, isValidProjectBarValue, normalizeProjectBarValue, type AgentEventEnvelope, type AppLocale, type UiAppCommand, type UiAttachment, type UiExtensionDialogRequest, type UiInputScope, type UiSessionMetaPatch, type UiSessionSummary, type UiSidebarGroupChange, type UiSlashCommandRequest, type UiThinkingLevel } from '@pidesktop/shared';
 import { createIsolatedAgentService } from './agentClient';
 import { hostedHeldSessionPaths, isPaiSender, isPaiWindow, paiHeldSessionPaths, paiSlotForSender, paiWindowSlots, registerPaiWindowSlot, unregisterPaiWindowSlot } from './paiWindows';
 import { isPaneSender, paneSlotForSender, paneSlots } from './paiWindows';
@@ -38,8 +38,9 @@ import { createProjectCreator } from './projectCreation';
 import { createConversationWorkspace, createConversationWorkspaceSync, prepareConversationStorageDirectory } from './conversationStorage';
 import { createDesktopNotifier } from './notifications';
 import { createKeepAwakeController, type KeepAwakeController } from './keepAwake';
-import { readDesktopSettings, writeDesktopSettings, type DesktopSettings } from './desktopSettings';
-import { appearanceStatePath, isValidAppearanceState, readAppearanceState, watchAppearanceState, writeAppearanceState } from './appearance';
+import { drainDesktopSettingsQueue, readDesktopSettings, withDesktopSettings, writeDesktopSettingsAsync, type DesktopSettings } from './desktopSettings';
+import { appearanceStatePath, isValidAppearanceState, readAppearanceState, watchAppearanceState, writeAppearanceStateAsync } from './appearance';
+import { resolveWindowTheme, syncWindowBackgrounds } from './windowTheme';
 import { readWorkspaceContext, validateContextRequest } from './contextService';
 import { createAutomationService } from './automationService';
 import { createGoalWatchService } from './goalWatchService';
@@ -290,7 +291,8 @@ function createPaiWindow(request: PaiWindowRequest): void {
 		height: 780,
 		minWidth: 680,
 		minHeight: 520,
-		backgroundColor: '#111216',
+		// Same theme source as the main and boot windows (splash theming).
+		backgroundColor: resolveWindowTheme(readAppearanceState(appearancePath), nativeTheme.shouldUseDarkColors).background,
 		title: 'pai',
 		icon: nativeImage.createFromPath(appIconPath()),
 		frame: process.platform !== 'win32',
@@ -364,6 +366,11 @@ function createPaiWindow(request: PaiWindowRequest): void {
 	entry.agent.onEvent((envelope: AgentEventEnvelope) => {
 		const event = envelope.event;
 		if (event.type === 'ready') entry.liveSessionPath = event.sessionPath;
+		// A conversation persisted by a hosted window lands in the same session
+		// directory as the main agent's listing; its per-cwd change event must
+		// invalidate the shared listing cache too, or the sidebar would keep
+		// serving the stale snapshot.
+		if (event.type === 'sessions-changed') invalidateSessionListing(entry.cwd);
 		if (event.type === 'status') {
 			entry.busy = event.status === 'busy';
 			updateKeepAwakeBusy();
@@ -593,7 +600,6 @@ function readWorkspaceSettingsAsync(): Promise<WorkspaceSettings> {
 }
 
 let workspaceSettingsQueue: Promise<void> = Promise.resolve();
-let desktopSettingsQueue: Promise<void> = Promise.resolve();
 let appearancePath = appearanceStatePath(app.getPath('userData'));
 let stopAppearanceWatch: (() => void) | null = null;
 function withWorkspaceSettings<T>(action: (settings: WorkspaceSettings) => Promise<T> | T): Promise<T> {
@@ -606,7 +612,9 @@ function desktopSettingsPath(): string {
 	return join(app.getPath('userData'), 'desktop-settings.json');
 }
 
-/** Sync read for the close-policy handler (4.2); corrupt files fall back to defaults. */
+/** Sync read for the close-policy handler (4.2); corrupt files fall back to defaults.
+ * Served from the in-process cache in desktopSettings after the first disk load; every
+ * settings write updates that cache, so a read right after a write stays consistent. */
 export function readCurrentDesktopSettings(): DesktopSettings {
 	return readDesktopSettings(desktopSettingsPath(), join(app.getPath('home'), 'PiDesktopWorkspace'));
 }
@@ -615,13 +623,11 @@ export function readCurrentDesktopSettings(): DesktopSettings {
  * page shows, plus "no more asking" while tasks run. Picking a behavior in Settings asks again. */
 export function saveCloseChoice(behavior: DesktopSettings['closeBehavior']): Promise<void> {
 	// Share the settings queue so a concurrent Settings save cannot drop this choice.
-	const result = desktopSettingsQueue.then(() => {
+	return withDesktopSettings(async () => {
 		const current = readCurrentDesktopSettings();
-		writeDesktopSettings(desktopSettingsPath(), { ...current, closeBehavior: behavior, confirmBusyClose: false });
+		await writeDesktopSettingsAsync(desktopSettingsPath(), { ...current, closeBehavior: behavior, confirmBusyClose: false });
 		keepAwake?.settingsChanged();
 	});
-	desktopSettingsQueue = result.then(() => undefined, () => undefined);
-	return result;
 }
 
 /** Sends a main → renderer command (tray menu, notification clicks). */
@@ -677,11 +683,63 @@ export function defaultWorkspace(initialWorkspace?: string): string {
 	}
 	const root = readCurrentDesktopSettings().conversationStorageDirectory;
 	const cwd = createConversationWorkspaceSync(root);
+	// Startup path: runs once per cold start and must return the workspace synchronously,
+	// so the sync write stays (runtime workspace saves all go through saveWorkspaceAsync).
 	writeStateFile(workspaceSettingsPath(), registerConversationWorkspace(saved, cwd, root));
 	activeWorkspace = cwd;
 	return cwd;
 }
 
+/**
+ * Cold-start twin of defaultWorkspace (audit P2): the same decisions with async
+ * state IO, so the startup workspace resolves off the main thread while the
+ * main window's renderer loads. The sync version above remains the probe for
+ * the currently active workspace (tests and the sync close path).
+ */
+export async function defaultWorkspaceAsync(initialWorkspace?: string): Promise<string> {
+	if (initialWorkspace !== undefined) {
+		// A missing launch workspace reports the actionable message instead of raw ENOENT.
+		if (!(await stat(initialWorkspace, { throwIfNoEntry: false }))?.isDirectory()) throw new Error('The launch workspace must be a directory');
+		await saveWorkspaceAsync(initialWorkspace, true);
+		activeWorkspace = initialWorkspace;
+		return initialWorkspace;
+	}
+	let saved: WorkspaceSettings;
+	try {
+		saved = await readWorkspaceSettingsAsync();
+	} catch (error) {
+		if (!(error instanceof CorruptStateFileError)) {
+			dialog.showErrorBox(getAppLocale() === 'en-US' ? 'Workspace settings could not be read' : '无法读取工作区设置', String(error));
+			throw error;
+		}
+		const backup = await backupCorruptStateFileAsync(workspaceSettingsPath());
+		const english = getAppLocale() === 'en-US';
+		dialog.showErrorBox(english ? 'Workspace settings recovered' : '工作区设置已恢复',
+			english ? `The damaged settings were saved to:\n${backup}\n\nA default workspace will open. You can restore your old workspace list from the backup.`
+				: `损坏的设置已备份到：\n${backup}\n\n将打开默认工作区。你可以从备份中恢复旧工作区列表。`);
+		saved = {};
+	}
+	try {
+		if (typeof saved.cwd === 'string' && (await stat(saved.cwd)).isDirectory()) {
+			activeWorkspace = saved.cwd;
+			return saved.cwd;
+		}
+	} catch {
+		// A saved workspace may have been moved or removed.
+	}
+	const root = readCurrentDesktopSettings().conversationStorageDirectory;
+	const cwd = await createConversationWorkspace(root);
+	// The read-modify-write joins the workspace-settings queue so the parallel
+	// startup branch cannot lose a queued writer's update (hardened invariant;
+	// the re-read inside the queue replaces the possibly stale `saved` snapshot).
+	await withWorkspaceSettings(async (previous) => {
+		await writeStateFileAsync(workspaceSettingsPath(), registerConversationWorkspace(previous, cwd, root));
+	});
+	activeWorkspace = cwd;
+	return cwd;
+}
+
+/** Startup-only sync twin of saveWorkspaceAsync (defaultWorkspace must return the cwd). */
 function saveWorkspace(cwd: string, explicit = false): void {
 	const previous = readWorkspaceSettings();
 	const workspaces = [...new Set([...(Array.isArray(previous.workspaces) ? previous.workspaces : []), previous.cwd, cwd]
@@ -864,14 +922,25 @@ async function readSessionMeta(): Promise<Record<string, SessionMeta>> {
 }
 function saveSessionMeta(meta: Record<string, SessionMeta>): Promise<void> {
 	invalidateAppTrayData();
-	return writeStateFileAsync(sessionMetaPath(), meta);
+	const saved = writeStateFileAsync(sessionMetaPath(), meta);
+	// Cached only after the write landed: a failed save drops the snapshot (the
+	// queued action may already have mutated it in place) so the next read goes
+	// back to disk, and queued saves resolve in order so the last one wins.
+	void saved.then(() => { sessionMetaSnapshot = meta; }, () => { sessionMetaSnapshot = null; });
+	return saved;
+}
+/** Last written metadata, kept in memory: paged listings merge it on every page serve,
+ *  so the sidebar's per-page reads must not re-read the file each time. */
+let sessionMetaSnapshot: Record<string, SessionMeta> | null = null;
+async function currentSessionMeta(): Promise<Record<string, SessionMeta>> {
+	return sessionMetaSnapshot ??= await readSessionMeta();
 }
 
 // Serialize every metadata read and mutation so simultaneous background events,
 // pin changes, and read receipts cannot overwrite one another.
 let sessionMetaQueue: Promise<void> = Promise.resolve();
 function withSessionMeta<T>(action: (meta: Record<string, SessionMeta>) => Promise<T> | T): Promise<T> {
-	const result = sessionMetaQueue.then(async () => action(await readSessionMeta()));
+	const result = sessionMetaQueue.then(async () => action(await currentSessionMeta()));
 	sessionMetaQueue = result.then(() => undefined, () => undefined);
 	return result;
 }
@@ -883,6 +952,82 @@ function rememberSessionOwner(path: string, cwd: string): void {
 		const oldest = sessionOwnerByPath.keys().next().value;
 		if (oldest !== undefined) sessionOwnerByPath.delete(oldest);
 	}
+}
+
+// Sidebar session listings are paged (agentListSessionsPage): every page of one
+// refresh is served from one rebuilt snapshot instead of re-listing the workspace
+// per page. A snapshot is rebuilt only after an explicit invalidation — the
+// agent's per-cwd `sessions-changed`, host-side mutations (rename / fork / delete),
+// or an automation finishing in that workspace — while metadata (pins, unread,
+// order) merges live on every serve, so flag flips never re-list at all.
+interface SessionListSnapshot {
+	/** Monotonic per-process version; changes whenever this workspace is re-listed. */
+	revision: number;
+	/** Raw agent listing rows (unfiltered); filtering and metadata merge at serve time. */
+	sessions: UiSessionSummary[];
+}
+const sessionListSnapshots = new Map<string, SessionListSnapshot>();
+const sessionListInFlight = new Map<string, Promise<SessionListSnapshot>>();
+/** Presence = the workspace needs a re-list; the number is the invalidation generation,
+ *  so a load that finishes while an invalidation lands does not swallow it. */
+const dirtySessionLists = new Map<string, number>();
+let sessionListRevision = 0;
+
+function invalidateSessionListing(cwd: string): void {
+	const key = workspaceKey(cwd);
+	dirtySessionLists.set(key, (dirtySessionLists.get(key) ?? 0) + 1);
+}
+
+/** Re-lists the workspace only when its snapshot is missing or dirty; concurrent callers share one load. */
+function sessionListSnapshotFor(cwd: string): Promise<SessionListSnapshot> {
+	const key = workspaceKey(cwd);
+	const inFlight = sessionListInFlight.get(key);
+	if (inFlight) return inFlight;
+	const cached = sessionListSnapshots.get(key);
+	if (cached && !dirtySessionLists.has(key)) return Promise.resolve(cached);
+	const generation = dirtySessionLists.get(key) ?? 0;
+	const load = (async () => {
+		const sessions = await agentService.listSessions(cwd);
+		for (const session of sessions) rememberSessionOwner(session.path, cwd);
+		const snapshot: SessionListSnapshot = { revision: ++sessionListRevision, sessions };
+		sessionListSnapshots.set(key, snapshot);
+		// Only clear the dirty flag when no invalidation arrived while listing:
+		// that event may have landed after our directory read, so the next serve
+		// must re-list instead of trusting this snapshot.
+		if ((dirtySessionLists.get(key) ?? 0) === generation) dirtySessionLists.delete(key);
+		return snapshot;
+	})();
+	const tracked = load.finally(() => {
+		if (sessionListInFlight.get(key) === tracked) sessionListInFlight.delete(key);
+	});
+	sessionListInFlight.set(key, tracked);
+	return tracked;
+}
+
+/** One authoritative serve pass shared by the full and paged listings: snapshot rows,
+ *  live metadata (with the bounded periodic prune), automation sessions excluded. */
+async function serveWorkspaceSessions(cwd: string): Promise<{ snapshot: SessionListSnapshot; sessions: UiSessionSummary[] }> {
+	const snapshot = await sessionListSnapshotFor(cwd);
+	const meta = await withSessionMeta(async (value) => {
+		if (Date.now() - lastSessionMetaPrune >= 5 * 60_000) {
+			const livePaths = new Set(snapshot.sessions.map((session) => session.path));
+			if (activeSessionPath) livePaths.add(activeSessionPath);
+			for (const path of Object.keys(value)) if (automationExecutor.isSessionRunning(path)) livePaths.add(path);
+			if (await pruneMissingSessionMeta(value, livePaths)) await saveSessionMeta(value);
+			lastSessionMetaPrune = Date.now();
+		}
+		return value;
+	});
+	return { snapshot, sessions: snapshot.sessions
+		.filter((session) => !automationExecutor.isSessionRunning(session.path))
+		// Same normalization as the search pipeline (order ?? undefined): persisted
+		// metadata never carries null, and the row keeps its own order otherwise.
+		.map((session) => {
+			const flags = meta[session.path];
+			if (!flags) return session;
+			const { order, ...rest } = flags;
+			return { ...session, ...rest, ...(order !== null && order !== undefined ? { order } : {}) };
+		}) };
 }
 
 function likelySessionOwners(path: string, workspaces: string[]): string[] {
@@ -1108,7 +1253,7 @@ function requireTrustedSender(event: IpcMainInvokeEvent): BrowserWindow {
 const mainOnlyChannels = new Set<string>([
 	IPC_CHANNELS.agentInit, IPC_CHANNELS.agentResidentSnapshot, IPC_CHANNELS.agentActivateResident,
 	IPC_CHANNELS.agentListWorkspaces, IPC_CHANNELS.workspaceListConversations, IPC_CHANNELS.conversationStoragePick,
-	IPC_CHANNELS.agentListSessions, IPC_CHANNELS.agentSearchSessions, IPC_CHANNELS.agentSwitchSession, IPC_CHANNELS.agentPeekSession,
+	IPC_CHANNELS.agentListSessions, IPC_CHANNELS.agentListSessionsPage, IPC_CHANNELS.agentSearchSessions, IPC_CHANNELS.agentSwitchSession, IPC_CHANNELS.agentPeekSession,
 	IPC_CHANNELS.sessionRevealFile, IPC_CHANNELS.sessionFork, IPC_CHANNELS.sessionOpenWindow, IPC_CHANNELS.sessionDelete,
 	IPC_CHANNELS.agentUpdateSessionMeta, IPC_CHANNELS.agentUpdateSessionOrders, IPC_CHANNELS.agentListSessionGroups, IPC_CHANNELS.agentUpdateSessionGroups,
 	IPC_CHANNELS.appRelaunch,
@@ -1278,16 +1423,31 @@ export function registerIpc(options: {
 			keepAwake?.setAutomationActive(snapshot.runs.some((run) => run.status === 'running' || run.status === 'retrying'));
 		},
 		onError: (error) => console.error('Automation scheduler failed:', error),
-		onRunFinished: (entry, task) => { notifier.handleAutomationRun(entry, task.name, task.cwd); },
+		onRunFinished: (entry, task) => { notifier.handleAutomationRun(entry, task.name, task.cwd); invalidateSessionListing(task.cwd); },
 	});
 	handleRendererInvoke(IPC_CHANNELS.desktopSettingsGet, () => readCurrentDesktopSettings());
-	stopAppearanceWatch = watchAppearanceState(appearancePath, (state) => {
-		if (state) sendAppCommand({ type: 'appearance-changed', appearance: state });
+	// Keep every live window's pre-paint background on the current theme
+	// surface: appearance edits (here or from another instance via the watch)
+	// and OS light/dark flips under a 'system' preference both change it.
+	const syncBackgrounds = (appearance = readAppearanceState(appearancePath)) => {
+		syncWindowBackgrounds(BrowserWindow.getAllWindows(), appearance, nativeTheme.shouldUseDarkColors);
+	};
+	const onNativeThemeUpdated = () => syncBackgrounds();
+	nativeTheme.on?.('updated', onNativeThemeUpdated);
+	const stopFileWatch = watchAppearanceState(appearancePath, (state) => {
+		if (!state) return;
+		syncBackgrounds(state);
+		sendAppCommand({ type: 'appearance-changed', appearance: state });
 	});
+	stopAppearanceWatch = () => {
+		nativeTheme.removeListener?.('updated', onNativeThemeUpdated);
+		stopFileWatch();
+	};
 	handleRendererInvoke(IPC_CHANNELS.appearanceGet, () => readAppearanceState(appearancePath));
-	handleRendererInvoke(IPC_CHANNELS.appearanceSet, (_event, state: unknown) => {
+	handleRendererInvoke(IPC_CHANNELS.appearanceSet, async (_event, state: unknown) => {
 		if (!isValidAppearanceState(state)) throw new Error('外观设置无效');
-		writeAppearanceState(appearancePath, state);
+		await writeAppearanceStateAsync(appearancePath, state);
+		syncBackgrounds(state);
 		sendAppCommand({ type: 'appearance-changed', appearance: state });
 	});
 	handleRendererInvoke(IPC_CHANNELS.desktopSettingsSet, (event, patch: unknown) => {
@@ -1305,7 +1465,7 @@ export function registerIpc(options: {
 				if (!probe.ok) throw new Error(`自定义 Pi 引擎不可用：${probe.problems.join('；')}`);
 			}
 		}
-		const result = desktopSettingsQueue.then(async () => {
+		const result = withDesktopSettings(async () => {
 			const directory = patch.conversationStorageDirectory === undefined ? undefined
 				: await prepareConversationStorageDirectory(patch.conversationStorageDirectory);
 			const previousDirectory = readCurrentDesktopSettings().conversationStorageDirectory;
@@ -1335,7 +1495,7 @@ export function registerIpc(options: {
 				// stored config over keeps a running server and its token alive across unrelated saves.
 				debugApi: current.debugApi,
 			};
-			writeDesktopSettings(desktopSettingsPath(), next);
+			await writeDesktopSettingsAsync(desktopSettingsPath(), next); // 缓存在写入完成后更新，后续读立即拿到 next
 			keepAwake?.settingsChanged();
 			// Enabling auto-install is explicit consent: chain straight into download +
 			// silent install for an already-known version, or start an auto-install check.
@@ -1346,7 +1506,6 @@ export function registerIpc(options: {
 			}
 			return next;
 		});
-		desktopSettingsQueue = result.then(() => undefined, () => undefined);
 		return result;
 	});
 	handleRendererInvoke(IPC_CHANNELS.piEngineProbe, (_event, path: unknown) => {
@@ -1483,6 +1642,8 @@ export function registerIpc(options: {
 	agentService.onEvent((event: AgentEventEnvelope) => {
 		if (event.event.type === 'ready') activeSessionPath = event.event.sessionPath;
 		if (event.event.type === 'ready' || event.event.type === 'status' || event.event.type === 'sessions-changed') invalidateAppTrayData();
+		// The per-cwd change event is the listing cache's invalidation signal.
+		if (event.event.type === 'sessions-changed') invalidateSessionListing(event.event.cwd);
 		if (event.event.type === 'status') {
 			mainAgentBusy = event.event.status === 'busy';
 			updateKeepAwakeBusy();
@@ -1516,8 +1677,8 @@ export function registerIpc(options: {
 		platform: process.platform,
 		windowMode: isPaneSender(event) ? 'pane' as const : isPaiSender(event) ? 'pai' as const : windowMode,
 	}));
-	handleRendererInvoke(IPC_CHANNELS.appSetLocale, (_event, locale: AppLocale) => {
-		setAppLocale(locale);
+	handleRendererInvoke(IPC_CHANNELS.appSetLocale, async (_event, locale: AppLocale) => {
+		await setAppLocale(locale);
 		updateAppTrayMenu();
 	});
 	handleRendererInvoke(IPC_CHANNELS.updateState, (event) => isPaiSender(event)
@@ -1680,19 +1841,18 @@ export function registerIpc(options: {
 	handleRendererInvoke(IPC_CHANNELS.agentListSessions, async (_event, cwd?: string) => {
 		const targetCwd = cwd ?? activeWorkspace;
 		if (targetCwd && !(await listWorkspaces()).includes(targetCwd)) throw new Error('未知工作区');
-		const sessions = (await agentService.listSessions(targetCwd)).filter((session) => !automationExecutor.isSessionRunning(session.path));
-		for (const session of sessions) rememberSessionOwner(session.path, targetCwd);
-		const meta = await withSessionMeta(async (value) => {
-			if (Date.now() - lastSessionMetaPrune >= 5 * 60_000) {
-				const livePaths = new Set(sessions.map((session) => session.path));
-				if (activeSessionPath) livePaths.add(activeSessionPath);
-				for (const path of Object.keys(value)) if (automationExecutor.isSessionRunning(path)) livePaths.add(path);
-				if (await pruneMissingSessionMeta(value, livePaths)) await saveSessionMeta(value);
-				lastSessionMetaPrune = Date.now();
-			}
-			return value;
-		});
-		return sessions.map((session) => ({ ...session, ...meta[session.path] }));
+		return (await serveWorkspaceSessions(targetCwd)).sessions;
+	});
+	// Paged sidebar listing: the first screen renders from page 0 while the
+	// remaining pages stream in behind it, all served from one snapshot.
+	handleRendererInvoke(IPC_CHANNELS.agentListSessionsPage, async (_event, cwd: unknown, offset: unknown, limit: unknown) => {
+		const pageOffset = typeof offset === 'number' ? offset : Number.NaN;
+		const pageLimit = typeof limit === 'number' ? limit : Number.NaN;
+		if (typeof cwd !== 'string' || !cwd || !Number.isInteger(pageOffset) || !Number.isInteger(pageLimit) || pageOffset < 0 || pageLimit < 1 || pageLimit > 500) throw new Error('会话分页参数无效');
+		if (!(await listWorkspaces()).includes(cwd)) throw new Error('未知工作区');
+		const { snapshot, sessions } = await serveWorkspaceSessions(cwd);
+		const page = sessions.slice(pageOffset, pageOffset + pageLimit);
+		return { sessions: page, total: sessions.length, hasMore: pageOffset + page.length < sessions.length, revision: snapshot.revision };
 	});
 	handleRendererInvoke(IPC_CHANNELS.agentSearchSessions, async (_event, query: string) => {
 		const request = ++sessionSearchRequest;
@@ -1729,7 +1889,10 @@ export function registerIpc(options: {
 		path = normalizeSessionPath(path);
 		if (name !== undefined && (typeof name !== 'string' || !name.trim() || name.trim().length > 200 || /[\u0000-\u001f\u007f]/u.test(name))) throw new Error('会话名称无效');
 		const owner = await requireSessionOwner(path);
-		return agentService.forkSession(path, owner, name?.trim());
+		const forked = await agentService.forkSession(path, owner, name?.trim());
+		// A fork writes a new transcript beside the source; the owner's listing must re-list.
+		invalidateSessionListing(owner);
+		return forked;
 	}));
 	handleRendererInvoke(IPC_CHANNELS.splitPaneOpen, (event, cwd: unknown, sessionPath?: unknown) => {
 		trace('invoke received session=' + (sessionPath ?? '(fresh)') + ' cwd=' + cwd);
@@ -1809,7 +1972,12 @@ export function registerIpc(options: {
 		if (patch.order !== undefined && patch.order !== null && (!Number.isInteger(patch.order) || Math.abs(patch.order) > 1e9)) throw new Error('会话顺序无效');
 		if (patch.expectedUnreadAt !== undefined && (!Number.isSafeInteger(patch.expectedUnreadAt) || patch.expectedUnreadAt < 0)) throw new Error('会话状态无效');
 		const owner = await requireSessionOwner(path, patch.name !== undefined);
-		if (patch.name !== undefined) await agentService.renameSession(path, patch.name, owner);
+		if (patch.name !== undefined) {
+			await agentService.renameSession(path, patch.name, owner);
+			// A rename rewrites the header the listing's name comes from; flag flips
+			// alone merge from live metadata and never need a re-list.
+			invalidateSessionListing(owner);
+		}
 		if (!metaKeys.some((key) => patch[key] !== undefined) && patch.order === undefined) return;
 		await withSessionMeta(async (meta) => {
 			const next: SessionMeta = { ...meta[path] };
@@ -1886,6 +2054,7 @@ export function registerIpc(options: {
 			// There is no app trash and no recovery; only the file itself is removed.
 			await rm(target, { force: true });
 			sessionOwnerByPath.delete(target);
+			invalidateSessionListing(owner);
 			await withSessionMeta(async (meta) => {
 				delete meta[target];
 				await saveSessionMeta(meta);
@@ -1986,6 +2155,11 @@ export function registerIpc(options: {
 		await agentFor(event).updateQueuedMessage(id, action, action === 'edit' ? text : undefined);
 	});
 
+	handleRendererInvoke(IPC_CHANNELS.agentInterruptShellTools, (event, toolCallId?: string) => {
+		if (toolCallId !== undefined && (typeof toolCallId !== 'string' || !toolCallId.trim() || toolCallId.length > 512 || toolCallId.includes('\0'))) throw new Error('工具调用标识无效');
+		return agentFor(event).interruptShellTools(toolCallId);
+	});
+
 	handleRendererInvoke(IPC_CHANNELS.agentGenerateCommitMessage, (event, context: string) => {
 		if (typeof context !== 'string' || !context.trim() || context.length > 256 * 1024) throw new Error('提交上下文无效或过长');
 		return agentFor(event).generateCommitMessage(context);
@@ -2027,7 +2201,7 @@ export function disposeServices(): Promise<void> {
 	return serviceShutdown = (async () => {
 		// Finish an accepted file move before terminating its host or exiting.
 		await workspaceActivationQueue;
-		await desktopSettingsQueue;
+	await drainDesktopSettingsQueue();
 		await workspaceSettingsQueue;
 		// A pending move may still need the agent to validate session ownership.
 		await sessionGroupService?.flush();

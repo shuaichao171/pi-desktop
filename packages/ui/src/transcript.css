@@ -15,6 +15,12 @@
 .pd-activity-list.is-inline { margin: 0; padding: 0; border: 0; }
 .pd-activity-item { min-width: 0; }
 .pd-activity-head { width: 100%; padding: 4px 2px; }
+/* Head row with the inline interrupt action for a running shell command. */
+.pd-activity-headrow { display: flex; align-items: center; gap: 4px; width: 100%; }
+.pd-activity-headrow .pd-activity-head { flex: 1; min-width: 0; }
+.pd-activity-interrupt { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 4px; padding: 3px 8px; border: 1px solid var(--pd-border-soft); border-radius: var(--pd-radius-sm); background: transparent; color: var(--pd-text-subtle); font-size: var(--pd-font-xs); white-space: nowrap; }
+.pd-activity-interrupt:hover:not(:disabled) { color: var(--pd-danger); border-color: color-mix(in srgb, var(--pd-danger) 40%, transparent); background: var(--pd-surface-hover); }
+.pd-activity-interrupt:disabled { opacity: 0.6; cursor: default; }
 .pd-activity-icon { display: flex; flex: 0 0 auto; color: var(--pd-text-weak); }
 .pd-activity-icon.is-error, .pd-activity-status.is-error { color: var(--pd-danger); }
 .pd-activity-icon.is-interrupted, .pd-activity-status.is-interrupted { color: var(--pd-warning); }

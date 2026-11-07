@@ -16,7 +16,7 @@ import { SessionDeleteDialog } from './SessionDeleteDialog';
 import { SessionBulkDeleteDialog, type SessionDeleteTarget } from './SessionBulkDeleteDialog';
 import { ProjectCreationDialog } from './ProjectCreationDialog';
 import { ProjectRemovalDialog, type ProjectRemovalSummary } from './ProjectRemovalDialog';
-import { assignProjectToGroup, buildSidebarGroups, buildSidebarProjectGroups, clearPinnedProjects, collectSidebarSessions, groupSidebarProjects, groupSessionsByDate, mergeSidebarProjectOrder, orderSidebarProjects, readPinnedProjects, readSidebarPreferences, readSidebarProjectGroups, readSidebarSectionLayout, reorderSidebarProjectPositions, saveSidebarPreferences, saveSidebarProjectGroups, saveSidebarSectionLayout, selectSidebarSessions, sidebarProjectPaths, sidebarWorkspaceKey, splitSidebarProjects, type SidebarPreferences, type SidebarSession } from '../sidebarOrganization';
+import { assignProjectToGroup, buildSidebarGroups, buildSidebarProjectGroups, clearPinnedProjects, collectSidebarSessions, groupSidebarProjects, groupSessionsByDate, mergeSidebarProjectOrder, moveProjectToGroupPosition, orderSidebarProjects, readPinnedProjects, readSidebarPreferences, readSidebarProjectGroups, readSidebarSectionLayout, reorderSidebarProjectPositions, saveSidebarPreferences, saveSidebarProjectGroups, saveSidebarSectionLayout, selectSidebarSessions, sidebarProjectPaths, sidebarWorkspaceKey, splitSidebarProjects, type SidebarPreferences, type SidebarSession } from '../sidebarOrganization';
 import { HoverTooltip } from './HoverTooltip';
 import { Icon, type IconName } from './Icons';
 import { SidebarPopover } from './SidebarPopover';
@@ -64,7 +64,7 @@ type DragState = {
 	groupOrder: string[] | null;
 	/** Project rows stay in place until drop, with a precise insertion indicator. */
 	projectOrder: string[] | null;
-	projectDrop: { workspace: string; edge: 'before' | 'after' } | null;
+	projectDrop: { workspace: string; edge: 'before' | 'after'; group: string | null } | null;
 	ghost: { x: number; y: number; width: number };
 };
 
@@ -526,20 +526,54 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 		return { container, index: current.length };
 	}
 
+	/**
+	 * Resolve a project drag target: the row under the pointer, or — when the
+	 * pointer rests in a gap inside a group container or the ungrouped region —
+	 * the geometrically nearest row heading. The row's group membership rides
+	 * along so a drop can enter, leave, or reorder inside a group. Group
+	 * headings report no row target and keep the append-to-group drop.
+	 */
+	function resolveProjectDrop(): { workspace: string; edge: 'before' | 'after'; group: string | null } | null {
+		const element = document.elementFromPoint(pointerRef.current.x, pointerRef.current.y);
+		if (!element || !scrollRef.current?.contains(element)) return null;
+		const row = element.closest<HTMLElement>('[data-project-path]');
+		if (row) {
+			const heading = row.querySelector<HTMLElement>('.pd-sidebar-group-heading');
+			const rect = (heading ?? row).getBoundingClientRect();
+			return {
+				workspace: row.dataset.projectPath!,
+				edge: pointerRef.current.y < rect.top + rect.height / 2 ? 'before' : 'after',
+				group: row.closest<HTMLElement>('[data-project-group]')?.dataset.projectGroup ?? null,
+			};
+		}
+		if (element.closest<HTMLElement>('.pd-sidebar-group-heading[data-project-group-target]')) return null;
+		const groupContainer = element.closest<HTMLElement>('[data-project-group-container]');
+		const ungroupedRegion = groupContainer ? null : element.closest<HTMLElement>('[data-region-id="ungrouped-projects"]');
+		const scope = groupContainer ?? ungroupedRegion;
+		if (!scope) return null;
+		let best: { workspace: string; edge: 'before' | 'after'; distance: number } | null = null;
+		for (const candidate of scope.querySelectorAll<HTMLElement>('[data-project-path]')) {
+			// Skip the nested per-project section; only wrapper rows position members.
+			if (candidate.parentElement?.closest('[data-project-path]')) continue;
+			const heading = candidate.querySelector<HTMLElement>('.pd-sidebar-group-heading');
+			const rect = (heading ?? candidate).getBoundingClientRect();
+			const edge = pointerRef.current.y < rect.top + rect.height / 2 ? 'before' : 'after';
+			const distance = Math.abs(pointerRef.current.y - (edge === 'before' ? rect.top : rect.bottom));
+			if (!best || distance < best.distance) best = { workspace: candidate.dataset.projectPath!, edge, distance };
+		}
+		return best ? { ...best, group: groupContainer?.dataset.projectGroupContainer ?? null } : null;
+	}
+
 	function applyDropPreview(state: DragState): DragState {
 		const item = state.item;
 		if (item.kind === 'project') {
-			const element = document.elementFromPoint(pointerRef.current.x, pointerRef.current.y);
-			const target = element?.closest<HTMLElement>('[data-project-path]');
-			const workspace = target?.dataset.projectPath;
+			const drop = resolveProjectDrop();
 			const initial = projectDragOrder.current;
-			if (!target || !workspace || !initial || !scrollRef.current?.contains(target) || workspace === item.workspace
-				|| pinnedWorkspaceSet.has(workspace) !== pinnedWorkspaceSet.has(item.workspace)) {
+			if (!drop || !initial || drop.workspace === item.workspace
+				|| pinnedWorkspaceSet.has(drop.workspace) !== pinnedWorkspaceSet.has(item.workspace)) {
 				return { ...state, projectOrder: null, projectDrop: null };
 			}
-			const rect = (target.querySelector<HTMLElement>('.pd-sidebar-group-heading') ?? target).getBoundingClientRect();
-			const edge = pointerRef.current.y < rect.top + rect.height / 2 ? 'before' : 'after';
-			return { ...state, projectOrder: moveSidebarProject(initial, item.workspace, workspace, edge, pinnedWorkspaceSet), projectDrop: { workspace, edge } };
+			return { ...state, projectOrder: moveSidebarProject(initial, item.workspace, drop.workspace, drop.edge, pinnedWorkspaceSet), projectDrop: drop };
 		}
 		if (item.kind === 'group') {
 			const element = document.elementFromPoint(pointerRef.current.x, pointerRef.current.y);
@@ -648,11 +682,30 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 		if (!state || !commit || !snapshot) return;
 		const item = state.item;
 		if (item.kind === 'project') {
-			const groupTarget = document.elementFromPoint(pointerRef.current.x, pointerRef.current.y)?.closest<HTMLElement>('[data-project-group-target]')?.dataset.projectGroupTarget;
-			if (groupTarget !== undefined) setProjectGroupItems(current => assignProjectToGroup(current, item.workspace, groupTarget || null));
-			if (state.projectDrop && state.projectOrder) {
-				const reordered = state.projectOrder.filter(path => pinnedWorkspaceSet.has(path) === pinnedWorkspaceSet.has(item.workspace));
-				setPreferences(current => ({ ...current, projectOrder: reorderSidebarProjectPositions(current.projectOrder, reordered) }));
+			const drop = state.projectDrop;
+			if (drop) {
+				const key = sidebarWorkspaceKey(item.workspace);
+				const sourceGroup = projectGroupItems.find(group => group.projects.some(path => sidebarWorkspaceKey(path) === key))?.id ?? null;
+				// Group membership follows the row the project landed on: entering a
+				// group, reordering inside one, or leaving for the ungrouped list.
+				if (drop.group !== null || sourceGroup !== null) {
+					setProjectGroupItems(current => moveProjectToGroupPosition(current, item.workspace, drop.group, drop.workspace, drop.edge));
+				}
+				// The ungrouped list reads the global project order; grouped rows do not.
+				if (drop.group === null && state.projectOrder) {
+					const reordered = state.projectOrder.filter(path => pinnedWorkspaceSet.has(path) === pinnedWorkspaceSet.has(item.workspace));
+					setPreferences(current => ({ ...current, projectOrder: reorderSidebarProjectPositions(current.projectOrder, reordered) }));
+				}
+				return;
+			}
+			// No row target: a group heading appends to that group, and an empty
+			// ungrouped region still accepts the project (no rows to anchor on).
+			const element = document.elementFromPoint(pointerRef.current.x, pointerRef.current.y);
+			const headingGroup = element?.closest<HTMLElement>('.pd-sidebar-group-heading[data-project-group-target]')?.dataset.projectGroupTarget;
+			if (headingGroup !== undefined) {
+				setProjectGroupItems(current => assignProjectToGroup(current, item.workspace, headingGroup || null));
+			} else if (element?.closest('[data-region-id="ungrouped-projects"]') && !element.closest('[data-project-path]')) {
+				setProjectGroupItems(current => assignProjectToGroup(current, item.workspace, null));
 			}
 			return;
 		}
@@ -1206,7 +1259,7 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 				{projectOrganization.groups.map(group => {
 					const groupKey = `pgroup:${group.id}`;
 					const groupExpanded = !collapsed.has(groupKey);
-					return <div key={group.id} className="pd-sidebar-project-subgroup">
+					return <div key={group.id} className="pd-sidebar-project-subgroup" data-project-group-container={group.id}>
 						<div className="pd-sidebar-group-heading" data-project-group-target={group.id} onContextMenu={event => { event.preventDefault(); event.stopPropagation(); setPopup({ kind: 'project-group', groupId: group.id, name: group.name, anchor: event.currentTarget, trigger: event.currentTarget, point: { x: event.clientX, y: event.clientY } }); }}>
 							<button type="button" className="pd-sidebar-group-toggle" aria-expanded={groupExpanded} onClick={() => toggleSection(groupKey)}>
 								<Icon name="layers" width="14" height="14" /><span>{group.name}</span><Icon name="chevronRight" width="12" height="12" className={groupExpanded ? 'is-expanded' : ''} /><small>{group.projects.length}</small>

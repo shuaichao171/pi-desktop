@@ -1,13 +1,15 @@
 import { isValidElement, useContext, useMemo, useState, type ReactNode } from 'react';
 import { TranscriptSearchContext } from '../transcriptSearch';
 import { useHighlighter } from '../codeHighlighter';
+import { useWorkerHighlight, WORKER_HIGHLIGHT_LINE_LIMIT } from '../codeHighlightWorkerPool';
+import { StreamingContentContext } from '../streamingContent';
 import { useT } from '../i18n';
 import { MermaidDiagram } from './MermaidDiagram';
 import { useCodeWrap } from '../codeWrapPreference';
 import './codeBlock.css';
 
 const COLLAPSE_LINES = 30;
-/** Beyond this size highlighting is skipped so one huge block cannot block input. */
+/** Beyond this size synchronous highlighting is skipped so one huge block cannot block input. */
 const HIGHLIGHT_LINE_LIMIT = 2000;
 
 function escapeHtml(value: string): string {
@@ -25,17 +27,26 @@ export function CodeBlock({ code, language }: { code: string; language?: string 
 	const collapsed = collapsible && (userCollapsed ?? true) && !(findQuery && source.toLocaleLowerCase().includes(findQuery));
 	const shown = collapsed ? lines.slice(0, COLLAPSE_LINES).join('\n') : source;
 	const isMermaid = (language ?? '').trim().toLowerCase() === 'mermaid';
+	const streaming = useContext(StreamingContentContext);
 	// Plain text first: the highlighter chunk loads on demand (codeHighlighter.ts).
 	const hljs = useHighlighter(Boolean(language) && !isMermaid && lines.length <= HIGHLIGHT_LINE_LIMIT);
-	const resolved = language && hljs?.getLanguage(language) ? language : '';
+	const trimmedLanguage = (language ?? '').trim();
+	const resolved = trimmedLanguage && hljs?.getLanguage(trimmedLanguage) ? trimmedLanguage : '';
+	// Over-limit blocks highlight in a worker — but only once the message stopped
+	// streaming; re-highlighting every streamed token would flicker.
+	const workerHtml = useWorkerHighlight(shown, trimmedLanguage, !streaming && Boolean(language) && !isMermaid && lines.length > HIGHLIGHT_LINE_LIMIT && lines.length <= WORKER_HIGHLIGHT_LINE_LIMIT);
 	const html = useMemo(() => {
-		if (!hljs || !resolved || lines.length > HIGHLIGHT_LINE_LIMIT) return escapeHtml(shown);
+		if (!hljs || !resolved || lines.length > HIGHLIGHT_LINE_LIMIT) {
+			// Worker markup wraps the same text in spans, so replacing the escaped
+			// plain text never changes line heights; '' keeps the plain rendering.
+			return lines.length > HIGHLIGHT_LINE_LIMIT ? workerHtml || escapeHtml(shown) : escapeHtml(shown);
+		}
 		try {
 			return hljs.highlight(shown, { language: resolved, ignoreIllegals: true }).value;
 		} catch {
 			return escapeHtml(shown);
 		}
-	}, [hljs, shown, resolved, lines.length]);
+	}, [hljs, shown, resolved, lines.length, workerHtml]);
 	const [copied, setCopied] = useState(false);
 	const [wrap, setWrap] = useCodeWrap();
 	const [view, setView] = useState<'chart' | 'source'>('chart');

@@ -89,6 +89,10 @@ export function registerWorkbenchIpc(getWorkspace: () => string, nicknameStore?:
 	handleRendererInvoke(IPC_CHANNELS.workspaceCommitContext, () => service.gitCommitContext());
 	handleRendererInvoke(IPC_CHANNELS.workspaceCommit, (_event, message: string) => service.gitCommit(message));
 	handleRendererInvoke(IPC_CHANNELS.workspaceListEntries, (event, relativePath?: string) => service.listEntries(relativePath, hostedSenderWorkspace(event)));
+	handleRendererInvoke(IPC_CHANNELS.workspaceListEntriesPage, (event, relativePath: unknown, offset: unknown) => {
+		if ((relativePath !== undefined && typeof relativePath !== 'string') || typeof offset !== 'number') throw new Error('列表参数无效');
+		return service.listEntriesPage(relativePath, hostedSenderWorkspace(event), offset);
+	});
 	handleRendererInvoke(IPC_CHANNELS.workspaceReadFile, (_event, relativePath: string) => service.readFile(relativePath));
 	handleRendererInvoke(IPC_CHANNELS.workspaceCreateEntry, (_event, parentPath: unknown, name: unknown, kind: unknown) => {
 		if (typeof parentPath !== 'string' || typeof name !== 'string' || (kind !== 'file' && kind !== 'directory')) throw new Error('新建参数无效');

@@ -6,12 +6,15 @@ import { useChatStore } from '../store';
 import { useT } from '../i18n';
 import { managementCopy } from '../managementCopy';
 import { pluginResourceGroups } from '../managementState';
+import { createPluginCatalogCache } from '../pluginCatalogCache';
 import { Icon } from './Icons';
 import { SegmentedIndicator } from './SegmentedIndicator';
 import './pluginsPage.css';
 
 const KINDS: UiPluginResourceKind[] = ['extensions', 'skills', 'prompts', 'themes'];
 const KIND_ICON: Record<UiPluginResourceKind, ComponentProps<typeof Icon>['name']> = { extensions: 'plugins', skills: 'spark', prompts: 'message', themes: 'settings' };
+/** 上次目录按工作区缓存：重进插件页先渲染缓存，后台刷新完成后替换（突变回包也同步写入）。 */
+const pluginCatalogCache = createPluginCatalogCache();
 const errorMessage = (value: unknown) => value instanceof Error ? value.message : String(value);
 const packageKey = (item: UiPluginPackage) => JSON.stringify([item.scope, item.source]);
 const resourceKey = (item: UiPluginResource) => JSON.stringify([item.scope, item.kind, item.path]);
@@ -120,8 +123,16 @@ export function PluginsPage() {
 		if (!ready || !bridge || busy) return;
 		const token = generation.current;
 		const request = ++fetchRequest.current;
-		setLoading(true);
-		void bridge.getPluginCatalog(cwd).then((value) => { if (contextCurrent(token) && request === fetchRequest.current) setCatalog(value); }).catch((cause) => { if (contextCurrent(token) && request === fetchRequest.current) setError(errorMessage(cause)); }).finally(() => { if (contextCurrent(token) && request === fetchRequest.current) setLoading(false); });
+		// Cache-first: paint the previous catalog immediately and refresh behind it;
+		// a failed refresh keeps the cached view and stays retryable through the same error path.
+		const cached = pluginCatalogCache.read(cwd);
+		if (cached) setCatalog(cached);
+		else setLoading(true);
+		void bridge.getPluginCatalog(cwd).then((value) => {
+			if (!contextCurrent(token) || request !== fetchRequest.current) return;
+			pluginCatalogCache.write(cwd, value);
+			setCatalog(value);
+		}).catch((cause) => { if (contextCurrent(token) && request === fetchRequest.current) setError(errorMessage(cause)); }).finally(() => { if (contextCurrent(token) && request === fetchRequest.current) setLoading(false); });
 		return () => { fetchRequest.current += 1; };
 	}, [bridge, cwd, sessionId, ready, retry, busy, pluginReloadRevision]);
 	function refreshCatalog() { setError(null); setRetry((value) => value + 1); }
@@ -141,6 +152,7 @@ export function PluginsPage() {
 		try {
 			const value = await bridge.mutatePlugin(input);
 			if (!contextCurrent(token)) return false;
+			pluginCatalogCache.write(cwd, value);
 			setCatalog(value); setFeedback(t(value.warnings.length ? 'plugins.doneWithWarnings' : value.reloadPending ? 'plugins.doneReloadPending' : `plugins.done.${input.action === 'update-target' ? 'update' : input.action}`)); done?.();
 			return true;
 		} catch (cause) { if (contextCurrent(token)) (inDialog ? setDialogError : setError)(errorMessage(cause)); return false; }

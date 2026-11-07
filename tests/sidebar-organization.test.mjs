@@ -11,6 +11,7 @@ import {
   groupSidebarProjects,
   groupSessionsByDate,
   mergeSidebarProjectOrder,
+  moveProjectToGroupPosition,
   normalizeSidebarProjectGroups,
   orderSidebarProjects,
   readSidebarPreferences,
@@ -54,6 +55,26 @@ test('project groups persist independently, preserve empty groups, and normalize
   assert.doesNotThrow(() => saveSidebarSectionLayout({ collapsed: [], heights: {} }, { setItem() { throw new Error('blocked'); } }));
 });
 
+test('project drag placement enters, reorders inside, and leaves groups at the dropped position', () => {
+  const groups = () => [
+    { id: 'work', name: 'Work', projects: ['D:/One', 'D:/Two'] },
+    { id: 'play', name: 'Play', projects: ['E:/Game'] },
+  ];
+  const lists = (next) => next.map(group => group.projects);
+  // Reordering inside a group moves the member to the anchor edge.
+  assert.deepEqual(lists(moveProjectToGroupPosition(groups(), 'D:/Two', 'work', 'D:/One', 'before')), [['D:/Two', 'D:/One'], ['E:/Game']]);
+  assert.deepEqual(lists(moveProjectToGroupPosition(groups(), 'D:/One', 'work', 'D:/Two', 'after')), [['D:/Two', 'D:/One'], ['E:/Game']]);
+  // Cross-group insertion removes the old membership first.
+  assert.deepEqual(lists(moveProjectToGroupPosition(groups(), 'D:/One', 'play', 'E:/Game', 'after')), [['D:/Two'], ['E:/Game', 'D:/One']]);
+  // Entering from the ungrouped list matches Windows path aliases for both members and anchors.
+  assert.deepEqual(lists(moveProjectToGroupPosition(groups(), 'C:/New', 'work', 'd:\\two\\', 'before')), [['D:/One', 'C:/New', 'D:/Two'], ['E:/Game']]);
+  // Leaving for the ungrouped list only clears membership; the position comes from the global order.
+  assert.deepEqual(lists(moveProjectToGroupPosition(groups(), 'E:/Game', null, 'D:/One', 'after')), [['D:/One', 'D:/Two'], []]);
+  // A missing or absent anchor appends instead of failing, and an unknown group falls back to ungrouped.
+  assert.deepEqual(lists(moveProjectToGroupPosition(groups(), 'C:/New', 'work', 'D:/Missing', 'before')), [['D:/One', 'D:/Two', 'C:/New'], ['E:/Game']]);
+  assert.deepEqual(lists(moveProjectToGroupPosition(groups(), 'C:/New', 'work', null, 'after')), [['D:/One', 'D:/Two', 'C:/New'], ['E:/Game']]);
+  assert.deepEqual(lists(moveProjectToGroupPosition(groups(), 'D:/One', 'missing', 'D:/Two', 'before')), [['D:/Two'], ['E:/Game']]);
+});
 test('plugin sidebar section registry namespaces IDs, sorts contributions, and unregisters cleanly', () => {
   const registry = createSidebarSectionRegistry();
   const remove = registry.register({ id: 'issues', pluginId: 'example.plugin', title: 'Issues', viewId: 'issues-view', order: 10 });

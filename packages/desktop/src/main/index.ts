@@ -1,19 +1,24 @@
 import { initializeDiagnostics, recordDiagnostic } from './diagnostics.ts';
 import { userInfo } from 'node:os';
-import { app, BrowserWindow, dialog, Menu, nativeImage, session, shell } from 'electron';
-import { mkdirSync, statSync } from 'node:fs';
+import { app, BrowserWindow, dialog, Menu, nativeImage, nativeTheme, session, shell } from 'electron';
+import { mkdir, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { IPC_CHANNELS } from '@pidesktop/shared';
 import { getAppLocale } from './appLocale';
+import { appearanceStatePath, readAppearanceState, readAppearanceStateAsync } from './appearance.ts';
 import { createBootErrorHtml, createBootHtml } from './splash';
 import { showEditContextMenu } from './editContextMenu.ts';
 import { appIconPath, createAppTray, destroyAppTray } from './tray';
 import { paiPipeName, startPaiPipeServer } from './paiPipe.ts';
 import { parseDesktopLaunch, reservePaiProfile, validatePaiSession, validatePaiWorkspace, type DesktopLaunch, type PaiProfile } from './desktopLaunch.ts';
+import { createStartupMetrics } from './startupMetrics.ts';
+import { swapSplashForMainWindow } from './startupSwap.ts';
+import { resolveWindowTheme } from './windowTheme.ts';
 import {
 	MAIN_WINDOW_MIN_HEIGHT,
 	MAIN_WINDOW_MIN_WIDTH,
+	readWindowStateAsync,
 	resolveStartupWindowState,
 	trackWindowState,
 	windowStateFromWindow,
@@ -66,8 +71,35 @@ let updateService: typeof import('./updateService').updateService | null = null;
 let mainRevealed = false;
 let pendingOpenSettings = false;
 let startupCancelled = false;
+let startupErrorShown = false;
 const pendingWindowReveals = new WeakMap<BrowserWindow, () => void>();
 const rendererWindows = new Set<BrowserWindow>();
+
+// Cold-start phases (audit P2): one structured diagnostics event per phase, plus
+// a single human-readable summary line in dev builds or with PI_STARTUP_LOG=1.
+const startupMetrics = createStartupMetrics({
+	now: () => performance.now(),
+	enabled: process.env.PI_STARTUP_LOG === '1' || !app.isPackaged,
+	logger: (...args) => console.log(...args),
+	record: (record) => recordDiagnostic({ stage: 'startup', action: `boot-${record.phase}`, outcome: record.outcome, durationMs: record.atMs }),
+});
+startupMetrics.mark('main-start');
+
+// Cold-start prefetch (audit P2): the boot window needs the saved placement and
+// the appearance before it can be built. Read both now, concurrently and off the
+// main thread's critical path, so they overlap Electron's own ready wait instead
+// of running as sync reads after it. Display geometry needs `ready`, so only
+// the raw saved state is prefetched; both readers fall back to null exactly
+// like their sync twins.
+const startupStatePrefetch = Promise.all([
+	readWindowStateAsync(windowStatePath(app.getPath('userData'))),
+	readAppearanceStateAsync(appearanceStatePath(baseUserData ?? app.getPath('userData'))),
+]);
+
+/** The colors the boot window, the main window and the pai windows share (splash theming). */
+function currentWindowTheme(): ReturnType<typeof resolveWindowTheme> {
+	return resolveWindowTheme(readAppearanceState(appearanceStatePath(baseUserData ?? app.getPath('userData'))), nativeTheme.shouldUseDarkColors);
+}
 
 function showMainWindow(): void {
 	const windows = BrowserWindow.getAllWindows();
@@ -126,7 +158,12 @@ function splashUrl(html: string): string {
 }
 
 function showStartupError(splash: BrowserWindow, error: unknown): void {
+	// One startup error at a time: a workspace failure keeps the renderer branch
+	// loading, and its own load failure must not stack a second error dialog.
+	if (startupErrorShown) return;
+	startupErrorShown = true;
 	startupCancelled = true;
+	startupMetrics.abort();
 	const message = error instanceof Error ? error.message : String(error);
 	const english = getAppLocale() === 'en-US';
 	console.error('Pi Desktop failed to start:', error);
@@ -136,7 +173,9 @@ function showStartupError(splash: BrowserWindow, error: unknown): void {
 		return;
 	}
 	if (!splash.isVisible()) splash.show();
-	void splash.loadURL(splashUrl(createBootErrorHtml(message, getAppLocale())))
+	// The error page shares the boot page's background and palette, so the
+	// swap between them shows no color flash.
+	void splash.loadURL(splashUrl(createBootErrorHtml(message, getAppLocale(), currentWindowTheme())))
 		.catch(() => {})
 		.finally(() => {
 			if (splash.isDestroyed()) return;
@@ -168,7 +207,9 @@ function createWindow(options: CreateMainWindowOptions): BrowserWindow {
 		y: state.bounds.y,
 		minWidth: MAIN_WINDOW_MIN_WIDTH,
 		minHeight: MAIN_WINDOW_MIN_HEIGHT,
-		backgroundColor: '#111216',
+		// Same source as the boot window and the renderer's theme surface, so the
+		// splash→main swap never changes color (splash theming).
+		backgroundColor: currentWindowTheme().background,
 		title: 'Pi Desktop',
 		// Deterministic taskbar/alt-tab icon in dev (electron.exe would show the
 		// Electron default) and packaged alike; same ico the tray uses.
@@ -192,6 +233,7 @@ function createWindow(options: CreateMainWindowOptions): BrowserWindow {
 	// A window closed maximized reopens maximized; maximize() before the first
 	// show() reveals it already covering the work area.
 	if (state.maximized) win.maximize();
+	startupMetrics.mark('window-created');
 	// Remember where the user leaves the window so the next launch opens here.
 	trackWindowState(win, windowStatePath(app.getPath('userData')));
 	rendererWindows.add(win);
@@ -350,14 +392,19 @@ function createWindow(options: CreateMainWindowOptions): BrowserWindow {
 		}
 		win.show();
 		win.webContents.setBackgroundThrottling(true);
+		// The reveal is the first user-visible frame of the app itself.
+		startupMetrics.mark('first-frame');
+		startupMetrics.finish();
 		onReady?.();
 	};
 	pendingWindowReveals.set(win, () => {
 		rendererReady = true;
+		startupMetrics.mark('renderer-ready');
 		reveal();
 	});
 	win.once('ready-to-show', () => {
 		firstPaintReady = true;
+		startupMetrics.mark('ready-to-show');
 		reveal();
 	});
 	const openExternalLink = (url: string): void => {
@@ -391,9 +438,24 @@ function createWindow(options: CreateMainWindowOptions): BrowserWindow {
 		: win.loadFile(join(here, '../renderer/index.html'));
 	void load.then(() => {
 		loaded = true;
+		startupMetrics.mark('renderer-loaded');
 		reveal();
 	}).catch(reportStartupFailure);
 	return win;
+}
+
+/**
+ * Startup workspace branch (audit P2): the workspace's state IO runs off the
+ * main thread and concurrently with the renderer load — the main window does
+ * not depend on it, only the agent boot does.
+ */
+async function resolveStartupWorkspace(module: typeof import('./ipc')): Promise<string> {
+	const workspace = await module.defaultWorkspaceAsync();
+	// A workspace that already exists — notably a Windows drive root such as
+	// D:\ — must not be passed to mkdir: recursive mkdir still fails with
+	// EPERM on drive roots. Only create the directory when it is missing.
+	if (!(await stat(workspace, { throwIfNoEntry: false }))?.isDirectory()) await mkdir(workspace, { recursive: true });
+	return workspace;
 }
 
 async function bootstrap(splash: BrowserWindow): Promise<void> {
@@ -412,25 +474,20 @@ async function bootstrap(splash: BrowserWindow): Promise<void> {
 				return focused && rendererWindows.has(focused) ? focused : [...rendererWindows][0];
 			},
 		});
-		const workspace = module.defaultWorkspace();
-		// A workspace that already exists — notably a Windows drive root such as
-		// D:\ — must not be passed to mkdirSync: recursive mkdir still fails with
-		// EPERM on drive roots. Only create the directory when it is missing.
-		if (!statSync(workspace, { throwIfNoEntry: false })?.isDirectory()) mkdirSync(workspace, { recursive: true });
-		updateService?.setBeforeInstall(async () => {
-			if (ipc) await ipc.disposeServices();
-			readyToQuit = true;
-		});
-		updateService?.start();
+		startupMetrics.mark('ipc-ready');
 		// Open the main window where the boot window is right now — the saved
 		// placement plus any drag made while the app was still loading — and
-		// keep following the boot window's position until the reveal.
+		// keep following the boot window's position until the reveal. Its
+		// renderer load starts immediately and runs in parallel with the
+		// workspace branch below (the two share no state; audit P2).
 		const mainWindow = createWindow({
 			state: windowStateFromWindow(splash),
 			mirror: splash,
 			onReady: () => {
 				mainRevealed = true;
-				if (!splash.isDestroyed()) splash.close();
+				// Same-frame swap: the boot window closes only after this window's
+				// show has been processed, never before a frame is on screen.
+				swapSplashForMainWindow(mainWindow, splash);
 				if (pendingOpenSettings) {
 					pendingOpenSettings = false;
 					module.sendAppCommand({ type: 'open-settings' });
@@ -438,23 +495,51 @@ async function bootstrap(splash: BrowserWindow): Promise<void> {
 			},
 			onLoadError: (error) => showStartupError(splash, error),
 		});
-		// Load the UI and Pi history concurrently, keeping the logo until React
-		// acknowledges a committed conversation (or a required extension dialog).
-		// Extra instances start fresh so they never reopen a transcript in use;
-		// a hosted pai window (below) resumes its own conversation.
-		void module.agentService.init({ cwd: workspace, ...(launch.windowMode !== 'full' ? { fresh: true } : {}) }).catch((error: unknown) => {
-			recordDiagnostic({ stage: 'startup', action: 'agent-init', outcome: 'failure' });
-			console.error('Pi agent failed to initialize:', error);
-			if (startupCancelled || mainRevealed) return;
-			mainWindow.destroy();
-			showStartupError(splash, error);
+		updateService?.setBeforeInstall(async () => {
+			if (ipc) await ipc.disposeServices();
+			readyToQuit = true;
 		});
+		// A non-first-screen item: the first network check is delayed inside the
+		// update service itself, so it never competes with the startup path.
+		updateService?.start();
+		void resolveStartupWorkspace(module)
+			.then((workspace) => {
+				// The renderer branch may have failed (or the user closed the boot
+				// window) while the workspace resolved: don't fork an agent host into
+				// a startup that is already unwinding.
+				if (startupCancelled || splash.isDestroyed()) return;
+				startupMetrics.mark('workspace-ready');
+				// Load the UI and Pi history concurrently, keeping the logo until React
+				// acknowledges a committed conversation (or a required extension dialog).
+				// Extra instances start fresh so they never reopen a transcript in use;
+				// a hosted pai window (below) resumes its own conversation.
+				return module.agentService.init({ cwd: workspace, ...(launch.windowMode !== 'full' ? { fresh: true } : {}) }).catch((error: unknown) => {
+					recordDiagnostic({ stage: 'startup', action: 'agent-init', outcome: 'failure' });
+					console.error('Pi agent failed to initialize:', error);
+					if (startupCancelled || mainRevealed) return;
+					mainWindow.destroy();
+					showStartupError(splash, error);
+				});
+			})
+			.catch((error: unknown) => {
+				// The renderer branch keeps loading; the boot error page takes over
+				// exactly as before, once, for the failed workspace.
+				recordDiagnostic({ stage: 'startup', action: 'workspace-init', outcome: 'failure' });
+				if (!startupCancelled) showStartupError(splash, error);
+			});
 		// A cold `pai` launch booted the main instance; open its window now that
 		// IPC, the tray and the main window's agent are on their way.
 		if (pendingPaiLaunch) {
 			const request = pendingPaiLaunch;
 			pendingPaiLaunch = null;
-			module.openPaiWindow(request);
+			try {
+				module.openPaiWindow(request);
+			} catch (error) {
+				// A cold pai launch validates its workspace directory; one removed during
+				// the boot gap is a pai-only failure — same handling as the handoff path,
+				// it must not take down the main instance.
+				showPaiError(error);
+			}
 		}
 	} catch (error) {
 		if (!startupCancelled) showStartupError(splash, error);
@@ -476,9 +561,10 @@ if (!hasSingleInstanceLock) {
 		openPaiHandoff(commandLine);
 	});
 
-	void app.whenReady().then(() => {
+	void app.whenReady().then(async () => {
 		initializeDiagnostics(join(app.getPath('userData'), 'diagnostics'));
 		recordDiagnostic({ stage: 'startup', action: 'app-ready', outcome: 'success' });
+		startupMetrics.mark('app-ready');
 		// Fast path for the `pai` command: the running instance serves pipe
 		// requests without starting another Electron process.
 		if (process.platform === 'win32' && launch.windowMode === 'full') {
@@ -511,7 +597,11 @@ if (!hasSingleInstanceLock) {
 	// with the main window's background color so the swap is invisible. It
 	// opens at the main window's saved placement (centered on first run) so
 	// the finished window appears exactly where loading started.
-	const startupState = resolveStartupWindowState(windowStatePath(app.getPath('userData')));
+	const [savedWindowState, savedAppearance] = await startupStatePrefetch;
+	startupMetrics.mark('state-read');
+	const startupState = resolveStartupWindowState(windowStatePath(app.getPath('userData')), undefined, savedWindowState);
+	// One theme for the boot window and its page (one read, not two).
+	const bootTheme = resolveWindowTheme(savedAppearance, nativeTheme.shouldUseDarkColors);
 	const splash = new BrowserWindow({
 		width: startupState.bounds.width,
 		height: startupState.bounds.height,
@@ -524,7 +614,9 @@ if (!hasSingleInstanceLock) {
 		autoHideMenuBar: process.platform === 'win32',
 		show: false,
 		hasShadow: true,
-		backgroundColor: '#111216',
+		// The user's appearance preference decides the boot window's color; the
+		// same constant feeds the boot page and the main window (splash theming).
+		backgroundColor: bootTheme.background,
 		title: 'Pi Desktop',
 		icon: nativeImage.createFromPath(appIconPath()),
 		webPreferences: {
@@ -533,6 +625,7 @@ if (!hasSingleInstanceLock) {
 			nodeIntegration: false,
 		},
 	});
+	startupMetrics.mark('splash-created');
 	if (startupState.maximized) splash.maximize();
 	splash.on('closed', () => {
 		if (!mainRevealed) {
@@ -545,13 +638,14 @@ if (!hasSingleInstanceLock) {
 		if (started || splash.isDestroyed()) return;
 		started = true;
 		splash.show();
+		startupMetrics.mark('splash-shown');
 		// Give the visible splash a few frames before evaluating the heavy Pi import.
 		setTimeout(() => {
 			if (!startupCancelled && !splash.isDestroyed()) void bootstrap(splash);
 		}, 100);
 	};
 	splash.once('ready-to-show', showAndStart);
-	void splash.loadURL(splashUrl(createBootHtml(getAppLocale())))
+	void splash.loadURL(splashUrl(createBootHtml(getAppLocale(), bootTheme)))
 		.then(() => {
 			// A fallback for environments that never emit ready-to-show.
 			setTimeout(showAndStart, 800);

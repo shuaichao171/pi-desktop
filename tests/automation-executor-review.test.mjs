@@ -196,6 +196,7 @@ test('automation IPC accepts only its current main renderer and starts schedulin
     electron: `
       const env=globalThis.__automationIpcReview;
       export const app={getPath:()=>'/automation-review'};
+      export const nativeTheme = { shouldUseDarkColors: false };
     export const nativeImage = { createFromPath: () => ({}) };
     export const shell = { showItemInFolder: () => {} };
     export const powerSaveBlocker = { start: () => 1, stop: () => {} };

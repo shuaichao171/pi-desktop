@@ -14,6 +14,7 @@ import { useConversationCopy } from '../conversationCopy';
 import { operationFeedback } from '../operationFeedback';
 import { useMessageStreamShowReasoning } from '../messageStreamShowReasoning';
 import { TranscriptSearchContext } from '../transcriptSearch';
+import { StreamingContentContext } from '../streamingContent';
 
 function AttachmentPreview({ attachment }: { attachment: UiAttachment }) {
 	const { t } = useT();
@@ -291,7 +292,7 @@ const AssistantMessageItem = memo(function AssistantMessageItem({ message, highl
 				{showHeading && <div className="pd-assistant-heading"><span className="pd-assistant-mark">π</span><span>Pi</span></div>}
 				{hasThinking && !hideThinking && showReasoning && <ThinkingActivity message={message} />}
 				{hasThinking && !showReasoning && !hideThinking && message.status === 'streaming' && message.thinkingStatus === 'streaming' && <span className="pd-response-pending" role="status"><ActivityLabel active>{t('message.generating')}</ActivityLabel></span>}
-				{message.text && <div ref={bodyRef} data-message-body className="pd-markdown" onPointerUp={inspectSelection} onKeyUp={inspectSelection}><ConversationMarkdown>{message.text}</ConversationMarkdown></div>}
+				{message.text && <div ref={bodyRef} data-message-body className="pd-markdown" onPointerUp={inspectSelection} onKeyUp={inspectSelection}><StreamingContentContext.Provider value={message.status === 'streaming'}><ConversationMarkdown>{message.text}</ConversationMarkdown></StreamingContentContext.Provider></div>}
 				{selection && createPortal(<button type="button" className="pd-quote-selection" data-quote-for={message.id} style={{ position: 'fixed', zIndex: 'var(--pd-z-selection-action)', ...selectionPosition }} onMouseDown={(event) => event.preventDefault()} onClick={quote}>{c('quote')}</button>, document.body)}
 				{!hidePending && message.status === 'streaming' && message.thinkingStatus !== 'streaming' && <span className="pd-response-pending" role="status"><ActivityLabel active>{t(message.text ? 'message.generating' : 'message.preparing')}</ActivityLabel></span>}
 				{message.status === 'error' && <div className="pd-message-interrupted">{message.errorMessage || t('message.interrupted')}</div>}

@@ -1,6 +1,7 @@
 import { memo, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import type { UiToolActivity } from '@pidesktop/shared';
 import { useT } from '../i18n';
+import { useChatStore } from '../store';
 import { activityCopy, activityPresentation } from '../activityCopy';
 import { useDisclosureChoice } from '../conversationDisclosure';
 import { ActivityDisclosure, ActivityLabel } from './ActivityDisclosure';
@@ -59,6 +60,15 @@ function ActivityFiles({ files }: { files: string[] }) {
 
 export function ToolActivityItem({ activity, onInteract }: { activity: UiToolActivity; onInteract?(): void }) {
 	const { t, locale } = useT();
+	const interruptShellTools = useChatStore((s) => s.interruptShellTools);
+	const [interruptPending, setInterruptPending] = useState(false);
+	// Shell commands can be killed without aborting the turn; other tools cannot.
+	const interruptible = activity.status === 'running' && (activity.tool === 'bash' || activity.tool === 'powershell');
+	async function interruptCommand() {
+		if (interruptPending) return;
+		setInterruptPending(true);
+		try { await interruptShellTools(activity.id); } finally { setInterruptPending(false); }
+	}
 	const detailId = useId();
 	// null follows the default. Either user choice wins over every later update.
 	const [userExpanded, setUserExpanded] = useDisclosureChoice(`tool:${activity.id}`);
@@ -102,16 +112,23 @@ export function ToolActivityItem({ activity, onInteract }: { activity: UiToolAct
 	}
 
 	const files = activity.files ?? [];
+	const head = (
+		<button type="button" className="pd-activity-head" onClick={() => { setUserExpanded(!expanded); onInteract?.(); }} aria-expanded={expanded} aria-controls={detailId}>
+			<span className={'pd-activity-icon is-' + activity.status} aria-hidden="true"><Icon name={activity.status === 'done' ? 'check' : activity.status === 'error' ? 'close' : activity.status === 'interrupted' ? 'square' : activity.tool === 'bash' ? 'terminal' : 'file'} width="14" height="14" /></span>
+			<span className="pd-activity-copy"><span className="pd-activity-kind" title={activity.tool}><ActivityLabel active={activity.status === 'running'}>{presentation.label}</ActivityLabel></span>{presentation.summary && <span className="pd-activity-title" title={presentation.summary}>{presentation.summary}</span>}</span>
+			{activity.exitCode != null && activity.exitCode !== 0 && <span className="pd-activity-exit is-error">{t('chat.tool.exitCode', { code: activity.exitCode })}</span>}
+			{duration && <span className="pd-activity-duration">{duration}</span>}
+			<span className={'pd-activity-status is-' + activity.status}>{t('chat.tool.' + activity.status)}</span>
+			<Icon name="chevronDown" className={'pd-chevron' + (expanded ? ' is-open' : '')} width="14" height="14" />
+		</button>
+	);
 	return (
 		<div className={'pd-activity-item is-' + activity.status}>
-			<button type="button" className="pd-activity-head" onClick={() => { setUserExpanded(!expanded); onInteract?.(); }} aria-expanded={expanded} aria-controls={detailId}>
-				<span className={'pd-activity-icon is-' + activity.status} aria-hidden="true"><Icon name={activity.status === 'done' ? 'check' : activity.status === 'error' ? 'close' : activity.status === 'interrupted' ? 'square' : activity.tool === 'bash' ? 'terminal' : 'file'} width="14" height="14" /></span>
-				<span className="pd-activity-copy"><span className="pd-activity-kind" title={activity.tool}><ActivityLabel active={activity.status === 'running'}>{presentation.label}</ActivityLabel></span>{presentation.summary && <span className="pd-activity-title" title={presentation.summary}>{presentation.summary}</span>}</span>
-				{activity.exitCode != null && activity.exitCode !== 0 && <span className="pd-activity-exit is-error">{t('chat.tool.exitCode', { code: activity.exitCode })}</span>}
-				{duration && <span className="pd-activity-duration">{duration}</span>}
-				<span className={'pd-activity-status is-' + activity.status}>{t('chat.tool.' + activity.status)}</span>
-				<Icon name="chevronDown" className={'pd-chevron' + (expanded ? ' is-open' : '')} width="14" height="14" />
-			</button>
+			{interruptible
+				? <div className="pd-activity-headrow">{head}
+					<button type="button" className="pd-activity-interrupt" disabled={interruptPending} onClick={() => { void interruptCommand(); }} title={t('chat.tool.interruptTitle')} aria-label={t('chat.tool.interrupt')}>{interruptPending ? t('chat.tool.interrupting') : t('chat.tool.interrupt')}</button>
+				</div>
+				: head}
 			<ActivityDisclosure id={detailId} expanded={expanded}>
 				<div className="pd-activity-detail">
 					{command && <div className="pd-activity-command">

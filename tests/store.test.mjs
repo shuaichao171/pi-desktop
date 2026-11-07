@@ -668,6 +668,35 @@ test('model and credential settings use the bridge without retaining the API key
   assert.equal(JSON.stringify(state).includes('sample-secret'), false);
 });
 
+test('an empty model picker renders the last cached catalog until the host answers', async () => {
+  const items = new Map();
+  const previous = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
+  Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: {
+    getItem: (key) => items.get(key) ?? null, setItem: (key, value) => { items.set(key, String(value)); }, removeItem: (key) => { items.delete(key); },
+  } });
+  try {
+    const cachedModel = { provider: 'test-provider', id: 'cached-model', name: 'Cached', reasoning: false, input: ['text'], contextWindow: 1000, maxTokens: 100 };
+    items.set('pi-desktop.model-catalog.v1', JSON.stringify({ models: [cachedModel], modelProviders: [] }));
+    const host = createBridge();
+    useChatStore.getState().setBridge(host.bridge);
+    await settle();
+    host.emit(2, { type: 'reset', cwd: 'D:\\cached-project' });
+    assert.deepEqual(useChatStore.getState().models, []);
+    const fresh = deferred();
+    host.bridge.listModels = () => fresh.promise;
+    const read = useChatStore.getState().refreshModels();
+    assert.deepEqual(useChatStore.getState().models, [cachedModel], 'stale catalog shows immediately');
+    const liveModel = { ...cachedModel, id: 'live-model', name: 'Live' };
+    fresh.resolve([liveModel]);
+    await read;
+    assert.deepEqual(useChatStore.getState().models, [liveModel], 'the response replaces it wholesale');
+    assert.deepEqual(JSON.parse(items.get('pi-desktop.model-catalog.v1')).models, [liveModel], 'and becomes the cache for the next launch');
+  } finally {
+    if (previous) Object.defineProperty(globalThis, 'localStorage', previous);
+    else delete globalThis.localStorage;
+  }
+});
+
 test('workspace reset ignores late settings reads and preserves the new loading state', async () => {
   const host = createBridge();
   useChatStore.getState().setBridge(host.bridge);

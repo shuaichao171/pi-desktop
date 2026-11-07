@@ -4,6 +4,7 @@ import type { UiQueuedMessage } from '@pidesktop/shared';
 import type { UiInputQueueItem } from '../../../shared/src/inputFeatures';
 import { useT } from '../i18n';
 import { useInputQueue } from '../useInputQueue';
+import { useChatStore } from '../store';
 import { Icon } from './Icons';
 import { QueueComposerEditor } from './QueueComposerEditor';
 import './composerQueue.css';
@@ -27,6 +28,8 @@ export const ComposerQueue = memo(function ComposerQueue({ items, scopeKey, edit
 }) {
   const { t } = useT();
   const { queue, error, pending, pendingRows, pendingGlobal, activeRow, ready, refresh, mutate } = useInputQueue(items);
+  const runningShellTool = useChatStore((s) => s.activities.some((activity) => activity.status === 'running' && (activity.tool === 'bash' || activity.tool === 'powershell')));
+  const interruptShellTools = useChatStore((s) => s.interruptShellTools);
   const [editing, setEditing] = useState<UiInputQueueItem | null>(null);
   const [details, setDetails] = useState<string | null>(null);
   const [menu, setMenu] = useState<{ id: string; left: number; bottom: number; trigger: HTMLElement } | null>(null);
@@ -146,6 +149,7 @@ export const ComposerQueue = memo(function ComposerQueue({ items, scopeKey, edit
     {menu && menuItem && createPortal(<div ref={menuRef} className="pd-queue-menu" role="menu" aria-label={t('queue.itemActions')} style={{ left: menu.left, bottom: menu.bottom, maxHeight: Math.min(340, innerHeight - menu.bottom - 8) }} onKeyDown={menuKeys}>
       <button type="button" role="menuitem" disabled={rowDisabled(menuItem.id) || editingPending || Boolean(editing) || itemState(menuItem.id) === 'recovered' || queue?.items.some(row => row.state === 'editing' && row.id !== menuItem.id)} onClick={() => { closeMenu(false); void beginEdit(menuItem); }}><Icon name="pencil" width="15" height="15" />{t('queue.edit')}</button>
       <button type="button" role="menuitem" onClick={() => { closeMenu(false); setDetails(menuItem.id); }}><Icon name="message" width="15" height="15" />{t('queue.viewFull')}</button>
+      {runningShellTool && itemState(menuItem.id) === 'accepted' && <button type="button" role="menuitem" disabled={rowDisabled(menuItem.id)} onClick={() => { closeMenu(); void (menuItem.behavior === 'followUp' ? mutate('steer', menuItem.id) : Promise.resolve()).then(() => interruptShellTools()); }}><Icon name="square" width="15" height="15" />{t(menuItem.behavior === 'followUp' ? 'queue.interruptSteer' : 'queue.interruptRunning')}</button>}
       {([-1, 1] as const).map(delta => { const peers = siblings(menuItem), index = peers.findIndex(row => row.id === menuItem.id); return <button key={delta} type="button" role="menuitem" disabled={rowDisabled(menuItem.id) || index < 0 || index + delta < 0 || index + delta >= peers.length} onClick={() => { closeMenu(); move(menuItem, delta); }}><Icon name={delta < 0 ? 'arrowUp' : 'arrowDown'} width="15" height="15" />{t(delta < 0 ? 'queue.moveUp' : 'queue.moveDown')}</button>; })}
       {itemState(menuItem.id) === 'editing' && !editing && <button type="button" role="menuitem" disabled={rowDisabled(menuItem.id)} onClick={() => { closeMenu(); void mutate('cancelEdit', menuItem.id); }}>{t('queue.cancelEdit')}</button>}
       <hr />

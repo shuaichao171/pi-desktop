@@ -12,7 +12,7 @@ import { randomUUID } from 'node:crypto';
 import type { IpcMainInvokeEvent } from 'electron';
 import { DEBUG_API_CHANNELS, type UiDebugApiConfig, type UiDebugApiState } from '@pidesktop/shared';
 import { handleRendererInvoke } from './rendererIpc.ts';
-import { DEFAULT_DEBUG_API_SETTINGS, isValidDesktopDebugApiSettings, readDesktopSettings, writeDesktopSettingsAsync, type DesktopDebugApiSettings } from './desktopSettings.ts';
+import { DEFAULT_DEBUG_API_SETTINGS, isValidDesktopDebugApiSettings, readDesktopSettings, withDesktopSettings, writeDesktopSettingsAsync, type DesktopDebugApiSettings } from './desktopSettings.ts';
 import { createDebugServer, type DebugServer } from './debugServer.ts';
 import type { CloudSyncService } from './cloudSync/cloudSyncService.ts';
 
@@ -57,18 +57,23 @@ export function registerDebugApiIpc(options: {
 	};
 
 	async function applyConfig(config: UiDebugApiConfig): Promise<UiDebugApiState> {
-		const settings = readDesktopSettings(settingsPath);
-		if (server) {
-			await server.stop();
-			server = null;
-		}
-		await writeDesktopSettingsAsync(settingsPath, { ...settings, debugApi: config });
-		if (config.enabled) {
-			server = await createDebugServer(config, {
-				cloudSync: options.cloudSync,
-				appVersion: options.appVersion,
-			});
-		}
+		// stop / 写盘 / create 全部收进共享设置队列（desktopSettings.ts）：
+		// 并发 setConfig 交错时后到调用不可能跳过对先建服务器的 stop
+		// （否则会遗留监听直到 dispose），并发设置保存也不会互相回滚字段。
+		await withDesktopSettings(async () => {
+			if (server) {
+				await server.stop();
+				server = null;
+			}
+			const settings = readDesktopSettings(settingsPath);
+			await writeDesktopSettingsAsync(settingsPath, { ...settings, debugApi: config });
+			if (config.enabled) {
+				server = await createDebugServer(config, {
+					cloudSync: options.cloudSync,
+					appVersion: options.appVersion,
+				});
+			}
+		});
 		return snapshot();
 	}
 

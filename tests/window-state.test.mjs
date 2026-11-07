@@ -23,11 +23,13 @@ const {
 	isValidWindowState,
 	isVisibleOnDisplays,
 	readWindowState,
+	readWindowStateAsync,
 	resolveStartupWindowState,
 	trackWindowState,
 	windowStateFromWindow,
 	windowStatePath,
 	writeWindowState,
+	writeWindowStateAsync,
 } = await import('../packages/desktop/src/main/windowState.ts');
 
 const primaryWorkArea = { x: 0, y: 0, width: 1920, height: 1040 };
@@ -58,7 +60,17 @@ function fakeWindow(bounds, { maximized = false } = {}) {
 
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-test('window state round-trips and damaged files fall back to no placement', () => {
+const waitFor = async (check, { timeout = 2000, interval = 15 } = {}) => {
+	const deadline = Date.now() + timeout;
+	for (;;) {
+		const value = check();
+		if (value) return value;
+		if (Date.now() > deadline) throw new Error('waitFor timed out');
+		await delay(interval);
+	}
+};
+
+test('window state round-trips and damaged files fall back to no placement', async () => {
 	const root = tempRoot('io');
 	try {
 		const path = windowStatePath(root);
@@ -68,6 +80,8 @@ test('window state round-trips and damaged files fall back to no placement', () 
 		const state = { bounds: { x: 140, y: 88, width: 1500, height: 900 }, maximized: false };
 		writeWindowState(path, state);
 		assert.deepEqual(readWindowState(path), state, 'the placement round-trips');
+		await writeWindowStateAsync(path, { bounds: { x: 20, y: 40, width: 900, height: 600 }, maximized: true });
+		assert.deepEqual(readWindowState(path), { bounds: { x: 20, y: 40, width: 900, height: 600 }, maximized: true }, 'the async writer round-trips too');
 
 		assert.equal(isValidWindowState(null), false);
 		assert.equal(isValidWindowState({ bounds: { x: 0, y: 0, width: 1280, height: 820 } }), false, 'maximized flag required');
@@ -149,7 +163,11 @@ test('the tracker persists moves debounced and once more on close', async () => 
 		await delay(120);
 		assert.equal(readWindowState(path), null, 'bursty drag events coalesce into one write');
 
-		await delay(500);
+		// 防抖触发后落盘是异步的：轮询等待最后一次位置写入磁盘。
+		await waitFor(() => {
+			const saved = readWindowState(path);
+			return saved !== null && saved.bounds.x === 220;
+		});
 		assert.deepEqual(readWindowState(path), { bounds: { x: 220, y: 100, width: 1280, height: 820 }, maximized: false }, 'the last placement wins');
 
 		win.bounds = { x: 300, y: 240, width: 1400, height: 860 };
@@ -161,6 +179,56 @@ test('the tracker persists moves debounced and once more on close', async () => 
 			'closing writes immediately, including the tray hide on Windows',
 		);
 		assert.deepEqual(JSON.parse(readFileSync(path, 'utf8')), readWindowState(path));
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+test('closing while an async save is in flight still leaves the final placement on disk', async () => {
+	const root = tempRoot('track-close');
+	try {
+		const path = windowStatePath(root);
+		const win = fakeWindow({ x: 10, y: 10, width: 1280, height: 820 });
+		trackWindowState(win, path);
+
+		// 防抖已触发、异步保存在途时立刻 close：同步写立即落盘，
+		// 迟到的异步 rename 必须收敛到 close 的位置而不是覆盖田它。
+		win.emit('move');
+		await delay(520);
+		win.bounds = { x: 999, y: 88, width: 1300, height: 900 };
+		win.emit('close');
+		assert.deepEqual(
+			readWindowState(path),
+			{ bounds: { x: 999, y: 88, width: 1300, height: 900 }, maximized: false },
+			'the close write is synchronous and immediately visible',
+		);
+		await waitFor(() => {
+			const saved = readWindowState(path);
+			return saved !== null && saved.bounds.x === 999 && saved.bounds.width === 1300;
+		});
+		assert.deepEqual(readWindowState(path), { bounds: { x: 999, y: 88, width: 1300, height: 900 }, maximized: false }, 'the final placement survives the late async save');
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+test('the cold-start prefetch reads placement async with the sync reader fallbacks', async () => {
+	const root = tempRoot('prefetch');
+	try {
+		const path = windowStatePath(root);
+		assert.equal(await readWindowStateAsync(path), null, 'missing file');
+		const saved = { bounds: { x: 2100, y: 40, width: 1000, height: 700 }, maximized: true };
+		writeWindowState(path, saved);
+		assert.deepEqual(await readWindowStateAsync(path), saved);
+		assert.deepEqual(await readWindowStateAsync(path), readWindowState(path), 'same value as the sync reader');
+		writeFileSync(path, '{broken', 'utf8');
+		assert.equal(await readWindowStateAsync(path), null, 'corrupt file falls back');
+		assert.equal(readFileSync(path, 'utf8'), '{broken', 'unreadable bytes are left for the next save');
+
+		// A prefetched value is used as-is (no second read); null means "nothing saved".
+		writeWindowState(path, { bounds: { x: -5000, y: 0, width: 1000, height: 700 }, maximized: false });
+		assert.deepEqual(resolveStartupWindowState(path, { displays, primaryWorkArea }, saved), saved, 'preloaded placement wins over the file');
+		assert.deepEqual(resolveStartupWindowState(path, { displays, primaryWorkArea }, null), defaultWindowState(primaryWorkArea), 'preloaded null centers');
 	} finally {
 		rmSync(root, { recursive: true, force: true });
 	}

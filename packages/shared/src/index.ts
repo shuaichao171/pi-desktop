@@ -74,6 +74,7 @@ export const IPC_CHANNELS = {
   agentEditMessage: 'agent:edit-message',
   agentForkMessage: 'agent:fork-message',
   agentUpdateQueuedMessage: 'agent:update-queued-message',
+  agentInterruptShellTools: 'agent:interrupt-shell-tools',
   agentGenerateCommitMessage: 'agent:generate-commit-message',
   agentAbort: 'agent:abort',
   agentNewSession: 'agent:new-session',
@@ -88,6 +89,7 @@ export const IPC_CHANNELS = {
   agentSessionTree: 'agent:session-tree',
   agentSwitchBranch: 'agent:switch-branch',
   agentListSessions: 'agent:list-sessions',
+  agentListSessionsPage: 'agent:list-sessions-page',
   agentSearchSessions: 'agent:search-sessions',
   agentSwitchSession: 'agent:switch-session',
   agentPeekSession: 'agent:peek-session',
@@ -144,6 +146,7 @@ export const IPC_CHANNELS = {
   workspaceOpenPath: 'workspace:open-path',
   workspacePickPath: 'workspace:pick-path',
   workspaceListEntries: 'workspace:list-entries',
+  workspaceListEntriesPage: 'workspace:list-entries-page',
   workspaceSearchFiles: 'workspace:search-files',
   workspaceReadFile: 'workspace:read-file',
   workspaceCreateEntry: 'workspace:create-entry',
@@ -837,12 +840,33 @@ export interface UiSessionSearchResult extends UiSessionSummary {
   messageId?: string;
 }
 
+/** One page of a workspace's session listing (agentListSessionsPage). Pages of one
+ *  refresh share a snapshot `revision`; a rebuilt listing changes it, so a later
+ *  continuation page that sees a different revision (or total) must be dropped
+ *  instead of spliced into a list built from another snapshot. */
+export interface UiSessionListPage {
+  sessions: UiSessionSummary[];
+  /** Session count in this workspace after the same filtering as the full listing. */
+  total: number;
+  hasMore: boolean;
+  revision: number;
+}
+
 export interface WorkspaceEntry {
   name: string;
   /** Path relative to the active workspace. */
   path: string;
   kind: 'file' | 'directory';
   size?: number;
+}
+
+/** One page of a directory listing: folders first, then files, by name. */
+export interface WorkspaceEntryPage {
+  entries: WorkspaceEntry[];
+  /** Offset for the next page; null when the directory is exhausted. */
+  nextOffset: number | null;
+  /** Listable children (files and folders, symlinks excluded) in the directory. */
+  total: number;
 }
 
 export interface WorkspaceGitChange {
@@ -1164,6 +1188,8 @@ export interface AgentBridge extends InputFeatureBridge, DataFeaturesBridge, Wor
   /** 弹出原生选择器挑选文件或文件夹；取消返回 null。 */
   pickPath(mode: 'file' | 'folder', cwd: string): Promise<string | null>;
   listWorkspaceEntries(relativePath?: string): Promise<WorkspaceEntry[]>;
+  /** Paged listing for large folders; older bridges only have listWorkspaceEntries (first page). */
+  listWorkspaceEntriesPage?(relativePath: string, offset: number): Promise<WorkspaceEntryPage>;
   searchWorkspaceFiles(query: string, options?: { includeDirectories?: boolean }): Promise<{ files: WorkspaceEntry[]; truncated: boolean; skipped?: number; ignoredDirectories?: string[] }>;
   readWorkspaceFile(relativePath: string): Promise<string>;
   /** Creates an empty file or folder inside a workspace directory (4.6). */
@@ -1252,6 +1278,10 @@ export interface AgentBridge extends InputFeatureBridge, DataFeaturesBridge, Wor
   /** Moves the visible branch leaf onto another entry (zcode-style branch switch). */
   switchSessionBranch(entryId: string): Promise<void>;
   listSessions(cwd?: string): Promise<UiSessionSummary[]>;
+  /** Paged sidebar listing: the first screen arrives first and the remaining pages
+   *  stream in behind it. Optional so older bridges and test harnesses fall back
+   *  to the full listSessions. */
+  listSessionsPage?(cwd: string, offset: number, limit: number): Promise<UiSessionListPage>;
   searchSessions(query: string): Promise<{ sessions: UiSessionSearchResult[]; truncated: boolean; skipped?: number }>;
   switchSession(path: string): Promise<void>;
   /** Reads a session's content window straight from disk without loading it (seamless-switch peek).
@@ -1304,6 +1334,8 @@ export interface AgentBridge extends InputFeatureBridge, DataFeaturesBridge, Wor
   forkAssistantMessage(entryId: string): Promise<void>;
   /** Edit, remove, or steer-early a queued instruction while the agent is busy (Codex-style queue management). */
   updateQueuedMessage(id: string, action: 'edit' | 'remove' | 'steer', text?: string): Promise<void>;
+  /** Kill the conversation's running bash/powershell commands (exit 130 + marker) without aborting the turn. Returns how many were interrupted. */
+  interruptShellTools(toolCallId?: string): Promise<number>;
   abort(): Promise<void>;
   /** Omitted cwd creates an independent folder. The returned scope remains valid for draft persistence after navigation. */
   newSession(options?: { cwd?: string }): Promise<UiInputScope | void>;

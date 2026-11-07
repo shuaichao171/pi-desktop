@@ -15,6 +15,7 @@ import { SegmentedIndicator } from './SegmentedIndicator';
 import { WorkbenchTextView } from './WorkbenchTextView';
 import { ScopedErrorBoundary } from './ScopedErrorBoundary';
 import { appendCommandOutput, commandOutput, groupGitEntries, type DiffSource } from '../workbenchReading';
+import { streamDirectoryListing, WORKBENCH_LISTING_CAP } from '../workbenchListing';
 import { runWithFeedback } from '../operationFeedback';
 import { contextMenuPosition, type ContextMenuPoint } from '../contextMenuPosition';
 import { WorkbenchGitFeatures } from './WorkbenchGitFeatures';
@@ -93,6 +94,7 @@ export function WorkbenchSidePane({ open, onClose, openRequest, terminalRequest,
 	const [fileLoading, setFileLoading] = useState(false);
 	const [fileError, setFileError] = useState<string | null>(null);
 	const [listingLoading, setListingLoading] = useState(false);
+	const [listingTruncated, setListingTruncated] = useState(false);
 	const [listingError, setListingError] = useState<string | null>(null);
 	const [listingRevision, setListingRevision] = useState(0);
 	const [gitStatus, setGitStatus] = useState<WorkspaceGitStatus | null>(null);
@@ -314,10 +316,21 @@ export function WorkbenchSidePane({ open, onClose, openRequest, terminalRequest,
 		// Auto-refresh re-reads in place: no loading flash, current rows stay until replaced.
 		const quiet = quietListingRef.current;
 		quietListingRef.current = false;
-		if (!quiet) { setListingLoading(true); setEntries([]); }
+		if (!quiet) { setListingLoading(true); setEntries([]); setListingTruncated(false); }
 		setListingError(null);
-		void bridge.listWorkspaceEntries(directory).then((items) => {
-			if (request === listingRequest.current) setEntries([...items].sort((a, b) => Number(a.kind === 'file') - Number(b.kind === 'file') || a.name.localeCompare(b.name)));
+		const isCurrent = () => request === listingRequest.current;
+		// The first page renders at once and later pages append behind it. A
+		// quiet refresh keeps the current rows until the whole listing is back,
+		// so a large folder never shrinks to its first page mid-refresh.
+		void streamDirectoryListing(bridge, directory, {
+			isCurrent,
+			onEntries: (items, complete) => {
+				if (quiet && !complete) return;
+				setEntries(items);
+				setListingLoading(false);
+			},
+		}).then(({ truncated }) => {
+			if (isCurrent()) setListingTruncated(truncated);
 		}).catch((cause: unknown) => {
 			if (request === listingRequest.current) setListingError(cause instanceof Error ? cause.message : String(cause));
 		}).finally(() => { if (request === listingRequest.current) setListingLoading(false); });
@@ -729,7 +742,7 @@ export function WorkbenchSidePane({ open, onClose, openRequest, terminalRequest,
 							{listingLoading && <div className="pd-workbench-empty">{t('workbench.loadingFolder')}</div>}
 							{listingError && <div className="pd-workbench-error" role="alert">{listingError}</div>}
 							{!listingLoading && !listingError && entries.length === 0 && <div className="pd-workbench-empty">{t('workbench.folderEmpty')}</div>}
-							{!listingLoading && entries.length >= 400 && <div className="pd-workbench-empty">{t('workbench.entryLimit')}</div>}
+							{!listingLoading && listingTruncated && <div className="pd-workbench-empty">{t('workbench.folderLimit', { count: WORKBENCH_LISTING_CAP })}</div>}
 						</>}
 					</div>
 					{selectedFile && <section className="pd-workbench-preview" aria-label={t('workbench.preview')}>
