@@ -58,6 +58,12 @@ export const IPC_CHANNELS = {
   automationCancelRun: 'automation:cancel-run',
   automationChanged: 'automation:changed',
   rendererReady: 'window:renderer-ready',
+  splitPaneOpen: 'split-pane:open',
+  splitPaneClose: 'split-pane:close',
+  splitPaneSetBounds: 'split-pane:set-bounds',
+  splitPaneClosed: 'split-pane:closed',
+  splitPaneList: 'split-pane:list',
+  focusHostedSession: 'agent:focus-hosted-session',
   appInfo: 'app:info',
   appSetLocale: 'app:set-locale',
   updateState: 'update:state',
@@ -1020,7 +1026,7 @@ export interface AppInfo {
   nodeVersion: string;
   electronVersion: string;
   platform: string;
-  windowMode?: 'full' | 'pai' | 'multi';
+  windowMode?: 'full' | 'pai' | 'pane' | 'multi';
 }
 
 // 'available' = an update was found but nothing downloads until the user consents.
@@ -1288,6 +1294,18 @@ export interface AgentBridge extends InputFeatureBridge, DataFeaturesBridge, Wor
   forkSession(path: string, name?: string): Promise<string>;
   /** Opens a conversation in its own pai chat window (a separate app instance). */
   openSessionInNewWindow(path: string): Promise<void>;
+  /** Opens a conversation as an embedded split pane inside the main window (any project); resolves with the new pane id. */
+  openSplitPane(cwd: string, sessionPath?: string): Promise<number>;
+  /** Closes a pane of this window by id (pane renderer self-close or main window request). */
+  closeSplitPane(paneId?: number): Promise<void>;
+  /** Ids of this window's open panes, oldest first (a reloaded main renderer resyncs its regions). */
+  listSplitPanes(): Promise<number[]>;
+  /** Reports one pane's region rect (DIP, viewport-relative) for WebContentsView positioning; an empty rect hides the pane. */
+  setSplitPaneBounds(paneId: number, rect: { x: number; y: number; width: number; height: number }): Promise<void>;
+  /** Push notification: one of the window's split panes was closed. */
+  onSplitPaneClosed(listener: (paneId: number) => void): () => void;
+  /** True when the session lives in a split pane or pai window; focuses that host. */
+  focusHostedSession(path: string): Promise<boolean>;
   updateSessionMeta(path: string, patch: UiSessionMetaPatch): Promise<void>;
   /** Permanently deletes a conversation file (native pi semantics) and clears its desktop metadata. */
   deleteSession(path: string): Promise<void>;

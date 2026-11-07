@@ -3,6 +3,8 @@ import { mkdirSync, readFileSync, realpathSync, renameSync, rmdirSync, statSync,
 import { isAbsolute, join, posix, resolve, win32 } from 'node:path';
 
 export type DesktopLaunch = { windowMode: 'full' } | { windowMode: 'multi' } | { windowMode: 'pai'; cwd: string; sessionPath?: string };
+/** Renderer surfaces hosted inside another window: split panes never start an app instance of their own. */
+export type HostedRendererLaunch = DesktopLaunch | { windowMode: 'pane'; cwd: string };
 
 /**
  * Electron appends its own Chromium switches (for example
@@ -180,9 +182,9 @@ export function reservePaiProfile(baseUserData: string, options: ProfileOptions 
 	throw new Error('No free pai profile is available');
 }
 
-export function rendererLaunchUrl(url: string, launch: DesktopLaunch): string {
-	if (launch.windowMode !== 'pai') return url;
+export function rendererLaunchUrl(url: string, launch: HostedRendererLaunch): string {
+	if (launch.windowMode !== 'pai' && launch.windowMode !== 'pane') return url;
 	const target = new URL(url);
-	target.searchParams.set('mode', 'pai');
+	target.searchParams.set('mode', launch.windowMode);
 	return target.toString();
 }

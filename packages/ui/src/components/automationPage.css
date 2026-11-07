@@ -1,4 +1,4 @@
-.pd-chat-view-host { display: flex; flex: 1; min-width: 0; min-height: 0; container: pane / inline-size; }
+.pd-chat-view-host { display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0; container: pane / inline-size; }
 .pd-automation-editor-section { margin-bottom: 22px; }
 .pd-automation-editor-section h3 { margin: 0 0 14px; color: var(--pd-text); font-size: var(--pd-font-base); font-weight: var(--pd-weight-semibold); }
 .pd-automation-model-options { padding: 11px 13px; border: 1px solid var(--pd-border-soft); border-radius: var(--pd-radius-md); }

@@ -15,6 +15,7 @@ const stubs = {
     export const Menu = { buildFromTemplate: () => ({}) };
     export const nativeImage = { createFromPath: () => ({ isEmpty: () => true }) };
     export const Tray = class {};
+    export const WebContentsView = class {};
     export const dialog = { showErrorBox() {}, async showOpenDialog(owner) { globalThis.__pluginPickerOwner = owner; return { canceled: false, filePaths: [globalThis.__pluginRoot] }; } };
     export const Notification = class { static isSupported() { return false; } on() { return this; } show() {} };
     export const ipcMain = { handle: (name, fn) => globalThis.__pluginHandlers.set(name, fn) };

@@ -1,4 +1,5 @@
 import type { BrowserWindow, IpcMainInvokeEvent, WebContents } from 'electron';
+import { paneHeldSessionPaths } from './paneRegistry';
 
 /**
  * Registry of hosted pai chat windows.
@@ -56,3 +57,12 @@ export function paiHeldSessionPaths(): string[] {
 	}
 	return paths;
 }
+
+/** Conversations owned by any hosted surface: pai windows and split panes. */
+export function hostedHeldSessionPaths(): string[] {
+	return [...paiHeldSessionPaths(), ...paneHeldSessionPaths()];
+}
+
+// Split panes (WebContentsView-hosted, keyed by WebContents) live in paneRegistry
+// so splitPanes.ts never imports this module back; re-exported for ipc.ts.
+export { paneSlots, paneSlotForSender, isPaneSender, registerPaneSlot, unregisterPaneSlot, paneHeldSessionPaths, type PaiPaneSlot, type PaneAgentService } from './paneRegistry';

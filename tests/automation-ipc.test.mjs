@@ -14,6 +14,7 @@ const stubs = {
     export const Menu = { buildFromTemplate: () => ({}) };
     export const nativeImage = { createFromPath: () => ({ isEmpty: () => true }) };
     export const Tray = class {};
+    export const WebContentsView = class {};
     export const BrowserWindow = { getAllWindows: () => [], fromWebContents: (sender) => globalThis.__reviewWindow?.webContents === sender ? globalThis.__reviewWindow : null };
     export const dialog = { showErrorBox: () => {} };
     export const Notification = class { static isSupported() { return false; } on() { return this; } show() {} };

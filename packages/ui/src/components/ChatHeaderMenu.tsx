@@ -15,7 +15,7 @@ import { isConversationWorkspace } from '../sidebarOrganization';
  * zcode-style ellipsis menu behind the chat title: rename plus the same
  * session toggles the sidebar offers, copy actions, and folder access.
  */
-export function ChatHeaderMenu({ title, sessionPath, cwd, onRename, onOpenCommit }: { title: string; sessionPath: string | null; cwd: string; onRename(): void; onOpenCommit(): void }) {
+export function ChatHeaderMenu({ title, sessionPath, cwd, onOpenCommit }: { title: string; sessionPath: string | null; cwd: string; onOpenCommit(): void }) {
 	const { t } = useT();
 	const session = useChatStore((s) => (sessionPath ? s.sessions.find((item) => item.path === sessionPath) : undefined));
 	const updateSessionMeta = useChatStore((s) => s.updateSessionMeta);
@@ -92,7 +92,7 @@ export function ChatHeaderMenu({ title, sessionPath, cwd, onRename, onOpenCommit
 	return <>
 		<HoverTooltip title={t('chat.menuLabel')}><button type="button" className="pd-icon-button pd-chat-header-more pd-top-bar-menu" aria-label={t('chat.menuLabel')} aria-haspopup="menu" aria-expanded={Boolean(anchor)} onClick={(event) => { setNotice(null); setAnchor(event.currentTarget); }}><Icon name="more" width="16" height="16" /></button></HoverTooltip>
 		<ExitPresence show={Boolean(anchor)} surface="pd-sidebar-popover">{anchor && <SidebarPopover anchor={anchor} label={t('chat.menuLabel')} onClose={close}>
-			{item(t('sidebar.rename'), () => { close(); onRename(); }, !saved)}
+
 			{item(t(session?.pinned ? 'sidebar.unpin' : 'sidebar.pin'), () => perform({ pinned: !session?.pinned }), !saved)}
 			{item(t(session?.unread ? 'sidebar.markRead' : 'sidebar.markUnread'), () => perform(session?.unread ? { unread: false, expectedUnreadAt: session.unreadAt } : { unread: true }), !saved)}
 			{item(t(session?.archived ? 'sidebar.unarchive' : 'sidebar.archive'), () => perform({ archived: !session?.archived }), !saved)}

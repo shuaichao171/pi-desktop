@@ -2,10 +2,12 @@
 /* Same card language as plugin notices: raised surface, accent edge by kind. */
 .pd-operation-notice { pointer-events: auto; padding: 11px 12px 11px 14px; border: 1px solid var(--pd-border); border-left: 3px solid var(--pd-brand); border-radius: var(--pd-radius-lg); background: var(--pd-surface); color: var(--pd-text); box-shadow: var(--pd-shadow-popover); font-size: var(--pd-font-caption); line-height: 1.5; overflow-wrap: anywhere; }
 .pd-operation-notice.is-error { border-left-color: var(--pd-danger); }
+.pd-operation-notice.is-warning { border-left-color: var(--pd-danger); }
 .pd-operation-notice.is-success { border-left-color: var(--pd-success); }
 .pd-operation-notice-heading { display: flex; align-items: center; gap: 8px; }
 .pd-operation-notice-icon { flex: 0 0 auto; color: var(--pd-brand); }
 .pd-operation-notice.is-error .pd-operation-notice-icon { color: var(--pd-danger); }
+.pd-operation-notice.is-warning .pd-operation-notice-icon { color: var(--pd-danger); }
 .pd-operation-notice.is-success .pd-operation-notice-icon { color: var(--pd-success); }
 .pd-operation-notice-heading strong { flex: 1; min-width: 0; font-weight: var(--pd-weight-semibold); }
 .pd-operation-notice-close { display: grid; flex: 0 0 auto; place-items: center; width: 22px; height: 22px; padding: 0; border: 0; border-radius: var(--pd-radius-xs); background: transparent; color: var(--pd-text-subtle); }

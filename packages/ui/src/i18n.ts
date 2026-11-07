@@ -780,6 +780,8 @@ export const translations: Record<string, { 'zh-CN': string; 'en-US': string }> 
   'sidebar.moveToGroup': { 'zh-CN': '移动到分组', 'en-US': 'Move to group' },
   'sidebar.openIn': { 'zh-CN': '打开方式', 'en-US': 'Open in' },
   'sidebar.openInNewWindow': { 'zh-CN': '新窗口', 'en-US': 'New window' },
+  'sidebar.openInSplitPane': { 'zh-CN': '在右侧窗格打开', 'en-US': 'Open in split pane' },
+  'pane.close': { 'zh-CN': '关闭窗格', 'en-US': 'Close pane' },
   'sidebar.openersLoading': { 'zh-CN': '正在检测可用应用…', 'en-US': 'Looking for apps…' },
   'sidebar.openersEmpty': { 'zh-CN': '未检测到可用应用', 'en-US': 'No apps detected' },
   'sidebar.fork': { 'zh-CN': 'Fork', 'en-US': 'Fork' },
@@ -1533,6 +1535,7 @@ export const translations: Record<string, { 'zh-CN': string; 'en-US': string }> 
   'window.controls': { 'zh-CN': '窗口控制', 'en-US': 'Window controls' },
   'store.agentNotReady': { 'zh-CN': 'Agent 尚未就绪', 'en-US': 'Agent is not ready yet' },
   'store.inputNeedsConfirmation': { 'zh-CN': '输入接收状态不确定，请先核对会话或确认恢复队列。', 'en-US': 'Input acceptance is uncertain. Check the conversation or confirm the recovered queue item.' },
+  'store.hostedSessionInPane': { 'zh-CN': '该会话已在分屏窗格中打开', 'en-US': 'This session is already open in the split pane' },
   'store.sessionBusy': { 'zh-CN': '当前会话仍在运行，请等待完成后再编辑', 'en-US': 'The session is still running. Wait for it to finish before editing.' },
   'store.nothingToRegenerate': { 'zh-CN': '没有可重新生成的用户消息', 'en-US': 'There is no user message to regenerate' },
   // Strings migrated from inline zh/en ternaries in components.

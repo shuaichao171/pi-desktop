@@ -33,7 +33,7 @@ function Notice({ notice }: { notice: OperationNotice }) {
 	const hasMore = rest.some(line => line.trim()) || shortReason !== reason;
 	const title = error ? t('operation.failed', { title: notice.title }) : notice.title;
 	return <section className={`pd-operation-notice is-${notice.kind}`} role={error ? 'alert' : 'status'} aria-busy={notice.kind === 'pending'} onMouseEnter={() => setHeld(true)} onMouseLeave={() => setHeld(false)} onFocusCapture={() => setHeld(true)} onBlurCapture={(event) => { if (!event.currentTarget.contains(event.relatedTarget)) setHeld(false); }}>
-		<div className="pd-operation-notice-heading"><Icon name={error ? 'alert' : notice.kind === 'success' ? 'check' : 'clock'} width="15" height="15" className="pd-operation-notice-icon" /><strong>{title}</strong><button type="button" className="pd-operation-notice-close" aria-label={t('operation.dismiss')} onClick={() => operationFeedback.dismiss(notice.id)}><Icon name="close" width="14" height="14" /></button></div>
+		<div className="pd-operation-notice-heading"><Icon name={notice.kind === 'success' ? 'check' : notice.kind === 'pending' ? 'clock' : 'alert'} width="15" height="15" className="pd-operation-notice-icon" /><strong>{title}</strong><button type="button" className="pd-operation-notice-close" aria-label={t('operation.dismiss')} onClick={() => operationFeedback.dismiss(notice.id)}><Icon name="close" width="14" height="14" /></button></div>
 		{/* Retry sits beside the reason instead of adding a row of its own. */}
 		{(shortReason || notice.retry) && <div className="pd-operation-notice-body">
 			{shortReason && <p className="pd-operation-notice-reason">{shortReason}</p>}

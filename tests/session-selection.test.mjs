@@ -41,6 +41,7 @@ function mountSearch() {
       if (specifier === 'react/jsx-runtime') return { jsx, jsxs: jsx };
       if (specifier === '../store') return { useChatStore: Object.assign((select) => select(useChatStore.getState()), { getState: useChatStore.getState }) };
       if (specifier === '../i18n') return { useT: () => ({ t: (value) => value }) };
+      if (specifier === './splitPaneRegions') return { useSplitPaneRegions: () => ({ paneIds: [], hostRef: { current: null } }), SPLIT_PANE_OPENED_EVENT: 'pi-split-pane-opened' };
       if (specifier === '../useSessionNavigation') return { useSessionNavigation: () => ({}) };
       if (specifier === '../workbenchReading') return { clampWorkbenchWidth };
       if (specifier === '../shortcuts/bindings') return shortcutBindings;

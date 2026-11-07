@@ -3,11 +3,13 @@ import { createRoot } from 'react-dom/client';
 import '@pidesktop/ui/styles.css';
 import { AppShell, selectStartupReady, useChatStore } from '@pidesktop/ui';
 
-// Wire the preload bridge into the store before first render. A hosted pai chat
-// window loads this same renderer with ?mode=pai and keeps only the chat surface,
-// so the store must not ask for the main window's workspace and session lists.
+// Wire the preload bridge into the store before first render. Hosted surfaces
+// (pai windows and split panes) load this same renderer with ?mode=pai|pane and
+// keep only the chat surface, so the store must not ask for the main window's
+// workspace and session lists — those channels are main-window-only.
+const launchMode = new URLSearchParams(window.location.search).get('mode');
 useChatStore.getState().setBridge(window.piDesktop, {
-	hostedChatWindow: new URLSearchParams(window.location.search).get('mode') === 'pai',
+	hostedChatWindow: launchMode === 'pai' || launchMode === 'pane',
 });
 
 function RendererReady() {
