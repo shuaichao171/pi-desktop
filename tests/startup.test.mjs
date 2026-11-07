@@ -68,6 +68,19 @@ async function settle() {
   for (let i = 0; i < 25; i++) await new Promise((resolve) => setImmediate(resolve));
 }
 
+// The startup path performs real threadpool I/O (appearance/state prefetch,
+// workspace stat) whose latency a fixed setImmediate budget cannot bound on
+// loaded CI runners. Wait on a condition against a wall-clock deadline
+// instead; the fake timers only replace setTimeout, so performance.now and
+// setImmediate stay real and each round still yields to pending I/O.
+async function waitFor(condition, label) {
+  const deadline = performance.now() + 10_000;
+  while (!condition()) {
+    if (performance.now() > deadline) assert.fail(`timed out waiting for ${label}`);
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+}
+
 async function createStartupHarness(t, { workspaceError, workspace, initialization = deferred(), shutdown = async () => {}, closeBehavior = 'quit', confirmBusyClose = true, busy = false, closeChoice = 1, checkboxChecked = false, launchArgs, userData = 'test-user-data', startupLog, prefersDark = true, expectedSplashBackground } = {}) {
   t.mock.timers.enable({ apis: ['setTimeout'] });
   const windows = [];
@@ -193,6 +206,9 @@ async function createStartupHarness(t, { workspaceError, workspace, initializati
     t.after(() => { for (const listener of ownedExitListeners) { process.removeListener('exit', listener); listener(); } });
   }
   await settle();
+  // The splash appears only after the real state prefetch resolves; on a busy
+  // runner that I/O can outlast settle()'s fixed budget (the historical flake).
+  await waitFor(() => windows.length > 0, 'the boot splash to be created');
   const splash = windows[0];
   assert.equal(splash.options.backgroundColor, expectedSplashBackground ?? (prefersDark === false ? '#f8f8f8' : '#161616'), 'the boot splash follows the resolved window theme');
   assert.equal(splash.options.width, 1280, 'the boot splash matches the main window size');
@@ -204,6 +220,9 @@ async function createStartupHarness(t, { workspaceError, workspace, initializati
     async start() {
       splash.emit('ready-to-show');
       t.mock.timers.tick(100);
+      // The main window comes from the bootstrap that the 100ms fake timer
+      // starts; its module compilation crosses many real event-loop turns.
+      await waitFor(() => windows.length > 1, 'the main window to be created');
       await settle();
       return windows[1];
     },
@@ -218,6 +237,8 @@ async function createStartupHarness(t, { workspaceError, workspace, initializati
 test('startup restores the agent in parallel and keeps the splash until the renderer commits the session', async (t) => {
   const harness = await createStartupHarness(t);
   const main = await harness.start();
+  // init fires only after the real workspace stat resolves.
+  await waitFor(() => harness.calls.init.length === 1, 'the agent boot to start');
   assert.equal(harness.calls.init.length, 1, 'agent initialization starts before the main window is shown');
   main.load.resolve();
   main.emit('ready-to-show');
@@ -286,6 +307,7 @@ test('cold pai boot joins the main instance and hands its window request to IPC'
   t.after(async () => { await rm(root, { recursive: true, force: true, maxRetries: 4 }); });
   const main = await harness.start();
   // The process boots as the main instance: default workspace, singleton, tray, updater.
+  await waitFor(() => harness.calls.init.length === 1, 'the agent boot to start');
   assert.deepEqual(harness.calls.init, [[{ cwd: process.cwd() }]], 'the main agent keeps the default workspace');
   assert.equal(harness.calls.windowMode, 'full');
   assert.equal(harness.calls.singleInstanceLocks, 1, 'a cold pai boot contends for the singleton like a normal launch');
@@ -337,6 +359,7 @@ test('multi boot opens a full-size isolated instance without the singleton, tray
   const harness = await createStartupHarness(t, { launchArgs: ['--multi'], userData: root, closeBehavior: 'tray' });
   t.after(async () => { await rm(root, { recursive: true, force: true, maxRetries: 4 }); });
   const main = await harness.start();
+  await waitFor(() => harness.calls.init.length === 1, 'the agent boot to start');
   assert.deepEqual(harness.calls.init, [[{ cwd: process.cwd(), fresh: true }]], 'a multi instance starts a fresh conversation in the default workspace');
   assert.equal(harness.calls.windowMode, 'multi');
   assert.equal(harness.calls.singleInstanceLocks, 0, 'multi does not contend for the main application singleton');
@@ -541,7 +564,7 @@ test('the renderer starts loading while the startup workspace is still resolving
   assert.equal(harness.calls.init.length, 0, 'the agent boot waits for its workspace');
   assert.equal(main.options.backgroundColor, '#161616', 'the main window shares the boot splash background');
   workspace.resolve(process.cwd());
-  await settle();
+  await waitFor(() => harness.calls.init.length === 1, 'the agent to boot once its workspace resolves');
   assert.deepEqual(harness.calls.init, [[{ cwd: process.cwd() }]], 'the agent boots once the workspace resolves');
   main.load.resolve();
   main.emit('ready-to-show');
@@ -568,6 +591,9 @@ test('the boot window disappears only once the main window is on screen', async 
 test('cold-start phases are recorded once, in order, with monotonic durations', async (t) => {
   const harness = await createStartupHarness(t);
   const main = await harness.start();
+  // The workspace branch ends with the real stat; let its mark land before
+  // the renderer branch so the recorded phase order is deterministic.
+  await waitFor(() => harness.calls.init.length === 1, 'the agent boot to start');
   main.load.resolve();
   await settle();
   main.emit('ready-to-show');
