@@ -454,7 +454,7 @@ async function resolveStartupWorkspace(module: typeof import('./ipc')): Promise<
 	// A workspace that already exists — notably a Windows drive root such as
 	// D:\ — must not be passed to mkdir: recursive mkdir still fails with
 	// EPERM on drive roots. Only create the directory when it is missing.
-	if (!(await stat(workspace, { throwIfNoEntry: false }))?.isDirectory()) await mkdir(workspace, { recursive: true });
+	if (!(await stat(workspace).catch((error: NodeJS.ErrnoException) => { if (error?.code === 'ENOENT') return null; throw error; }))?.isDirectory()) await mkdir(workspace, { recursive: true });
 	return workspace;
 }
 

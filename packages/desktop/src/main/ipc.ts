@@ -696,10 +696,21 @@ export function defaultWorkspace(initialWorkspace?: string): string {
  * main window's renderer loads. The sync version above remains the probe for
  * the currently active workspace (tests and the sync close path).
  */
+/** Async stat that reads a missing path as null. `throwIfNoEntry` is a sync-only
+ * option on Node 22 (CI), so fs/promises would still reject with ENOENT there. */
+async function statIfExists(path: string): Promise<import('node:fs').Stats | null> {
+	try { return await stat(path); }
+	catch (error) {
+		const code = (error as NodeJS.ErrnoException | undefined)?.code;
+		if (code === 'ENOENT' || code === 'ENOTDIR') return null;
+		throw error;
+	}
+}
+
 export async function defaultWorkspaceAsync(initialWorkspace?: string): Promise<string> {
 	if (initialWorkspace !== undefined) {
 		// A missing launch workspace reports the actionable message instead of raw ENOENT.
-		if (!(await stat(initialWorkspace, { throwIfNoEntry: false }))?.isDirectory()) throw new Error('The launch workspace must be a directory');
+		if (!(await statIfExists(initialWorkspace))?.isDirectory()) throw new Error('The launch workspace must be a directory');
 		await saveWorkspaceAsync(initialWorkspace, true);
 		activeWorkspace = initialWorkspace;
 		return initialWorkspace;
