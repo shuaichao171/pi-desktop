@@ -1060,7 +1060,7 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 				event.preventDefault(); event.stopPropagation();
 				openSectionMenu(event.currentTarget);
 			} : undefined}>
-				<HoverTooltip title={name} description={options.workspace} side="right" align="start">
+				<HoverTooltip title={name} description={options.workspace} side="top" align="start">
 				<button type="button" className={`pd-sidebar-group-toggle${options.workspace && projectDragMode ? ' is-project-draggable' : ''}`} aria-expanded={expanded} onPointerDown={options.workspace && projectDragMode ? (event) => beginDrag({ kind: 'project', workspace: options.workspace! }, event) : options.group && dragMode && !draggingGroup ? (event) => beginDrag({ kind: 'group', id: options.group!.id }, event) : undefined} onClick={() => toggleSection(key)}>
 					<Icon name={options.icon ?? 'hash'} width="14" height="14" /><span>{name}</span><Icon name="chevronRight" width="12" height="12" className={expanded ? 'is-expanded' : ''} />{aggregateLabel && <span className="pd-session-state-counts" title={aggregateLabel} aria-label={aggregateLabel}>{aggregate.waiting > 0 && <b className="is-waiting" />}{aggregate.subagents > 0 && <b className="is-subagents" />}{aggregate.running > 0 && <b className="is-running" />}{aggregate.failed > 0 && <b className="is-failed" />}{aggregate.unread > 0 && <b className="is-unread" />}</span>}
 				</button>
