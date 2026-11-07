@@ -236,11 +236,17 @@ export function setPaneBounds(parentWin: BrowserWindow, paneId: number, rect: { 
 	const visible = rect.width >= 1 && rect.height >= 1;
 	entry.view.setVisible(visible);
 	if (!visible) return;
+	// Round inward (ceil the top-left corner, floor the bottom-right one) so the
+	// view stays strictly inside its reported region: rounding x and width
+	// independently can push both edges outward, letting two adjacent panes
+	// fully cover the 1px divider column between them.
+	const x = Math.max(0, Math.ceil(rect.x));
+	const y = Math.max(0, Math.ceil(rect.y));
 	entry.view.setBounds({
-		x: Math.max(0, Math.round(rect.x)),
-		y: Math.max(0, Math.round(rect.y)),
-		width: Math.max(0, Math.round(rect.width)),
-		height: Math.max(0, Math.round(rect.height)),
+		x,
+		y,
+		width: Math.max(0, Math.floor(rect.x + rect.width) - x),
+		height: Math.max(0, Math.floor(rect.y + rect.height) - y),
 	});
 }
 

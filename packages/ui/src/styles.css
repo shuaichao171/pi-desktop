@@ -1157,6 +1157,14 @@ html.pd-popover-open :is(.pd-sidebar-toolbar, .pd-chat-header, .pd-chat-heading,
   .pd-conv-rail { display: none; }
 }
 
+
+/* ≤600px — compact composer dock, the pane-column twin of the window-width
+ * @media (max-width: 600px) tier: split panes are narrow independent
+ * viewports while the chat column narrows with them, so keying the padding
+ * to column width keeps every composer on the same baseline. */
+@container pane (max-width: 600px) {
+  .pd-composer-dock { padding: 8px 10px 12px; }
+}
 /* ≤480px — reclaim chrome width for content. */
 @container pane (max-width: 480px) {
   .pd-message-list { padding: 16px 12px 8px; }
