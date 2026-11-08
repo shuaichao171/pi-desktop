@@ -45,7 +45,12 @@ function validateTarget(value: unknown): ResultFileTarget {
   for (const position of [target.line, target.column]) {
     if (position !== undefined && (!Number.isSafeInteger(position) || position < 1)) throw new Error('文件位置无效');
   }
-  return { cwd: target.cwd, path: target.path, line: target.line, column: target.column };
+  // Fallback mentions are hints, not authority: malformed entries are dropped,
+  // and each survivor is still localPath- and realpath-checked before use.
+  const candidates = Array.isArray(target.candidates)
+    ? target.candidates.filter((candidate): candidate is string => localPath(candidate) && isAbsolute(candidate)).slice(0, 8)
+    : undefined;
+  return { cwd: target.cwd, path: target.path, line: target.line, column: target.column, ...(candidates?.length ? { candidates } : {}) };
 }
 
 function imageMime(bytes: Buffer): string | undefined {
@@ -87,7 +92,20 @@ export class ResultFileService {
     const directory = await realpath(target.cwd);
     if (!(await stat(directory)).isDirectory()) throw new Error('对话文件夹无效');
     const expanded = target.path === '~' ? homedir() : /^~[\\/]/.test(target.path) ? resolve(homedir(), target.path.slice(2)) : target.path;
-    const path = await realpath(resolve(directory, expanded));
+    // A model that searched another directory often names just the file, so the
+    // relative join misses; retry the absolute paths the conversation mentioned
+    // (newest first) before surfacing the original error.
+    let resolved: string;
+    try {
+      resolved = await realpath(resolve(directory, expanded));
+    } catch (primaryError) {
+      resolved = '';
+      for (const candidate of target.candidates ?? []) {
+        try { resolved = await realpath(candidate); break; } catch { /* try the next mention */ }
+      }
+      if (!resolved) throw primaryError;
+    }
+    const path = resolved;
     if (!localPath(path)) throw new Error('文件路径无效');
     const info = await stat(path);
     if (!info.isFile() && !info.isDirectory()) throw new Error('此路径不是普通文件或文件夹');
