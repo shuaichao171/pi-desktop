@@ -19,6 +19,13 @@
 
 ## 已完成
 
+- [x] 修改供应商设置不再等待整套扩展重载：保存立即落盘返回（真实配置实测 5579 ms → 22 ms，用户本机运行日志里的 38–44 s 消失），扩展镜像副本改为后台空闲重载；右下角浮动卡片提示「正在后台重载 / 已完成 / 失败」，连续修改合并为「本轮一次 + 期间改动后再一次」；受影响供应商的发送与选模型会等重载完成，其它供应商照常（2026-11-09 提出并完成）
+  - 根因：models.json 会被 pi-model-manager 这类扩展镜像注册，只有该扩展重建自己的副本才能看到新配置；重建 = `session.reload()` 重新转译并加载全部扩展、再 emit `session_shutdown`/`session_start`（本机 5.6–7 s，用户机器上 38–44 s，见 `_ai_work/provider-save-timing/README.md`），旧实现把这步放在保存事务里同步执行。
+  - 落地：`packages/agent/src/index.ts` 新增 `providerResync` 待重载集合与单飞后台 pass（不占供应商锁、空闲或下一次事件推进、失败退避重试）；`provider-resync` 事件贯通 `packages/shared`，渲染端 `store.ts` 复用 `operationFeedback` 同一张卡片（同 id 替换，不叠加），重载完成后自动刷新模型目录；文案在 `i18n.ts`。
+  - 仅在「该供应商正在待重载集合中」时 `prompt`/`submitInput`/`setModel` 才等待重载；空闲时保持同步启动，不改变原有忙状态时序。
+  - 验证：`tests/provider-resync.test.mjs`（保存不等重载、连续修改合并、受影响模型等待、无关供应商照常、无镜像供应商仍同步刷新）、`tests/provider-resync-notice.test.mjs`（卡片合并与三种结果）；全量 1124 项通过、四个包 typecheck 通过；真实配置副本实测保存 22–25 ms + 后台重载 7.1 s 完成。
+  - 已知取舍：重载完成前设置页的模型目录可能短暂滞后（提示卡片期间），但发送/选模型会被拦住等待，不会用旧连接发请求。
+
 - [x] 分屏多窗格会话监控（2026-11-02 提出；b1inkie 交接，2026-11-07 完成）
   - 目标：侧栏右键任意项目任意会话 →「打开方式 › 在右侧窗格打开」→ 主窗右侧嵌入窗格（WebContentsView），可同时监控多个会话、都能打字；会话区与各窗格横向均分，关闭后剩余重排。
   - 架构：每 pane = WebContentsView 嵌主窗 contentView，复用 pai 小窗隔离基建（独立 agent host/cwd/信任态/按 sender IPC 路由）。主进程 `splitPanes.ts`（生命周期、按 id 定位/隐藏）+ `paneRegistry.ts`（注册表，避免与 `paiWindows.ts` 循环依赖）；渲染层 `splitPaneRegions.ts`（占位区上报 rect、主窗重载后经 `listSplitPanes` 重新同步）。
