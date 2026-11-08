@@ -101,13 +101,9 @@ export class ResultFileService {
     } catch (primaryError) {
       resolved = '';
       for (const candidate of target.candidates ?? []) {
-        try { resolved = await realpath(candidate); console.error(`[result-file-fallback] HIT via candidate: ${candidate}`); break; } catch { /* try the next mention */ }
+        try { resolved = await realpath(candidate); break; } catch { /* try the next mention */ }
       }
-      if (!resolved) {
-        // eslint-disable-next-line no-console -- temporary diagnostics for the fallback path
-        console.error(`[result-file-fallback] primary miss, candidates=${target.candidates?.length ?? 0}, path=${target.path}`);
-        throw primaryError;
-      }
+      if (!resolved) throw primaryError;
     }
     const path = resolved;
     if (!localPath(path)) throw new Error('文件路径无效');
