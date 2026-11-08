@@ -82,6 +82,11 @@ export const translations: Record<string, { 'zh-CN': string; 'en-US': string }> 
   "plugins.doneReloadPending": { 'zh-CN': "已保存，当前对话结束后自动重载生效。", 'en-US': "Saved. Resources reload automatically when the current conversation finishes." },
   "plugins.reloadedNotice": { 'zh-CN': "插件已重载生效", 'en-US': "Plugins reloaded" },
   "plugins.reloadedWithWarnings": { 'zh-CN': "插件已重载，但有警告", 'en-US': "Plugins reloaded with warnings" },
+  // 供应商保存后台重载扩展：保存已生效，镜像副本（扩展注册的模型目录）稍后重建。
+  "settings.providerResyncPending": { 'zh-CN': "供应商配置已保存，正在后台重载扩展…", 'en-US': "Provider settings saved. Extensions are reloading in the background…" },
+  "settings.providerResyncProviders": { 'zh-CN': "重载中：{providers}", 'en-US': "Reloading: {providers}" },
+  "settings.providerResyncDone": { 'zh-CN': "扩展已重载，供应商配置已生效", 'en-US': "Extensions reloaded; the provider settings are live" },
+  "settings.providerResyncFailed": { 'zh-CN': "扩展重载失败，供应商配置尚未生效", 'en-US': "Extension reload failed; the provider settings are not live yet" },
   "plugins.trustHint": { 'zh-CN': "当前项目尚未获信任，项目扩展可能不会加载。", 'en-US': "This project has not been trusted. Project extensions may not load." },
   "plugins.warnings": { 'zh-CN': "{count} 条资源诊断", 'en-US': "{count} resource diagnostics" },
   "plugins.openProjectTitle": { 'zh-CN': "先选择一个项目", 'en-US': "Choose a project first" },

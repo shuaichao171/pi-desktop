@@ -754,6 +754,20 @@ if (!get().modelProviders.length) void get().refreshModelProviders().catch(() =>
 					title: translate(event.warnings.length ? 'plugins.reloadedWithWarnings' : 'plugins.reloadedNotice'),
 					...(event.warnings.length ? { detail: event.warnings.join('\n') } : {}) });
 				return;
+			case 'provider-resync': {
+				// One card per burst of provider edits: the same id is replaced by the pass's
+				// own outcome, so consecutive saves never stack notices.
+				if (event.status !== 'pending') void refreshModelSettings().catch(() => { });
+				const warnings = event.warnings ?? [];
+				operationFeedback.show({
+					id: 'provider-resync',
+					kind: event.status === 'pending' ? 'pending' : event.status === 'failed' ? 'error' : warnings.length ? 'warning' : 'success',
+					title: translate(event.status === 'pending' ? 'settings.providerResyncPending' : event.status === 'failed' ? 'settings.providerResyncFailed' : 'settings.providerResyncDone'),
+					...(event.status === 'pending' ? { detail: translate('settings.providerResyncProviders', { providers: event.providers.join(' / ') }) }
+						: event.status === 'failed' ? { detail: event.error ?? '' } : warnings.length ? { detail: warnings.join('\n') } : {}),
+				});
+				return;
+			}
 			case 'session-runtime': {
 				set((state) => {
 					const sessionRuntimes = { ...state.sessionRuntimes, [sessionRuntimeKey(event.cwd, event.path)]: event.runtime };

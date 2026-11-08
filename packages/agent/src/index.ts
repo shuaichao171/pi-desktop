@@ -2327,6 +2327,12 @@ class SingleAgentService {
 
 /** Keep independent Pi runtimes alive while the user moves between conversations. */
 const PLUGIN_RELOAD_RETRY_MS = 1_500;
+/** A conflicting provider/credential operation is holding the background rebuild back. */
+const PROVIDER_RESYNC_RETRY_MS = 1_500;
+/** The rebuild itself failed; keep the pending set and retry on this backoff. */
+const PROVIDER_RESYNC_FAILURE_RETRY_MS = 10_000;
+/** A send that needs a stale provider gives up instead of hanging on a stuck reload. */
+const PROVIDER_RESYNC_WAIT_MS = 120_000;
 
 export class AgentService {
 	private readonly personalization = createPersonalizationService({ userDirectory: homedir(), agentDirectory: getAgentDir() });
@@ -2356,6 +2362,18 @@ export class AgentService {
 	private pluginReloadPending = false;
 	private pluginReloadTimer: ReturnType<typeof setTimeout> | null = null;
 	private pluginWarnings: string[] = [];
+	/**
+	 * models.json providers whose extension-mirrored registration is older than the file.
+	 * Saving a provider writes the file and returns immediately; rebuilding the extension copy
+	 * means a full session reload (re-transpiled extensions), which runs here in the background
+	 * instead of inside the save. Requests that need one of these providers wait for the pass.
+	 */
+	private readonly providerResync = new Set<string>();
+	private providerResyncRun: Promise<void> | null = null;
+	private providerResyncTimer: ReturnType<typeof setTimeout> | null = null;
+	private readonly providerResyncWaiters = new Set<{ provider: string; resolve: () => void; reject: (error: Error) => void }>();
+	/** Save counter; a running pass compares it to know whether its file snapshot is stale. */
+	private providerResyncRevision = 0;
 	private readonly mcp = new McpManager(getAgentDir());
 	private closing = false;
 	private readonly requestProjectTrust: RequestProjectTrust;
@@ -2949,7 +2967,10 @@ export class AgentService {
 	listProviderAuth(): UiProviderAuthStatus[] { return this.active?.listProviderAuth() ?? []; }
 	setModel(provider: string, id: string, persist = true): Promise<void> {
 		if (this.pluginOperation) return Promise.reject(new Error('插件设置正在更新，请稍后再试'));
-		return this.requireActive().setModel(provider, id, persist);
+		// Selecting a model from a provider whose mirrored copy is stale would resolve against
+		// the pre-save catalog. The check stays synchronous whenever nothing is pending.
+		if (!this.providerResync.has(provider)) return this.requireActive().setModel(provider, id, persist);
+		return this.waitForProviderResync(provider).then(() => this.requireActive().setModel(provider, id, persist));
 	}
 	setThinkingLevel(level: UiThinkingLevel, persist = true): Promise<void> {
 		if (this.pluginOperation) return Promise.reject(new Error('插件设置正在更新，请稍后再试'));
@@ -2990,9 +3011,22 @@ export class AgentService {
 	}
 	prompt(text: string, behavior?: 'steer' | 'followUp', attachments?: UiAttachment[]): Promise<void> {
 		if (this.pluginOperation) return Promise.reject(new Error('插件设置正在更新，请稍后发送消息'));
-		return this.requireActive().prompt(text, behavior, attachments).finally(() => { void this.trimContexts(); });
+		const service = this.requireActive();
+		const provider = service.getSnapshot().modelProvider;
+		// The mirror of the provider this request would use must be current first; other providers
+		// keep sending while a background rebuild runs. With nothing pending this starts the turn
+		// synchronously, so the busy transition still lands before this call returns.
+		if (!this.providerResync.has(provider)) return service.prompt(text, behavior, attachments).finally(() => { void this.trimContexts(); });
+		return this.waitForProviderResync(provider)
+			.then(() => service.prompt(text, behavior, attachments))
+			.finally(() => { void this.trimContexts(); });
 	}
-	submitInput(request: UiSubmitInput): Promise<UiInputReceipt> { return this.requireActive().submitInput(request).finally(() => { void this.trimContexts(); }); }
+	submitInput(request: UiSubmitInput): Promise<UiInputReceipt> {
+		const service = this.requireActive();
+		const provider = service.getSnapshot().modelProvider;
+		if (!this.providerResync.has(provider)) return service.submitInput(request).finally(() => { void this.trimContexts(); });
+		return this.waitForProviderResync(provider).then(() => service.submitInput(request)).finally(() => { void this.trimContexts(); });
+	}
 	testProviderModel(request: ModelTestRequest) { return this.requireActive().testProviderModel(request); }
 	cancelProviderModelTest(id: string): void { for (const context of this.contexts.values()) context.cancelProviderModelTest(id); }
 	getProjectDefaults() { return this.requireActive().getProjectDefaults(); }
@@ -3038,6 +3072,9 @@ export class AgentService {
 		try { await this.pluginInstallOperation; } catch { /* Plugin errors are reported to the caller. */ }
 		if (this.pluginReloadTimer) clearTimeout(this.pluginReloadTimer);
 		this.pluginReloadTimer = null;
+		if (this.providerResyncTimer) clearTimeout(this.providerResyncTimer);
+		this.providerResyncTimer = null;
+		this.failProviderResyncWaiters(new Error('应用正在退出'));
 		await Promise.allSettled([...this.contexts.values()].map((service) => service.dispose()));
 		await this.mcp.dispose();
 		this.contexts.clear();
@@ -3228,7 +3265,12 @@ export class AgentService {
 					credentialChanged = true;
 					await service.writeProviderCredential(provider, literalApiKey(request.apiKey));
 				}
-				await this.refreshCustomProviderContexts(contexts, provider);
+				// A provider an extension mirrors (pi-model-manager registers every models.json entry)
+				// only sees the file when that extension rebuilds its copy, and the rebuild re-transpiles
+				// every extension. Queue it for the background pass instead of blocking the save;
+				// requests that need this provider wait for that pass (see waitForProviderResync).
+				if (contexts.some((context) => context.usesExtensionProvider(provider))) this.queueProviderResync(provider);
+				else await this.refreshCustomProviderContexts(contexts, provider);
 			} catch {
 				let recovered = true;
 				const restoreCredential = async () => {
@@ -3263,6 +3305,105 @@ export class AgentService {
 		if (results.some((result) => result.status === 'rejected')) throw new Error('Pi 无法同步供应商配置');
 	}
 
+	/**
+	 * The edit is already on disk; only the extension-mirrored copy is stale, and rebuilding it
+	 * re-transpiles every extension (seconds). One background pass per burst of edits: saves that
+	 * arrive while the pass runs stay queued, so the following pass re-reads the newest file.
+	 */
+	private queueProviderResync(provider: string): void {
+		this.providerResync.add(provider);
+		// Bumped on every save so a pass that started earlier can tell that its snapshot of
+		// models.json is already out of date and must run again.
+		this.providerResyncRevision += 1;
+		this.fire({ type: 'provider-resync', providers: [...this.providerResync], status: 'pending' });
+		this.scheduleProviderResync(0);
+	}
+
+	private scheduleProviderResync(delay: number): void {
+		if (this.closing || this.providerResyncTimer || this.providerResync.size === 0) return;
+		this.providerResyncTimer = setTimeout(() => { this.providerResyncTimer = null; void this.flushProviderResync(); }, delay);
+	}
+
+	/**
+	 * Runs the rebuild without taking the provider configuration locks: those reject the user's
+	 * next save, while the edit they guard is already committed. An edit that lands mid-pass
+	 * re-queues its provider, and the pass that follows picks up the newer models.json.
+	 */
+	private async flushProviderResync(): Promise<void> {
+		if (this.closing || this.providerResyncRun || this.providerResync.size === 0) return;
+		if (this.transition || this.providerOperation || this.pluginOperation || this.pluginInstallOperation || this.credentialOperation || this.trimOperation) {
+			this.scheduleProviderResync(PROVIDER_RESYNC_RETRY_MS);
+			return;
+		}
+		const providers = [...this.providerResync];
+		const revision = this.providerResyncRevision;
+		const run = (async () => {
+			const contexts = [...this.contexts.values()].filter((context) => providers.some((provider) => context.usesExtensionProvider(provider)));
+			// A context that never mirrored these providers already refreshed from the file.
+			if (!contexts.length) { for (const provider of providers) this.providerResync.delete(provider); return; }
+			const results = await Promise.allSettled(contexts.map((context) => context.reloadPlugins()));
+			const failure = results.find((result) => result.status === 'rejected');
+			if (failure?.status === 'rejected') throw failure.reason instanceof Error ? failure.reason : new Error(String(failure.reason));
+			// A save that arrived while this pass ran is not in the file copy it read, so keep it
+			// queued; the follow-up pass picks it up. Nothing more to do when the burst settled.
+			if (this.providerResyncRevision === revision) for (const provider of providers) this.providerResync.delete(provider);
+			const warnings = results.flatMap((result) => result.status === 'fulfilled' ? result.value : []);
+			this.fire({ type: 'provider-resync', providers, status: 'done', warnings });
+			this.settleProviderResyncWaiters();
+		})();
+		this.providerResyncRun = run;
+		try { await run; }
+		catch (error) {
+			const message = errorMessage(error);
+			this.fire({ type: 'provider-resync', providers: [...this.providerResync], status: 'failed', error: message });
+			this.failProviderResyncWaiters(new Error(`扩展重载失败，供应商配置尚未生效：${message}`));
+			this.scheduleProviderResync(PROVIDER_RESYNC_FAILURE_RETRY_MS);
+		}
+		finally {
+			this.providerResyncRun = null;
+			if (this.providerResync.size) this.scheduleProviderResync(0);
+		}
+	}
+
+	/** Waiters whose provider finished this pass resume; a re-queued one keeps waiting. */
+	private settleProviderResyncWaiters(): void {
+		for (const waiter of [...this.providerResyncWaiters]) {
+			if (this.providerResync.has(waiter.provider)) continue;
+			this.providerResyncWaiters.delete(waiter);
+			waiter.resolve();
+		}
+	}
+
+	private failProviderResyncWaiters(error: Error): void {
+		for (const waiter of [...this.providerResyncWaiters]) { this.providerResyncWaiters.delete(waiter); waiter.reject(error); }
+	}
+
+	/**
+	 * A request that resolves a model from a stale provider waits for the rebuild, so a save
+	 * followed by an immediate send never runs on the pre-save connection. Providers outside
+	 * the pending set are untouched: an unrelated conversation keeps sending while it runs.
+	 */
+	private async waitForProviderResync(provider: string): Promise<void> {
+		while (!this.closing && this.providerResync.has(provider)) await this.awaitProviderResyncPass(provider);
+	}
+
+	private awaitProviderResyncPass(provider: string): Promise<void> {
+		this.scheduleProviderResync(0);
+		return new Promise<void>((resolve, reject) => {
+			let timer: ReturnType<typeof setTimeout>;
+			const waiter = {
+				provider,
+				resolve: () => { clearTimeout(timer); resolve(); },
+				reject: (error: Error) => { clearTimeout(timer); reject(error); },
+			};
+			timer = setTimeout(() => {
+				this.providerResyncWaiters.delete(waiter);
+				reject(new Error('扩展正在后台重载，请稍后重试'));
+			}, PROVIDER_RESYNC_WAIT_MS);
+			this.providerResyncWaiters.add(waiter);
+		});
+	}
+
 	private newContext(key: string): SingleAgentService {
 		const service: SingleAgentService = new SingleAgentService(
 			(cwd) => this.withRuntimeWait(service, { phase: 'waiting-approval' }, () => this.requestProjectTrust(cwd)),
@@ -3286,7 +3427,7 @@ export class AgentService {
 			// Busy tracking covers every context: a foreground run that the user
 			// switches away from must still light the unread dot when it settles.
 			if (event.type === 'status') {
-				if (event.status === 'idle') this.schedulePluginReload();
+				if (event.status === 'idle') { this.schedulePluginReload(); this.scheduleProviderResync(PROVIDER_RESYNC_RETRY_MS); }
 				if (event.status === 'busy' || event.status === 'starting') {
 					this.backgroundBusyContexts.add(service);
 				} else if (this.backgroundBusyContexts.delete(service) && this.active !== service) {

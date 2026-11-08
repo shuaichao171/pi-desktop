@@ -534,11 +534,18 @@ test('a models.json provider stays editable when an extension mirrors that same 
     assert.equal(summary.editable, true);
     assert.equal(summary.modelsEditable, true);
     assert.deepEqual(summary.configModelIds, ['mirrored-one']);
+    // 保存不再等待扩展重载：文件立即写入，镜像目录在后台重载完成后才跟上。
+    const resyncs = [];
+    f.service.onEvent(({ event }) => { if (event.type === 'provider-resync') resyncs.push(event); });
     await f.service.saveProviderModels({ provider, upsert: [{ id: 'mirrored-two', name: 'Mirrored Two', contextWindow: 32768, maxTokens: 4096 }] });
     const saved = JSON.parse(contents(f.modelsPath)).providers[provider];
     assert.deepEqual(saved.models.map((item) => item.id), ['mirrored-one', 'mirrored-two']);
+    assert.deepEqual(resyncs.map((event) => event.status), ['pending'], 'the extension mirror rebuilds in the background');
+    const deadline = Date.now() + 5000;
+    while (!resyncs.some((event) => event.status === 'done') && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 10));
+    assert.deepEqual(resyncs.map((event) => event.status), ['pending', 'done']);
     const refreshed = (await f.service.listModelProviders()).find((item) => item.provider === provider);
-    assert.deepEqual(refreshed.models.map((item) => item.id).sort(), ['mirrored-one', 'mirrored-two'], 'the refreshed catalog must expose the newly saved model');
+    assert.deepEqual(refreshed.models.map((item) => item.id).sort(), ['mirrored-one', 'mirrored-two'], 'the mirrored catalog catches up once the background rebuild finished');
     f.assertOffline();
   } finally { await f.cleanup(); }
 });

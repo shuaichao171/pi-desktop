@@ -681,6 +681,12 @@ export type AgentUiEvent =
   | { type: 'sessions-changed'; cwd: string }
   /** A plugin change deferred while conversations ran has now been reloaded into every session. */
   | { type: 'plugins-reloaded'; cwd: string; warnings: string[] }
+  /**
+   * A provider edit is already on disk; the extensions that mirror models.json rebuild
+   * their copy in the background. Requests that use one of `providers` wait for it, so a
+   * save never blocks the settings UI and no request runs on the pre-save connection.
+   */
+  | { type: 'provider-resync'; providers: string[]; status: 'pending' | 'done' | 'failed'; warnings?: string[]; error?: string }
   | { type: 'session-runtime'; cwd: string; path: string; runtime: UiSessionRuntimeState }
   | { type: 'error'; message: string; error?: UiAgentError }
   | { type: 'subagent-fleet'; fleet: UiSubagentFleetSnapshot | null }
