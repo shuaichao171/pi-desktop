@@ -4,6 +4,10 @@ export interface ResultFileTarget {
   path: string;
   line?: number;
   column?: number;
+  /** Absolute paths the conversation text mentioned for this file (newest first),
+   * tried when the path does not resolve under cwd — a model often names just the
+   * file after searching another directory. */
+  candidates?: string[];
 }
 
 export interface ResultFilePreview {

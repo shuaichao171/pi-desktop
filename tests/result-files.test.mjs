@@ -51,6 +51,30 @@ test('opening never launches executables or scripts, while preview and reveal st
   assert.equal((await service.previewResultFile({ cwd, path: 'setup.js' })).text, 'echo hi');
 });
 
+test('relative misses fall back to conversation-mentioned absolute paths', async t => {
+  const { root, cwd, service } = fixture(t);
+  const elsewhere = join(root, 'elsewhere');
+  const nested = join(elsewhere, 'nested');
+  mkdirSync(nested, { recursive: true });
+  const found = join(elsewhere, 'sheepington_basic.zip');
+  const report = join(nested, 'report.txt');
+  writeFileSync(found, 'zip');
+  writeFileSync(report, 'doc');
+  const opened = [], revealed = [];
+  // The link text names only the file; the conversation mentioned where it lives.
+  await service.openResultFile({ cwd, path: 'sheepington_basic.zip', candidates: [found] }, async path => { opened.push(path); return ''; });
+  await service.revealResultFile({ cwd, path: 'report.txt', candidates: [join(nested, 'report.txt'), join(root, 'no-such-dir')] }, path => revealed.push(path));
+  assert.deepEqual(opened, [realpathSync.native(found)]);
+  assert.deepEqual(revealed, [realpathSync.native(report)]);
+  assert.equal((await service.previewResultFile({ cwd, path: 'report.txt', candidates: [join(root, 'mentioned-but-gone', 'report.txt'), join(nested, 'report.txt')] })).text, 'doc');
+  // Every mention missing keeps the original error, and a fallback that points
+  // at a script is still refused.
+  await assert.rejects(service.previewResultFile({ cwd, path: 'missing.txt', candidates: [join(root, 'nope.txt')] }), /ENOENT/);
+  const script = join(elsewhere, 'setup.js');
+  writeFileSync(script, 'echo hi');
+  await assert.rejects(service.openResultFile({ cwd, path: 'setup.js', candidates: [script] }, async () => ''), /可执行文件或脚本/);
+});
+
 test('result file requests reject URLs, devices, invalid locations and missing files', async t => {
   const { cwd, service } = fixture(t);
   const requests = [null, [], {}, { cwd: '.', path: 'file.txt' }, { cwd, path: '' }, { cwd, path: 'a\0b' },

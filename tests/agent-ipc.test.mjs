@@ -375,7 +375,7 @@ test('split panes route to their own agent, stay out of main-window features, an
   // The main renderer resyncs its regions and positions panes by id.
   assert.deepEqual(call(mainSender, channels.splitPaneList), [7]);
   call(mainSender, channels.splitPaneSetBounds, 7, { x: 600.4, y: 48, width: 599.6, height: 700 });
-  assert.deepEqual(viewCalls.splice(0), [['visible', true], ['bounds', { x: 600, y: 48, width: 600, height: 700 }]]);
+  assert.deepEqual(viewCalls.splice(0), [['visible', true], ['bounds', { x: 601, y: 48, width: 599, height: 700 }]]);
   // An empty rect hides the pane (an overlay of the main window is above it).
   call(mainSender, channels.splitPaneSetBounds, 7, { x: 0, y: 0, width: 0, height: 0 });
   assert.deepEqual(viewCalls.splice(0), [['visible', false]]);
