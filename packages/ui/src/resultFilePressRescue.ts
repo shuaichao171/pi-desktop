@@ -1,4 +1,5 @@
 import { parseResultFileReference } from './resultFileReferences';
+import { resultFileCandidates } from './resultFileCandidates';
 import { useChatStore } from './store';
 import { useResultFilePreviewStore } from './resultFilePreviewStore';
 
@@ -18,7 +19,10 @@ function openFromPress(href: string): void {
 	if (!state.bridge || !state.cwd || state.navigationPending) return;
 	const reference = parseResultFileReference(href);
 	if (!reference) return;
-	useResultFilePreviewStore.getState().open({ ...reference, cwd: state.cwd });
+	// Same fallback as ResultFileLink: a model that searched another directory
+	// often names just the file, so attach mentioned absolute paths for the retry.
+	const candidates = resultFileCandidates(reference.path, state.messages, state.activities);
+	useResultFilePreviewStore.getState().open({ ...reference, cwd: state.cwd, ...(candidates.length ? { candidates } : {}) });
 }
 
 export function installResultFilePressRescue(): void {
