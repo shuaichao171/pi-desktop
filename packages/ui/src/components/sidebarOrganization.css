@@ -117,7 +117,8 @@
 .pd-session-bulk-trash-list li { padding: 8px 0; overflow-wrap: anywhere; border-bottom: 1px solid var(--pd-border-soft); }
 .pd-session-bulk-trash-list strong { font-weight: var(--pd-weight-medium); }
 .pd-session-bulk-trash-list p { margin: 5px 0 0; }
-.pd-group-empty { padding: 8px; font-size: var(--pd-font-sm); }
+/* Region-level empty hints sit outside the row grid: align their padding to the new compact .pd-session-empty instead of the old 12px card. */
+.pd-group-empty { padding: 0 10px; font-size: var(--pd-font-sm); line-height: 22px; margin-bottom: 4px; }
 .pd-sidebar-filter-chip { display: flex; align-items: center; align-self: flex-start; gap: 6px; margin: 1px 15px 7px; padding: 4px 7px; border: 0; border-radius: var(--pd-radius-xs); background: var(--pd-sidebar-selected); color: var(--pd-brand); font-size: var(--pd-font-xs); }
 .pd-sidebar-filter-chip:hover { background: var(--pd-sidebar-hover); }
 .pd-sidebar-retry { margin: 10px; padding: 5px 9px; border: 1px solid var(--pd-sidebar-surface); border-radius: var(--pd-radius-sm); background: var(--pd-sidebar-surface); color: var(--pd-text); font-size: var(--pd-font-caption); }
