@@ -14,6 +14,7 @@ import { mkdir, rm, stat } from 'node:fs/promises';
 import { basename, dirname, join, resolve } from 'node:path';
 import { IPC_CHANNELS, PROJECT_BAR_ANIM_IDS, isValidProjectBarValue, normalizeProjectBarValue, type AgentEventEnvelope, type AppLocale, type UiAppCommand, type UiAttachment, type UiExtensionDialogRequest, type UiInputScope, type UiSessionMetaPatch, type UiSessionSummary, type UiSidebarGroupChange, type UiSlashCommandRequest, type UiThinkingLevel } from '@pidesktop/shared';
 import { createIsolatedAgentService } from './agentClient';
+import { guardExternalNavigation } from './externalLinks';
 import { hostedHeldSessionPaths, isPaiSender, isPaiWindow, isPaneSender, paiHeldSessionPaths, paiSlotForSender, paiWindowSlots, paneHeldSessionPaths, paneSlotForSender, paneSlots, registerPaiWindowSlot, unregisterPaiWindowSlot } from './paiWindows';
 import { initSplitPanes, openSplitPane, closeSplitPane, setPaneBounds, notifyPaneRendererReady, disposeAllPanes, panePendingDialogRequests, paneById, paneIdsFor, resolvePanePendingDialog } from './splitPanes';
 import { getAppLocale, setAppLocale } from './appLocale';
@@ -347,13 +348,9 @@ function createPaiWindow(request: PaiWindowRequest): void {
 	win.webContents.on('did-fail-load', (_event, code, description, _url, isMainFrame) => {
 		if (isMainFrame && code !== -3) reportFailure(description);
 	});
-	win.webContents.setWindowOpenHandler(({ url }) => {
-		try {
-			const parsed = new URL(url);
-			if (parsed.protocol === 'https:' || parsed.protocol === 'http:') void shell.openExternal(parsed.toString());
-		} catch { /* Ignore malformed links from generated content. */ }
-		return { action: 'deny' };
-	});
+	// Hosted surfaces must not navigate away: the transcript's links leave to the
+	// system browser, and a dead localhost address keeps the window on its own document.
+	guardExternalNavigation(win.webContents);
 	win.on('close', (event) => {
 		if (entry.closing) return;
 		event.preventDefault();

@@ -1,6 +1,6 @@
 import { initializeDiagnostics, recordDiagnostic } from './diagnostics.ts';
 import { userInfo } from 'node:os';
-import { app, BrowserWindow, dialog, Menu, nativeImage, nativeTheme, session, shell } from 'electron';
+import { app, BrowserWindow, dialog, Menu, nativeImage, nativeTheme, session } from 'electron';
 import { mkdir, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -10,6 +10,7 @@ import { appearanceStatePath, readAppearanceState, readAppearanceStateAsync } fr
 import { createBootErrorHtml, createBootHtml } from './splash';
 import { showEditContextMenu } from './editContextMenu.ts';
 import { appIconPath, createAppTray, destroyAppTray } from './tray';
+import { guardExternalNavigation } from './externalLinks.ts';
 import { paiPipeName, startPaiPipeServer } from './paiPipe.ts';
 import { parseDesktopLaunch, reservePaiProfile, validatePaiSession, validatePaiWorkspace, type DesktopLaunch, type PaiProfile } from './desktopLaunch.ts';
 import { createStartupMetrics } from './startupMetrics.ts';
@@ -407,25 +408,8 @@ function createWindow(options: CreateMainWindowOptions): BrowserWindow {
 		startupMetrics.mark('ready-to-show');
 		reveal();
 	});
-	const openExternalLink = (url: string): void => {
-		try {
-			const parsed = new URL(url);
-			if (parsed.protocol === 'https:' || parsed.protocol === 'http:') {
-				void shell.openExternal(parsed.toString());
-			}
-		} catch {
-			// Ignore malformed links from generated content.
-		}
-	};
-	win.webContents.setWindowOpenHandler(({ url }) => {
-		openExternalLink(url);
-		return { action: 'deny' };
-	});
-	win.webContents.on('will-navigate', (event, url) => {
-		if (url === win.webContents.getURL()) return;
-		event.preventDefault();
-		openExternalLink(url);
-	});
+	// Links in transcripts open in the system browser instead of navigating this window.
+	guardExternalNavigation(win.webContents);
 	// Right-click editing menu (cut/copy/paste...) for plain text fields; targets
 	// with their own React menu preventDefault() and never reach this handler.
 	win.webContents.on('context-menu', (_event, params) => {

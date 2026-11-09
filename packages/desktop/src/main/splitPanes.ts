@@ -12,6 +12,7 @@ import { join } from 'node:path';
 import { IPC_CHANNELS, type AgentEventEnvelope, type UiExtensionDialogRequest, type UiExtensionDialogResponse } from '@pidesktop/shared';
 import { getAppLocale } from './appLocale';
 import { rendererLaunchUrl, validatePaiSession, validatePaiWorkspace } from './desktopLaunch';
+import { guardExternalNavigation } from './externalLinks';
 import { createIsolatedAgentService } from './agentClient';
 import { paneHeldSessionPaths, paneSlotForSender, paneSlots, registerPaneSlot, unregisterPaneSlot, type PaiPaneSlot } from './paneRegistry';
 
@@ -132,13 +133,9 @@ export function openSplitPane(parentWin: BrowserWindow, request: { cwd: string; 
 	entry.webContents.on('did-fail-load', (_event, code, description, _url, isMainFrame) => {
 		if (isMainFrame && code !== -3) reportFailure(description);
 	});
-	entry.webContents.setWindowOpenHandler(({ url }) => {
-		try {
-			const parsed = new URL(url);
-			if (parsed.protocol === 'https:' || parsed.protocol === 'http:') void import('electron').then(({ shell }) => shell.openExternal(parsed.toString()));
-		} catch { /* Ignore malformed links from generated content. */ }
-		return { action: 'deny' };
-	});
+	// Hosted surfaces must not navigate away: the transcript's links leave to the
+	// system browser, and a dead localhost address keeps the pane on its own document.
+	guardExternalNavigation(entry.webContents);
 	entry.agent.onEvent((envelope: AgentEventEnvelope) => {
 		const event = envelope.event;
 		if (event.type === 'ready') entry.liveSessionPath = event.sessionPath;
