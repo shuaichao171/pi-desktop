@@ -11,7 +11,10 @@
 ; no PATH change or Explorer restart is necessary.
 !define PAI_APP_PATHS_ROOT "Software\Microsoft\Windows\CurrentVersion\App Paths"
 !define PAI_APP_PATH_KEY "${PAI_APP_PATHS_ROOT}\pai.exe"
-!define PAI_MANAGED_VALUE "dev.pidesktop.app"
+; Marker meaning "this App Paths entry was written by us". Matches the retired
+; AUMI scheme too so upgrades keep managing an entry created by <=0.4.1.
+!define PAI_MANAGED_VALUE "app.pidesktop.desktop"
+!define PAI_MANAGED_VALUE_LEGACY "dev.pidesktop.app"
 
 !macro customInstall
   !if "${PRODUCT_NAME}" == "Pi Desktop"
@@ -45,7 +48,7 @@
     ${Loop}
     ReadRegStr $1 SHCTX "${PAI_APP_PATH_KEY}" "PiDesktopManaged"
     ${If} $2 != "exists"
-    ${OrIf} $1 == "${PAI_MANAGED_VALUE}"
+    ${OrIf} $1 == "${PAI_MANAGED_VALUE_LEGACY}"
       WriteRegStr SHCTX "${PAI_APP_PATH_KEY}" "" "$INSTDIR\bin\pai.exe"
       WriteRegStr SHCTX "${PAI_APP_PATH_KEY}" "PiDesktopManaged" "${PAI_MANAGED_VALUE}"
     ${EndIf}
@@ -63,6 +66,7 @@
     ReadRegStr $1 SHCTX "${PAI_APP_PATH_KEY}" ""
     ; Another install may have taken ownership since this copy was installed.
     ${If} $0 == "${PAI_MANAGED_VALUE}"
+    ${OrIf} $0 == "${PAI_MANAGED_VALUE_LEGACY}"
     ${AndIf} $1 == "$INSTDIR\bin\pai.exe"
       DeleteRegKey SHCTX "${PAI_APP_PATH_KEY}"
     ${EndIf}

@@ -574,10 +574,12 @@ if (!hasSingleInstanceLock) {
 			});
 		}
 	if (process.platform === 'win32') {
-		// Packaged and dev share this appId; Windows pins taskbar name/icon per AUMI,
-		// so a dev run (electron.exe, "Electron") would hijack the installed app's
-		// button. Dev gets its own AUMI suffix to keep the two buttons separate.
-		app.setAppUserModelId(app.isPackaged ? 'dev.pidesktop.app' : 'dev.pidesktop.app.dev');
+		// AUMI matches the electron-builder appId; the old 'dev.pidesktop.app' was
+		// retired because Windows StateRepository had cached its taskbar display
+		// name as "Electron" from early dev-era runs and no cache flush refreshes it.
+		// Packaged and dev still must differ, or a dev run (electron.exe, "Electron")
+		// pollutes the packaged button record again.
+		app.setAppUserModelId(app.isPackaged ? 'app.pidesktop.desktop' : 'app.pidesktop.desktop.dev');
 		Menu.setApplicationMenu(null);
 		if (launch.windowMode === 'full') createAppTray({
 			showMainWindow,
