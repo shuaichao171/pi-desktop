@@ -25,6 +25,11 @@
 
 ## 已完成
 
+- [x] 修复：助手回复里的 http 链接会把 pai 小窗 / 分屏窗格整块导航走（目标地址失效时窗口变黑屏后自毁）（2026-11-09 提出并完成）
+  - 根因：只有主窗注册了 `will-navigate` 防护；`createPaiWindow`（`ipc.ts`）与 `createSplitPane`（`splitPanes.ts`）只有 `setWindowOpenHandler`，而它只拦 `window.open` / `target="_blank"`。普通 `<a href>` 点击会让承载会话的 WebContents 自己导航到目标地址，`http://127.0.0.1:5173` 这类已关闭的本地服务直接 `ERR_CONNECTION_REFUSED`，pai 窗与窗格随后按 `did-fail-load` 走失败清理被关闭（用户看到的就是整块黑屏）。
+  - 修复：新增 `packages/desktop/src/main/externalLinks.ts`（`openExternalHttpUrl` 只转交 http(s) 给系统浏览器；`guardExternalNavigation` 对新窗请求一律 deny、对主框架导航一律取消，仅放行「重新加载当前文档」）；主窗、pai 窗、分屏窗格三处统一安装，删掉三份重复的内联处理器。
+  - 验证：`tests/external-links.test.mjs`（只放行 http(s)、新窗请求不建窗、死地址夺不走当前文档、重载当前文档不算离开、三个渲染面都装了防护）；CDP 隔离实例在修复前复现（窗格与 pai 窗均 `ERR_CONNECTION_REFUSED` 后被清理），修复后真实鼠标点击同一链接，两者都停在原文档，截图 `_ai_work/link-click/after-pane.png`、`after-pai.png`；全量 1129 项通过、四个包 typecheck 通过。
+
 - [x] 修改供应商设置不再等待整套扩展重载：保存立即落盘返回（真实配置实测 5579 ms → 22 ms，用户本机运行日志里的 38–44 s 消失），扩展镜像副本改为后台空闲重载；右下角浮动卡片提示「正在后台重载 / 已完成 / 失败」，连续修改合并为「本轮一次 + 期间改动后再一次」；受影响供应商的发送与选模型会等重载完成，其它供应商照常（2026-11-09 提出并完成）
   - 根因：models.json 会被 pi-model-manager 这类扩展镜像注册，只有该扩展重建自己的副本才能看到新配置；重建 = `session.reload()` 重新转译并加载全部扩展、再 emit `session_shutdown`/`session_start`（本机 5.6–7 s，用户机器上 38–44 s，见 `_ai_work/provider-save-timing/README.md`），旧实现把这步放在保存事务里同步执行。
   - 落地：`packages/agent/src/index.ts` 新增 `providerResync` 待重载集合与单飞后台 pass（不占供应商锁、空闲或下一次事件推进、失败退避重试）；`provider-resync` 事件贯通 `packages/shared`，渲染端 `store.ts` 复用 `operationFeedback` 同一张卡片（同 id 替换，不叠加），重载完成后自动刷新模型目录；文案在 `i18n.ts`。
