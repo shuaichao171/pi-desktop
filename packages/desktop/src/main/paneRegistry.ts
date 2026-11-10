@@ -11,6 +11,8 @@ export interface PaiPaneSlot {
 	agent: PaneAgentService;
 	liveSessionPath: string | null;
 	busy: boolean;
+	/** Hidden by its own close button: off-screen but alive, listed under "Loaded sessions". */
+	hidden?: boolean;
 	loaded: boolean;
 	firstPaintReady: boolean;
 	rendererReady: boolean;

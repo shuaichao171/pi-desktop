@@ -25,6 +25,8 @@ export const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
 	{ id: 'toggleTerminal', keys: 'Ctrl+`', labelKey: 'settings.shortcutTerminal', scope: 'global' },
 	{ id: 'historyBack', keys: 'Ctrl+[', labelKey: 'settings.shortcutHistoryBack', scope: 'global' },
 	{ id: 'historyForward', keys: 'Ctrl+]', labelKey: 'settings.shortcutHistoryForward', scope: 'global' },
+	{ id: 'nextLoadedSession', keys: 'Ctrl+Tab', labelKey: 'settings.shortcutNextLoaded', scope: 'global' },
+	{ id: 'previousLoadedSession', keys: 'Ctrl+Shift+Tab', labelKey: 'settings.shortcutPreviousLoaded', scope: 'global' },
 	{ id: 'findInTranscript', keys: 'Ctrl+F', labelKey: 'chat.find.label', scope: 'transcript' },
 	{ id: 'previousTurn', keys: 'Alt+ArrowUp', labelKey: 'settings.shortcutPrevTurn', scope: 'transcript' },
 	{ id: 'nextTurn', keys: 'Alt+ArrowDown', labelKey: 'settings.shortcutNextTurn', scope: 'transcript' },

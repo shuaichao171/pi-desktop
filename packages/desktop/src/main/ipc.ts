@@ -15,8 +15,9 @@ import { basename, dirname, join, resolve } from 'node:path';
 import { IPC_CHANNELS, PROJECT_BAR_ANIM_IDS, isValidProjectBarValue, normalizeProjectBarValue, type AgentEventEnvelope, type AppLocale, type UiAppCommand, type UiAttachment, type UiExtensionDialogRequest, type UiInputScope, type UiSessionMetaPatch, type UiSessionSummary, type UiSidebarGroupChange, type UiSlashCommandRequest, type UiThinkingLevel } from '@pidesktop/shared';
 import { createIsolatedAgentService } from './agentClient';
 import { guardExternalNavigation } from './externalLinks';
+import { InterruptedRunTracker, isRunningPhase } from './interruptedRuns';
 import { hostedHeldSessionPaths, isPaiSender, isPaiWindow, isPaneSender, paiHeldSessionPaths, paiSlotForSender, paiWindowSlots, paneHeldSessionPaths, paneSlotForSender, paneSlots, registerPaiWindowSlot, unregisterPaiWindowSlot } from './paiWindows';
-import { initSplitPanes, openSplitPane, closeSplitPane, setPaneBounds, notifyPaneRendererReady, disposeAllPanes, panePendingDialogRequests, paneById, paneIdsFor, resolvePanePendingDialog } from './splitPanes';
+import { initSplitPanes, openSplitPane, closeSplitPane, setPaneBounds, setPaneHidden, describePanes, notifyPaneRendererReady, disposeAllPanes, panePendingDialogRequests, paneById, paneIdsFor, resolvePanePendingDialog } from './splitPanes';
 import { getAppLocale, setAppLocale } from './appLocale';
 import { appIconPath, destroyAppTray, invalidateAppTrayData, updateAppTrayMenu } from './tray';
 import { updateService } from './updateService';
@@ -144,6 +145,22 @@ const pendingPaiWindowRequests: PaiWindowRequest[] = [];
 let paiWindowsReady = false;
 let mainAgentBusy = false;
 
+/** Conversations still running are recorded so the next launch can continue them. */
+let interruptedRuns: InterruptedRunTracker | null = null;
+const paiRuntimeSourceIds = new WeakMap<PaiWindowEntry, string>();
+let nextPaiRuntimeSource = 0;
+function paiRuntimeSource(entry: PaiWindowEntry): string {
+	let source = paiRuntimeSourceIds.get(entry);
+	if (!source) { source = `pai:${++nextPaiRuntimeSource}`; paiRuntimeSourceIds.set(entry, source); }
+	return source;
+}
+function trackRuntime(source: string, event: AgentEventEnvelope['event'] | null): void {
+	if (!interruptedRuns) return;
+	if (!event) { interruptedRuns.clearSource(source); return; }
+	if (event.type !== 'session-runtime') return;
+	interruptedRuns.update(source, { cwd: event.cwd, path: event.path, running: isRunningPhase(event.runtime.phase) });
+}
+
 /** Pai windows keep their own agent host; every other window shares the main service. */
 function agentFor(event: IpcMainInvokeEvent): PaiAgentService {
 	return (paneSlotForSender(event.sender)?.agent as PaiAgentService | undefined)
@@ -162,6 +179,8 @@ function updateKeepAwakeBusy(): void {
 async function disposePaiEntry(entry: PaiWindowEntry): Promise<void> {
 	if (entry.disposed) return;
 	entry.disposed = true;
+	// A pai window closed on purpose ends its conversations; during app shutdown the record is frozen.
+	trackRuntime(paiRuntimeSource(entry), null);
 	try { await entry.agent.dispose(); }
 	catch (error) { console.error('pai agent disposal failed:', error); }
 	updateKeepAwakeBusy();
@@ -372,6 +391,7 @@ function createPaiWindow(request: PaiWindowRequest): void {
 			entry.busy = event.status === 'busy';
 			updateKeepAwakeBusy();
 		}
+		if (event.type === 'session-runtime') trackRuntime(paiRuntimeSource(entry), event);
 		if (!entry.revealed && !entry.win.isDestroyed()) return; // Nothing is listening yet; the snapshot covers pre-reveal state.
 		if (!win.isDestroyed() && !win.webContents.isDestroyed()) win.webContents.send(IPC_CHANNELS.agentEvent, envelope);
 	});
@@ -1261,12 +1281,14 @@ function requireTrustedSender(event: IpcMainInvokeEvent): BrowserWindow {
  */
 const mainOnlyChannels = new Set<string>([
 	IPC_CHANNELS.agentInit, IPC_CHANNELS.agentResidentSnapshot, IPC_CHANNELS.agentActivateResident,
+	IPC_CHANNELS.interruptedRunsTake,
 	IPC_CHANNELS.agentListWorkspaces, IPC_CHANNELS.workspaceListConversations, IPC_CHANNELS.conversationStoragePick,
 	IPC_CHANNELS.agentListSessions, IPC_CHANNELS.agentListSessionsPage, IPC_CHANNELS.agentSearchSessions, IPC_CHANNELS.agentSwitchSession, IPC_CHANNELS.agentPeekSession,
 	IPC_CHANNELS.sessionRevealFile, IPC_CHANNELS.sessionFork, IPC_CHANNELS.sessionOpenWindow, IPC_CHANNELS.sessionDelete,
 	IPC_CHANNELS.agentUpdateSessionMeta, IPC_CHANNELS.agentUpdateSessionOrders, IPC_CHANNELS.agentListSessionGroups, IPC_CHANNELS.agentUpdateSessionGroups,
 	IPC_CHANNELS.appRelaunch,
-	IPC_CHANNELS.splitPaneOpen, IPC_CHANNELS.splitPaneSetBounds, IPC_CHANNELS.splitPaneList,
+	IPC_CHANNELS.splitPaneOpen, IPC_CHANNELS.splitPaneSetBounds, IPC_CHANNELS.splitPaneList, IPC_CHANNELS.splitPaneDescribe,
+	IPC_CHANNELS.agentLoadSession, IPC_CHANNELS.agentUnloadSession,
 	IPC_CHANNELS.workspacePick, IPC_CHANNELS.workspaceProjectsDirectory, IPC_CHANNELS.workspaceCreateProject, IPC_CHANNELS.workspaceAddDropped,
 	IPC_CHANNELS.workspaceSwitch, IPC_CHANNELS.workspaceDefault, IPC_CHANNELS.workspaceRemove, IPC_CHANNELS.workspaceListPinned, IPC_CHANNELS.workspaceSetPinned,
 	IPC_CHANNELS.pluginCatalog, IPC_CHANNELS.pluginMutate, IPC_CHANNELS.pluginPreview, IPC_CHANNELS.pluginPickDirectory, IPC_CHANNELS.pluginDiscover,
@@ -1308,6 +1330,8 @@ export function registerIpc(options: {
 	keepAwake = createKeepAwakeController({ settingsPath: desktopSettingsPath, defaultStorageDirectory: join(app.getPath('home'), 'PiDesktopWorkspace') });
 	updateService.setAutoInstallSource(() => readCurrentDesktopSettings().autoInstallUpdates === true);
 	appearancePath = appearanceStatePath(options.baseUserData ?? app.getPath('userData'));
+	// Only the full app resumes interrupted conversations; isolated multi-profile launches keep none.
+	if (windowMode === 'full' && !interruptedRuns) interruptedRuns = new InterruptedRunTracker(join(app.getPath('userData'), 'interrupted-runs.json'));
 	// Hosted pai windows may be requested before IPC is wired (pipe server or
 	// second-instance handoff during boot); replay those requests now.
 	paiWindowsReady = true;
@@ -1317,6 +1341,7 @@ export function registerIpc(options: {
 	}
 	initSplitPanes({
 		updateKeepAwakeBusy,
+		trackRuntime,
 		isAutomationRunning: (_cwd, path) => automationExecutor.isSessionRunning(path),
 		isHeldElsewhere: (path) => new Set(paiHeldSessionPaths()).has(path),
 		markBackgroundActivity: (path) => {
@@ -1455,6 +1480,7 @@ export function registerIpc(options: {
 		stopFileWatch();
 	};
 	handleRendererInvoke(IPC_CHANNELS.appearanceGet, () => readAppearanceState(appearancePath));
+	handleRendererInvoke(IPC_CHANNELS.interruptedRunsTake, () => interruptedRuns?.take() ?? []);
 	handleRendererInvoke(IPC_CHANNELS.appearanceSet, async (_event, state: unknown) => {
 		if (!isValidAppearanceState(state)) throw new Error('外观设置无效');
 		await writeAppearanceStateAsync(appearancePath, state);
@@ -1659,6 +1685,7 @@ export function registerIpc(options: {
 			mainAgentBusy = event.event.status === 'busy';
 			updateKeepAwakeBusy();
 		}
+		if (event.event.type === 'session-runtime') trackRuntime('main', event.event);
 		notifier.handleAgentEvent(event, activeSessionPath, agentService.cwd || activeWorkspace);
 		broadcastToRenderers(IPC_CHANNELS.agentEvent, event, (win) => !isPaiWindow(win));
 	});
@@ -1914,11 +1941,30 @@ export function registerIpc(options: {
 		});
 	});
 	handleRendererInvoke(IPC_CHANNELS.splitPaneList, (event) => paneIdsFor(requireRendererSender(event)));
+	handleRendererInvoke(IPC_CHANNELS.splitPaneDescribe, (event) => describePanes(requireRendererSender(event)));
+	handleRendererInvoke(IPC_CHANNELS.splitPaneSetHidden, (event, hidden: unknown, paneId?: unknown) => {
+		if (typeof hidden !== 'boolean') throw new Error('窗格参数无效');
+		// A pane hides itself (its close button); the main window hides or shows one by id.
+		const paneSlot = paneSlotForSender(event.sender);
+		const pane = paneSlot ?? (typeof paneId === 'number' ? paneById(requireRendererSender(event), paneId) : undefined);
+		if (!pane) throw new Error('没有可操作的窗格');
+		setPaneHidden(pane, hidden);
+	});
+	handleRendererInvoke(IPC_CHANNELS.agentLoadSession, (_event, cwd: unknown, path: unknown) => {
+		if (typeof cwd !== 'string' || typeof path !== 'string') throw new Error('会话参数无效');
+		if (new Set(paiHeldSessionPaths()).has(path) || paneSlots().some((pane) => pane.sessionPath === path || pane.liveSessionPath === path)) throw new Error('会话已在窗格或小窗中打开');
+		return agentService.loadSession(cwd, path);
+	});
+	handleRendererInvoke(IPC_CHANNELS.agentUnloadSession, (_event, path: unknown) => {
+		if (typeof path !== 'string') throw new Error('会话参数无效');
+		agentService.unloadSession(path);
+	});
 	handleRendererInvoke(IPC_CHANNELS.focusHostedSession, (_event, path: unknown) => {
 		if (typeof path !== 'string' || !path) return false;
 		for (const pane of paneSlots()) {
 			if (pane.sessionPath === path || pane.liveSessionPath === path) {
 				if (pane.parentWin.isDestroyed() || pane.webContents.isDestroyed()) return false;
+				if (pane.hidden) setPaneHidden(pane, false);
 				pane.parentWin.focus();
 				pane.webContents.focus();
 				return true;
@@ -2178,6 +2224,12 @@ export function registerIpc(options: {
 		return agentFor(event).generateCommitMessage(context);
 	});
 
+	handleRendererInvoke(IPC_CHANNELS.agentSuggestNextInput, (event, request: unknown) => {
+		if (!isRecord(request) || typeof request.sessionPath !== 'string' || !request.sessionPath || request.sessionPath.length > 32768
+			|| (request.provider !== undefined && typeof request.provider !== 'string') || (request.model !== undefined && typeof request.model !== 'string')) throw new Error('建议请求无效');
+		return agentFor(event).suggestNextInput({ sessionPath: request.sessionPath, ...(request.provider && request.model ? { provider: request.provider, model: request.model } : {}) });
+	});
+
 	handleRendererInvoke(IPC_CHANNELS.agentAbort, (event) => agentFor(event).abort());
 
 	handleRendererInvoke(IPC_CHANNELS.agentNewSession, (event, options?: unknown) => {
@@ -2200,6 +2252,8 @@ export function registerIpc(options: {
 export function disposeServices(): Promise<void> {
 	if (serviceShutdown) return serviceShutdown;
 	disposingServices = true;
+	// Record what is still running before disposal aborts it: the next launch continues those turns.
+	interruptedRuns?.freeze();
 	updateService.stop();
 	stopAppearanceWatch?.();
 	keepAwake?.dispose();

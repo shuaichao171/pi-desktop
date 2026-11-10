@@ -138,6 +138,7 @@ function mountShell(storage, chatState = { appInfo: { platform: 'win32' }, cwd: 
 			}
 			if (specifier === '../i18n') return { useT: () => ({ t: (key) => key }) };
 			if (specifier === './splitPaneRegions') return { useSplitPaneRegions: () => ({ paneIds: [], hostRef: { current: null } }), SPLIT_PANE_OPENED_EVENT: 'pi-split-pane-opened' };
+			if (specifier === '../useInterruptedRunResume') return { useInterruptedRunResume: () => {} };
 			if (specifier === '../useSessionNavigation') return { useSessionNavigation: () => ({ canGoBack: false, canGoForward: false, navigating: false, goBack: async () => {}, goForward: async () => {} }) };
 			if (specifier === '../workbenchReading') return workbenchReading;
 			if (specifier === '../shortcuts/bindings') return shortcutBindings;

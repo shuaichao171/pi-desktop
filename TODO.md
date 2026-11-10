@@ -6,24 +6,36 @@
 
 ## 计划中
 
-- [ ] 项目的聚焦悬浮框不要挡住右侧按钮：悬浮框弹出时若盖住右侧操作按钮（如展开/菜单/箭头），需错位或翻转方向（2026-11-06 提出）
-- [ ] 支持渲染 LaTeX 公式：会话内容中的 LaTeX（$...$ / $$...$$）渲染为公式（候选方案 KaTeX，注意与现有 markdown 管线的集成与转义冲突）（2026-11-06 提出）
-- [ ] 目前项目右键只能往右拆分新会话,而我想要右键可以加载好该会话(在左侧栏的左上角添加一个新区域叫:已加载会话),并且可以在当前所处的会话中ctrl tab切换已加载的会话,拆分过的窗格关闭,也不会致使会话关闭,而是临时隐藏,实际关闭要去左上角的已加载会话中关闭（2026-11-07 提出）
-- [ ] 应用被直接关闭后，下次启动自动继续之前正在跑的对话：退出时若有会话仍在运行，下次软件启动时自动恢复该会话并向模型发送 `The app was quit while you were working. Please continue from where you left off.`，让其接着完成未完成的工作（2026-11-08 提出）
-- [ ] 对话完成后在输入框显示「猜你下一句」（2026-11-08 提出）
-  - 场景：助手回复结束、轮到用户说话且输入框为空时，用户常不知道接着说什么，想让模型先猜一句。
-  - 交互（已确认）：猜测句作为输入框内灰色建议（placeholder）显示，只在输入框为空且会话空闲时出现；点击或 Tab 填入为真实文本，可编辑再发送；用户开始打字即消失。
-  - 模型与开关（已确认）：用哪个模型在设置里单独指定；功能默认关闭，需用户在设置里手动开启。
-  - 实现要点（待实施）：agent 侧新增独立轻量请求（参照 `generateCommitMessage` 的 `completeSimple` 单次调用，不写入会话记录），从当前分支最近若干条消息构建议题的「用户下一句预测」提示词；每轮回复结束触发一次；失败静默降级、不影响主流程；设置页新增开关 + 模型选择项。
-  - 待定：模型选项默认值与记忆方式、上下文截断长度与超时、与下一轮的并发/取消关系、分屏多窗格与 pai 小窗下的触发与去重。
-
-- [ ] 排队发送的内容立刻出现在对话里，并带「立即发送」「取消发送」按钮（2026-11-09 提出）
-  - 现状：会话运行中发出的消息只出现在输入框上方的排队条（`ComposerQueue.tsx`），对话正文（`ChatView.tsx` / `MessageItem.tsx`）完全不知道队列存在，用户看不到自己刚发的内容，容易以为没发出去。
-  - 期望：消息一提交就以「排队中」样式的用户气泡出现在对话末尾（与真实轮次同一位置、同一排版），气泡上直接给两个按钮：「立即发送」（打断当前回合优先送达，即现有 `steer`）与「取消发送」（从队列移除并清掉该气泡，即现有 `remove`）。
-  - 实现要点（待实施）：`useInputQueue.ts` / `inputQueueController.ts` 已有数据（`UiInputQueueItem.state`：accepted / reserved / consumed / recovered / failed / editing），把它接到会话渲染侧，在消息列表尾部合成「待发送」条目（只在界面上合成，不写入会话记录，刷新或切换会话不得重复）；气泡按钮复用现有 `mutateInputQueue` 的 `steer` / `remove`；进入 `consumed`（已被真实轮次接收）时用真实消息替换，避免同一句话出现两条；`failed` 就在气泡上就地显示错误与重试。
-  - 待定：`editing` / `paused` / `recovered` 各状态的呈现（排队中 / 编辑中 / 已暂停 / 待确认恢复）、多窗格与 pai 小窗下是否同样显示、新排队气泡是否自动滚到底。
+- [ ] 支持渲染 LaTeX 公式：会话内容中的 LaTeX（$...$ / $$...$$）渲染为公式（候选方案 KaTeX，注意与现有 markdown 管线的集成与转义冲突）（2026-11-06 提出；2026-11-10 按用户要求暂缓，本批跳过）
 
 ## 已完成
+
+- [x] 项目的聚焦悬浮框不再挡住右侧按钮（2026-11-06 提出，2026-11-10 完成）
+  - 根因：项目行标题提示已在 6e20bd7 修过；剩下的是行内操作按钮（新建对话、置顶等）的 `side="right"` 提示以按钮自身右缘为锚点，盖住同排相邻按钮。
+  - 修复：新增纯函数 `packages/ui/src/tooltipPlacement.ts`（`placeTooltip`），右侧提示改为锚定到所在侧栏（`[data-tooltip-rail], .pd-sidebar`）的右缘之外，空间不足 120px 时回退原有翻转；`HoverTooltip.tsx` 接入。
+  - 验证：`tests/tooltip-placement.test.mjs`。
+
+- [x] 排队发送的内容立刻出现在对话里，带「立即发送」「取消发送」（2026-11-09 提出，2026-11-10 完成）
+  - `useInputQueue.ts` 改为按 bridge+作用域共享一个控制器（引用计数），输入框排队条与对话气泡看到同一份队列；`queuedTranscript.ts` 把队列条目合成为排队中 / 引导中 / 已暂停 / 编辑中 / 待确认恢复几种气泡，`QueuedTranscriptMessages.tsx` 渲染在消息列表末尾（只在界面合成，不写会话记录），按钮复用 `steer` / `remove` / `confirm`。
+  - 不重复：SDK 的 `consumed` 队列事件与 `user-message` 同一轮先后到达，被消费的条目先从队列消失再出现真实消息。
+  - 验证：`tests/queued-transcript.test.mjs`。
+
+- [x] 应用被直接关闭后，下次启动自动继续之前正在跑的对话（2026-11-08 提出，2026-11-10 完成）
+  - 主进程 `interruptedRuns.ts`（`InterruptedRunTracker`）实时镜像主窗 / pai 小窗 / 分屏窗格中运行中（running / waiting-input / waiting-approval）的会话，写入 `userData/interrupted-runs.json`；崩溃、强杀同样留下记录；退出时先冻结再释放服务，避免释放过程把记录清掉。
+  - 下次启动由主窗渲染端一次性领取（`interrupted-runs:take`，领取即清空，重载不会重复续跑），`useInterruptedRunResume` 在启动会话就绪后逐个切过去发送 `The app was quit while you were working. Please continue from where you left off.`，最后回到启动时的会话；右下角提示进度与失败原因。已不存在的会话文件自动跳过。
+  - 验证：`tests/interrupted-runs.test.mjs`。
+
+- [x] 对话完成后在输入框显示「猜你下一句」（2026-11-08 提出，2026-11-10 完成）
+  - agent 侧 `nextInputSuggestion.ts` + `SingleAgentService.suggestNextInput`：取当前分支最近 12 条消息（单条 2000 字、总计 12000 字截断）走一次 `completeSimple`，20 s 超时，结果清洗为单行 ≤200 字；不写入会话记录。经 `agent:suggest-next-input` 通道暴露。
+  - 渲染端：设置 → 常规 新增「猜你下一句」开关（默认关）与「建议使用的模型」（默认跟随当前对话）；每轮回复结束（busy → idle）请求一次，按会话与最后一条消息缓存，失败静默；仅在输入框为空、无附件、会话空闲时以灰字 placeholder 显示，Tab 或点击「Tab 采用建议」填入。
+  - 验证：`tests/next-input-suggestion.test.mjs`；渲染器回归 `tests/fixtures/next-input-suggestion/scenarios.mjs`（默认不请求、开关与模型选择、灰字显示、Tab 填入），截图 `_ai_work/todo-batch-2026-11-10/suggestion-01-settings.png`、`suggestion-02-placeholder.png`。
+
+- [x] 已加载会话：右键或拖动加载、Ctrl+Tab 切换、窗格关闭仅隐藏（2026-11-07 提出；2026-11-10 追加拖动需求并完成）
+  - 侧栏左上角新增「已加载会话」区：右键会话「加载到已加载会话」，或把会话拖到该区域即加载（主 agent 后台建好上下文并钉住，不参与 LRU 淘汰）；把会话拖到对话区右侧会出现「松开以在右侧分屏打开」放置区，松开即分屏打开。列表持久化，下次启动后台重新预热。
+  - Ctrl+Tab / Ctrl+Shift+Tab 在主窗已加载会话间循环（快捷键可在设置中改）；分屏窗格顶栏的关闭按钮改为隐藏窗格（会话继续运行），已加载区列出全部窗格（显示/已隐藏），点击恢复，× 才真正关闭。
+  - 落地：agent `loadSession` / `unloadSession`（`pinnedSessions`、`backgroundLoads`），主进程 `splitPaneSetHidden` / `splitPaneDescribe` / `splitPaneChanged`；渲染端 `loadedSessions.ts`、`loadedSessionActions.ts`、`LoadedSessionsRegion.tsx`、`SessionDropOverlays.tsx`。
+  - 验证：`tests/loaded-sessions.test.mjs`；渲染器回归 `tests/fixtures/loaded-sessions/scenarios.mjs`（右键加载、真实鼠标拖到已加载区与分屏区、拖动不误触打开、Ctrl+Tab 前后切换、窗格隐藏/恢复/关闭、移出），截图 `_ai_work/todo-batch-2026-11-10/loaded-02-drag-to-loaded.png`、`loaded-05-drag-to-split.png`、`loaded-06-hidden-pane.png`。
+  - 顺带：截图夹具补齐 `listSplitPanes` / `describeSplitPanes` / `takeInterruptedRuns` 与两个分屏订阅的桩（此前缺 `listSplitPanes` 桩会让依赖默认夹具的场景在挂载时就失败）。
 
 - [x] 修复：助手回复里的 http 链接会把 pai 小窗 / 分屏窗格整块导航走（目标地址失效时窗口变黑屏后自毁）（2026-11-09 提出并完成）
   - 根因：只有主窗注册了 `will-navigate` 防护；`createPaiWindow`（`ipc.ts`）与 `createSplitPane`（`splitPanes.ts`）只有 `setWindowOpenHandler`，而它只拦 `window.open` / `target="_blank"`。普通 `<a href>` 点击会让承载会话的 WebContents 自己导航到目标地址，`http://127.0.0.1:5173` 这类已关闭的本地服务直接 `ERR_CONNECTION_REFUSED`，pai 窗与窗格随后按 `did-fail-load` 走失败清理被关闭（用户看到的就是整块黑屏）。

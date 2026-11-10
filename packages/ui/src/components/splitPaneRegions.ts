@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import type { UiSplitPaneState } from '@pidesktop/shared';
+import { setLoadedPanes } from '../loadedSessions';
 import { useChatStore } from '../store';
 
 /** Window event the sidebar dispatches once the main process returned a pane id. */
@@ -48,10 +50,27 @@ export function useSplitPaneRegions(enabled: boolean, visible: boolean) {
 		if (!enabled) return;
 		const bridge = useChatStore.getState().bridge;
 		let cancelled = false;
+		// Full pane states (shown and hidden) feed the "Loaded sessions" list; only shown panes
+		// get a layout region. A pane hidden by its own close button keeps running off-screen.
+		const applyStates = (panes: UiSplitPaneState[]) => {
+			setLoadedPanes(panes);
+			const shown = new Set(panes.filter((pane) => !pane.hidden).map((pane) => pane.paneId));
+			for (const pane of panes) if (pane.hidden) lastReported.current.delete(pane.paneId);
+			setPaneIds((current) => {
+				const kept = current.filter((id) => shown.has(id));
+				const added = [...shown].filter((id) => !kept.includes(id));
+				return kept.length === current.length && added.length === 0 ? current : [...kept, ...added];
+			});
+		};
 		// A reloaded main renderer (dev reload, crash recovery) finds its panes again.
-		void bridge?.listSplitPanes?.().then((ids) => {
-			if (!cancelled && Array.isArray(ids)) setPaneIds((current) => [...new Set([...current, ...ids])]);
-		}).catch(() => { /* Older host without the channel. */ });
+		if (bridge?.describeSplitPanes) {
+			void bridge.describeSplitPanes().then((panes) => { if (!cancelled && Array.isArray(panes)) applyStates(panes); }).catch(() => {});
+		} else {
+			void bridge?.listSplitPanes?.().then((ids) => {
+				if (!cancelled && Array.isArray(ids)) setPaneIds((current) => [...new Set([...current, ...ids])]);
+			}).catch(() => { /* Older host without the channel. */ });
+		}
+		const unsubscribeChanged = bridge?.onSplitPaneChanged?.((panes) => { if (!cancelled) applyStates(panes); });
 		const unsubscribe = bridge?.onSplitPaneClosed?.((paneId) => {
 			lastReported.current.delete(paneId);
 			setPaneIds((current) => current.filter((id) => id !== paneId));
@@ -64,6 +83,7 @@ export function useSplitPaneRegions(enabled: boolean, visible: boolean) {
 		return () => {
 			cancelled = true;
 			unsubscribe?.();
+			unsubscribeChanged?.();
 			window.removeEventListener(SPLIT_PANE_OPENED_EVENT, opened);
 		};
 	}, [enabled]);

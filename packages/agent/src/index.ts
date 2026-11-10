@@ -107,7 +107,7 @@ import { ConversationRunTracker, isConversationRunEntry, latestUnassociatedRunId
 import { sessionTiming } from './sessionMetrics.ts';
 import { requestDesktopConfirmation } from './extensionApproval.ts';
 export type { DesktopApprovalOptions } from './extensionApproval.ts';
-import { requireInputQueueScope, type UiInputQueue, type UiInputQueueScope, type UiInputQueueMutation, type UiInputReceipt, type UiSubmitInput } from '../../shared/src/inputFeatures.ts';
+import { requireInputQueueScope, type UiInputQueue, type UiInputQueueScope, type UiInputQueueMutation, type UiInputReceipt, type UiNextInputRequest, type UiSubmitInput } from '../../shared/src/inputFeatures.ts';
 import type { ModelTestRequest, ProjectDefaultsWrite, UiSaveProviderUsageQueryRequest, UiUsageQueryConfig, UiUsageQueryResult } from '../../shared/src/managementFeatures.ts';
 import { runProviderUsageQuery, usageQueryInfo, normalizeUsageQueryConfig, validateUsageQueryRequest } from './providerUsageQuery.ts';
 import { applyCanonicalThinkingLevel, normalizeThinkingLevel } from './thinkingLevels.ts';
@@ -119,6 +119,7 @@ import { createInterruptibleShellTools, shellRunRegistry } from './shellInterrup
 import type { UiMcpSaveRequest, UiMcpTarget } from '../../shared/src/mcpFeatures.ts';
 import type { PluginUpdateCheck } from '../../shared/src/pluginUpdates.ts';
 import { checkPluginUpdate } from './pluginUpdates.ts';
+import { buildNextInputContext, cleanNextInputSuggestion, NEXT_INPUT_SYSTEM_PROMPT, NEXT_INPUT_TIMEOUT_MS } from './nextInputSuggestion.ts';
 
 export interface AgentInitOptions {
 	cwd: string;
@@ -1450,6 +1451,37 @@ class SingleAgentService {
 		return text;
 	}
 
+	/**
+	 * Guess the user's next message after a reply settles. Like generateCommitMessage this is
+	 * one standalone model call that never touches the transcript; it only reads the recent
+	 * user/assistant text of the open conversation. Callers treat any failure as "no hint".
+	 */
+	async suggestNextInput(request: UiNextInputRequest): Promise<string> {
+		const runtime = this.runtime;
+		if (!runtime) throw new Error('Agent is not initialized');
+		if (!request || typeof request.sessionPath !== 'string' || request.sessionPath !== this.state.sessionPath) throw new Error('会话已切换');
+		const session = runtime.session;
+		const requested = typeof request.provider === 'string' && typeof request.model === 'string' && request.provider && request.model
+			? session.modelRuntime.getAvailableSnapshot().find((item) => item.provider === request.provider && item.id === request.model)
+			: undefined;
+		if (request.provider && request.model && !requested) throw new Error(`模型不可用：${request.provider}/${request.model}`);
+		const model = requested ?? session.model;
+		if (!model) throw new Error('未选择模型');
+		const context = buildNextInputContext(this.state.messages);
+		if (!context) return '';
+		const controller = new AbortController();
+		const timer = setTimeout(() => controller.abort(), NEXT_INPUT_TIMEOUT_MS);
+		try {
+			const message = await session.modelRuntime.completeSimple(model, {
+				systemPrompt: NEXT_INPUT_SYSTEM_PROMPT,
+				messages: [{ role: 'user', content: context, timestamp: Date.now() }],
+			}, { signal: controller.signal });
+			return cleanNextInputSuggestion(message.content
+				.filter((block): block is { type: 'text'; text: string } => block.type === 'text')
+				.map((block) => block.text).join(''));
+		} finally { clearTimeout(timer); }
+	}
+
 	/** Abort the active run. */
 	async abort(): Promise<void> {
 		this.conversationRuns?.requestCancel();
@@ -2345,6 +2377,11 @@ export class AgentService {
 	private readonly deletingSessionPaths = new Map<string, string>();
 	private readonly projectTrustByCwd = new Map<string, boolean>();
 	private readonly lastContextByCwd = new Map<string, string>();
+	/** Sessions the user loaded ("已加载会话"): their contexts stay warm and are never evicted. */
+	private readonly pinnedSessions = new Set<string>();
+	/** Background loads in flight, by session key; navigation to the same session waits for them. */
+	private readonly backgroundLoads = new Map<string, Promise<void>>();
+	private readonly backgroundLoading = new WeakSet<SingleAgentService>();
 	private active: SingleAgentService | null = null;
 	private activeKey: string | null = null;
 	private emit: EventEmitter = () => {};
@@ -2605,6 +2642,51 @@ export class AgentService {
 		});
 	}
 
+	/**
+	 * Load a conversation into a warm background context without activating it, and pin it
+	 * so eviction skips it. Ctrl+Tab / the loaded-sessions list then switch to it instantly.
+	 * Navigation to the same session waits for an in-flight load instead of opening a twin.
+	 */
+	loadSession(cwd: string, path: string): Promise<void> {
+		if (this.closing) return Promise.reject(new Error('应用正在退出'));
+		if (typeof cwd !== 'string' || !cwd || cwd.length > 32768 || typeof path !== 'string' || !path || path.length > 32768 || /[\u0000-\u001f\u007f]/.test(path)) return Promise.reject(new Error('会话参数无效'));
+		const key = sessionPathKey(path);
+		this.pinnedSessions.add(key);
+		const pending = this.backgroundLoads.get(key);
+		if (pending) return pending;
+		if ([...this.contexts.values()].some((service) => service.getSnapshot().sessionPath === path)) return Promise.resolve();
+		if (this.isSessionReserved(path)) { this.pinnedSessions.delete(key); return Promise.reject(new Error('会话正在切换或删除，请稍后重试')); }
+		const load = (async () => {
+			if (!(await sessionBelongsToWorkspace(path, cwd))) throw new Error('会话不属于指定工作区');
+			const contextKey = randomUUID();
+			const service = this.newContext(contextKey);
+			this.backgroundLoading.add(service);
+			try { await service.init({ cwd, sessionPath: path }); }
+			catch (error) {
+				if (this.contexts.get(contextKey) === service) this.contexts.delete(contextKey);
+				await service.dispose().catch(() => {});
+				throw error;
+			} finally { this.backgroundLoading.delete(service); }
+			await this.trimContexts();
+		})();
+		const tracked = load.catch((error: unknown) => { this.pinnedSessions.delete(key); throw error; })
+			.finally(() => { if (this.backgroundLoads.get(key) === tracked) this.backgroundLoads.delete(key); });
+		this.backgroundLoads.set(key, tracked);
+		return tracked;
+	}
+
+	/** Unpin a loaded conversation; its idle context becomes evictable again (a running one keeps going). */
+	unloadSession(path: string): void {
+		if (typeof path !== 'string' || !path) return;
+		if (this.pinnedSessions.delete(sessionPathKey(path))) void this.trimContexts();
+	}
+
+	private isPinned(service: SingleAgentService): boolean {
+		if (this.backgroundLoading.has(service)) return true;
+		const path = service.getSnapshot().sessionPath;
+		return Boolean(path && this.pinnedSessions.has(sessionPathKey(path)));
+	}
+
 	async switchSession(path: string): Promise<void> {
 		// cwd 在切换体执行时才读取：排队等在其它导航后面时，工作区可能已被更新点击换过，
 		// 旧工作区的会话应按「不属于当前工作区」拒绝，而不是被误加载成激活上下文。
@@ -2613,6 +2695,8 @@ export class AgentService {
 			if (!cwd) throw new Error('请先打开工作区');
 			if (this.isSessionReserved(path)) throw new Error('会话正在切换或删除，请稍后重试');
 			if (this.active?.getSnapshot().sessionPath === path) return;
+			// A loaded-sessions preload of this conversation becomes the context we activate.
+			await this.backgroundLoads.get(sessionPathKey(path))?.catch(() => {});
 			const existing = [...this.contexts.entries()].find(([, service]) =>
 				service.cwd === cwd && service.getSnapshot().sessionPath === path);
 			if (existing) {
@@ -3060,6 +3144,10 @@ export class AgentService {
 	generateCommitMessage(context: string): Promise<string> {
 		if (this.pluginOperation) return Promise.reject(new Error('插件设置正在更新，请稍后再试'));
 		return this.requireActive().generateCommitMessage(context);
+	}
+	suggestNextInput(request: UiNextInputRequest): Promise<string> {
+		if (this.pluginOperation) return Promise.reject(new Error('插件设置正在更新，请稍后再试'));
+		return this.requireActive().suggestNextInput(request);
 	}
 	abort(): Promise<void> { return this.active?.abort() ?? Promise.resolve(); }
 
@@ -3546,7 +3634,7 @@ export class AgentService {
 		const work = (async () => {
 			for (const [key, service] of this.contexts) {
 				if (this.contexts.size <= MAX_LOADED_CONTEXTS) break;
-				if (service === this.active || !service.canEvict) continue;
+				if (service === this.active || !service.canEvict || this.isPinned(service)) continue;
 				this.contexts.delete(key);
 				if (this.lastContextByCwd.get(service.cwd) === key) this.lastContextByCwd.delete(service.cwd);
 				await service.dispose();

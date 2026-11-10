@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import { ExitPresence } from './ExitPresence';
 import { SPLIT_PANE_OPENED_EVENT } from './splitPaneRegions';
+import { LoadedSessionsRegion } from './LoadedSessionsRegion';
+import { loadSessionIntoMain, unloadSessionFromMain } from '../loadedSessionActions';
+import { getSessionDrag, sessionDropTargetAt, setSessionDrag, useLoadedSessions } from '../loadedSessions';
 import { isValidProjectBarValue, normalizeProjectBarValue, projectBarLeavesMachine, type UiSessionGroup, type UiSidebarGroupChange, type WorkspaceOpener, type WorkspaceProjectNickname } from '@pidesktop/shared';
 import { PROJECT_BAR_ANIMS, PROJECT_BAR_PRESETS, readUserBarPresets, saveUserBarPresets, suggestBarLight, USER_BAR_PRESET_LIMIT, projectBarStyle, type UserBarPreset } from '../sidebarAppearance';
 import { projectCustomEntryDisplayName, readProjectCustomEntries, saveProjectCustomEntries, PROJECT_CUSTOM_ENTRY_LIMIT, type ProjectCustomEntry } from '../projectCustomEntries';
@@ -331,6 +334,7 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 	const projectGroups = useMemo(() => buildSidebarProjectGroups(sessions, orderedWorkspaces), [sessions, orderedWorkspaces]);
 	const projectByWorkspace = useMemo(() => new Map(projectGroups.projects.map(project => [project.workspace, project])), [projectGroups]);
 	const sessionByPath = useMemo(() => new Map(sessions.map((session) => [session.path, session])), [sessions]);
+	const { main: loadedMain } = useLoadedSessions();
 	const dragMode = false;
 	const projectDragMode = !archived;
 	const dragSections = useMemo<DragSection[]>(() => {
@@ -756,10 +760,57 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 	// Window-level drag phase listeners stay bound for the panel's lifetime:
 	// the press→drag transition itself must be observed (the first move fires
 	// outside the pressed row), and closures are refreshed through a ref.
+	// Dragging a conversation out of the list: onto "Loaded sessions" (keeps it ready in this
+	// window) or onto the right part of the chat area (opens it in a split pane). Rows are not
+	// reorderable, so this is the only drag a conversation row starts.
+	const sessionPress = useRef<{ session: SidebarSession; pointerId: number; startX: number; startY: number; dragging: boolean } | null>(null);
+	function beginSessionDrop(session: SidebarSession, event: ReactPointerEvent): void {
+		if (event.button !== 0 || !event.isPrimary || archived || renaming === session.path || navigating) return;
+		if (!bridge?.loadSession && !bridge?.openSplitPane) return;
+		if ((event.target as Element).closest('.pd-session-actions, .pd-session-pin, input, textarea')) return;
+		sessionPress.current = { session, pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, dragging: false };
+	}
+	function moveSessionDrop(event: PointerEvent): void {
+		const press = sessionPress.current;
+		if (!press || press.pointerId !== event.pointerId) return;
+		if ((event.buttons & 1) === 0) { endSessionDrop(false, event.pointerId); return; }
+		if (!press.dragging) {
+			if (Math.abs(event.clientX - press.startX) < DRAG_THRESHOLD && Math.abs(event.clientY - press.startY) < DRAG_THRESHOLD) return;
+			press.dragging = true;
+			suppressDragClick.current = true;
+			setPopup(null);
+			setArchiveConfirm(null);
+			document.body.classList.add('pd-sidebar-dragging');
+		}
+		setSessionDrag({ cwd: press.session.workspace, path: press.session.path, title: titleOf(press.session), x: event.clientX, y: event.clientY, target: sessionDropTargetAt(event.clientX, event.clientY) });
+	}
+	function endSessionDrop(commit: boolean, pointerId?: number): void {
+		const press = sessionPress.current;
+		if (!press || (pointerId !== undefined && pointerId !== press.pointerId)) return;
+		sessionPress.current = null;
+		if (!press.dragging) return;
+		const target = getSessionDrag()?.target ?? null;
+		document.body.classList.remove('pd-sidebar-dragging');
+		setSessionDrag(null);
+		if (!commit || !target) return;
+		const session = press.session;
+		if (target === 'loaded') {
+			void loadSessionIntoMain(session.workspace, session.path);
+			return;
+		}
+		if (!bridge?.openSplitPane) return;
+		if (sessionBusy(session)) {
+			operationFeedback.show({ id: 'loaded-sessions', kind: 'warning', title: t('loaded.busySplit') });
+			return;
+		}
+		// A pane takes over the transcript: release the main window's loaded copy first.
+		void unloadSessionFromMain(session.path).then(() => openInSplitPane(session));
+	}
 	const dragHandlers = useRef({ move: (_: PointerEvent) => {}, up: (_: PointerEvent) => {}, cancel: (_?: number) => {}, key: (_: KeyboardEvent) => {} });
 	dragHandlers.current = {
-		move: (event) => onPointerMove(event),
+		move: (event) => { moveSessionDrop(event); onPointerMove(event); },
 		up: (event) => {
+			endSessionDrop(true, event.pointerId);
 			const state = dragRef.current;
 			if (state?.pointerId === event.pointerId && state.item.kind === 'project') {
 				pointerRef.current = { x: event.clientX, y: event.clientY };
@@ -767,8 +818,13 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 			}
 			finishDrag(true, event.pointerId);
 		},
-		cancel: (pointerId) => finishDrag(false, pointerId),
+		cancel: (pointerId) => { endSessionDrop(false, pointerId); finishDrag(false, pointerId); },
 		key: (event) => {
+			if (event.key === 'Escape' && sessionPress.current) {
+				const dragging = sessionPress.current.dragging;
+				endSessionDrop(false);
+				if (dragging) { event.preventDefault(); event.stopImmediatePropagation(); return; }
+			}
 			if (event.key === 'Escape' && (dragRef.current || pressRef.current)) {
 				event.preventDefault(); event.stopImmediatePropagation(); finishDrag(false);
 			}
@@ -976,7 +1032,7 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 		};
 		const pinButton = (className: string) => <HoverTooltip title={pinLabel} side="right" interactive={false}><button type="button" className={className} data-session-action="pin" aria-label={`${pinLabel}: ${title}`} aria-pressed={Boolean(session.pinned)} onClick={togglePin}><Icon name="pin" width="14" height="14" /></button></HoverTooltip>;
 		return <div className={`pd-session-item${active ? ' is-active' : ''}${isDragSource ? ' is-drag-source' : ''}${session.pinned ? ' is-pinned' : ''}${indicator ? ` has-indicator${rowTint}` : ''}${confirmingArchive ? ' is-archive-confirming' : ''}${archived ? ' has-archive-selection' : ''}${archived && archiveSelection.has(session.path) ? ' is-selected-for-trash' : ''}`} key={session.path} data-session-path={session.path}
-			data-drag-path={container && dragMode ? session.path : undefined} onPointerDown={container && dragMode ? (event) => beginDrag({ kind: 'session', path: session.path, from: container }, event) : undefined}
+			data-drag-path={container && dragMode ? session.path : undefined} onPointerDown={container && dragMode ? (event) => beginDrag({ kind: 'session', path: session.path, from: container }, event) : (event) => beginSessionDrop(session, event)}
 			onContextMenu={(event) => {
 				if (renaming === session.path) return;
 				event.preventDefault();
@@ -1227,6 +1283,11 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 	function resizer(upper: string, lower: string) {
 		return <div className="pd-sidebar-region-resizer" role="separator" aria-orientation="horizontal" aria-label={`${t('sidebar.resizeSection')}: ${upper}, ${lower}`} onPointerDown={event => resizeRegionPair(upper, lower, event.clientY, event)} />;
 	}
+	const loadedTitle = (path: string | null) => {
+		const session = path ? sessionByPath.get(path) : undefined;
+		if (session) return titleOf(session);
+		return path ? path.split(/[\\/]/).pop()!.replace(/\.jsonl$/i, '') : t('loaded.newChat');
+	};
 	const dragItem = drag?.item;
 	const ghostSession = dragItem?.kind === 'session' ? sessionByPath.get(dragItem.path) : null;
 	const ghostGroup = dragItem?.kind === 'group' ? groups.find((group) => group.id === dragItem.id) : null;
@@ -1252,6 +1313,7 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 			{dates.map(date => section(`archive:${date.id}`, t(`sidebar.${date.id}`), date.sessions.slice(0, limitOf(`archive:${date.id}`)).map(session => renderSession(session, null)), { icon: 'clock' }))}
 			{!dates.length && <div className="pd-session-empty">{t(loadingSessions ? 'sidebar.loading' : 'sidebar.noArchived')}</div>}
 		</div> : <div className="pd-sidebar-regions" ref={scrollRef}>
+			{bridge?.loadSession && <LoadedSessionsRegion titleFor={loadedTitle} onNavigate={onNavigate} />}
 			{(loadingSessions) && sessions.length > 0 && <div className="pd-session-loading-hint" role="status"><Icon name="loader" className="pd-session-spinner" width="14" height="14" />{t('sidebar.refreshing')}</div>}
 			{regionVisible('project-groups') && region('project-groups', t('sidebar.groups'), <>
 				{projectOrganization.groups.map(group => {
@@ -1431,6 +1493,11 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 				<hr />
 				{menuItem({ icon: 'pin', label: t(popup.session.pinned ? 'sidebar.unpin' : 'sidebar.pin'), shortcut: 'P', onSelect: () => { const s = popup.session; sessionAction(s, popup.anchor, () => updateSessionMeta(s.path, { pinned: !s.pinned })); } })}
 				{menuItem({ icon: 'message', label: t(popup.session.unread ? 'sidebar.markRead' : 'sidebar.markUnread'), shortcut: 'U', onSelect: () => { const s = popup.session; sessionAction(s, popup.anchor, () => updateSessionMeta(s.path, s.unread ? { unread: false, expectedUnreadAt: s.unreadAt } : { unread: true })); } })}
+				{bridge?.loadSession && (() => {
+					const s = popup.session;
+					const loaded = loadedMain.some((entry) => entry.path === s.path);
+					return menuItem({ icon: 'layers', label: t(loaded ? 'sidebar.unloadSession' : 'sidebar.loadSession'), shortcut: 'L', onSelect: () => { setPopup(null); void (loaded ? unloadSessionFromMain(s.path) : loadSessionIntoMain(s.workspace, s.path)); } });
+				})()}
 				{menuItem({ icon: 'pencil', label: t('sidebar.rename'), shortcut: 'R', onSelect: () => { renameCancelled.current = false; setRenaming(popup.session.path); setRenameDraft(titleOf(popup.session)); setPopup(null); } })}
 				{menuItem({ icon: 'gitBranch', label: t('sidebar.fork'), shortcut: 'F', disabled: !bridge?.forkSession || navigating || sessionBusy(popup.session), onSelect: () => forkFromMenu(popup.session) })}
 				{menuItem({ icon: 'archive', label: t(popup.session.archived ? 'sidebar.unarchive' : 'sidebar.archive'), shortcut: 'A', onSelect: () => { const s = popup.session; sessionAction(s, popup.anchor, () => updateSessionMeta(s.path, { archived: !s.archived })); } })}

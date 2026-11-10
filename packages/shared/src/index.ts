@@ -63,6 +63,11 @@ export const IPC_CHANNELS = {
   splitPaneSetBounds: 'split-pane:set-bounds',
   splitPaneClosed: 'split-pane:closed',
   splitPaneList: 'split-pane:list',
+  splitPaneSetHidden: 'split-pane:set-hidden',
+  splitPaneDescribe: 'split-pane:describe',
+  splitPaneChanged: 'split-pane:changed',
+  agentLoadSession: 'agent:load-session',
+  agentUnloadSession: 'agent:unload-session',
   focusHostedSession: 'agent:focus-hosted-session',
   appInfo: 'app:info',
   appSetLocale: 'app:set-locale',
@@ -77,6 +82,7 @@ export const IPC_CHANNELS = {
   agentUpdateQueuedMessage: 'agent:update-queued-message',
   agentInterruptShellTools: 'agent:interrupt-shell-tools',
   agentGenerateCommitMessage: 'agent:generate-commit-message',
+  agentSuggestNextInput: 'agent:suggest-next-input',
   agentAbort: 'agent:abort',
   agentNewSession: 'agent:new-session',
   agentSnapshot: 'agent:snapshot',
@@ -103,6 +109,7 @@ export const IPC_CHANNELS = {
   agentUpdateSessionMeta: 'agent:update-session-meta',
   sessionDelete: 'session:delete',
   appCommand: 'app:command',
+  interruptedRunsTake: 'interrupted-runs:take',
   desktopSettingsGet: 'desktop-settings:get',
   desktopSettingsSet: 'desktop-settings:set',
   piEngineProbe: 'pi-engine:probe',
@@ -1132,6 +1139,12 @@ export interface UiAppearanceState {
 }
 
 /** Main → renderer commands (tray menu, notification clicks). */
+/** A conversation that was still running when the app last went away (quit, kill or crash). */
+/** One split pane of the main window, as listed under "Loaded sessions". */
+export interface UiSplitPaneState { paneId: number; cwd: string; sessionPath: string | null; hidden: boolean; busy: boolean }
+
+export interface UiInterruptedRun { cwd: string; path: string }
+
 export type UiAppCommand = { type: 'new-session' } | { type: 'switch-session'; path: string; cwd?: string } | { type: 'open-settings' } | { type: 'appearance-changed'; appearance: UiAppearanceState };
 
 export interface AgentBridge extends InputFeatureBridge, DataFeaturesBridge, WorkbenchFeaturesBridge, ManagementFeaturesBridge, PluginUpdatesBridge, McpFeaturesBridge, ResultFilesBridge, CloudSyncFeaturesBridge, GoalFeaturesBridge {
@@ -1174,6 +1187,8 @@ export interface AgentBridge extends InputFeatureBridge, DataFeaturesBridge, Wor
   getAppearance(): Promise<UiAppearanceState | null>;
   setAppearance(state: UiAppearanceState): Promise<void>;
   onAppCommand(listener: (command: UiAppCommand) => void): () => void;
+  /** Main window only: conversations interrupted by the previous app exit, handed out once. */
+  takeInterruptedRuns?(): Promise<UiInterruptedRun[]>;
   getWindowChromeState(): Promise<WindowChromeState>;
   onWindowChromeStateChanged(listener: (state: WindowChromeState) => void): () => void;
   minimizeWindow(): Promise<void>;
@@ -1310,6 +1325,19 @@ export interface AgentBridge extends InputFeatureBridge, DataFeaturesBridge, Wor
   setSplitPaneBounds(paneId: number, rect: { x: number; y: number; width: number; height: number }): Promise<void>;
   /** Push notification: one of the window's split panes was closed. */
   onSplitPaneClosed(listener: (paneId: number) => void): () => void;
+  /**
+   * Hide or show a pane without closing it: a hidden pane keeps its agent and conversation running
+   * and stays listed under "Loaded sessions". With no id, a pane hides itself.
+   */
+  setSplitPaneHidden?(hidden: boolean, paneId?: number): Promise<void>;
+  /** Every pane of this window (shown or hidden) with what it hosts. */
+  describeSplitPanes?(): Promise<UiSplitPaneState[]>;
+  /** Push notification: a pane was hidden/shown, switched conversation or changed busy state. */
+  onSplitPaneChanged?(listener: (panes: UiSplitPaneState[]) => void): () => void;
+  /** Main window: keep a conversation warm in a background context and exempt it from eviction. */
+  loadSession?(cwd: string, path: string): Promise<void>;
+  /** Main window: release a loaded conversation's pin (a running turn keeps going). */
+  unloadSession?(path: string): Promise<void>;
   /** True when the session lives in a split pane or pai window; focuses that host. */
   focusHostedSession(path: string): Promise<boolean>;
   updateSessionMeta(path: string, patch: UiSessionMetaPatch): Promise<void>;

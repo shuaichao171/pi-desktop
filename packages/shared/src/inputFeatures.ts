@@ -33,6 +33,8 @@ export interface UiInputQueueMutation {
 	requestId: string; expectedVersion: number; action: 'beginEdit' | 'cancelEdit' | 'edit' | 'remove' | 'steer' | 'move' | 'pause' | 'resume' | 'confirm';
 	id?: string; text?: string; beforeId?: string | null;
 }
+/** "Guess your next message" request for the open conversation; model defaults to the session's. */
+export interface UiNextInputRequest { sessionPath: string; provider?: string; model?: string }
 export interface UiPdfInputRequest { requestId: string; name: string; data: string }
 export interface UiPdfInputResult { attachment: Extract<UiAttachment, { kind: 'text' }>; pageCount: number; scannedPages: number[]; truncated: boolean }
 /** Added to AgentBridge by the main integration; every scope is checked against the active workspace. */
@@ -46,4 +48,6 @@ export interface InputFeatureBridge {
 	saveInputDraft(request: UiSaveInputDraft): Promise<UiInputDraft>;
 	processPdfInput(request: UiPdfInputRequest): Promise<UiPdfInputResult>;
 	cancelPdfInput(requestId: string): Promise<void>;
+	/** One standalone model call predicting the user's next message; never written to the session. */
+	suggestNextInput?(request: UiNextInputRequest): Promise<string>;
 }
