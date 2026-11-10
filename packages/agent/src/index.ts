@@ -3426,22 +3426,33 @@ export class AgentService {
 		service.onEvent(({ event }) => {
 			// Busy tracking covers every context: a foreground run that the user
 			// switches away from must still light the unread dot when it settles.
+			let foregroundSettled = false;
 			if (event.type === 'status') {
 				if (event.status === 'idle') { this.schedulePluginReload(); this.scheduleProviderResync(PROVIDER_RESYNC_RETRY_MS); }
 				if (event.status === 'busy' || event.status === 'starting') {
 					this.backgroundBusyContexts.add(service);
-				} else if (this.backgroundBusyContexts.delete(service) && this.active !== service) {
-					// zcode semantics: the unread dot appears when a background turn
-					// settles (completed or failed), never for mid-run output. A turn the
-					// user watched to the end stays unread-free.
-					const snapshot = service.getSnapshot();
-					if (snapshot.sessionPath) {
-						this.backgroundActivity(service.cwd, snapshot.sessionPath);
-						this.fire({ type: 'sessions-changed', cwd: service.cwd });
+				} else if (this.backgroundBusyContexts.delete(service)) {
+					if (this.active === service) foregroundSettled = true;
+					else {
+						// zcode semantics: the unread dot appears when a background turn
+						// settles (completed or failed), never for mid-run output. A turn the
+						// user watched to the end stays unread-free.
+						const snapshot = service.getSnapshot();
+						if (snapshot.sessionPath) {
+							this.backgroundActivity(service.cwd, snapshot.sessionPath);
+							this.fire({ type: 'sessions-changed', cwd: service.cwd });
+						}
 					}
 				}
 			}
-			if (this.active === service) this.fire(event);
+			if (this.active === service) {
+				this.fire(event);
+				// Pi writes a new conversation's transcript only once its first input
+				// lands, after the `sessions-changed` of its creation. The host caches
+				// listings until this event, so a foreground turn must announce accepted
+				// input and its settle too, or the new row never reaches the sidebar.
+				if (event.type === 'user-message' || foregroundSettled) this.fire({ type: 'sessions-changed', cwd: service.cwd });
+			}
 			else if (event.type === 'user-message') this.fire({ type: 'sessions-changed', cwd: service.cwd });
 			else if (event.type === 'assistant-end' || (event.type === 'tool' && event.activity.status === 'done')) {
 				// Mid-run background output only refreshes the row (title, counts).
