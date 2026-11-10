@@ -53,8 +53,19 @@ test('Ctrl+Tab bindings are registered and handled in the main window only', () 
 	assert.equal(ids.get('previousLoadedSession'), 'Ctrl+Shift+Tab');
 	const shell = read('../packages/ui/src/components/AppShell.tsx');
 	assert.match(shell, /bindingKeysFor\('nextLoadedSession'\)/);
-	assert.match(shell, /cycle && !paneMode/);
 	assert.match(shell, /restoreLoadedSessions\(\)/);
+});
+
+test('Ctrl+Tab is captured before focused widgets and a focused pane hands it to its host', () => {
+	const shell = read('../packages/ui/src/components/AppShell.tsx');
+	// The terminal's xterm cancels Ctrl+Tab in its own keydown; a bubble-phase listener never saw it.
+	assert.match(shell, /addEventListener\('keydown', onLoadedCycleKeyDown, true\)/);
+	assert.match(shell, /if \(paneMode\) void useChatStore\.getState\(\)\.bridge\?\.cycleLoadedSessionFromPane\?\.\(direction\)/);
+	assert.match(shell, /command\.type === 'cycle-loaded-session'[\s\S]{0,80}if \(!paneMode && !paiMode\) cycleLoadedConversation\(command\.direction\)/);
+	const ipc = read('../packages/desktop/src/main/ipc.ts');
+	assert.match(ipc, /IPC_CHANNELS\.splitPaneCycleLoaded[\s\S]{0,400}pane\.parentWin\.webContents\.send\(IPC_CHANNELS\.appCommand, \{ type: 'cycle-loaded-session', direction \}/);
+	const preload = read('../packages/desktop/src/preload/index.ts');
+	assert.match(preload, /cycleLoadedSessionFromPane: \(direction\) => invoke\(IPC_CHANNELS\.splitPaneCycleLoaded, direction\)/);
 });
 
 test('a pane header close only hides the pane; the loaded list closes it for real', () => {

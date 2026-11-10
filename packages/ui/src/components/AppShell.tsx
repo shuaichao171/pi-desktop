@@ -224,6 +224,16 @@ export function AppShell() {
 		return () => window.removeEventListener('keydown', onKeyDown);
 	}, [navigation.goBack, navigation.goForward]);
 
+	/** Ctrl+Tab target: the next loaded conversation of the main window (no-op while one is opening). */
+	function cycleLoadedConversation(direction: 1 | -1): void {
+		const state = useChatStore.getState();
+		const { main, panes } = getLoadedSessions();
+		const target = nextLoadedSession(main, panes, state.sessionPath, direction);
+		if (!target || state.navigationPending) return;
+		setMainView('chat');
+		void state.selectSession(target.cwd, target.path).catch(() => { /* Navigation errors are shown by the store. */ });
+	}
+
 	// Tray menu / notification-click commands from the main process (4.1).
 	useEffect(() => {
 		const bridge = commandBridge;
@@ -232,6 +242,10 @@ export function AppShell() {
 			if (command.type === 'appearance-changed') {
 				// Follow a shared change saved by another window or process.
 				applySharedAppearance(command.appearance);
+				return;
+			}
+			if (command.type === 'cycle-loaded-session') {
+				if (!paneMode && !paiMode) cycleLoadedConversation(command.direction);
 				return;
 			}
 			if (command.type === 'open-settings') {
@@ -251,7 +265,7 @@ export function AppShell() {
 				.find(([, sessions]) => sessions.some((session) => session.path === command.path))?.[0];
 			if (workspace) void state.selectSession(workspace, command.path).catch(() => { /* Navigation errors are shown by the store. */ });
 		});
-	}, [commandBridge]);
+	}, [commandBridge, paiMode, paneMode]);
 
 	// Pick up the shared look-and-feel once per mount; pai windows start from it
 	// instead of their isolated profile defaults. First launch seeds the shared
@@ -350,19 +364,6 @@ export function AppShell() {
 					return;
 				}
 			}
-			// Ctrl+Tab / Ctrl+Shift+Tab: cycle the main window's loaded conversations.
-			const cycle = matchesShortcut(event, bindingKeysFor('nextLoadedSession')) ? 1 : matchesShortcut(event, bindingKeysFor('previousLoadedSession')) ? -1 : 0;
-			if (cycle && !paneMode) {
-				if (document.querySelector('[role="dialog"][aria-modal="true"], dialog[open]')) return;
-				event.preventDefault();
-				const state = useChatStore.getState();
-				const { main, panes } = getLoadedSessions();
-				const target = nextLoadedSession(main, panes, state.sessionPath, cycle);
-				if (!target || state.navigationPending || event.repeat) return;
-				setMainView('chat');
-				void state.selectSession(target.cwd, target.path).catch(() => {});
-				return;
-			}
 			if (matchesShortcut(event, bindingKeysFor('search')) || matchesShortcut(event, bindingKeysFor('commandPalette'))) {
 				if (document.querySelector('[role="dialog"][aria-modal="true"]')) return;
 				event.preventDefault();
@@ -374,9 +375,22 @@ export function AppShell() {
 				setSidebarOpen((open) => !open);
 			}
 		};
+		// Ctrl+Tab / Ctrl+Shift+Tab cycle the main window's loaded conversations. Captured before
+		// focused widgets (the terminal's xterm, editors) consume it; a focused split pane hands
+		// the keys to the window hosting it.
+		const onLoadedCycleKeyDown = (event: KeyboardEvent) => {
+			if (paiMode || event.defaultPrevented || event.isComposing || event.keyCode === 229) return;
+			const direction = matchesShortcut(event, bindingKeysFor('nextLoadedSession')) ? 1 : matchesShortcut(event, bindingKeysFor('previousLoadedSession')) ? -1 : 0;
+			if (!direction || document.querySelector('[role="dialog"][aria-modal="true"], dialog[open]')) return;
+			event.preventDefault(); event.stopPropagation();
+			if (event.repeat) return;
+			if (paneMode) void useChatStore.getState().bridge?.cycleLoadedSessionFromPane?.(direction).catch(() => {});
+			else cycleLoadedConversation(direction);
+		};
+		window.addEventListener('keydown', onLoadedCycleKeyDown, true);
 		window.addEventListener('keydown', onTerminalKeyDown, true);
 		window.addEventListener('keydown', onKeyDown);
-		return () => { window.removeEventListener('keydown', onTerminalKeyDown, true); window.removeEventListener('keydown', onKeyDown); };
+		return () => { window.removeEventListener('keydown', onTerminalKeyDown, true); window.removeEventListener('keydown', onLoadedCycleKeyDown, true); window.removeEventListener('keydown', onKeyDown); };
 	}, [paiMode, paneMode, workbenchOpen, workbenchTab]);
 
 	async function selectSearchSession(result: UiSessionSearchResult) {
