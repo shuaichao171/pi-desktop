@@ -1,4 +1,7 @@
-appId: dev.pidesktop.app
+# Fresh AUMI (v0.4.2+): the old 'dev.pidesktop.app' registration was polluted
+# (StateRepository cached the display name 'Electron' from early dev-era runs
+# and icon-cache rebuilds do not refresh it). A new appId starts clean.
+appId: app.pidesktop.desktop
 productName: Pi Desktop
 copyright: Copyright (c) 2026 Pi Desktop contributors
 

@@ -558,7 +558,12 @@ if (!hasSingleInstanceLock) {
 			});
 		}
 	if (process.platform === 'win32') {
-		app.setAppUserModelId('dev.pidesktop.app');
+		// AUMI matches the electron-builder appId; the old 'dev.pidesktop.app' was
+		// retired because Windows StateRepository had cached its taskbar display
+		// name as "Electron" from early dev-era runs and no cache flush refreshes it.
+		// Packaged and dev still must differ, or a dev run (electron.exe, "Electron")
+		// pollutes the packaged button record again.
+		app.setAppUserModelId(app.isPackaged ? 'app.pidesktop.desktop' : 'app.pidesktop.desktop.dev');
 		Menu.setApplicationMenu(null);
 		if (launch.windowMode === 'full') createAppTray({
 			showMainWindow,
