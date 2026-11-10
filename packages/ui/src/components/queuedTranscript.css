@@ -1,0 +1,15 @@
+/* Pending (queued) user inputs rendered at the end of the transcript before delivery. */
+.pd-queued-transcript { display: flex; flex-direction: column; gap: 14px; padding: 10px 22px 4px; }
+.pd-message-row.is-queued .pd-user-bubble { border-style: dashed; border-color: var(--pd-border); background: color-mix(in srgb, var(--pd-user-surface) 70%, transparent); color: var(--pd-text-subtle); }
+.pd-message-row.is-queued.is-steering .pd-user-bubble { border-color: color-mix(in srgb, var(--pd-brand) 55%, var(--pd-border)); }
+.pd-message-row.is-queued.is-recovered .pd-user-bubble { border-color: color-mix(in srgb, var(--pd-warning) 60%, var(--pd-border)); }
+.pd-message-row.is-queued.is-pending .pd-user-bubble { opacity: .6; }
+.pd-message-row.is-queued .pd-user-bubble p { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 8; overflow: hidden; }
+.pd-queued-attachments { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; font-size: var(--pd-font-sm); color: var(--pd-text-subtle); }
+.pd-queued-attachments span { display: inline-flex; align-items: center; gap: 4px; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pd-queued-footer { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 6px; margin-top: 6px; font-size: var(--pd-font-sm); }
+.pd-queued-status { display: inline-flex; align-items: center; gap: 4px; margin-right: 4px; color: var(--pd-text-subtle); }
+.pd-queued-action { display: inline-flex; align-items: center; gap: 4px; min-height: 26px; padding: 2px 9px; border: 1px solid var(--pd-border-soft); border-radius: var(--pd-radius-sm); background: transparent; color: var(--pd-text); font: inherit; cursor: pointer; }
+.pd-queued-action:hover:not(:disabled) { background: var(--pd-surface-hover); }
+.pd-queued-action.is-primary { border-color: color-mix(in srgb, var(--pd-brand) 60%, var(--pd-border-soft)); color: var(--pd-brand); }
+.pd-queued-action:disabled { opacity: .5; cursor: default; }

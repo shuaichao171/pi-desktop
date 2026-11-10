@@ -8,11 +8,12 @@ import { useT } from '../i18n';
  * status dot, plus an optional pane close button. Display only — renaming
  * lives in the sidebar session menu (2026-11-02 用户拍板).
  */
-export function ConversationHeader({ cwd, title, busy, onClose }: {
+export function ConversationHeader({ cwd, title, busy, onClose, closeLabel }: {
 	cwd: string | null;
 	title: string;
 	busy: boolean;
 	onClose?: () => void;
+	closeLabel?: string;
 }) {
 	const { t } = useT();
 	const project = (cwd ?? '').split(/[\\/]+/).filter(Boolean).pop() ?? '';
@@ -22,7 +23,7 @@ export function ConversationHeader({ cwd, title, busy, onClose }: {
 			{project && <span className="pd-conversation-header-sep" aria-hidden="true">›</span>}
 			<span className="pd-conversation-header-title" title={title}>{title}</span>
 			<span className={`pd-conversation-header-status${busy ? ' is-busy' : ''}`} aria-hidden="true" />
-			{onClose && <HoverTooltip title={t('pane.close')}><button className="pd-icon-button" type="button" aria-label={t('pane.close')} onClick={onClose}><Icon name="close" width="15" height="15" /></button></HoverTooltip>}
+			{onClose && <HoverTooltip title={closeLabel ?? t('pane.close')}><button className="pd-icon-button" type="button" aria-label={closeLabel ?? t('pane.close')} onClick={onClose}><Icon name="close" width="15" height="15" /></button></HoverTooltip>}
 		</div>
 	);
 }

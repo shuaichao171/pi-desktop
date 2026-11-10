@@ -9,7 +9,7 @@
  */
 import { app, BrowserWindow, dialog, WebContentsView, type WebContents } from 'electron';
 import { join } from 'node:path';
-import { IPC_CHANNELS, type AgentEventEnvelope, type UiExtensionDialogRequest, type UiExtensionDialogResponse } from '@pidesktop/shared';
+import { IPC_CHANNELS, type AgentEventEnvelope, type UiExtensionDialogRequest, type UiExtensionDialogResponse, type UiSplitPaneState } from '@pidesktop/shared';
 import { getAppLocale } from './appLocale';
 import { rendererLaunchUrl, validatePaiSession, validatePaiWorkspace } from './desktopLaunch';
 import { guardExternalNavigation } from './externalLinks';
@@ -33,6 +33,7 @@ let hooks: {
 	isAutomationRunning(cwd: string, path: string): boolean;
 	markBackgroundActivity(path: string): void;
 	isHeldElsewhere(path: string): boolean;
+	trackRuntime?(source: string, event: AgentEventEnvelope['event'] | null): void;
 } | null = null;
 
 /** Called from ipc.ts once: injects the main-process collaborators so this
@@ -43,6 +44,8 @@ export function initSplitPanes(collaborators: {
 	markBackgroundActivity(path: string): void;
 	/** True when a pai window already owns the session (a second host must not open it). */
 	isHeldElsewhere(path: string): boolean;
+	/** Records running conversations for resume-after-restart; null clears a closed pane. */
+	trackRuntime?(source: string, event: AgentEventEnvelope['event'] | null): void;
 }): void {
 	hooks = collaborators;
 }
@@ -69,6 +72,8 @@ export function openSplitPane(parentWin: BrowserWindow, request: { cwd: string; 
 	if (sessionPath) {
 		const existing = paneSlots().find((slot) => slot.sessionPath === sessionPath || slot.liveSessionPath === sessionPath);
 		if (existing) {
+			// A hidden pane comes back into the layout rather than opening a twin.
+			if (existing.hidden) setPaneHidden(existing, false);
 			if (!existing.parentWin.isDestroyed() && !existing.webContents.isDestroyed()) {
 				existing.parentWin.focus();
 				existing.webContents.focus();
@@ -115,6 +120,7 @@ export function openSplitPane(parentWin: BrowserWindow, request: { cwd: string; 
 		},
 	});
 	registerPaneSlot(entry);
+	notifyPanesChanged(parentWin);
 	// Attach immediately: an unattached WebContentsView does not advance page
 	// loads in Electron 44.
 	parentWin.contentView.addChildView(view);
@@ -138,11 +144,16 @@ export function openSplitPane(parentWin: BrowserWindow, request: { cwd: string; 
 	guardExternalNavigation(entry.webContents);
 	entry.agent.onEvent((envelope: AgentEventEnvelope) => {
 		const event = envelope.event;
-		if (event.type === 'ready') entry.liveSessionPath = event.sessionPath;
-		if (event.type === 'status') {
+		if (event.type === 'ready' && entry.liveSessionPath !== event.sessionPath) {
+			entry.liveSessionPath = event.sessionPath;
+			notifyPanesChanged(entry.parentWin);
+		}
+		if (event.type === 'status' && entry.busy !== (event.status === 'busy')) {
 			entry.busy = event.status === 'busy';
 			hooks?.updateKeepAwakeBusy();
+			notifyPanesChanged(entry.parentWin);
 		}
+		if (event.type === 'session-runtime') hooks?.trackRuntime?.(`pane:${entry.paneId}`, event);
 		if (entry.webContents.isDestroyed()) return;
 		entry.webContents.send(IPC_CHANNELS.agentEvent, envelope);
 	});
@@ -230,7 +241,7 @@ export function notifyPaneRendererReady(webContents: WebContents): void {
 export function setPaneBounds(parentWin: BrowserWindow, paneId: number, rect: { x: number; y: number; width: number; height: number }): void {
 	const entry = paneById(parentWin, paneId);
 	if (!entry || entry.webContents.isDestroyed()) return;
-	const visible = rect.width >= 1 && rect.height >= 1;
+	const visible = !entry.hidden && rect.width >= 1 && rect.height >= 1;
 	entry.view.setVisible(visible);
 	if (!visible) return;
 	// Round inward (ceil the top-left corner, floor the bottom-right one) so the
@@ -251,9 +262,37 @@ export function paneById(parentWin: BrowserWindow, paneId: number): PaiPaneSlot 
 	return paneSlots().find((slot) => slot.paneId === paneId && slot.parentWin === parentWin && !slot.disposed);
 }
 
-/** Open pane ids of a window, oldest first (a reloaded main renderer resyncs from it). */
+/** Every live pane of a window with what it hosts; hidden ones included. */
+export function describePanes(parentWin: BrowserWindow): UiSplitPaneState[] {
+	return paneSlots().filter((slot) => slot.parentWin === parentWin && !slot.disposed && !slot.closing).map((slot) => ({
+		paneId: slot.paneId, cwd: slot.cwd, sessionPath: slot.liveSessionPath ?? slot.sessionPath ?? null, hidden: Boolean(slot.hidden), busy: slot.busy,
+	}));
+}
+
+function notifyPanesChanged(parentWin: BrowserWindow): void {
+	if (parentWin.isDestroyed() || parentWin.webContents.isDestroyed()) return;
+	parentWin.webContents.send(IPC_CHANNELS.splitPaneChanged, describePanes(parentWin));
+}
+
+/**
+ * Hide a pane instead of closing it: the native view leaves the layout, while its agent and
+ * conversation keep running. The main window lists it under "Loaded sessions"; showing it
+ * again puts it back into the split layout, and only closing it from there ends it.
+ */
+export function setPaneHidden(entry: PaiPaneSlot, hidden: boolean): void {
+	if (entry.closing || entry.disposed || Boolean(entry.hidden) === hidden) return;
+	entry.hidden = hidden;
+	if (hidden) {
+		try { entry.view.setVisible(false); } catch { /* View already gone. */ }
+		// Keyboard focus must not stay inside an invisible view.
+		if (!entry.parentWin.isDestroyed()) entry.parentWin.webContents.focus();
+	}
+	notifyPanesChanged(entry.parentWin);
+}
+
+/** Shown pane ids of a window, oldest first (a reloaded main renderer resyncs its regions from it). */
 export function paneIdsFor(parentWin: BrowserWindow): number[] {
-	return paneSlots().filter((slot) => slot.parentWin === parentWin && !slot.disposed && !slot.closing).map((slot) => slot.paneId);
+	return paneSlots().filter((slot) => slot.parentWin === parentWin && !slot.disposed && !slot.closing && !slot.hidden).map((slot) => slot.paneId);
 }
 
 export async function closeSplitPane(entry: PaiPaneSlot, options?: { skipConfirm?: boolean }): Promise<void> {
@@ -281,6 +320,7 @@ export async function closeSplitPane(entry: PaiPaneSlot, options?: { skipConfirm
 	if (!entry.parentWin.isDestroyed() && !entry.parentWin.webContents.isDestroyed()) {
 		entry.parentWin.webContents.send(IPC_CHANNELS.splitPaneClosed, entry.paneId);
 	}
+	notifyPanesChanged(entry.parentWin);
 	await disposePaneEntry(entry);
 	try { if (!entry.view.webContents.isDestroyed()) entry.view.webContents.close(); } catch { /* Already gone. */ }
 }
@@ -288,6 +328,8 @@ export async function closeSplitPane(entry: PaiPaneSlot, options?: { skipConfirm
 async function disposePaneEntry(entry: PaiPaneSlot): Promise<void> {
 	if (entry.disposed) return;
 	entry.disposed = true;
+	// Closing a pane on purpose ends its conversations; during app shutdown the record is frozen.
+	hooks?.trackRuntime?.(`pane:${entry.paneId}`, null);
 	try { await entry.agent.dispose(); }
 	catch (error) { console.error('split pane agent disposal failed:', error); }
 	hooks?.updateKeepAwakeBusy();

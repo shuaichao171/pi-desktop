@@ -38,6 +38,7 @@ function mountShell(storage, chatState = { appInfo: { platform: 'win32' } }) {
       if (specifier === '../store') return { useChatStore: Object.assign((select) => select(chatState), { getState: () => chatState }) };
       if (specifier === '../i18n') return { useT: () => ({ t: (value) => value }) };
       if (specifier === './splitPaneRegions') return { useSplitPaneRegions: () => ({ paneIds: [], hostRef: { current: null } }), SPLIT_PANE_OPENED_EVENT: 'pi-split-pane-opened' };
+      if (specifier === '../useInterruptedRunResume') return { useInterruptedRunResume: () => {} };
       if (specifier === '../useSessionNavigation') return { useSessionNavigation: () => ({}) };
       if (specifier === '../workbenchReading') return workbenchReading;
       if (specifier === '../shortcuts/bindings') return shortcutBindings;

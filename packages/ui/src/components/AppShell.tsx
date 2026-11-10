@@ -27,6 +27,10 @@ import { useChatStore } from '../store';
 import { bindingKeysFor, matchesShortcut } from '../shortcuts/bindings';
 import { useT } from '../i18n';
 import { useSessionNavigation } from '../useSessionNavigation';
+import { useInterruptedRunResume } from '../useInterruptedRunResume';
+import { getLoadedSessions, nextLoadedSession } from '../loadedSessions';
+import { restoreLoadedSessions } from '../loadedSessionActions';
+import { SessionDragGhost, SplitDropZone } from './SessionDropOverlays';
 import { playTaskNotificationSound, shouldPlayTaskCompletionSound } from '../taskNotificationSound';
 import type { HistoryNavigationProps } from './HistoryNavigation';
 import { applyThemeColors, normalizeColorPreferences, readColorPreferences, writeColorPreferences, type ThemeColorPreferences } from '../themeColors';
@@ -74,6 +78,16 @@ export function AppShell() {
 	const [paneLaunch] = useState(() => new URLSearchParams(window.location.search).get('mode') === 'pane');
 	const paneMode = windowMode === 'pane' || paneLaunch;
 	const navigation = useSessionNavigation();
+	// Conversations still running when the app last quit continue in the main window only.
+	useInterruptedRunResume(windowMode === 'full' && !paiMode && !paneMode);
+	// "Loaded sessions" are re-warmed in the background once the startup conversation is ready.
+	const loadedRestoreReady = useChatStore((s) => windowMode === 'full' && !paiMode && !paneMode && Boolean(s.bridge?.loadSession) && Boolean(s.sessionId) && !s.navigationPending && !s.sessionLoading);
+	const loadedRestored = useRef(false);
+	useEffect(() => {
+		if (!loadedRestoreReady || loadedRestored.current) return;
+		loadedRestored.current = true;
+		void restoreLoadedSessions();
+	}, [loadedRestoreReady]);
 	const [sidebarOpen, setSidebarOpen] = useState(() => !window.matchMedia(NARROW_WINDOW_QUERY).matches);
 	const [projectRevealRequest, setProjectRevealRequest] = useState(0);
 	const revealAddedProjects = () => { setSidebarOpen(true); setProjectRevealRequest(value => value + 1); };
@@ -336,6 +350,19 @@ export function AppShell() {
 					return;
 				}
 			}
+			// Ctrl+Tab / Ctrl+Shift+Tab: cycle the main window's loaded conversations.
+			const cycle = matchesShortcut(event, bindingKeysFor('nextLoadedSession')) ? 1 : matchesShortcut(event, bindingKeysFor('previousLoadedSession')) ? -1 : 0;
+			if (cycle && !paneMode) {
+				if (document.querySelector('[role="dialog"][aria-modal="true"], dialog[open]')) return;
+				event.preventDefault();
+				const state = useChatStore.getState();
+				const { main, panes } = getLoadedSessions();
+				const target = nextLoadedSession(main, panes, state.sessionPath, cycle);
+				if (!target || state.navigationPending || event.repeat) return;
+				setMainView('chat');
+				void state.selectSession(target.cwd, target.path).catch(() => {});
+				return;
+			}
 			if (matchesShortcut(event, bindingKeysFor('search')) || matchesShortcut(event, bindingKeysFor('commandPalette'))) {
 				if (document.querySelector('[role="dialog"][aria-modal="true"]')) return;
 				event.preventDefault();
@@ -350,7 +377,7 @@ export function AppShell() {
 		window.addEventListener('keydown', onTerminalKeyDown, true);
 		window.addEventListener('keydown', onKeyDown);
 		return () => { window.removeEventListener('keydown', onTerminalKeyDown, true); window.removeEventListener('keydown', onKeyDown); };
-	}, [paiMode, workbenchOpen, workbenchTab]);
+	}, [paiMode, paneMode, workbenchOpen, workbenchTab]);
 
 	async function selectSearchSession(result: UiSessionSearchResult) {
 		if (!await useChatStore.getState().selectSession(result.cwd, result.path)) return;
@@ -426,7 +453,12 @@ export function AppShell() {
 	if (paneMode) return (
 		<ExtensionDialogHost chatVisible notificationTarget={notificationTarget} globalNotices={PAI_GLOBAL_NOTICES}>
 			<div className="pd-app-shell is-pane">
-				<ConversationHeader cwd={conversationCwd} title={currentTitle} busy={status === 'busy'} onClose={() => { void useChatStore.getState().bridge?.closeSplitPane?.().catch(() => { /* Confirm canceled. */ }); }} />
+				<ConversationHeader cwd={conversationCwd} title={currentTitle} busy={status === 'busy'} closeLabel={t('pane.hide')} onClose={() => {
+					// Closing a pane only hides it; it is closed for real from "Loaded sessions".
+					const bridge = useChatStore.getState().bridge;
+					if (bridge?.setSplitPaneHidden) void bridge.setSplitPaneHidden(true).catch(() => {});
+					else void bridge?.closeSplitPane?.().catch(() => { /* Confirm canceled. */ });
+				}} />
 				<div className="pd-main-view">
 				<div className="pd-chat-view-host"><ChatView compact navigationError={navigation.error} onOpenModelManagement={openModelManagement} /></div>
 				<div className="pd-notification-center"><div ref={setNotificationTarget} className="pd-extension-notification-slot" /></div>
@@ -482,7 +514,8 @@ export function AppShell() {
 				setSidebarWidth((value) => Math.max(MIN_SIDEBAR_WIDTH, Math.min(MAX_SIDEBAR_WIDTH, value + (event.key === 'ArrowRight' ? 16 : -16))));
 			}} />}
 			<div className="pd-main-view">
-			<div className="pd-chat-view-host" hidden={mainView !== 'chat'} inert={mainView !== 'chat'}><ConversationHeader cwd={conversationCwd} title={currentTitle} busy={status === 'busy'} /><ScopedErrorBoundary scope="conversation" resetKeys={[conversationCwd, conversationId, conversationPath]}><ChatView onOpenModelManagement={openModelManagement} searchTarget={searchMessageTarget} navigationError={navigation.error} /></ScopedErrorBoundary></div>
+			<div className="pd-chat-view-host" hidden={mainView !== 'chat'} inert={mainView !== 'chat'}><ConversationHeader cwd={conversationCwd} title={currentTitle} busy={status === 'busy'} /><ScopedErrorBoundary scope="conversation" resetKeys={[conversationCwd, conversationId, conversationPath]}><ChatView onOpenModelManagement={openModelManagement} searchTarget={searchMessageTarget} navigationError={navigation.error} /></ScopedErrorBoundary><SplitDropZone /></div>
+			<SessionDragGhost />
 			{/* Split pane placeholders: the chat and every pane share the row evenly;
 			   each native pane view is glued to its region by useSplitPaneRegions. */}
 			{paneIds.length > 0 && mainView === 'chat' && <div ref={splitPaneHostRef} className="pd-split-pane-host">

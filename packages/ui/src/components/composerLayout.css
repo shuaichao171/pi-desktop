@@ -10,3 +10,9 @@
 @media (prefers-reduced-motion: reduce) { .pd-composer-shell[data-composer-layout] { transition: none; } }
 .pd-composer-error button { margin-inline-start: 10px; padding: 3px 8px; border: 1px solid currentColor; border-radius: var(--pd-radius-xs); color: inherit; white-space: nowrap; }
 .pd-composer-queue > p[role=status] { padding: 4px 13px 8px; color: var(--pd-text-subtle); font-size: var(--pd-font-caption); }
+
+/* "Guess your next message": the suggestion itself is the textarea placeholder; this chip fills it in. */
+.pd-composer-shell > textarea[data-suggestion]::placeholder { color: var(--pd-text-weak); font-style: italic; }
+.pd-next-suggestion-accept { display: flex; align-items: center; gap: 6px; width: max-content; margin: -2px 12px 2px auto; padding: 2px 8px; border: 1px solid var(--pd-border-soft); border-radius: var(--pd-radius-sm); background: transparent; color: var(--pd-text-subtle); font-size: var(--pd-font-sm); cursor: pointer; }
+.pd-next-suggestion-accept:hover { background: var(--pd-surface-hover); color: var(--pd-text); }
+.pd-next-suggestion-accept kbd { padding: 0 4px; border: 1px solid var(--pd-border); border-radius: 3px; font: inherit; font-size: 11px; line-height: 16px; }

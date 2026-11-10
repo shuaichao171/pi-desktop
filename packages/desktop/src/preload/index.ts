@@ -5,7 +5,7 @@ import { WORKBENCH_FEATURE_CHANNELS } from '@pidesktop/shared/workbenchFeatures'
 import { DATA_FEATURE_CHANNELS } from '@pidesktop/shared/dataFeatures';
 import { INPUT_FEATURE_CHANNELS } from '@pidesktop/shared/inputFeatures';
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
-import { CLOUD_SYNC_FEATURE_CHANNELS, DEBUG_API_CHANNELS, IPC_CHANNELS, type AgentBridge, type AgentEventEnvelope, type UiAppCommand, type UiAutomationSnapshot, type UiCloudSyncState, type UiDebugApiConfig, type UiDebugApiState, type UiExtensionDialogRequest, type UiUpdateState, type WindowChromeState, type WorkspaceChangeEvent, type WorkspaceCommandEvent } from '@pidesktop/shared';
+import { CLOUD_SYNC_FEATURE_CHANNELS, DEBUG_API_CHANNELS, IPC_CHANNELS, type AgentBridge, type AgentEventEnvelope, type UiAppCommand, type UiAutomationSnapshot, type UiCloudSyncState, type UiDebugApiConfig, type UiDebugApiState, type UiExtensionDialogRequest, type UiSplitPaneState, type UiUpdateState, type WindowChromeState, type WorkspaceChangeEvent, type WorkspaceCommandEvent } from '@pidesktop/shared';
 import { unwrapIpcError } from './ipcErrors';
 
 /**
@@ -21,6 +21,11 @@ async function invoke(channel: string, ...args: unknown[]) {
 	}
 }
 
+const onSplitPaneChanged: NonNullable<AgentBridge['onSplitPaneChanged']> = (listener) => {
+	const wrapped = (_event: Electron.IpcRendererEvent, panes: UiSplitPaneState[]) => listener(panes);
+	ipcRenderer.on(IPC_CHANNELS.splitPaneChanged, wrapped);
+	return () => ipcRenderer.removeListener(IPC_CHANNELS.splitPaneChanged, wrapped);
+};
 const onSplitPaneClosed: AgentBridge['onSplitPaneClosed'] = (listener) => {
 	const wrapped = (_e: Electron.IpcRendererEvent, paneId: number): void => listener(paneId);
 	ipcRenderer.on(IPC_CHANNELS.splitPaneClosed, wrapped);
@@ -183,6 +188,7 @@ const bridge: AgentBridge = {
 	getAppearance: () => invoke(IPC_CHANNELS.appearanceGet),
 	setAppearance: (state) => invoke(IPC_CHANNELS.appearanceSet, state),
 	onAppCommand,
+	takeInterruptedRuns: () => invoke(IPC_CHANNELS.interruptedRunsTake),
 	getWindowChromeState: () => invoke(IPC_CHANNELS.windowChromeState),
 	onWindowChromeStateChanged,
 	minimizeWindow: () => invoke(IPC_CHANNELS.windowMinimize),
@@ -266,6 +272,11 @@ const bridge: AgentBridge = {
 	openSplitPane: (cwd, sessionPath) => invoke(IPC_CHANNELS.splitPaneOpen, cwd, sessionPath),
 	closeSplitPane: (paneId) => invoke(IPC_CHANNELS.splitPaneClose, paneId),
 	listSplitPanes: () => invoke(IPC_CHANNELS.splitPaneList),
+	setSplitPaneHidden: (hidden, paneId) => invoke(IPC_CHANNELS.splitPaneSetHidden, hidden, paneId),
+	describeSplitPanes: () => invoke(IPC_CHANNELS.splitPaneDescribe),
+	onSplitPaneChanged,
+	loadSession: (cwd, path) => invoke(IPC_CHANNELS.agentLoadSession, cwd, path),
+	unloadSession: (path) => invoke(IPC_CHANNELS.agentUnloadSession, path),
 	focusHostedSession: (path) => invoke(IPC_CHANNELS.focusHostedSession, path),
 	onSplitPaneClosed,
 	setSplitPaneBounds: (paneId, rect) => invoke(IPC_CHANNELS.splitPaneSetBounds, paneId, rect),
@@ -296,6 +307,7 @@ const bridge: AgentBridge = {
 		updateQueuedMessage: (id, action, text) => invoke(IPC_CHANNELS.agentUpdateQueuedMessage, id, action, text),
 		interruptShellTools: (toolCallId) => invoke(IPC_CHANNELS.agentInterruptShellTools, toolCallId),
 		generateCommitMessage: (context) => invoke(IPC_CHANNELS.agentGenerateCommitMessage, context),
+		suggestNextInput: (request) => invoke(IPC_CHANNELS.agentSuggestNextInput, request),
 	abort: () => invoke(IPC_CHANNELS.agentAbort),
 	newSession: (options) => invoke(IPC_CHANNELS.agentNewSession, options),
 	onExtensionDialog,

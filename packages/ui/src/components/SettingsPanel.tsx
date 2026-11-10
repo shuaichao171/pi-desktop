@@ -20,6 +20,7 @@ import { createSettingsLeaveGuard, type SettingsDraftState as DraftState, type S
 import { useBusyInputBehavior } from '../busyInputBehavior';
 import { ConversationMetricsSettings } from './ConversationMetricsSettings';
 import { useTaskNotificationSoundEnabled } from '../taskNotificationSound';
+import { setNextInputSuggestionPreference, useNextInputSuggestionPreference } from '../nextInputSuggestion';
 import { useExtensionNoticeDisplayEnabled } from '../extensionNoticeDisplay';
 import { OPERATION_NOTICE_TIMEOUT_SECOND_OPTIONS, useOperationNoticeTimeoutSeconds } from '../operationNoticeTimeout';
 import { useMessageStreamShowReasoning } from '../messageStreamShowReasoning';
@@ -161,6 +162,8 @@ export function SettingsPanel({ initialPage = 'general', modelManagementTarget, 
 	const [busyInputBehavior, setBusyInputBehavior] = useBusyInputBehavior();
 	const [busyInputSaveFailed, setBusyInputSaveFailed] = useState(false);
 	const [notificationSound, setNotificationSound] = useTaskNotificationSoundEnabled();
+	const nextSuggestion = useNextInputSuggestionPreference();
+	const suggestionModels = useChatStore((s) => s.models);
 	const [notificationSoundSaveFailed, setNotificationSoundSaveFailed] = useState(false);
 	const [operationNoticeTimeout, setOperationNoticeTimeout] = useOperationNoticeTimeoutSeconds();
 	const [operationNoticeTimeoutSaveFailed, setOperationNoticeTimeoutSaveFailed] = useState(false);
@@ -443,6 +446,19 @@ export function SettingsPanel({ initialPage = 'general', modelManagementTarget, 
 									footer={showReasoningSaveFailed && <p className="pd-settings-feedback" role="status">{t('settings.showReasoningSaveFailed')}</p>}>
 									<SettingsSwitch setting="show-reasoning" label={t('settings.showReasoning')} checked={showReasoning} onChange={next => setShowReasoningSaveFailed(!setShowReasoning(next))} />
 								</SettingsRow>
+								<SettingsRow title={t('settings.nextSuggestion')} description={t('settings.nextSuggestionDescription')}>
+									<SettingsSwitch setting="next-suggestion" label={t('settings.nextSuggestion')} checked={nextSuggestion.enabled} onChange={next => { setNextInputSuggestionPreference({ enabled: next }); }} />
+								</SettingsRow>
+								{nextSuggestion.enabled && <SettingsRow title={t('settings.nextSuggestionModel')} description={t('settings.nextSuggestionModelDescription')}>
+									<select className="pd-settings-select" data-setting="next-suggestion-model" aria-label={t('settings.nextSuggestionModel')} value={nextSuggestion.model ? `${nextSuggestion.model.provider}/${nextSuggestion.model.id}` : ''} onChange={event => {
+										const picked = suggestionModels.find((item) => `${item.provider}/${item.id}` === event.target.value);
+										setNextInputSuggestionPreference({ model: picked ? { provider: picked.provider, id: picked.id } : null });
+									}}>
+										<option value="">{t('settings.nextSuggestionModelSession')}</option>
+										{nextSuggestion.model && !suggestionModels.some((item) => item.provider === nextSuggestion.model!.provider && item.id === nextSuggestion.model!.id) && <option value={`${nextSuggestion.model.provider}/${nextSuggestion.model.id}`}>{`${nextSuggestion.model.provider}/${nextSuggestion.model.id}`}</option>}
+										{suggestionModels.map((item) => <option key={`${item.provider}/${item.id}`} value={`${item.provider}/${item.id}`}>{`${item.provider} / ${item.name.trim() || item.id}`}</option>)}
+									</select>
+								</SettingsRow>}
 								<SettingsRow title={t('settings.questionAutoResolution')} description={t('settings.questionAutoResolutionDescription')}
 									footer={questionAutoResolutionSaveFailed && <p className="pd-settings-feedback" role="status">{t('settings.questionAutoResolutionSaveFailed')}</p>}>
 									<select className="pd-settings-select" data-setting="question-auto-resolution" aria-label={t('settings.questionAutoResolution')} value={String(questionAutoResolutionMinutes)} onChange={event => setQuestionAutoResolutionSaveFailed(!setQuestionAutoResolutionMinutes(Number(event.target.value)))}>

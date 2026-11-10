@@ -16,6 +16,7 @@ import { ADD_CONTEXT_EVENT, hasWorkspaceEntryDrag, isWorkspaceEntryContext, read
 import { completeSlashCommand, slashTriggerAt, type SlashTrigger } from '../composerSlash';
 import { ComposerSlashPicker, type ComposerSlashPickerHandle } from './ComposerSlashPicker';
 import { ComposerQueue } from './ComposerQueue';
+import { useNextInputSuggestion } from '../useNextInputSuggestion';
 import './composerLayout.css';
 import { appendQuote } from '../conversationState';
 import { appendCodeQuote, CODE_QUOTE_EVENT, isCodeQuote } from '../codeQuote';
@@ -164,6 +165,14 @@ export function Composer({ header, onOpenModelManagement, changesSlotRef }: { he
 	// existing thread invites a follow-up (busy keeps the queue/steer hint).
 	const placeholder = status === 'error' ? t('composer.connectionErrorPlaceholder') : inputLocked ? t('composer.connecting') : busy ? busyHint : t(hasConversationHistory ? 'composer.placeholderFollowUp' : 'composer.placeholder');
 	const hasContent = Boolean(text.trim() || attachments.length);
+	// "Guess your next message": shown as the placeholder only while the box is empty and idle.
+	const nextSuggestion = useNextInputSuggestion();
+	const suggestion = nextSuggestion && !text && !attachments.length && status === 'idle' && !inputLocked && !navigating && !sessionPreparation ? nextSuggestion : null;
+	const acceptSuggestion = () => {
+		if (!suggestion) return;
+		changeText(suggestion);
+		requestAnimationFrame(() => { const node = textareaRef.current; if (node) { node.focus({ preventScroll: true }); node.setSelectionRange(suggestion.length, suggestion.length); } });
+	};
 	const showStop = busy && !hasContent;
 	const primaryActionLabel = t(showStop ? stopping ? 'composer.stopping' : 'composer.stopTitle' : 'composer.send');
 	const canSubmit = hasContent && !sending && attachmentJobs.length === 0 && !restoringDraft && !unavailable && status !== 'error' && !missingAttachments.length;
@@ -640,6 +649,11 @@ export function Composer({ header, onOpenModelManagement, changesSlotRef }: { he
 			requestAnimationFrame(() => { if (currentKeyRef.current === key) textareaRef.current?.setSelectionRange(recalled.length, recalled.length); });
 			return;
 		}
+		if (event.key === 'Tab' && !event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey && suggestion && !event.currentTarget.value) {
+			event.preventDefault();
+			acceptSuggestion();
+			return;
+		}
 		if (event.key !== 'Enter' || event.shiftKey || event.altKey || event.nativeEvent.isComposing) return;
 		event.preventDefault();
 		void submit(busy && (event.ctrlKey || event.metaKey) ? defaultBusyBehavior === 'followUp' ? 'steer' : 'followUp' : undefined);
@@ -706,7 +720,8 @@ export function Composer({ header, onOpenModelManagement, changesSlotRef }: { he
 								</>}
 						</div>
 					))}</div>}
-					<textarea ref={textareaRef} value={text} rows={2} placeholder={placeholder} aria-label={t('composer.messageLabel')} disabled={inputLocked} onChange={(event) => { changeText(event.target.value); syncCompletions(event.target.value, event.target.selectionStart, event.target.selectionEnd); }} onSelect={(event) => syncCompletions(event.currentTarget.value, event.currentTarget.selectionStart, event.currentTarget.selectionEnd)} onCompositionStart={() => { composingRef.current = true; setContextPicker(null); setSlashTrigger(null); }} onCompositionEnd={(event) => { composingRef.current = false; syncCompletions(event.currentTarget.value, event.currentTarget.selectionStart, event.currentTarget.selectionEnd); }} onKeyDown={onKeyDown} onPaste={onPaste} />
+					<textarea ref={textareaRef} value={text} rows={2} placeholder={suggestion ?? placeholder} aria-label={t('composer.messageLabel')} aria-description={suggestion ? t('composer.suggestionHint') : undefined} data-suggestion={suggestion ? 'true' : undefined} disabled={inputLocked} onChange={(event) => { changeText(event.target.value); syncCompletions(event.target.value, event.target.selectionStart, event.target.selectionEnd); }} onSelect={(event) => syncCompletions(event.currentTarget.value, event.currentTarget.selectionStart, event.currentTarget.selectionEnd)} onCompositionStart={() => { composingRef.current = true; setContextPicker(null); setSlashTrigger(null); }} onCompositionEnd={(event) => { composingRef.current = false; syncCompletions(event.currentTarget.value, event.currentTarget.selectionStart, event.currentTarget.selectionEnd); }} onKeyDown={onKeyDown} onPaste={onPaste} />
+					{suggestion && <button type="button" className="pd-next-suggestion-accept" onMouseDown={(event) => event.preventDefault()} onClick={acceptSuggestion} aria-label={t('composer.suggestionAccept')} title={t('composer.suggestionHint')}><kbd>Tab</kbd><span>{t('composer.suggestionUse')}</span></button>}
 					<div className="pd-composer-toolbar">
 						{quotes.filter((item) => item.key === draftKey && text.includes(item.block)).map((item, index) => <button type="button" className="pd-quote-chip" key={`${item.source}:${index}`} onClick={() => { changeText(textRef.current.replace(item.block, '')); setQuotes((items) => items.filter((entry) => entry !== item)); }} aria-label={c('removeQuote')}>{item.source} ×</button>)}
 						<div className="pd-composer-meta">

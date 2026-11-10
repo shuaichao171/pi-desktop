@@ -12,6 +12,7 @@ import {
 	type RefAttributes,
 } from 'react';
 import { createPortal } from 'react-dom';
+import { placeTooltip, TOOLTIP_RAIL_SELECTOR } from '../tooltipPlacement';
 import './hoverTooltip.css';
 
 export interface HoverTooltipProps {
@@ -29,8 +30,6 @@ export interface HoverTooltipProps {
 type TriggerProps = ButtonHTMLAttributes<HTMLButtonElement> & RefAttributes<HTMLButtonElement>;
 type TooltipPosition = { left: number; top: number; side: 'top' | 'bottom' | 'right'; origin: string; zIndex: number };
 
-const VIEWPORT_PADDING = 8;
-const TRIGGER_GAP = 6;
 const TOOLTIP_OPEN_EVENT = 'pd:hover-tooltip-open';
 const CLOSE_DELAY = 180;
 const interactivePopoverOpen = () => [...document.querySelectorAll<HTMLElement>('.pd-sidebar-popover, .pd-composer-config-popover, .pd-search-dialog')].some(element => element.getClientRects().length > 0 && getComputedStyle(element).visibility !== 'hidden');
@@ -117,25 +116,20 @@ export function HoverTooltip({ children, title, description, shortcut, disabled 
 		if (!button || !hint) return;
 		const place = () => {
 			const rect = button.getBoundingClientRect();
-			const width = document.documentElement.clientWidth;
-			const height = document.documentElement.clientHeight;
+			const viewport = { width: document.documentElement.clientWidth, height: document.documentElement.clientHeight };
+			const railRight = preferredSide === 'right' ? button.closest<HTMLElement>(TOOLTIP_RAIL_SELECTOR)?.getBoundingClientRect().right : undefined;
+			const input = { trigger: rect, viewport, side: preferredSide, align, railRight };
 			if (preferredSide === 'right') {
-				const availableWidth = width - rect.right - TRIGGER_GAP - VIEWPORT_PADDING;
+				// Width depends on where the hint can start; settle it before measuring the wrapped height.
+				const probe = placeTooltip({ ...input, hint: { width: 0, height: 0 } });
 				// A sidebar hint must never fall back over the rows being browsed.
-				// Hide it when the window cannot fit a readable hint beside the list.
-				if (availableWidth < 120) { setPosition(null); return; }
-				hint.style.setProperty('--pd-tooltip-available-width', `${availableWidth}px`);
+				if (!probe) { setPosition(null); return; }
+				hint.style.setProperty('--pd-tooltip-available-width', `${probe.availableWidth}px`);
 			} else hint.style.removeProperty('--pd-tooltip-available-width');
 			const bounds = hint.getBoundingClientRect();
-			const roomAbove = rect.top - TRIGGER_GAP - VIEWPORT_PADDING;
-			const roomBelow = height - rect.bottom - TRIGGER_GAP - VIEWPORT_PADDING;
-			const side = preferredSide === 'right' ? 'right' : roomAbove >= bounds.height || roomAbove >= roomBelow ? 'top' : 'bottom';
-			const preferredLeft = side === 'right' ? rect.right + TRIGGER_GAP : align === 'start' ? rect.left : align === 'end' ? rect.right - bounds.width : rect.left + (rect.width - bounds.width) / 2;
-			const preferredTop = side === 'right'
-				? align === 'start' ? rect.top : align === 'end' ? rect.bottom - bounds.height : rect.top + (rect.height - bounds.height) / 2
-				: side === 'top' ? rect.top - bounds.height - TRIGGER_GAP : rect.bottom + TRIGGER_GAP;
-			const left = side === 'right' ? preferredLeft : Math.max(VIEWPORT_PADDING, Math.min(preferredLeft, width - bounds.width - VIEWPORT_PADDING));
-			const top = Math.max(VIEWPORT_PADDING, Math.min(preferredTop, height - bounds.height - VIEWPORT_PADDING));
+			const placement = placeTooltip({ ...input, hint: { width: bounds.width, height: bounds.height } });
+			if (!placement) { setPosition(null); return; }
+			const { left, top, side } = placement;
 			// Hints inside a picker must sit above that picker; ordinary composer hints
 			// retain their low layer so they cannot cover settings or search dialogs.
 			// Base layer comes from the design tokens (--pd-z-tooltip); picker ancestors raise it.
