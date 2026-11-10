@@ -66,6 +66,7 @@ export const IPC_CHANNELS = {
   splitPaneSetHidden: 'split-pane:set-hidden',
   splitPaneDescribe: 'split-pane:describe',
   splitPaneChanged: 'split-pane:changed',
+  splitPaneCycleLoaded: 'split-pane:cycle-loaded',
   agentLoadSession: 'agent:load-session',
   agentUnloadSession: 'agent:unload-session',
   focusHostedSession: 'agent:focus-hosted-session',
@@ -1145,7 +1146,7 @@ export interface UiSplitPaneState { paneId: number; cwd: string; sessionPath: st
 
 export interface UiInterruptedRun { cwd: string; path: string }
 
-export type UiAppCommand = { type: 'new-session' } | { type: 'switch-session'; path: string; cwd?: string } | { type: 'open-settings' } | { type: 'appearance-changed'; appearance: UiAppearanceState };
+export type UiAppCommand = { type: 'new-session' } | { type: 'switch-session'; path: string; cwd?: string } | { type: 'open-settings' } | { type: 'appearance-changed'; appearance: UiAppearanceState } | { type: 'cycle-loaded-session'; direction: 1 | -1 };
 
 export interface AgentBridge extends InputFeatureBridge, DataFeaturesBridge, WorkbenchFeaturesBridge, ManagementFeaturesBridge, PluginUpdatesBridge, McpFeaturesBridge, ResultFilesBridge, CloudSyncFeaturesBridge, GoalFeaturesBridge {
   getPersonalization(): Promise<UiInstructionDocument[]>;
@@ -1332,6 +1333,8 @@ export interface AgentBridge extends InputFeatureBridge, DataFeaturesBridge, Wor
   setSplitPaneHidden?(hidden: boolean, paneId?: number): Promise<void>;
   /** Every pane of this window (shown or hidden) with what it hosts. */
   describeSplitPanes?(): Promise<UiSplitPaneState[]>;
+  /** From a focused pane: hand Ctrl+Tab / Ctrl+Shift+Tab to the window hosting it, which cycles its loaded conversations. */
+  cycleLoadedSessionFromPane?(direction: 1 | -1): Promise<void>;
   /** Push notification: a pane was hidden/shown, switched conversation or changed busy state. */
   onSplitPaneChanged?(listener: (panes: UiSplitPaneState[]) => void): () => void;
   /** Main window: keep a conversation warm in a background context and exempt it from eviction. */

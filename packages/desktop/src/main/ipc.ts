@@ -1950,6 +1950,13 @@ export function registerIpc(options: {
 		if (!pane) throw new Error('没有可操作的窗格');
 		setPaneHidden(pane, hidden);
 	});
+	// A focused pane receives Ctrl+Tab itself; only its host window cycles loaded conversations.
+	handleRendererInvoke(IPC_CHANNELS.splitPaneCycleLoaded, (event, direction: unknown) => {
+		if (direction !== 1 && direction !== -1) throw new Error('窗格参数无效');
+		const pane = paneSlotForSender(event.sender);
+		if (!pane || pane.parentWin.isDestroyed()) throw new Error('没有可操作的窗格');
+		pane.parentWin.webContents.send(IPC_CHANNELS.appCommand, { type: 'cycle-loaded-session', direction } satisfies UiAppCommand);
+	});
 	handleRendererInvoke(IPC_CHANNELS.agentLoadSession, (_event, cwd: unknown, path: unknown) => {
 		if (typeof cwd !== 'string' || typeof path !== 'string') throw new Error('会话参数无效');
 		if (new Set(paiHeldSessionPaths()).has(path) || paneSlots().some((pane) => pane.sessionPath === path || pane.liveSessionPath === path)) throw new Error('会话已在窗格或小窗中打开');

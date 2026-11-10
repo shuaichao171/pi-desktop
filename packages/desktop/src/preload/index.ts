@@ -274,6 +274,7 @@ const bridge: AgentBridge = {
 	listSplitPanes: () => invoke(IPC_CHANNELS.splitPaneList),
 	setSplitPaneHidden: (hidden, paneId) => invoke(IPC_CHANNELS.splitPaneSetHidden, hidden, paneId),
 	describeSplitPanes: () => invoke(IPC_CHANNELS.splitPaneDescribe),
+	cycleLoadedSessionFromPane: (direction) => invoke(IPC_CHANNELS.splitPaneCycleLoaded, direction),
 	onSplitPaneChanged,
 	loadSession: (cwd, path) => invoke(IPC_CHANNELS.agentLoadSession, cwd, path),
 	unloadSession: (path) => invoke(IPC_CHANNELS.agentUnloadSession, path),
