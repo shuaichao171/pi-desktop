@@ -1597,7 +1597,7 @@ if (!get().modelProviders.length) void get().refreshModelProviders().catch(() =>
 		} catch (error) {
 			if (currentSessionNavigation(bridge, request)) set({ error: errorMessage(error) });
 			throw error;
-		} finally { finishSessionNavigation(bridge, request); }
+		} finally { finishSessionNavigation(bridge, request); flushPendingBranchViewSync(bridge, request); }
 	},
 }));
 
@@ -1797,7 +1797,7 @@ async function sendInput(text: string, behavior?: 'steer' | 'followUp', attachme
 		if (store.getState().bridge === bridge && store.getState().cwd === cwd && store.getState().sessionId === sessionId
 			&& (navigationRequest === undefined || currentSessionNavigation(bridge, navigationRequest))) store.setState({ error: errorMessage(error) });
 		throw error;
-	} finally { if (navigationRequest !== undefined) finishSessionNavigation(bridge, navigationRequest); }
+	} finally { if (navigationRequest !== undefined) { finishSessionNavigation(bridge, navigationRequest); flushPendingBranchViewSync(bridge, navigationRequest); } }
 }
 
 function activePreparation(): SessionPreparation | null {
