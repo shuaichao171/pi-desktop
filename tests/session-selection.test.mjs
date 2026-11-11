@@ -31,7 +31,7 @@ function mountSearch() {
     window: { location: { search: '' }, innerWidth: 1440, matchMedia: () => ({ matches: false }) },
     require: (specifier) => {
       if (specifier === 'react') return {
-        useEffect() {}, useLayoutEffect() {}, useRef: (value) => ({ current: value }),
+        useEffect() {}, useLayoutEffect() {}, useRef: (value) => ({ current: value }), useMemo: (factory) => factory(),
         useState: (initial) => {
           const index = cursor++;
           if (index >= states.length) states.push(typeof initial === 'function' ? initial() : initial);

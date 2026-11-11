@@ -272,7 +272,6 @@ button:focus-visible, textarea:focus-visible, input:focus-visible { outline: 2px
 .pd-project-heading { display: flex; flex: 0 0 30px; align-items: center; justify-content: space-between; padding: 0 10px 0 18px; color: var(--pd-text-weak); font-size: var(--pd-font-caption); font-weight: var(--pd-weight-semibold); letter-spacing: var(--pd-tracking-wide); }
 .pd-project-add { width: 24px; height: 24px; }
 .pd-project-row { display: flex; flex: 0 0 36px; align-items: center; gap: 9px; width: calc(100% - 16px); margin: 0 8px; padding: 0 9px; border: 0; border-radius: var(--pd-radius-md); background: transparent; color: var(--pd-text); text-align: left; }
-.pd-project-row:hover { background: var(--pd-sidebar-hover); color: var(--pd-text); }
 .pd-project-row svg { flex: 0 0 auto; width: 16px; height: 16px; }
 .pd-project-row .pd-chevron { width: 14px; height: 14px; color: var(--pd-text); }
 .pd-workspace-name { flex: 1; min-width: 0; overflow: hidden; color: var(--pd-text); font-size: var(--pd-font-base); font-weight: var(--pd-weight-medium); text-overflow: ellipsis; white-space: nowrap; }
@@ -992,6 +991,7 @@ div.pd-hover-tooltip:has(.pd-update-notes-body) { max-width: min(400px, calc(100
 .pd-conversation-header-project { flex: 0 1 auto; min-width: 0; max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--pd-text-weak); font-size: var(--pd-font-sm); }
 .pd-conversation-header-sep { flex: 0 0 auto; color: var(--pd-text-weak); }
 .pd-conversation-header-title { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--pd-text); font-size: var(--pd-font-base); font-weight: var(--pd-weight-semibold); }
+.pd-conversation-header-branches { display: inline-flex; flex: 0 0 auto; align-items: center; gap: 3px; padding: 1px 7px; border: 1px solid var(--pd-border); border-radius: 999px; color: var(--pd-text-subtle); font-size: var(--pd-font-xs); font-variant-numeric: tabular-nums; }
 .pd-conversation-header-status { flex: 0 0 auto; width: 8px; height: 8px; margin-left: auto; border-radius: 999px; background: var(--pd-text-weak); }
 .pd-conversation-header-status.is-busy { background: var(--pd-brand); animation: pd-conversation-busy 1.2s ease-in-out infinite; }
 @keyframes pd-conversation-busy { 50% { opacity: .35; } }

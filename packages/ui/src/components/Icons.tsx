@@ -36,6 +36,7 @@ export type IconName =
 	| 'maximize'
 	| 'restore'
 	| 'chevronRight'
+	| 'chevronLeft'
 	| 'chevronDown'
 	| 'chevronUp'
 	| 'more'
@@ -121,6 +122,7 @@ const paths: Record<IconName, ReactNode> = {
 	maximize: <rect x="5" y="5" width="14" height="14" rx="1" />,
 	restore: <><path d="M8 6V4h12v12h-2" /><rect x="4" y="8" width="12" height="12" rx="1" /></>,
 	chevronRight: <path d="m9 5 7 7-7 7" />,
+	chevronLeft: <path d="m15 5-7 7 7 7" />,
 	chevronDown: <path d="m5 9 7 7 7-7" />,
 	chevronUp: <path d="m5 15 7-7 7 7" />,
 	more: <><circle cx="5" cy="12" r="1.3" fill="currentColor" stroke="none" /><circle cx="12" cy="12" r="1.3" fill="currentColor" stroke="none" /><circle cx="19" cy="12" r="1.3" fill="currentColor" stroke="none" /></>,

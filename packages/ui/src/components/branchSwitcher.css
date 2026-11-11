@@ -1,0 +1,10 @@
+/* Inline Claude-style ‹ k/n › branch switcher, rendered at fork points of the
+   visible path (below the turn the alternatives fork from). */
+.pd-branch-switcher { display: flex; align-items: center; gap: 2px; width: fit-content; margin: 2px 0; padding: 1px 2px; border-radius: var(--pd-radius-sm); color: var(--pd-text-subtle); font-size: var(--pd-font-xs); }
+.pd-branch-switcher:focus-within { background: var(--pd-surface-hover); }
+.pd-branch-step { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; padding: 0; border: 0; border-radius: var(--pd-radius-xs); background: transparent; color: inherit; cursor: pointer; }
+.pd-branch-step:hover:not(:disabled) { background: var(--pd-surface-hover); color: var(--pd-text); }
+.pd-branch-step:disabled { cursor: default; opacity: .45; }
+.pd-branch-position { min-width: 3ch; text-align: center; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.pd-branch-label { max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--pd-text-weak); }
+.pd-branch-switcher.is-disabled { opacity: .6; }
