@@ -34,6 +34,7 @@ import { createReadStream } from 'node:fs';
 import { normalizeSessionPath, pruneMissingSessionMeta } from './sessionPaths';
 import { rendererLaunchUrl, validatePaiSession, validatePaiWorkspace } from './desktopLaunch';
 import { prepareWorkspaceDrop } from './workspaceDrop';
+import { resolveProjectCandidate } from './projectCandidate';
 import { workspaceKey } from './workspaceKey';
 import { createProjectCreator } from './projectCreation';
 import { createConversationWorkspace, createConversationWorkspaceSync, prepareConversationStorageDirectory } from './conversationStorage';
@@ -806,6 +807,27 @@ function conversationWorkspaces(saved: WorkspaceSettings): string[] {
 		.filter((cwd) => !explicit.has(workspaceKey(cwd)));
 }
 
+/** Add folders to the project list as explicitly chosen projects; returns the accepted (canonical) paths. */
+function registerExplicitWorkspaces(paths: unknown): Promise<string[]> {
+	return withWorkspaceSettings(async (previous) => {
+		const registered = [...(previous.workspaces ?? []), previous.cwd, activeWorkspace]
+			.filter((cwd): cwd is string => typeof cwd === 'string' && cwd.length > 0);
+		const result = await prepareWorkspaceDrop(paths, registered);
+		if (result.accepted.length > 0) {
+			await writeStateFileAsync(workspaceSettingsPath(), { ...previous, workspaces: result.workspaces,
+				explicitWorkspaces: [...new Set([...(previous.explicitWorkspaces ?? []), ...result.accepted])],
+			});
+			invalidateAppTrayData();
+		}
+		return result.accepted;
+	});
+}
+
+/** Temporary conversation folders never become projects of their own. */
+async function projectCandidateExclusions(): Promise<string[]> {
+	return [readCurrentDesktopSettings().conversationStorageDirectory, ...await listConversationWorkspaces()];
+}
+
 async function listConversationWorkspaces(): Promise<string[]> {
 	await workspaceSettingsQueue;
 	return conversationWorkspaces(await readWorkspaceSettingsAsync());
@@ -1284,12 +1306,12 @@ const mainOnlyChannels = new Set<string>([
 	IPC_CHANNELS.interruptedRunsTake,
 	IPC_CHANNELS.agentListWorkspaces, IPC_CHANNELS.workspaceListConversations, IPC_CHANNELS.conversationStoragePick,
 	IPC_CHANNELS.agentListSessions, IPC_CHANNELS.agentListSessionsPage, IPC_CHANNELS.agentSearchSessions, IPC_CHANNELS.agentSwitchSession, IPC_CHANNELS.agentPeekSession,
-	IPC_CHANNELS.sessionRevealFile, IPC_CHANNELS.sessionFork, IPC_CHANNELS.sessionOpenWindow, IPC_CHANNELS.sessionDelete,
+	IPC_CHANNELS.sessionRevealFile, IPC_CHANNELS.sessionFork, IPC_CHANNELS.sessionOpenWindow, IPC_CHANNELS.sessionDelete, IPC_CHANNELS.sessionMoveToWorkspace,
 	IPC_CHANNELS.agentUpdateSessionMeta, IPC_CHANNELS.agentUpdateSessionOrders, IPC_CHANNELS.agentListSessionGroups, IPC_CHANNELS.agentUpdateSessionGroups,
 	IPC_CHANNELS.appRelaunch,
 	IPC_CHANNELS.splitPaneOpen, IPC_CHANNELS.splitPaneSetBounds, IPC_CHANNELS.splitPaneList, IPC_CHANNELS.splitPaneDescribe,
 	IPC_CHANNELS.agentLoadSession, IPC_CHANNELS.agentUnloadSession,
-	IPC_CHANNELS.workspacePick, IPC_CHANNELS.workspaceProjectsDirectory, IPC_CHANNELS.workspaceCreateProject, IPC_CHANNELS.workspaceAddDropped,
+	IPC_CHANNELS.workspacePick, IPC_CHANNELS.workspaceProjectsDirectory, IPC_CHANNELS.workspaceCreateProject, IPC_CHANNELS.workspaceAddDropped, IPC_CHANNELS.workspaceResolveProjectCandidate,
 	IPC_CHANNELS.workspaceSwitch, IPC_CHANNELS.workspaceDefault, IPC_CHANNELS.workspaceRemove, IPC_CHANNELS.workspaceListPinned, IPC_CHANNELS.workspaceSetPinned,
 	IPC_CHANNELS.pluginCatalog, IPC_CHANNELS.pluginMutate, IPC_CHANNELS.pluginPreview, IPC_CHANNELS.pluginPickDirectory, IPC_CHANNELS.pluginDiscover,
 	IPC_CHANNELS.agentSetExtensionEnabled, PLUGIN_UPDATE_CHANNELS.checkPluginUpdate,
@@ -1773,18 +1795,9 @@ export function registerIpc(options: {
 	});
 	handleRendererInvoke(IPC_CHANNELS.agentListWorkspaces, () => listWorkspaces());
 	handleRendererInvoke(IPC_CHANNELS.workspaceListConversations, () => listConversationWorkspaces());
-	handleRendererInvoke(IPC_CHANNELS.workspaceAddDropped, (_event, paths: unknown) => withWorkspaceSettings(async (previous) => {
-		const registered = [...(previous.workspaces ?? []), previous.cwd, activeWorkspace]
-			.filter((cwd): cwd is string => typeof cwd === 'string' && cwd.length > 0);
-		const result = await prepareWorkspaceDrop(paths, registered);
-		if (result.accepted.length > 0) {
-			await writeStateFileAsync(workspaceSettingsPath(), { ...previous, workspaces: result.workspaces,
-				explicitWorkspaces: [...new Set([...(previous.explicitWorkspaces ?? []), ...result.accepted])],
-			});
-			invalidateAppTrayData();
-		}
-		return result.accepted;
-	}));
+	handleRendererInvoke(IPC_CHANNELS.workspaceAddDropped, (_event, paths: unknown) => registerExplicitWorkspaces(paths));
+	handleRendererInvoke(IPC_CHANNELS.workspaceResolveProjectCandidate, async (_event, candidates: unknown) =>
+		resolveProjectCandidate(candidates, await projectCandidateExclusions()));
 	handleRendererInvoke(IPC_CHANNELS.workspaceListPinned, () => listPinnedWorkspaces());
 	handleRendererInvoke(IPC_CHANNELS.workspaceSetPinned, (_event, cwds: unknown) => setPinnedWorkspaces(cwds));
 	handleRendererInvoke(IPC_CHANNELS.agentListSessionGroups, () => groups.list());
@@ -1931,6 +1944,33 @@ export function registerIpc(options: {
 		// A fork writes a new transcript beside the source; the owner's listing must re-list.
 		invalidateSessionListing(owner);
 		return forked;
+	}));
+	// Automatic project assignment: the first message of a temporary conversation named
+	// a folder the user then chose to open as a project. The transcript is copied into
+	// that project; the renderer switches to the copy and deletes the source itself.
+	handleRendererInvoke(IPC_CHANNELS.sessionMoveToWorkspace, (event, path: unknown, cwd: unknown) => queueWorkspaceActivation(async () => {
+		const win = invokingWindow(event);
+		if (event.senderFrame !== win.webContents.mainFrame) throw new Error('Invalid session-move sender');
+		const source = normalizeSessionPath(path);
+		const directory = await resolveProjectCandidate([cwd], await projectCandidateExclusions());
+		if (!directory) throw new Error('项目目录无效');
+		const owner = await requireSessionOwner(source);
+		if (paiHeldSessionPaths().includes(source)) throw new Error('会话已在 pai 小窗中打开，请先关闭该小窗');
+		const [project] = await registerExplicitWorkspaces([directory]);
+		if (!project) throw new Error('项目目录无效');
+		if (workspaceKey(project) === workspaceKey(owner)) return { path: source, cwd: owner };
+		const moved = await agentService.relocateSession(source, owner, project);
+		sessionOwnerByPath.set(moved, project);
+		invalidateSessionListing(owner);
+		invalidateSessionListing(project);
+		await withSessionMeta(async (meta) => {
+			const previous = meta[source];
+			if (!previous) return;
+			const { unread: _unread, unreadAt: _unreadAt, ...kept } = previous;
+			meta[moved] = kept;
+			await saveSessionMeta(meta);
+		});
+		return { path: moved, cwd: project };
 	}));
 	handleRendererInvoke(IPC_CHANNELS.splitPaneOpen, (event, cwd: unknown, sessionPath?: unknown) => {
 		const parentWin = requireRendererSender(event);

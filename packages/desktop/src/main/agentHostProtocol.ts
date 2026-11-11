@@ -44,6 +44,7 @@ export const AGENT_HOST_METHODS = [
 	'peekSession',
 	'renameSession',
 	'forkSession',
+	'relocateSession',
 	'prepareSessionDeletion',
 	'releaseSessionDeletion',
 	'listModels',

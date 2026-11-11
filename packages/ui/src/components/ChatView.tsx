@@ -20,6 +20,7 @@ import { useChangesFind } from '../useChangesFind';
 import { createViewportOwnership } from '../viewportOwnership';
 import { RunStatusBar } from './RunStatusBar';
 import { ComposerContextBar } from './ComposerContextBar';
+import { ProjectOfferBar } from './ProjectOfferBar';
 import { Icon } from './Icons';
 import { MessageItem } from './MessageItem';
 import { QueuedTranscriptMessages } from './QueuedTranscriptMessages';
@@ -764,6 +765,7 @@ export function ChatView({ onOpenModelManagement, searchTarget, historyControls,
 				{!isEmpty && !sessionLoading && <ConversationRail messages={messages} getScrollElement={getScrollElement} markedIds={railMarkedIds ?? undefined} onJumpToMessage={jumpToMessage} />}
 				<GoalBeacon />
 				<FleetCard />
+				<ProjectOfferBar />
 				<Composer header={settledEmpty ? <ComposerContextBar /> : undefined} onOpenModelManagement={onOpenModelManagement} changesSlotRef={setChangesDock} />
 			</div>
 			{changesReview !== null && reviewItems.length > 0 && <ChangesDialog

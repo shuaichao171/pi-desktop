@@ -109,6 +109,8 @@ export const IPC_CHANNELS = {
   conversationStoragePick: 'conversation-storage:pick',
   agentUpdateSessionMeta: 'agent:update-session-meta',
   sessionDelete: 'session:delete',
+  sessionMoveToWorkspace: 'session:move-to-workspace',
+  workspaceResolveProjectCandidate: 'workspace:resolve-project-candidate',
   appCommand: 'app:command',
   interruptedRunsTake: 'interrupted-runs:take',
   desktopSettingsGet: 'desktop-settings:get',
@@ -1314,6 +1316,10 @@ export interface AgentBridge extends InputFeatureBridge, DataFeaturesBridge, Wor
   revealSessionFile(path: string): Promise<void>;
   /** Copies a whole conversation into a new session beside it and returns the new file path (sidebar "Fork"). */
   forkSession(path: string, name?: string): Promise<string>;
+  /** Copy a conversation into another directory, registering it as a project; returns the copy and the registered project path. The source stays until deleteSession. */
+  moveSessionToWorkspace?(path: string, cwd: string): Promise<{ path: string; cwd: string }>;
+  /** First candidate that names an existing directory outside the conversation storage (a file resolves to its folder), or null. */
+  resolveProjectDirectory?(candidates: string[]): Promise<string | null>;
   /** Opens a conversation in its own pai chat window (a separate app instance). */
   openSessionInNewWindow(path: string): Promise<void>;
   /** Opens a conversation as an embedded split pane inside the main window (any project); resolves with the new pane id. */

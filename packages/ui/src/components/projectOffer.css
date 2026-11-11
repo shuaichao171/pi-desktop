@@ -1,0 +1,19 @@
+/* Project folder detected in the first message: a slim bar above the composer. */
+.pd-project-offer { flex: 0 0 auto; display: flex; align-items: center; gap: 10px; width: min(calc(100% - 44px), 780px); min-height: 40px; margin: 0 auto 6px; padding: 6px 6px 6px 12px; border: 1px solid color-mix(in srgb, var(--pd-brand) 35%, var(--pd-border)); border-radius: var(--pd-radius-lg); background: color-mix(in srgb, var(--pd-brand) 7%, var(--pd-surface)); color: var(--pd-text); font-size: var(--pd-font-sm); }
+.pd-project-offer.is-failed { border-color: color-mix(in srgb, var(--pd-danger) 45%, var(--pd-border)); background: color-mix(in srgb, var(--pd-danger) 7%, var(--pd-surface)); }
+.pd-project-offer-icon { flex: 0 0 auto; color: var(--pd-brand); }
+.pd-project-offer.is-failed .pd-project-offer-icon { color: var(--pd-danger); }
+.pd-project-offer-text { flex: 1 1 auto; min-width: 0; display: flex; align-items: baseline; gap: 8px; overflow: hidden; }
+.pd-project-offer-text strong { flex: 0 0 auto; font-weight: var(--pd-weight-semibold); }
+.pd-project-offer-message { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--pd-text-subtle); }
+.pd-project-offer-path { flex: 0 1 auto; min-width: 40px; max-width: 34%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left; color: var(--pd-text-weak); font-family: var(--pd-font-mono); font-size: var(--pd-font-xs); }
+.pd-project-offer-move { flex: 0 0 auto; height: 28px; padding: 0 14px; border: 0; border-radius: var(--pd-radius-md); background: var(--pd-brand); color: var(--pd-brand-ink); font: inherit; font-weight: var(--pd-weight-semibold); cursor: pointer; transition: background var(--pd-motion-fast); }
+.pd-project-offer-move:hover { background: var(--pd-brand-hover); }
+.pd-project-offer-move:focus-visible, .pd-project-offer-close:focus-visible { outline: 2px solid var(--pd-focus-border); outline-offset: 2px; }
+.pd-project-offer-close { flex: 0 0 auto; display: inline-grid; place-items: center; width: 28px; height: 28px; padding: 0; border: 0; border-radius: var(--pd-radius-md); background: none; color: var(--pd-text-weak); cursor: pointer; }
+.pd-project-offer-close:hover:not(:disabled) { background: var(--pd-surface-hover); color: var(--pd-text); }
+.pd-project-offer-close:disabled { opacity: .4; cursor: default; }
+.pd-project-offer-spinner { flex: 0 0 auto; width: 14px; height: 14px; margin: 0 7px; border: 2px solid color-mix(in srgb, var(--pd-brand) 25%, transparent); border-top-color: var(--pd-brand); border-radius: 50%; animation: pd-project-offer-spin .8s linear infinite; }
+@keyframes pd-project-offer-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .pd-project-offer-spinner { animation: none; } }
+@media (max-width: 640px) { .pd-project-offer-path { display: none; } }

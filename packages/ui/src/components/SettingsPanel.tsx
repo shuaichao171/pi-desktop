@@ -21,6 +21,7 @@ import { useBusyInputBehavior } from '../busyInputBehavior';
 import { ConversationMetricsSettings } from './ConversationMetricsSettings';
 import { useTaskNotificationSoundEnabled } from '../taskNotificationSound';
 import { setNextInputSuggestionPreference, useNextInputSuggestionPreference } from '../nextInputSuggestion';
+import { useProjectAutoAssignEnabled } from '../projectAutoAssign';
 import { useExtensionNoticeDisplayEnabled } from '../extensionNoticeDisplay';
 import { OPERATION_NOTICE_TIMEOUT_SECOND_OPTIONS, useOperationNoticeTimeoutSeconds } from '../operationNoticeTimeout';
 import { useMessageStreamShowReasoning } from '../messageStreamShowReasoning';
@@ -163,6 +164,8 @@ export function SettingsPanel({ initialPage = 'general', modelManagementTarget, 
 	const [busyInputSaveFailed, setBusyInputSaveFailed] = useState(false);
 	const [notificationSound, setNotificationSound] = useTaskNotificationSoundEnabled();
 	const nextSuggestion = useNextInputSuggestionPreference();
+	const [projectAutoAssign, setProjectAutoAssign] = useProjectAutoAssignEnabled();
+	const [projectAutoAssignSaveFailed, setProjectAutoAssignSaveFailed] = useState(false);
 	const suggestionModels = useChatStore((s) => s.models);
 	const [notificationSoundSaveFailed, setNotificationSoundSaveFailed] = useState(false);
 	const [operationNoticeTimeout, setOperationNoticeTimeout] = useOperationNoticeTimeoutSeconds();
@@ -445,6 +448,10 @@ export function SettingsPanel({ initialPage = 'general', modelManagementTarget, 
 								<SettingsRow title={t('settings.showReasoning')} description={t('settings.showReasoningDescription')}
 									footer={showReasoningSaveFailed && <p className="pd-settings-feedback" role="status">{t('settings.showReasoningSaveFailed')}</p>}>
 									<SettingsSwitch setting="show-reasoning" label={t('settings.showReasoning')} checked={showReasoning} onChange={next => setShowReasoningSaveFailed(!setShowReasoning(next))} />
+								</SettingsRow>
+								<SettingsRow title={t('settings.projectAutoAssign')} description={t('settings.projectAutoAssignDescription')}
+									footer={projectAutoAssignSaveFailed && <p className="pd-settings-feedback" role="status">{t('settings.projectAutoAssignSaveFailed')}</p>}>
+									<SettingsSwitch setting="project-auto-assign" label={t('settings.projectAutoAssign')} checked={projectAutoAssign} onChange={next => setProjectAutoAssignSaveFailed(!setProjectAutoAssign(next))} />
 								</SettingsRow>
 								<SettingsRow title={t('settings.nextSuggestion')} description={t('settings.nextSuggestionDescription')}>
 									<SettingsSwitch setting="next-suggestion" label={t('settings.nextSuggestion')} checked={nextSuggestion.enabled} onChange={next => { setNextInputSuggestionPreference({ enabled: next }); }} />
