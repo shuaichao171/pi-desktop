@@ -173,3 +173,110 @@ test('syncBranchView keeps the natural branch when the record is only an ancesto
 	assert.deepEqual(host.calls.switch, [], 'an ancestral record must not truncate the loaded view');
 	assert.deepEqual(host.calls.selections, [['C:\\sessions\\three.jsonl', 'a2']], 'the record advances to the natural leaf');
 });
+
+test('a load whose ready lands before switchSession resolves still restores the remembered branch (P1-1 timing)', async () => {
+	const natural = editBranchTree(); // active leaf a2
+	const viewed = editBranchTree();
+	for (const { node: item } of flattenSessionTree(viewed)) item.active = item.id === 'u1' || item.id === 'a1';
+	const calls = { switch: [], selections: [] };
+	let leaf = 'a2';
+	const listeners = new Set();
+	const replies = new Map();
+	const bridge = {
+		getAppInfo: async () => ({ appVersion: 'test', nodeVersion: process.version, electronVersion: 'test', platform: process.platform }),
+		listWorkspaces: async () => ['C:\\w'],
+		listSessions: async () => [],
+		getAgentSnapshot: async () => ({
+			sequence: 1, status: 'idle', statusMessage: undefined, model: 'test-model', modelProvider: 'test-provider',
+			thinkingLevel: 'medium', availableThinkingLevels: [], contextUsage: null, cwd: 'C:\\w',
+			sessionId: 'session-base', sessionPath: 'C:\\sessions\\base.jsonl', messages: [], activities: [], queuedCount: 0, error: null,
+		}),
+		// Real host ordering: switchSession resolves only after its ready/status events fired.
+		switchSession: (path) => new Promise((resolve) => replies.set(path, resolve)),
+		onAgentEvent(listener) { listeners.add(listener); return () => listeners.delete(listener); },
+		getSessionTree: async () => (leaf === 'a1' ? viewed : natural),
+		getSessionBranchSelection: async () => 'a1',
+		setSessionBranchSelection: async (path, leafId) => { calls.selections.push([path, leafId]); },
+		switchSessionBranch: async (entryId) => { calls.switch.push(entryId); leaf = entryId; },
+	};
+	useChatStore.getState().setBridge(bridge);
+	await settle();
+	const emit = (sequence, event) => { for (const listener of listeners) listener({ sequence, event }); };
+
+	const switching = useChatStore.getState().switchSession('C:\\sessions\\p1.jsonl');
+	assert.equal(useChatStore.getState().navigationPending, true);
+	// The host fires ready (and the trailing idle status) before the RPC resolves.
+	emit(2, { type: 'reset', cwd: 'C:\\w' });
+	emit(3, {
+		type: 'ready', cwd: 'C:\\w', sessionId: 's-p1', sessionPath: 'C:\\sessions\\p1.jsonl', messages: [], activities: [], fileChanges: [],
+		model: 'test-model', modelProvider: 'test-provider', thinkingLevel: 'medium', availableThinkingLevels: [], contextUsage: null,
+	});
+	emit(4, { type: 'status', status: 'idle' });
+	assert.deepEqual(calls.switch, [], 'the ready-time sync pends while the navigation is settling');
+	assert.deepEqual(calls.selections, []);
+	replies.get('C:\\sessions\\p1.jsonl')();
+	await switching;
+	for (let i = 0; i < 10; i += 1) await settle();
+	assert.deepEqual(calls.switch, ['a1'], 'the pended restore runs once the navigation settles');
+	assert.deepEqual(calls.selections, [['C:\\sessions\\p1.jsonl', 'a1']], 'the restored leaf is recorded');
+	assert.equal(activeTreeLeafId(useChatStore.getState().branchTree ?? []), 'a1');
+	assert.equal(useChatStore.getState().navigationPending, false);
+});
+
+test('a busy first sync defers the restore without overwriting the remembered branch', async () => {
+	const natural = editBranchTree(); // active leaf a2
+	const viewed = editBranchTree();
+	for (const { node: item } of flattenSessionTree(viewed)) item.active = item.id === 'u1' || item.id === 'a1';
+	const host = bridgeWithTree({ a2: natural }, 'a1');
+	host.bridge.switchSessionBranch = async (entryId) => {
+		host.calls.switch.push(entryId);
+		host.leafRef.current = entryId;
+		host.bridge.getSessionBranchSelection = async () => null;
+		host.bridge.getSessionTree = async () => viewed;
+	};
+	useChatStore.setState({
+		bridge: host.bridge, status: 'busy', cwd: 'C:\\w', sessionId: 's1',
+		sessionPath: 'C:\\sessions\\busy.jsonl', navigationPending: false, sessionLoading: false,
+	});
+	await useChatStore.getState().syncBranchView('C:\\sessions\\busy.jsonl');
+	assert.deepEqual(host.calls.switch, [], 'a busy run defers the restore');
+	assert.deepEqual(host.calls.selections, [], 'the keep-warm must not overwrite the remembered branch before the restore ran');
+	useChatStore.setState({ status: 'idle' });
+	await useChatStore.getState().syncBranchView('C:\\sessions\\busy.jsonl');
+	assert.deepEqual(host.calls.switch, ['a1'], 'the deferred restore runs on the next ready');
+	assert.deepEqual(host.calls.selections, [['C:\\sessions\\busy.jsonl', 'a1']]);
+});
+
+test('a stale record degrades silently and is replaced by the visible leaf', async () => {
+	const tree = editBranchTree();
+	const host = bridgeWithTree({ a2: tree }, 'missing-leaf');
+	useChatStore.setState({
+		bridge: host.bridge, status: 'idle', cwd: 'C:\\w', sessionId: 's1',
+		sessionPath: 'C:\\sessions\\stale.jsonl', navigationPending: false, sessionLoading: false, error: null,
+	});
+	await useChatStore.getState().syncBranchView('C:\\sessions\\stale.jsonl');
+	assert.deepEqual(host.calls.switch, [], 'a leaf that is gone is never switched to');
+	assert.equal(useChatStore.getState().error, null, 'a stale record must not raise a visible error banner');
+	assert.deepEqual(host.calls.selections, [['C:\\sessions\\stale.jsonl', 'a2']], 'the record is replaced by the natural leaf');
+});
+
+test('an explicit switch and the following sync agree on the recorded leaf (no duplicate write)', async () => {
+	const natural = editBranchTree(); // active leaf a2
+	const viewed = editBranchTree();
+	for (const { node: item } of flattenSessionTree(viewed)) item.active = item.id === 'u1' || item.id === 'a1';
+	const host = bridgeWithTree({ a2: natural });
+	host.bridge.switchSessionBranch = async (entryId) => {
+		host.calls.switch.push(entryId);
+		host.leafRef.current = entryId;
+		host.bridge.getSessionTree = async () => viewed;
+	};
+	useChatStore.setState({
+		bridge: host.bridge, status: 'idle', cwd: 'C:\\w', sessionId: 's1',
+		sessionPath: 'C:\\sessions\\dedupe.jsonl', navigationPending: false, sessionLoading: false,
+	});
+	await useChatStore.getState().switchConversationBranch('a1');
+	assert.deepEqual(host.calls.selections, [['C:\\sessions\\dedupe.jsonl', 'a1']]);
+	await useChatStore.getState().syncBranchView('C:\\sessions\\dedupe.jsonl');
+	assert.deepEqual(host.calls.switch, ['a1']);
+	assert.deepEqual(host.calls.selections, [['C:\\sessions\\dedupe.jsonl', 'a1']], 'the ready keep-warm must not re-write the same leaf');
+});

@@ -33,11 +33,11 @@ Pi 的会话文件（`~/.pi/agent/sessions/<encoded-cwd>/*.jsonl`）本身就是
   - 分叉按路径顺序（根→叶）排列，对应切换器在正文中的位置。
 - `branchPathIds` / `isOnBranchPath`：路径成员判定（恢复记录时区分"记录点是当前叶子的祖先"与"真正换支"）。
 - `selectedChildrenByFork(index, leafId)`：Claude 式 selectedChild 投影（每个分叉点选中的子节点）。持久化只需存叶子 id（全路径可推导），此函数是文档化与测试用的投影面。
-- `treeFromLinearMessages(messages)`：从线性消息列表构建单路径树（keep-warm 预览等无树场景的降级，恒无分叉）。
+- `treeFromLinearMessages(messages)`：从线性消息列表构建单路径树（**预留，当前未接线**：keep-warm 预览期渲染层直接让 `branchTree` 保持 null、不渲染切换器；恒无分叉）。
 
 ## 交互
 
-- **切换器**：`BranchSwitcher`（‹ k/n ›）渲染在分叉点条目所在行/轮的**正下方**——编辑分支时即上一条回答（或会话开头）与被编辑消息的交界处。根分叉渲染在消息列表顶部。按钮可独立聚焦；分组支持 ←/→ 切换；`aria-label` 报告"分支 k/n"。
+- **切换器**：`BranchSwitcher`（‹ k/n ›）渲染在分叉点条目所在行/轮的**正下方**——编辑分支时即上一条回答（或会话开头）与被编辑消息的交界处。根分叉渲染在消息列表顶部。按钮可独立聚焦；分组支持 ←/→ 切换；`aria-label` 报告"分支 k/n"。分叉点上无活动分支时（如停靠叶子自身长出 ≥2 子树）不渲染切换器（而非渲染禁用的 ‹0/n›）。
 - **切换语义**：调用 `switchSessionBranch(targetId)`，`targetId` 为目标子树末端；Pi 把叶子移过去，随后 host 重发 `ready`，渲染层消息列表整体替换为该分支路径。切换要求会话空闲（运行中被禁用）。
 - **头部状态**：`ConversationHeader` 显示分支徽标（gitBranch 图标 + 叶子路径数，≥2 才显示），即当前会话的分支总量。
 - 会话树面板（ChatHeaderMenu → 会话树）保留完整树浏览；其切换同样走 store 动作以保持记录一致。
@@ -47,8 +47,8 @@ Pi 的会话文件（`~/.pi/agent/sessions/<encoded-cwd>/*.jsonl`）本身就是
 - 主进程 `conversationBranchStore.ts`：`userData/conversation-branches.json`，`会话文件路径 → 上次查看的叶子 entry id`；随会话删除清理。
 - IPC：`agent:get-branch-selection` / `agent:set-branch-selection`（`AgentBridge` 上为可选方法，兼容旧桥）。
 - 渲染层（`store.ts`）：
-  - 每个会话在本渲染器的第一次 `ready` 后执行一次**恢复**：读记录，若记录叶子存在、且 ≠ 自然叶子、且**不是自然叶子的祖先**（祖先说明当前分支就是它的延续，无需回退），则切到记录分支；
-  - 之后每次 `ready`（含轮次落定）**保鲜**：重取树，叶子变化才写记录。否则用户继续聊天/编辑后，旧记录会在下次启动时把视图截回到旧位置；
+  - 每个会话在本渲染器的第一次 `ready` 后执行一次**恢复**：读记录，若记录叶子仍在树中、且 ≠ 自然叶子、且**不是自然叶子的祖先**（祖先说明当前分支就是它的延续，无需回退），则切到记录分支；记录叶子已不在树中时静默降级（console.warn，不弹错误横幅）。加载期的 `ready` 总在导航未落定时先到（host 在 `switchSession` RPC 返回前 fire ready），恢复会**挂起并在导航落定后执行**；
+  - 之后每次 `ready`（含轮次落定）**保鲜**：重取树，叶子变化才写记录（仅在该会话的恢复已实际执行之后；首次 `ready` 时会话 busy 则恢复顺延，保鲜不得覆盖旧记录）。否则用户继续聊天/编辑后，旧记录会在下次启动时把视图截回到旧位置；
   - 显式切换（切换器/树面板/搜索跨分支跳转）成功后立即记录。
 
 ## 限制
@@ -57,4 +57,4 @@ Pi 的会话文件（`~/.pi/agent/sessions/<encoded-cwd>/*.jsonl`）本身就是
 - 以用户消息结尾的分支（如中断在发出瞬间）：`navigateTree` 对用户消息取其父为叶子，因此查看该分支时结尾的用户消息不显示（与 Pi 编辑语义一致）。
 - `getSessionTree()` 输出整棵树；超长多分支会话在每次轮次落定后的树重取成本为 O(entry 数)（与 ready 本身同数量级，但 ready 只传最近窗口）。后续可做增量更新。
 - 分支的模型上下文由 Pi 的 `buildContextEntries` 沿当前叶子路径解析（含压缩摘要），pi-desktop 不干预；切换到旧分支后继续聊天会在该分支上追加。
-- 桌面端记录按会话文件路径全局共享（多窗口不重复加载同一会话，无冲突）；记录文件损坏时回退为空（Pi 自然分支仍可用）。
+- 桌面端记录按会话文件路径全局共享（多窗口不重复加载同一会话，无冲突）；记录文件损坏时先备份（`backupCorruptStateFile`，与其他状态文件一致）再回退为空（Pi 自然分支仍可用）。

@@ -1,6 +1,6 @@
 import { app } from 'electron';
 import { join } from 'node:path';
-import { readStateFile, writeStateFile } from './stateFiles';
+import { backupCorruptStateFile, CorruptStateFileError, readStateFile, writeStateFile } from './stateFiles';
 
 /**
  * Last-viewed branch leaf per conversation file (selectedChild persistence).
@@ -31,7 +31,19 @@ export class ConversationBranchStore {
 		try {
 			stored = readStateFile(path, () => ({ version: 1, selections: {} }), isFile);
 		} catch (error) {
-			console.error('Failed to read conversation branch selections:', error);
+			if (error instanceof CorruptStateFileError) {
+				// Do not allow a later record() write to overwrite bytes we could not
+				// preserve: back the damaged file up first (same policy as the other
+				// state files), then continue with an empty record.
+				try {
+					const backup = backupCorruptStateFile(path);
+					console.warn(`损坏的会话分支记录已备份到 ${backup}`);
+				} catch (backupError) {
+					console.error('备份损坏的会话分支记录失败：', backupError);
+				}
+			} else {
+				console.error('Failed to read conversation branch selections:', error);
+			}
 			stored = { version: 1, selections: {} };
 		}
 		this.selections = stored.selections;

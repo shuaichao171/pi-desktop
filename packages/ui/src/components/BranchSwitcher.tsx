@@ -13,13 +13,17 @@ export const BranchSwitcher = memo(function BranchSwitcher({ fork, disabled, onS
 	const { t } = useT();
 	const total = fork.alternatives.length;
 	const activeIndex = fork.activeIndex < 0 || fork.activeIndex >= total ? -1 : fork.activeIndex;
-	const blocked = disabled || total < 2 || activeIndex < 0;
+	// No alternative below this fork is active (e.g. the docked leaf itself grew
+	// the sibling subtrees): ‹ k/n › has no branch to report, so hide the group
+	// instead of rendering a dead "‹ 0/n ›".
+	if (activeIndex < 0 || total < 2) return null;
+	const blocked = disabled;
 	const step = (delta: number) => {
 		if (blocked) return;
 		const alternative = fork.alternatives[(activeIndex + delta + total) % total];
 		if (alternative) onSwitch(alternative.targetId);
 	};
-	const active = activeIndex >= 0 ? fork.alternatives[activeIndex] : undefined;
+	const active = fork.alternatives[activeIndex];
 	return (
 		<div
 			className={`pd-branch-switcher${blocked ? ' is-disabled' : ''}`}

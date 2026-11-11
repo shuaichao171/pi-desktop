@@ -229,6 +229,12 @@ let peekInvalidator = 0;
 let lastRecordedBranchLeaf = '';
 let appliedBranchSelectionPath: string | null = null;
 let branchViewSyncToken = 0;
+// A ready that lands while a session navigation is still settling pends its
+// branch sync here until that navigation finishes (P1-1: the host fires ready
+// before switchSession resolves, so the ready-time sync would always hit the
+// navigationPending guard and the remembered branch would never be restored at
+// load time).
+let pendingBranchViewSyncPath: string | null = null;
 const MAX_BOOTSTRAP_EVENTS = 256;
 const MAX_BOOTSTRAP_RESYNCS = 3;
 const SNAPSHOT_TIMEOUT_MS = 15_000;
@@ -387,6 +393,7 @@ const store = createStore<ChatState>((set, get) => ({
 		lastRecordedBranchLeaf = '';
 		appliedBranchSelectionPath = null;
 		branchViewSyncToken += 1;
+		pendingBranchViewSyncPath = null;
 		set({ branchTree: null, branchSwitchPending: false });
 		resetSettingsRequests();
 		set({
@@ -511,7 +518,7 @@ void get().refreshModelProviders().catch(() => {});
 			if (!currentSessionNavigation(bridge, request)) return;
 			set({ status: 'error', error: errorMessage(error) });
 			throw error;
-		} finally { finishSessionNavigation(bridge, request); }
+		} finally { finishSessionNavigation(bridge, request); flushPendingBranchViewSync(bridge, request); }
 	},
 
 	handleEvent(event) {
@@ -627,7 +634,7 @@ modelProviders: [...get().modelProviders],
 					captureSettledConversation();
 					// Even a short-circuited ready is this session's first authoritative view
 					// in this renderer: restore the remembered branch and keep the record current.
-					if (event.sessionPath) void get().syncBranchView(event.sessionPath);
+					requestBranchViewSync(event.sessionPath);
 					if (!get().modelProviders.length) void get().refreshModelProviders().catch(() => {});
 					return;
 				}
@@ -679,7 +686,7 @@ modelProviders: [...get().modelProviders],
 				if (olderLoaded > 0) void get().loadOlderMessages(Math.min(olderLoaded, 500));
 				// Branch bookkeeping: restore the remembered branch once per load and keep
 				// the record current as the visible leaf moves (turns, edits, switches).
-				if (event.sessionPath) void get().syncBranchView(event.sessionPath);
+				requestBranchViewSync(event.sessionPath);
 				// This ready is the authoritative conversation view; remember it so a
 				// later failed navigation can put the renderer back on the session the
 				// host still shows.
@@ -935,7 +942,7 @@ if (!get().modelProviders.length) void get().refreshModelProviders().catch(() =>
 		} catch (error) {
 			if (currentSessionNavigation(bridge, request)) set({ error: errorMessage(error) });
 			throw error;
-		} finally { finishSessionNavigation(bridge, request); }
+		} finally { finishSessionNavigation(bridge, request); flushPendingBranchViewSync(bridge, request); }
 	},
 
 	async removeWorkspace(cwd) {
@@ -1280,7 +1287,7 @@ if (!get().modelProviders.length) void get().refreshModelProviders().catch(() =>
 		} catch (error) {
 			if (currentSessionNavigation(bridge, request)) { restoreSettledConversation(set); set({ error: errorMessage(error) }); }
 			throw error;
-		} finally { finishSessionNavigation(bridge, request); finishSessionLoadIndicator(set, loadingGeneration); }
+		} finally { finishSessionNavigation(bridge, request); finishSessionLoadIndicator(set, loadingGeneration); flushPendingBranchViewSync(bridge, request); }
 	},
 
 	async selectResidentSession(cwd, sessionId, sessionPath) {
@@ -1300,7 +1307,7 @@ if (!get().modelProviders.length) void get().refreshModelProviders().catch(() =>
 		} catch (error) {
 			if (currentSessionNavigation(bridge, request)) { restoreSettledConversation(set); set({ error: errorMessage(error) }); }
 			throw error;
-		} finally { finishSessionNavigation(bridge, request); finishSessionLoadIndicator(set, generation); }
+		} finally { finishSessionNavigation(bridge, request); finishSessionLoadIndicator(set, generation); flushPendingBranchViewSync(bridge, request); }
 	},
 
 	async selectSession(cwd, path) {
@@ -1341,7 +1348,7 @@ if (!get().modelProviders.length) void get().refreshModelProviders().catch(() =>
 			restoreSettledConversation(set);
 			set({ error: errorMessage(error) });
 			throw error;
-		} finally { finishSessionNavigation(bridge, request); finishSessionLoadIndicator(set, loadingGeneration); }
+		} finally { finishSessionNavigation(bridge, request); finishSessionLoadIndicator(set, loadingGeneration); flushPendingBranchViewSync(bridge, request); }
 	},
 
 	async send(text, behavior, attachments, inputId) {
@@ -1472,7 +1479,6 @@ if (!get().modelProviders.length) void get().refreshModelProviders().catch(() =>
 			// user last viewed. Pi itself always reloads the last-appended branch, so a
 			// merely viewed (older) branch needs this desktop-side record.
 			if (appliedBranchSelectionPath !== sessionPath) {
-				appliedBranchSelectionPath = sessionPath;
 				const stored = await bridge.getSessionBranchSelection?.(sessionPath).catch(() => null) ?? null;
 				if (token !== branchViewSyncToken || get().sessionPath !== sessionPath) return;
 				const initial = get().branchTree ?? await bridge.getSessionTree().catch(() => null);
@@ -1480,22 +1486,33 @@ if (!get().modelProviders.length) void get().refreshModelProviders().catch(() =>
 				if (!get().branchTree) set({ branchTree: initial });
 				const index = buildConversationTreeIndex(initial);
 				const current = get();
+				// A busy run defers the restore itself: until it has actually run, the
+				// keep-warm below must not overwrite the remembered branch with the
+				// natural leaf (it would yank the view back on the next load).
+				if (current.status !== 'idle' || current.branchSwitchPending) return;
+				appliedBranchSelectionPath = sessionPath;
 				// A stored leaf that is an ancestor of the natural leaf means the loaded
 				// branch already continues it; only a true sibling swap needs restoring.
-				if (stored && index.leafId && stored !== index.leafId && !isOnBranchPath(index, index.leafId, stored)
-					&& current.status === 'idle' && !current.branchSwitchPending) {
-					await get().switchConversationBranch(stored).catch(() => {});
-					return;
+				if (stored && index.leafId && stored !== index.leafId && !isOnBranchPath(index, index.leafId, stored)) {
+					if (!index.parentOf.has(stored)) {
+						// A stale record (its leaf is no longer in the tree) degrades silently;
+						// the keep-warm below replaces it with the actually visible leaf.
+						console.warn(`Recorded branch leaf ${stored} no longer exists in ${sessionPath}; ignoring the record`);
+					} else {
+						await get().switchConversationBranch(stored).catch(() => {});
+						return;
+					}
 				}
 			}
 			// Keep the record current: chats and edits grow/move the natural leaf, and a
-			// stale record would rewind the view on the next load. Writes only on change.
+			// stale record would rewind the view on the next load. Writes only on change
+			// (reachable only after the restore above has run for this conversation).
 			const tree = get().branchTree ?? await bridge.getSessionTree().catch(() => null);
 			if (token !== branchViewSyncToken || get().sessionPath !== sessionPath || !tree) return;
 			if (!get().branchTree) set({ branchTree: tree });
 			const leafId = activeTreeLeafId(tree);
-			if (leafId && lastRecordedBranchLeaf !== `${sessionPath} ${leafId}`) {
-				lastRecordedBranchLeaf = `${sessionPath} ${leafId}`;
+			if (leafId && lastRecordedBranchLeaf !== `${sessionPath}\0${leafId}`) {
+				lastRecordedBranchLeaf = `${sessionPath}\0${leafId}`;
 				await bridge.setSessionBranchSelection?.(sessionPath, leafId).catch(() => {});
 			}
 		} catch {
@@ -2379,6 +2396,32 @@ function finishSessionNavigation(bridge: AgentBridge, request: number): void {
 		sessionOpenMetrics.settled(request, Boolean(state.error) || state.status === 'error');
 		store.setState({ navigationPending: false });
 	}
+}
+
+/** Runs the ready-time branch sync now, or pends it while a navigation settles. */
+function requestBranchViewSync(sessionPath: string | null): void {
+	if (!sessionPath) return;
+	const state = store.getState();
+	// A load's ready lands before its switchSession resolves (navigationPending),
+	// so an immediate sync would be skipped: pend it for that navigation's finish.
+	if (state.navigationPending || state.sessionLoading) {
+		pendingBranchViewSyncPath = sessionPath;
+		return;
+	}
+	void state.syncBranchView(sessionPath);
+}
+
+/** Runs the branch sync a ready pended while its navigation was settling. */
+function flushPendingBranchViewSync(bridge: AgentBridge, request: number): void {
+	const path = pendingBranchViewSyncPath;
+	if (!path) return;
+	const state = store.getState();
+	// A newer navigation still settling re-arms the pending sync and flushes it in
+	// its own finish; anything else that made the pended ready stale drops it.
+	if (state.navigationPending || state.sessionLoading) return;
+	pendingBranchViewSyncPath = null;
+	if (!currentSessionNavigation(bridge, request) || state.error || state.sessionPath !== path) return;
+	void state.syncBranchView(path);
 }
 
 // An accepted offer waits for the turn to settle; re-check whenever the state that
