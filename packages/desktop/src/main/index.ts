@@ -1,6 +1,8 @@
 import { initializeDiagnostics, recordDiagnostic } from './diagnostics.ts';
 import { userInfo } from 'node:os';
 import { app, BrowserWindow, dialog, Menu, nativeImage, nativeTheme, session } from 'electron';
+import { spawnSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { mkdir, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -12,8 +14,9 @@ import { showEditContextMenu } from './editContextMenu.ts';
 import { appIconPath, createAppTray, destroyAppTray } from './tray';
 import { guardExternalNavigation } from './externalLinks.ts';
 import { paiPipeName, startPaiPipeServer } from './paiPipe.ts';
-import { parseDesktopLaunch, reservePaiProfile, validatePaiSession, validatePaiWorkspace, type DesktopLaunch, type PaiProfile } from './desktopLaunch.ts';
+import { isHeadlessPiInvocation, parseDesktopLaunch, reservePaiProfile, validatePaiSession, validatePaiWorkspace, type DesktopLaunch, type PaiProfile } from './desktopLaunch.ts';
 import { createStartupMetrics } from './startupMetrics.ts';
+import { readBuiltinEngineInfo } from './piEngine.ts';
 import { swapSplashForMainWindow } from './startupSwap.ts';
 import { resolveWindowTheme } from './windowTheme.ts';
 import {
@@ -26,6 +29,31 @@ import {
 	windowStatePath,
 	type WindowState,
 } from './windowState';
+
+/**
+ * Pi extensions spawn background children with `process.execPath`, expecting the
+ * host to be a plain Node runtime. Inside Electron that path is the app
+ * executable, so such a call would start a whole second application: it cannot
+ * take the singleton lock, Electron forwards it to `second-instance`, and the
+ * window surfaces. Handle those invocations with Node semantics before any lock
+ * or window exists.
+ */
+if (isHeadlessPiInvocation(process.argv)) {
+	const engine = readBuiltinEngineInfo();
+	const cli = engine === null ? null : join(engine.dir, 'dist', 'bundle', 'cli.js');
+	if (cli === null || !existsSync(cli)) {
+		process.stderr.write('Pi Desktop: bundled pi CLI is unavailable\n');
+		process.exit(1);
+	}
+	// ELECTRON_RUN_AS_NODE is read when the process starts, so re-enter once;
+	// stdio passes the caller's pipes through unchanged.
+	const result = spawnSync(process.execPath, [cli, ...process.argv.slice(1)], {
+		stdio: 'inherit',
+		env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+	});
+	if (result.error) process.stderr.write(`Pi Desktop: headless relaunch failed: ${String(result.error)}\n`);
+	process.exit(result.status ?? 1);
+}
 
 let paiProfile: PaiProfile | null = null;
 // A --multi window relocates userData to an isolated profile; appearance and
@@ -129,6 +157,10 @@ function showPaiError(error: unknown): void {
 }
 
 function openPaiHandoff(commandLine: readonly string[]): void {
+	// Extensions relaunch this executable with pi's headless flags to spawn
+	// background children (for example pi-magic-context's historian). That is
+	// not a user-initiated start and must never surface the window.
+	if (isHeadlessPiInvocation(commandLine)) return;
 	try {
 		const parsed = parseDesktopLaunch(commandLine);
 		if (parsed.windowMode !== 'pai') {

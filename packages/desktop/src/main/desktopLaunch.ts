@@ -67,6 +67,22 @@ export function parseDesktopLaunch(argv: readonly string[], platform: NodeJS.Pla
 	return sessionPath === undefined ? { windowMode: 'pai', cwd: paths.normalize(cwd) } : { windowMode: 'pai', cwd: paths.normalize(cwd), sessionPath: paths.normalize(sessionPath) };
 }
 
+/**
+ * Pi extensions spawn background children through `process.execPath`, expecting
+ * the host to be a plain Node runtime. Inside Electron that path is the app
+ * executable, and a headless `--print --mode json` call must never be mistaken
+ * for a window launch: it would race the app singleton and surface the running
+ * window. Desktop window modes (`--pai`) always win over these CLI flags.
+ */
+const PI_HEADLESS_FLAGS = new Set(['-p', '--print', '--mode']);
+
+/** True when argv looks like a pi CLI run instead of a desktop window launch. */
+export function isHeadlessPiInvocation(argv: readonly string[]): boolean {
+	const args = argv.slice(1);
+	if (args.includes('--pai')) return false;
+	return args.some((argument) => PI_HEADLESS_FLAGS.has(argument) || argument.startsWith('--mode='));
+}
+
 /** The conversation a pai window should open must still exist as a regular file. */
 export function validatePaiSession(path: string): string {
 	if (!isAbsolute(path) || !/\.jsonl$/i.test(path) || !statSync(path).isFile()) throw new Error('--session must name an existing conversation file');

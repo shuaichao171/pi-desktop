@@ -4,13 +4,31 @@ import { mkdtemp, mkdir, readFile, rm, writeFile, access } from 'node:fs/promise
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { test } from 'node:test';
-import { parseDesktopLaunch, rendererLaunchUrl, reservePaiProfile, validatePaiSession, validatePaiWorkspace } from '../packages/desktop/src/main/desktopLaunch.ts';
+import { isHeadlessPiInvocation, parseDesktopLaunch, rendererLaunchUrl, reservePaiProfile, validatePaiSession, validatePaiWorkspace } from '../packages/desktop/src/main/desktopLaunch.ts';
 
 async function temporary(action) {
   const root = await mkdtemp(join(tmpdir(), 'pi-desktop-launch-'));
   try { await action(root); }
   finally { await rm(root, { recursive: true, force: true, maxRetries: 4 }); }
 }
+
+test('headless pi invocations are told apart from user launches', () => {
+  for (const argv of [
+    ['Pi Desktop.exe', '--print', '--mode', 'json', '--no-session'],
+    ['Pi Desktop.exe', '--mode=json', '--no-tools'],
+    ['Pi Desktop.exe', '-p', 'summarize this'],
+    ['Pi Desktop.exe', '--no-extensions', '--extension', 'x.js', '--print', 'hi'],
+    // Electron's second-instance command lines carry injected Chromium switches.
+    ['Pi Desktop.exe', '--allow-file-access-from-files', '--print', '--mode', 'json'],
+  ]) assert.equal(isHeadlessPiInvocation(argv), true);
+
+  for (const argv of [
+    ['Pi Desktop.exe'],
+    ['Pi Desktop.exe', '--multi'],
+    ['Pi Desktop.exe', '--pai', '--cwd', 'D:\\proj'],
+    ['electron', 'out/main/index.js', '--inspect=9229'],
+  ]) assert.equal(isHeadlessPiInvocation(argv), false);
+});
 
 test('pai parses explicit folders without changing regular Electron launch behavior', () => {
   assert.deepEqual(parseDesktopLaunch(['electron', 'out/main/index.js', '--inspect=9229']), { windowMode: 'full' });
