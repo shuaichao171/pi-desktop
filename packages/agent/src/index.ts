@@ -15,7 +15,7 @@
 import { randomUUID } from 'node:crypto';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { createReadStream, existsSync, writeFileSync } from 'node:fs';
-import { readdir } from 'node:fs/promises';
+import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, extname, join, relative, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
@@ -2789,6 +2789,37 @@ export class AgentService {
 		if (!target) throw new Error('Fork 失败：未能创建新会话');
 		if (name) manager.appendSessionInfo(name.trim());
 		this.fire({ type: 'sessions-changed', cwd });
+		return target;
+	}
+
+	/**
+	 * Move a conversation into another project: the transcript is copied into the
+	 * target project's session directory with the same file name, id and history;
+	 * only the header cwd changes. The source is left for the desktop to delete once
+	 * the renderer has switched to the copy. A running conversation is refused.
+	 */
+	async relocateSession(path: string, cwd: string, targetCwd: string): Promise<string> {
+		if (typeof path !== 'string' || !path || path.length > 32768 || /[\u0000-\u001f\u007f]/.test(path)) throw new Error('会话路径无效');
+		if (typeof targetCwd !== 'string' || !targetCwd.trim() || targetCwd.length > 32768 || /[\u0000-\u001f\u007f]/.test(targetCwd)) throw new Error('项目路径无效');
+		const assertAvailable = () => {
+			if (this.closing || this.transition || this.isSessionReserved(path)) throw new Error('会话正在切换或删除，请稍后重试');
+		};
+		assertAvailable();
+		if (!cwd || !(await sessionBelongsToWorkspace(path, cwd))) throw new Error('会话不属于当前工作区');
+		assertAvailable();
+		const loaded = [...this.contexts.values()].find((service) => service.cwd === cwd && service.getSnapshot().sessionPath === path);
+		if (loaded && loaded.getSnapshot().status !== 'idle') throw new Error('会话正在运行，请结束后再转移');
+		const text = await readFile(path, 'utf8');
+		const newline = text.indexOf('\n');
+		const header = JSON.parse(newline < 0 ? text : text.slice(0, newline)) as Record<string, unknown>;
+		if (header.type !== 'session') throw new Error('会话文件缺少头信息');
+		const directory = SessionManager.create(targetCwd).getSessionDir();
+		await mkdir(directory, { recursive: true });
+		const target = join(directory, basename(path));
+		const body = newline < 0 ? '' : text.slice(newline + 1);
+		await writeFile(target, `${JSON.stringify({ ...header, cwd: resolve(targetCwd) })}\n${body}`, { flag: 'wx' });
+		this.fire({ type: 'sessions-changed', cwd });
+		this.fire({ type: 'sessions-changed', cwd: targetCwd });
 		return target;
 	}
 

@@ -15,6 +15,8 @@ import { parseSlashCommand } from './composerSlash.ts';
 import { mergeRuntimeStates, sessionRuntimeKey, type WorkspaceSessionRequest } from './managementState.ts';
 import { mergeConversationRuns } from './conversationRuns.ts';
 import { operationFeedback } from './operationFeedback.ts';
+import { detectMessageProject, getProjectAutoAssignEnabled, projectPathCandidates } from './projectAutoAssign.ts';
+import { sidebarProjectPaths, sidebarWorkspaceKey } from './sidebarOrganization.ts';
 import { readModelCatalogCache, writeModelCatalogCache, type ModelCatalogSnapshot } from './modelCatalogCache.ts';
 import type { UiAgentError } from '@pidesktop/shared';
 import type {
@@ -45,6 +47,15 @@ import type {
 	UiSubagentFleetSnapshot,
 	UiSubagentInspectReply,
 } from '@pidesktop/shared';
+
+/** A detected project directory for the open conversation; `registered` = already an opened project. */
+export interface ProjectOffer {
+	sessionId: string;
+	directory: string;
+	registered: boolean;
+	state: 'offered' | 'waiting' | 'moving' | 'failed';
+	error?: string;
+}
 
 interface ChatState {
 	bridge: AgentBridge | null;
@@ -114,6 +125,8 @@ interface ChatState {
 	draftTransfer: { requestId: number; from: UiInputScope; to: UiInputScope } | null;
 	/** Completed creations whose local draft was left before the backend receipt arrived. */
 	backgroundDraftTransfers: Array<{ requestId: number; from: UiInputScope; to: UiInputScope }>;
+	/** A project directory found in the first message of an unassigned conversation, shown above the composer. */
+	projectOffer: ProjectOffer | null;
 
 	setBridge(bridge: AgentBridge, options?: { hostedChatWindow?: boolean }): void;
 	retryAgent(): Promise<void>;
@@ -147,6 +160,9 @@ interface ChatState {
 	switchSession(path: string): Promise<void>;
 	selectSession(cwd: string, path: string): Promise<boolean>;
 	selectResidentSession(cwd: string, sessionId: string, sessionPath: string | null): Promise<boolean>;
+	/** Move the offered conversation into its project once the current turn has finished. */
+	acceptProjectOffer(): void;
+	dismissProjectOffer(): void;
 	send(text: string, behavior?: 'steer' | 'followUp', attachments?: UiAttachment[], inputId?: string): Promise<void>;
 	/** Rewind to a sent user message and resend the edited text (zcode-style edit). */
 	editMessage(entryId: string, text: string, attachments?: UiAttachment[], fileMode?: 'keep' | 'rewind'): Promise<void>;
@@ -329,6 +345,7 @@ const store = createStore<ChatState>((set, get) => ({
 	sessionPreparation: null,
 	draftTransfer: null,
 	backgroundDraftTransfers: [],
+	projectOffer: null,
 
 	setBridge(bridge, options) {
 		if (get().bridge === bridge) return;
@@ -1295,40 +1312,22 @@ if (!get().modelProviders.length) void get().refreshModelProviders().catch(() =>
 	},
 
 	async send(text, behavior, attachments, inputId) {
-		const preparing = sessionPreparation;
-		if (preparing && get().sessionPreparation?.requestId === preparing.requestId && currentSessionNavigation(preparing.bridge, preparing.requestId)) {
-			if (preparing.failed) throw new Error(get().error ?? translate('store.agentNotReady'));
-			return sendAfterPreparation(preparing, text, behavior, attachments, inputId);
-		}
-		const { bridge, status, cwd, sessionId, navigationPending, sessionLoading } = get();
-		const trimmed = text.trim();
-		if (!bridge || (!trimmed && !attachments?.length)) return;
-		const command = parseSlashCommand(trimmed);
-		// A new-session command is itself navigation; ordinary input must stay
-		// with its visible draft until the selected conversation is ready.
-		if (status !== 'idle' && status !== 'busy' || (navigationPending || sessionLoading) && command?.name !== 'new') {
-			const error = new Error(translate('store.agentNotReady'));
-			set({ error: error.message });
-			throw error;
-		}
-		set({ error: null });
-		let navigationRequest: number | undefined;
-		try {
-			const delivery = inputId ? behavior : behavior ?? (status === 'busy' ? 'followUp' : undefined);
-			if (command) {
-				if (!sessionId) throw new Error(translate('store.agentNotReady'));
-				if (command.name === 'new') navigationRequest = beginSessionNavigation();
-				await bridge.executeSlashCommand({ cwd, sessionId, ...command, behavior: delivery, attachments });
-				if (navigationRequest !== undefined) sessionOpenMetrics.rpc(navigationRequest);
-			} else if (inputId && 'submitInput' in bridge && typeof bridge.submitInput === 'function') {
-				const receipt = await bridge.submitInput({ id: inputId, sessionId: sessionId ?? '', text: trimmed, behavior: delivery, attachments });
-				if (receipt.state === 'recovered' || receipt.state === 'failed' || receipt.state === 'reserved') throw new Error(receipt.message ?? translate('store.inputNeedsConfirmation'));
-			} else await bridge.prompt(trimmed, delivery, attachments);
-		} catch (error) {
-			if (get().bridge === bridge && get().cwd === cwd && get().sessionId === sessionId
-				&& (navigationRequest === undefined || currentSessionNavigation(bridge, navigationRequest))) set({ error: errorMessage(error) });
-			throw error;
-		} finally { if (navigationRequest !== undefined) finishSessionNavigation(bridge, navigationRequest); }
+		const detection = beginProjectDetection(text);
+		const sending = sendInput(text, behavior, attachments, inputId);
+		// Detection never delays or fails the message; the banner follows once it is sent.
+		if (detection) void sending.then(() => offerDetectedProject(detection), () => { /* nothing to offer for an unsent message */ });
+		return sending;
+	},
+
+	acceptProjectOffer() {
+		const offer = get().projectOffer;
+		if (!offer || offer.state === 'moving' || offer.state === 'waiting') return;
+		set({ projectOffer: { ...offer, state: 'waiting', error: undefined } });
+		void moveOfferedConversation();
+	},
+
+	dismissProjectOffer() {
+		if (get().projectOffer?.state !== 'moving') set({ projectOffer: null });
 	},
 
 	async editMessage(entryId, text, attachments, fileMode) {
@@ -1553,6 +1552,121 @@ function prepareConversation(kind: SessionPreparation['kind'], options?: { cwd?:
 		queuedMessages: [], queuedCount: 0, historyTotal: 0, loadingOlder: false, sessionLoading: false,
 		timelineRevision: state.timelineRevision + 1, historyGeneration: state.historyGeneration + 1 }));
 	return preparing.promise;
+}
+
+interface ProjectDetection { bridge: AgentBridge; lookup: Promise<{ directory: string; registered: boolean } | null> }
+
+/** Projects as the sidebar lists them: temporary conversation folders are not projects. */
+function currentProjectPaths(state: ChatState): string[] {
+	return sidebarProjectPaths(state.workspaces, null, state.conversationWorkspaces);
+}
+
+function inProject(cwd: string, projects: readonly string[]): boolean {
+	return Boolean(cwd) && projects.some((project) => sidebarWorkspaceKey(project) === sidebarWorkspaceKey(cwd));
+}
+
+/**
+ * Starts looking for a project directory in the first message of an unassigned,
+ * still empty conversation (see projectAutoAssign.ts). Opened projects match
+ * locally; other paths are checked on disk by the main process.
+ */
+function beginProjectDetection(text: string): ProjectDetection | null {
+	if (!getProjectAutoAssignEnabled()) return null;
+	const state = store.getState(), bridge = state.bridge;
+	if (!bridge || state.hostedChatWindow) return null;
+	const trimmed = text.trim();
+	if (!trimmed || parseSlashCommand(trimmed)) return null;
+	if (state.status !== 'idle' || state.messages.length || state.historyTotal || state.queuedCount || currentPreparedInput()) return null;
+	const preparing = activePreparation();
+	if (preparing ? preparing.kind !== 'new' || preparing.failed : state.navigationPending || state.sessionLoading || !state.sessionId) return null;
+	const projects = currentProjectPaths(state);
+	// Only a conversation outside every project is offered a move.
+	if (inProject(state.cwd, projects)) return null;
+	const project = detectMessageProject(trimmed, projects);
+	if (project) return { bridge, lookup: Promise.resolve({ directory: project, registered: true }) };
+	const candidates = projectPathCandidates(trimmed);
+	if (!candidates.length || !bridge.resolveProjectDirectory) return null;
+	return { bridge, lookup: bridge.resolveProjectDirectory(candidates)
+		.then((directory) => directory ? { directory, registered: inProject(directory, projects) } : null)
+		.catch(() => null) };
+}
+
+async function offerDetectedProject(detection: ProjectDetection): Promise<void> {
+	const found = await detection.lookup;
+	const state = store.getState();
+	if (!found || state.bridge !== detection.bridge || !state.sessionId || inProject(state.cwd, currentProjectPaths(state))) return;
+	store.setState({ projectOffer: { sessionId: state.sessionId, directory: found.directory, registered: found.registered, state: 'offered' } });
+}
+
+/**
+ * Accepted offers move once the conversation is idle (its transcript is then
+ * complete on disk): copy into the project, switch to the copy, delete the source.
+ */
+async function moveOfferedConversation(): Promise<void> {
+	const state = store.getState(), offer = state.projectOffer, bridge = state.bridge;
+	if (!offer || offer.state !== 'waiting' || !bridge) return;
+	if (state.sessionId !== offer.sessionId || state.status !== 'idle' || state.navigationPending || state.sessionLoading || !state.sessionPath) return;
+	const source = state.sessionPath;
+	const moving: ProjectOffer = { ...offer, state: 'moving' };
+	store.setState({ projectOffer: moving });
+	try {
+		if (!bridge.moveSessionToWorkspace) throw new Error(translate('store.projectMoveUnavailable'));
+		const moved = await bridge.moveSessionToWorkspace(source, offer.directory);
+		if (store.getState().bridge !== bridge) return;
+		await store.getState().refreshWorkspaces();
+		if (moved.path !== source) {
+			const opened = await store.getState().selectSession(moved.cwd, moved.path);
+			// Only once the copy is open is the source removed; a source that cannot be
+			// removed simply stays behind as an ordinary temporary conversation.
+			if (opened) await store.getState().deleteSession(source).catch(() => undefined);
+		}
+		if (store.getState().projectOffer === moving) store.setState({ projectOffer: null });
+		operationFeedback.show({ id: 'project-offer', kind: 'success', title: translate('store.projectMoved', { project: projectLeaf(moved.cwd) }) });
+		void store.getState().refreshSessions();
+	} catch (error) {
+		if (store.getState().projectOffer === moving) store.setState({ projectOffer: { ...offer, state: 'failed', error: errorMessage(error) } });
+	}
+}
+
+function projectLeaf(path: string): string {
+	return path.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || path;
+}
+
+async function sendInput(text: string, behavior?: 'steer' | 'followUp', attachments?: UiAttachment[], inputId?: string): Promise<void> {
+	const preparing = sessionPreparation;
+	if (preparing && store.getState().sessionPreparation?.requestId === preparing.requestId && currentSessionNavigation(preparing.bridge, preparing.requestId)) {
+		if (preparing.failed) throw new Error(store.getState().error ?? translate('store.agentNotReady'));
+		return sendAfterPreparation(preparing, text, behavior, attachments, inputId);
+	}
+	const { bridge, status, cwd, sessionId, navigationPending, sessionLoading } = store.getState();
+	const trimmed = text.trim();
+	if (!bridge || (!trimmed && !attachments?.length)) return;
+	const command = parseSlashCommand(trimmed);
+	// A new-session command is itself navigation; ordinary input must stay
+	// with its visible draft until the selected conversation is ready.
+	if (status !== 'idle' && status !== 'busy' || (navigationPending || sessionLoading) && command?.name !== 'new') {
+		const error = new Error(translate('store.agentNotReady'));
+		store.setState({ error: error.message });
+		throw error;
+	}
+	store.setState({ error: null });
+	let navigationRequest: number | undefined;
+	try {
+		const delivery = inputId ? behavior : behavior ?? (status === 'busy' ? 'followUp' : undefined);
+		if (command) {
+			if (!sessionId) throw new Error(translate('store.agentNotReady'));
+			if (command.name === 'new') navigationRequest = beginSessionNavigation();
+			await bridge.executeSlashCommand({ cwd, sessionId, ...command, behavior: delivery, attachments });
+			if (navigationRequest !== undefined) sessionOpenMetrics.rpc(navigationRequest);
+		} else if (inputId && 'submitInput' in bridge && typeof bridge.submitInput === 'function') {
+			const receipt = await bridge.submitInput({ id: inputId, sessionId: sessionId ?? '', text: trimmed, behavior: delivery, attachments });
+			if (receipt.state === 'recovered' || receipt.state === 'failed' || receipt.state === 'reserved') throw new Error(receipt.message ?? translate('store.inputNeedsConfirmation'));
+		} else await bridge.prompt(trimmed, delivery, attachments);
+	} catch (error) {
+		if (store.getState().bridge === bridge && store.getState().cwd === cwd && store.getState().sessionId === sessionId
+			&& (navigationRequest === undefined || currentSessionNavigation(bridge, navigationRequest))) store.setState({ error: errorMessage(error) });
+		throw error;
+	} finally { if (navigationRequest !== undefined) finishSessionNavigation(bridge, navigationRequest); }
 }
 
 function activePreparation(): SessionPreparation | null {
@@ -2152,6 +2266,16 @@ function finishSessionNavigation(bridge: AgentBridge, request: number): void {
 		store.setState({ navigationPending: false });
 	}
 }
+
+// An accepted offer waits for the turn to settle; re-check whenever the state that
+// gates the move changes. The move marks the offer "moving" first, so this never re-enters.
+store.subscribe((state, previous) => {
+	if (state.projectOffer?.state !== 'waiting') return;
+	if (state.status !== previous.status || state.projectOffer !== previous.projectOffer || state.sessionId !== previous.sessionId
+		|| state.sessionPath !== previous.sessionPath || state.navigationPending !== previous.navigationPending || state.sessionLoading !== previous.sessionLoading) {
+		void moveOfferedConversation();
+	}
+});
 
 /** Convenience selector: is the agent currently producing output? */
   return store;
