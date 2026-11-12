@@ -5,7 +5,7 @@ import { test } from 'node:test';
 
 registerHooks({ resolve(specifier, context, nextResolve) {
   if (specifier === 'electron') return {
-    url: 'data:text/javascript,export const app={getAppPath:()=>"test-app"};export const shell={showItemInFolder:()=>{}};export const powerSaveBlocker={start:()=>1,stop:()=>{}};export const utilityProcess={fork:()=>{globalThis.__automationReviewForks=(globalThis.__automationReviewForks??0)+1;return globalThis.__automationReviewHost;}};',
+    url: 'data:text/javascript,export const app={getAppPath:()=>"test-app",getPath:()=>"test-user-data"};export const shell={showItemInFolder:()=>{}};export const powerSaveBlocker={start:()=>1,stop:()=>{}};export const utilityProcess={fork:()=>{globalThis.__automationReviewForks=(globalThis.__automationReviewForks??0)+1;return globalThis.__automationReviewHost;}};',
     shortCircuit: true,
   };
   if (specifier === './agentClient') return nextResolve('./agentClient.ts', context);
