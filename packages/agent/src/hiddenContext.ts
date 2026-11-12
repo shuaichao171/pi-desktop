@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import type { ExtensionFactory } from '@earendil-works/pi-coding-agent';
 
 /**
@@ -37,7 +38,10 @@ export function readHiddenContext(storePath: string, sessionPath: string, read =
 	if (!parsed || typeof parsed !== 'object') return null;
 	const contexts = (parsed as { contexts?: unknown }).contexts;
 	if (!contexts || typeof contexts !== 'object' || Array.isArray(contexts)) return null;
-	const text = (contexts as Record<string, unknown>)[sessionPath];
+	// The main-process writer keys records by normalizeSessionPath (= resolve());
+	// look up the same normalized form so a differently spelled path still matches.
+	const records = contexts as Record<string, unknown>;
+	const text = Object.hasOwn(records, sessionPath) ? records[sessionPath] : records[resolve(sessionPath)];
 	return typeof text === 'string' && text.trim() ? text : null;
 }
 

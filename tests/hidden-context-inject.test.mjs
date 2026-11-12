@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { registerHooks } from 'node:module';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { test } from 'node:test';
 
 registerHooks({
@@ -45,6 +45,20 @@ test('readHiddenContext fails open on any unreadable or malformed store file', a
 	assert.equal(readHiddenContext(path, ''), null, 'a session without a file is never injected');
 });
 
+test('the host looks up the same normalized session path the main-process writer keys by', async (t) => {
+	const { readHiddenContext } = await import('../packages/agent/src/hiddenContext.ts');
+	const temp = mkdtempSync(join(tmpdir(), 'pi-hidden-norm-'));
+	t.after(async () => { rmSync(temp, { recursive: true, force: true }); });
+	const storePath = join(temp, 'hidden-context.json');
+	// Main keys records by normalizeSessionPath (= resolve()); the host may hold a
+	// differently spelled but equivalent path (mixed separators, `..` segments).
+	const key = resolve(temp, 'sessions', 'a.jsonl');
+	writeFileSync(storePath, JSON.stringify({ version: 1, contexts: { [key]: '指令' } }));
+	const spelled = `${temp}/sessions/sub/../a.jsonl`;
+	assert.notEqual(spelled, key);
+	assert.equal(readHiddenContext(storePath, spelled), '指令', 'an equivalent spelling still finds the instruction');
+});
+
 test('the hidden extension injects its own system prompt section on before_agent_start', async (t) => {
 	const { hiddenContextExtension, HIDDEN_CONTEXT_SECTION, hiddenContextSection } = await import('../packages/agent/src/hiddenContext.ts');
 	const temp = mkdtempSync(join(tmpdir(), 'pi-hidden-ext-'));
@@ -85,14 +99,14 @@ test('changing or clearing the instruction takes effect on the next run', async 
 	const temp = mkdtempSync(join(tmpdir(), 'pi-hidden-ext-'));
 	t.after(async () => { rmSync(temp, { recursive: true, force: true }); });
 	const storePath = join(temp, 'hidden-context.json');
-	writeFileSync(storePath, JSON.stringify({ version: 1, contexts: { 'C:\sessions\a.jsonl': 'v1' } }));
+	writeFileSync(storePath, JSON.stringify({ version: 1, contexts: { 'C:\\sessions\\a.jsonl': 'v1' } }));
 
 	const handlers = new Map();
-	hiddenContextExtension(() => 'C:\sessions\a.jsonl', () => storePath)({ on: (name, handler) => handlers.set(name, handler) });
+	hiddenContextExtension(() => 'C:\\sessions\\a.jsonl', () => storePath)({ on: (name, handler) => handlers.set(name, handler) });
 	const fire = () => { const event = { systemPromptOptions: { sections: {} } }; handlers.get('before_agent_start')(event); return event; };
 
 	assert.equal(fire().systemPromptOptions.sections[HIDDEN_CONTEXT_SECTION], hiddenContextSection('v1'), 'first run reads the initial value');
-	writeFileSync(storePath, JSON.stringify({ version: 1, contexts: { 'C:\sessions\a.jsonl': 'v2' } }));
+	writeFileSync(storePath, JSON.stringify({ version: 1, contexts: { 'C:\\sessions\\a.jsonl': 'v2' } }));
 	assert.equal(fire().systemPromptOptions.sections[HIDDEN_CONTEXT_SECTION], hiddenContextSection('v2'), 'the next run re-reads the file and sees the edit');
 	writeFileSync(storePath, JSON.stringify({ version: 1, contexts: {} }));
 	assert.deepEqual(fire().systemPromptOptions.sections, {}, 'clearing the key drops the section on the next run');

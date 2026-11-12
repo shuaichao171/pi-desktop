@@ -2602,6 +2602,14 @@ store.subscribe((state, previous) => {
 	}
 });
 
+// The hidden instruction belongs to one conversation file. Any identity change
+// (optimistic switch, foreign ready, new session) drops the previous value at
+// once: until the new conversation's fetch lands — or forever, if it fails — the
+// indicator and the editor seed must never show another session's instruction.
+store.subscribe((state, previous) => {
+	if (state.sessionPath !== previous.sessionPath && state.hiddenContext !== null) store.setState({ hiddenContext: null });
+});
+
 /** Convenience selector: is the agent currently producing output? */
   return store;
 }

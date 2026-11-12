@@ -26,7 +26,7 @@
 
 ## 存储与进程拓扑
 
-- 文件：`<userData>/hidden-context.json`，`{ version: 1, contexts: Record<sessionPath, string> }`。**键 = 规范化 sessionPath**（`normalizeSessionPath` = 绝对路径 `resolve()`，与 conversationBranchStore / sideQuestionStore 相同；渲染端拿到的 sessionPath 本就来自 host 的 SDK 解析路径，两端一致）。
+- 文件：`<userData>/hidden-context.json`，`{ version: 1, contexts: Record<sessionPath, string> }`。**键 = 规范化 sessionPath**（`normalizeSessionPath` = 绝对路径 `resolve()`，与 conversationBranchStore / sideQuestionStore 相同；渲染端拿到的 sessionPath 本就来自 host 的 SDK 解析路径；host 读取时先按原样键、再按 `resolve()` 规范化后的键查找，写法不同但等价的路径也能命中）。
 - 写入方**只有主进程**（`HiddenContextStore`，损坏先备份 `.corrupt-*.bak` 再重建，空串即删键，store 层把单条上限钳到 8000，见 `stateFiles` 惯例）。
 - agent host 是**只读**读者：fork 时主进程经 `PI_DESKTOP_HIDDEN_CONTEXT_FILE` 环境变量传入路径（与 `PI_DESKTOP_ENGINE_DIR` 同一通道），注入时按当前 `sessionManager.getSessionFile()` 取值，每次 `before_agent_start` 现读（≤8KB JSON，开销可忽略；原子写保证不会读到半截）。host 读失败一律按「无指令」处理（fail-open），绝不阻塞发送，也不在 host 侧备份/写回。
 - 会话删除：`sessionDelete` 处理器与 branch/sideQuestion 同点调用 `hiddenContextStore().clear(target)`（主进程拒绝删除已加载会话，因此无需 changed 广播）。
@@ -39,7 +39,7 @@
 ## 透明度与交互（MVP）
 
 - **指示器**：会话已有文件即常驻 Composer 工具栏左侧（`+` 旁）：激活（有非空指令）时显示小眼睛，悬停提示「本会话含隐藏指令」；未激活时显示弱化（半透明）的「眼睛关闭」图标，悬停提示「未设置隐藏指令」，点击同样打开编辑器——首条消息后即可新增，不存在「无指令→无入口→无法创建」的自举死角。
-- **查看/编辑**：点击眼睛在 Composer 内联展开编辑面板（textarea + 字符计数 + 保存/清除/取消）。内容只在用户显式点击后展示（渲染端 store 平时只持有会话现值，用于指示与编辑种子）。Esc/取消关闭；会话切换自动收起（防串会话保存）。
+- **查看/编辑**：点击眼睛在 Composer 内联展开编辑面板（textarea + 字符计数 + 保存/清除/取消）。内容只在用户显式点击后展示（渲染端 store 平时只持有会话现值，用于指示与编辑种子）。Esc/取消关闭；会话切换自动收起（防串会话保存）。渲染端会话身份（sessionPath）一变即清空现值（乐观切换、外来 ready、新会话皆然），新会话的值取回前指示器隐藏、取失败也不会残留上一个会话的指令。
 - 保存即生效于**下一次发送**；正在流式中的本轮不重注入（转录里已有本 run 的段落）。
 - 多窗口/分屏：`hidden-context:changed` 广播让同会话的其他窗格同步指示器与编辑种子。
 
