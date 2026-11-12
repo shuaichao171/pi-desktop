@@ -83,7 +83,9 @@ export function LiveChangesSummary({ items, scope, target, review }: { items: Ui
 			(primary.current ?? composerFocus())?.focus({ preventScroll: true });
 		}
 	}, [items]);
-	useSwapFocus(entryHasFocus, () => document.querySelector<HTMLElement>('.pd-conversation-changes .pd-changes-card-main'));
+	// When the live capsule swaps to the session capsule at run end, prefer the
+	// session capsule in the same position before falling back to the turn card.
+	useSwapFocus(entryHasFocus, () => document.querySelector<HTMLElement>('.pd-composer-changes.is-session .pd-changes-live-main') ?? document.querySelector<HTMLElement>('.pd-conversation-changes .pd-changes-card-main'));
 	useEffect(() => {
 		if (!liveFilesOpen) return;
 		const outside = (event: PointerEvent) => { if (event.target instanceof Node && !liveRoot.current?.contains(event.target)) setLiveFilesOpen(false); };
@@ -111,5 +113,19 @@ export function LiveChangesSummary({ items, scope, target, review }: { items: Ui
 			<button ref={popupToggle} type="button" className="pd-composer-changes-toggle" aria-expanded={liveFilesOpen} aria-controls={listId} aria-label={t('composerChanges.show')} onClick={() => setLiveFilesOpen(value => !value)}><Icon name="chevronDown" width="14" height="14" /></button>
 		</div>
 		{liveFilesOpen && <div id={listId} className="pd-changes-live-popover" role="region" aria-label={t('changes.files')}><div className="pd-changes-live-scope">{t('composerChanges.thisTurn')}</div>{fileRows(items)}</div>}
+	</section>, target);
+}
+
+/** Idle session summary in the composer dock: "N files changed this conversation". */
+export function SessionChangesSummary({ items, target, review }: { items: UiFileChange[]; target: HTMLElement | null; review: ChangesReviewApi }) {
+	const { t } = useT();
+	if (!items.length || !target) return null;
+	const label = t('composerChanges.sessionSummary', { count: items.length });
+	return createPortal(<section className="pd-composer-changes is-session" aria-label={t('changes.files')}>
+		<div className="pd-composer-changes-summary">
+			<button type="button" className="pd-changes-live-main" aria-haspopup="dialog" aria-label={label} title={label} onClick={event => review({ kind: 'conversation' }, items[0]!.path, event.currentTarget)}>
+				<Icon name="file" width="15" height="15" /><span className="pd-changes-session-scope">{t('composerChanges.thisConversation')}</span><span>{t('changes.count', { count: items.length })}</span><ChangeStats items={items} />
+			</button>
+		</div>
 	</section>, target);
 }

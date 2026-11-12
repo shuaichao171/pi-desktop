@@ -1843,6 +1843,7 @@ export const translations: Record<string, { 'zh-CN': string; 'en-US': string }> 
   'composerChanges.collapse': { 'zh-CN': '收起文件列表', 'en-US': 'Collapse files' },
   'composerChanges.showMore': { 'zh-CN': '显示其余 {count} 个文件', 'en-US': 'Show {count} more files' },
   'composerChanges.show': { 'zh-CN': '查看已修改的文件列表', 'en-US': 'Show changed files' },
+  'composerChanges.sessionSummary': { 'zh-CN': '本次对话共修改 {count} 个文件，点击查看', 'en-US': '{count} files changed in this conversation — click to review' },
   // ComposerQueue
   'queue.itemContent': { 'zh-CN': '排队消息内容', 'en-US': 'Queued message' },
   'queue.itemTitle': { 'zh-CN': '排队消息', 'en-US': 'Queued message' },

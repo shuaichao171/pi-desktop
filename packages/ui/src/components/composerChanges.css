@@ -29,6 +29,8 @@
 .pd-composer-changes-file:hover > svg:last-child, .pd-composer-changes-file:focus-visible > svg:last-child { opacity: 1; }
 .pd-changes-show-more { display: flex; align-items: center; gap: 7px; width: 100%; min-height: 36px; border: 0; padding: 7px 14px; background: transparent; color: var(--pd-text-subtle); text-align: left; font-size: var(--pd-font-sm); }
 .pd-composer-changes.is-running { position: relative; max-width: 100%; }
+.pd-composer-changes.is-session { max-width: 100%; }
+.pd-changes-session-scope { flex: 0 0 auto; color: var(--pd-text-weak); }
 .pd-composer-changes-summary { display: flex; align-items: center; max-width: 100%; gap: 2px; padding: 3px 7px; border: 1px solid var(--pd-border); border-radius: var(--pd-radius-pill); background: var(--pd-surface-raised); box-shadow: 0 2px 8px #0001; }
 .pd-changes-live-main { min-width: 0; flex-shrink: 1; padding: 3px 4px; gap: 8px; border: 0; color: var(--pd-text-subtle); }
 .pd-changes-live-main > span:not(.pd-change-stats) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
