@@ -6,7 +6,7 @@ import { test } from 'node:test';
 
 const {
 	normalizeToolFilePath, editDiffStats, fallbackTurnChanges,
-	mergeTurnFileChanges, unionFileChanges, withUnavailableDiffs,
+	mergeTurnFileChanges, overlaySessionStats, unionFileChanges, withUnavailableDiffs,
 } = await import('../packages/ui/src/fileChangeSummary.ts');
 
 const uiSource = (relative) => readFileSync(fileURLToPath(new URL(`../packages/ui/src/${relative}`, import.meta.url)), 'utf8');
@@ -94,8 +94,8 @@ test('mergeTurnFileChanges layers the fallback under recorded tracker turns', ()
 	]));
 	assert.deepEqual(merged, [
 		{ runId: 'r1', items: [
-			{ path: 'src/a.ts', kind: 'modified', additions: 5, deletions: 2 },
 			{ path: 'gen.ts', kind: 'modified', additions: null, deletions: null },
+			{ path: 'src/a.ts', kind: 'modified', additions: 5, deletions: 2 },
 		] },
 		{ runId: null, items: [
 			{ path: 'legacy.ts', kind: 'added', additions: 1, deletions: 0 },
@@ -157,4 +157,41 @@ test('挂点约定：轮次变更卡、会话汇总与回退聚合的接线', ()
 test('i18n：会话汇总文案中英齐备', () => {
 	const i18n = uiSource('i18n.ts');
 	assert.match(i18n, /'composerChanges\.sessionSummary':\s*\{\s*'zh-CN': '[^']*',\s*'en-US': '[^']*'\s*\}/);
+});
+
+test('editDiffStats 与权威解析器语法对齐（裸数字行、符号后空格、多空格上下文）', () => {
+	// unifiedDiff.ts / isEditDiffText 均接受：符号+可选空格+数字（尾空格或行尾）。
+	assert.deepEqual(editDiffStats('+3 bare addition'), { additions: 1, deletions: 0 });
+	assert.deepEqual(editDiffStats('+ 3 spaced sign'), { additions: 1, deletions: 0 });
+	assert.deepEqual(editDiffStats('- 7 x\n-  7 y'), { additions: 0, deletions: 2 });
+	assert.deepEqual(editDiffStats('  5 multi-space context\n+10 a'), { additions: 1, deletions: 0 });
+	assert.deepEqual(editDiffStats('+3'), { additions: 1, deletions: 0 });
+});
+
+test('mergeTurnFileChanges 合并回退路径后同轮清单保持路径排序', () => {
+	const tracked = [{ runId: 'r1', items: [
+		{ path: 'src/z.ts', kind: 'modified', additions: 1, deletions: 0 },
+		{ path: 'src/b.ts', kind: 'modified', additions: 2, deletions: 0 },
+	] }];
+	const fallback = new Map([['r1', [
+		{ path: 'src/a.ts', kind: 'modified', additions: null, deletions: null },
+		{ path: 'src/b.ts', kind: 'modified', additions: null, deletions: null }, // 已知路径应被跳过
+	]]]);
+	const merged = mergeTurnFileChanges(tracked, fallback);
+	assert.deepEqual(merged[0].items.map(item => item.path), ['src/a.ts', 'src/b.ts', 'src/z.ts']);
+});
+
+test('overlaySessionStats 会话级净差覆盖并集首见统计', () => {
+	const union = [
+		{ path: 'a.ts', kind: 'modified', additions: 10, deletions: 2 }, // 轮次首见（r1 的统计）
+		{ path: 'b.ts', kind: 'modified', additions: 3, deletions: 0 },  // 纯回退路径，无会话记录
+	];
+	const session = [
+		{ path: 'a.ts', kind: 'modified', additions: 15, deletions: 3 }, // 跟踪器会话级净差（r1+r2）
+	];
+	const overlay = overlaySessionStats(union, session);
+	assert.deepEqual(overlay[0], session[0]); // 覆盖为净差，与差异正文同源
+	assert.deepEqual(overlay[1], union[1]);   // 回退路径保持近似
+	// 不修改输入数组。
+	assert.equal(union[0].additions, 10);
 });

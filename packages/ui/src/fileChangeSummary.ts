@@ -67,11 +67,15 @@ export function editDiffStats(text: string): { additions: number; deletions: num
 	if (lines.at(-1) === '') lines.pop();
 	let additions = 0, deletions = 0, changed = 0;
 	for (const line of lines) {
-		const addition = /^\+(\d+) /.exec(line);
-		if (addition) { additions += 1; changed += 1; continue; }
-		const deletion = /^-(\d+) /.exec(line);
-		if (deletion) { deletions += 1; changed += 1; continue; }
-		if (/^ \d+ /.test(line) || /^ +\.\.\.$/.test(line)) continue;
+		// Aligned with the authoritative edit-diff grammars (unifiedDiff.ts and
+		// isEditDiffText in the agent host): sign + optional spaces + digits.
+		const change = /^([+-]) *\d+(?: |$)/.exec(line);
+		if (change) {
+			if (change[1] === '+') additions += 1; else deletions += 1;
+			changed += 1;
+			continue;
+		}
+		if (/^ +\d+(?: |$)/.test(line) || /^ +\.\.\.$/.test(line)) continue;
 		return null;
 	}
 	return changed > 0 ? { additions, deletions } : null;
@@ -127,6 +131,8 @@ export function mergeTurnFileChanges(tracked: readonly UiFileChangeTurn[], fallb
 		if (turn) {
 			const known = new Set(turn.items.map(item => item.path));
 			turn.items.push(...items.filter(item => !known.has(item.path)));
+			// Keep the merged per-turn list path-sorted (tracker items arrive sorted).
+			turn.items.sort((a, b) => a.path.localeCompare(b.path));
 			continue;
 		}
 		if (!items.length) continue;
@@ -143,6 +149,15 @@ export function unionFileChanges(turns: readonly UiFileChangeTurn[]): UiFileChan
 	const byPath = new Map<string, UiFileChange>();
 	for (const turn of turns) for (const item of turn.items) if (!byPath.has(item.path)) byPath.set(item.path, item);
 	return [...byPath.values()].sort((a, b) => a.path.localeCompare(b.path));
+}
+
+/** Session-scope stats must match the conversation-scope diff body (the tracker's
+ * first-baseline → final net diff). Overlay the tracker's session-level records
+ * onto the cross-turn union; fallback paths with no session record keep the
+ * union's first-seen approximation. */
+export function overlaySessionStats(union: readonly UiFileChange[], session: readonly UiFileChange[]): UiFileChange[] {
+	const byPath = new Map(session.map(item => [item.path, item]));
+	return union.map(item => byPath.get(item.path) ?? item);
 }
 
 /**

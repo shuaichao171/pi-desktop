@@ -17,7 +17,7 @@ import { FleetCard } from './FleetCard';
 import { ChangesCard, LiveChangesSummary, SessionChangesSummary } from './ComposerChanges';
 import { ChangesDialog } from './ChangesDialog';
 import { useFileChangeDiffs } from '../fileChangeDiffs';
-import { fallbackTurnChanges, mergeTurnFileChanges, unionFileChanges, withUnavailableDiffs } from '../fileChangeSummary';
+import { fallbackTurnChanges, mergeTurnFileChanges, overlaySessionStats, unionFileChanges, withUnavailableDiffs } from '../fileChangeSummary';
 import { useChangesFind } from '../useChangesFind';
 import { createViewportOwnership } from '../viewportOwnership';
 import { RunStatusBar } from './RunStatusBar';
@@ -104,7 +104,10 @@ export function ChatView({ onOpenModelManagement, searchTarget, historyControls,
 	const fallbackChanges = useMemo(() => fallbackTurnChanges(cwd, activities), [cwd, activities]);
 	const mergedTurns = useMemo(() => mergeTurnFileChanges(fileChangeTurns, fallbackChanges), [fileChangeTurns, fallbackChanges]);
 	const changesByRun = useMemo(() => new Map(mergedTurns.map(turn => [turn.runId, turn.items])), [mergedTurns]);
-	const sessionChanges = useMemo(() => unionFileChanges(mergedTurns), [mergedTurns]);
+	// Session-scope rows use the tracker's session-level net stats so capsule/
+	// review numbers match the conversation-scope diff body; fallback-only paths
+	// (no session record) keep the union approximation.
+	const sessionChanges = useMemo(() => overlaySessionStats(unionFileChanges(mergedTurns), fileChanges), [mergedTurns, fileChanges]);
 	const hasTurnScopedChanges = mergedTurns.some(turn => turn.runId !== null && turn.items.length > 0);
 	const liveChanges = fileChangeActiveRunId
 		? changesByRun.get(fileChangeActiveRunId) ?? []

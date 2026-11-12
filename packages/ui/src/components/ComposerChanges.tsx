@@ -83,7 +83,9 @@ export function LiveChangesSummary({ items, scope, target, review }: { items: Ui
 			(primary.current ?? composerFocus())?.focus({ preventScroll: true });
 		}
 	}, [items]);
-	useSwapFocus(entryHasFocus, () => document.querySelector<HTMLElement>('.pd-conversation-changes .pd-changes-card-main'));
+	// When the live capsule swaps to the session capsule at run end, prefer the
+	// session capsule in the same position before falling back to the turn card.
+	useSwapFocus(entryHasFocus, () => document.querySelector<HTMLElement>('.pd-composer-changes.is-session .pd-changes-live-main') ?? document.querySelector<HTMLElement>('.pd-conversation-changes .pd-changes-card-main'));
 	useEffect(() => {
 		if (!liveFilesOpen) return;
 		const outside = (event: PointerEvent) => { if (event.target instanceof Node && !liveRoot.current?.contains(event.target)) setLiveFilesOpen(false); };
