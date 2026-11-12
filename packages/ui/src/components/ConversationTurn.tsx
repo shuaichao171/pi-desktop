@@ -13,6 +13,10 @@ import { Icon } from './Icons';
 import './conversationTurn.css';
 import { ChangesCard, type ChangesReviewApi } from './ComposerChanges';
 import { countToolGroup, isExplorationGroup, toolGroupSummaryParts } from '../toolGroupSummary';
+import { omittedFindText, toolFindText } from '../transcriptFind';
+
+/** Stable default so standalone renders (tests) skip turn-level find wiring. */
+const EMPTY_FIND_SET: ReadonlySet<string> = new Set();
 
 function RunDuration({ run }: { run: UiConversationRun }) {
   const { locale } = useT();
@@ -31,7 +35,7 @@ function RunDuration({ run }: { run: UiConversationRun }) {
   return <span className="pd-turn-duration" data-elapsed-ms={elapsed}>{formatRunDuration(elapsed, locale)}</span>;
 }
 
-export const ConversationTurn = memo(function ConversationTurn({ entry, messages, activities, run, changes, changesReview, legacyRunning, highlightedId, findIds, query, reveal, canRegenerateId }: {
+export const ConversationTurn = memo(function ConversationTurn({ entry, messages, activities, run, changes, changesReview, legacyRunning, highlightedId, findIds, query, reveal, canRegenerateId, findTurnIds = EMPTY_FIND_SET, activeFindTurnId = null }: {
   entry: ConversationTurnEntry; messages: UiMessage[]; activities: UiToolActivity[]; run?: UiConversationRun;
   /** This run's recorded file changes; rendered as the turn's settlement card. */
   changes?: UiFileChange[];
@@ -39,6 +43,10 @@ export const ConversationTurn = memo(function ConversationTurn({ entry, messages
   changesReview: ChangesReviewApi;
   legacyRunning: boolean; highlightedId: string | null; findIds: Set<string>; query: string;
   reveal: { id: string; request: number } | null; canRegenerateId: string | null;
+  /** Turns whose folded tool titles contain find hits (Claude-style folded-content find). */
+  findTurnIds?: ReadonlySet<string>;
+  /** The turn owning the current find hit, when that hit is a tool title. */
+  activeFindTurnId?: string | null;
 }) {
   const { t, locale } = useT();
   const detailId = useId();
@@ -56,7 +64,8 @@ export const ConversationTurn = memo(function ConversationTurn({ entry, messages
   const processMessages = ownMessages.filter(message => message.id !== answer?.id && message.systemKind !== 'extension-notice');
   const foldMessages = processMessages;
   const hasProcess = ownTools.length > 0 || processMessages.some(message => message.text || (showReasoning && (message.thinking || message.thinkingStatus)) || message.status === 'error') || Boolean(showReasoning && (answer?.thinking || answer?.thinkingStatus));
-  const searchExpands = Boolean(query && foldMessages.some(message => `${message.text}\n${message.thinking ?? ''}`.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase())));
+  const searchExpands = Boolean(query && (foldMessages.some(message => `${message.text}\n${message.thinking ?? ''}`.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()))
+    || ownTools.some(tool => toolFindText(tool).toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()))));
   const expanded = hasProcess && (searchExpands || (choice ?? running));
   const mountedProcess = useRef(false);
   if (expanded) mountedProcess.current = true;
@@ -83,11 +92,17 @@ export const ConversationTurn = memo(function ConversationTurn({ entry, messages
   </>;
   // Legacy direct replies have no timing information: do not invent a duration or extra status row.
   const showHeader = Boolean(run) || hasProcess || running;
-  return <section className={`pd-conversation-turn is-${status}`} data-run-id={entry.runId}>
+  // A folded turn keeps an sr-only placeholder (Claude data-find-omitted): find
+  // still hits the omitted tool titles and process text, and screen readers read
+  // them; the placeholder disappears once the turn expands.
+  const omitted = hasProcess && !expanded ? omittedFindText([...ownTools.map(toolFindText), ...foldMessages.map(message => message.text)]) : null;
+  const turnFindActive = entry.id === activeFindTurnId;
+  return <section className={`pd-conversation-turn is-${status}${turnFindActive ? ' is-search-match' : ''}${!turnFindActive && findTurnIds.has(entry.id) ? ' is-find-match' : ''}`} data-run-id={entry.runId} data-turn-id={entry.id}>
     <div className="pd-message-column">
       {showHeader && (hasProcess
         ? <button type="button" className="pd-turn-summary" aria-expanded={expanded} aria-controls={detailId} onClick={() => setChoice(!expanded)}>{header}</button>
         : <div className="pd-turn-summary">{header}</div>)}
+      {omitted !== null && <span className="pd-find-omitted">{t('chat.find.omittedLabel')}<span data-find-omitted>{omitted}</span></span>}
       {hasProcess && <div className="pd-turn-process"><ActivityDisclosure id={detailId} expanded={expanded}>
         {(running || mountedProcess.current) && <div className="pd-turn-steps">{entry.entries.map(item => {
           if (item.kind === 'tools') return <ToolActivityPanel key={`tools:${item.id}`} sourceActivities={activities} indices={item.indices} inline />;

@@ -12,14 +12,19 @@ const ACTIONS: Record<string, readonly [string, string]> = {
   subagent: ['子代理', 'Subagent'],
 };
 
-export function activityPresentation(activity: UiToolActivity, locale: Locale) {
+/** Stable, locale-free title line of a tool call: command, raw title or touched files. */
+export function activityTitleSummary(activity: UiToolActivity): string {
   const prefix = `${activity.tool}(`;
   const title = activity.title.startsWith(prefix) && activity.title.endsWith(')')
     ? activity.title.slice(prefix.length, -1)
     : activity.title === activity.tool ? '' : activity.title;
+  return (activity.command || title || activity.files?.join(', ') || '').replace(/\s+/g, ' ').trim();
+}
+
+export function activityPresentation(activity: UiToolActivity, locale: Locale) {
   return {
     label: ACTIONS[activity.tool]?.[locale === 'zh-CN' ? 0 : 1] ?? activity.tool,
-    summary: (activity.command || title || activity.files?.join(', ') || '').replace(/\s+/g, ' ').trim(),
+    summary: activityTitleSummary(activity),
   };
 }
 

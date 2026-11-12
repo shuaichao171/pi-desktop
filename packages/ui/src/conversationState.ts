@@ -4,7 +4,7 @@ import { gfmFromMarkdown } from 'mdast-util-gfm';
 import { toHast } from 'mdast-util-to-hast';
 import { gfm } from 'micromark-extension-gfm';
 
-export interface FindOccurrence { messageId: string; start: number; end: number; ordinal: number; key: string }
+export interface FindOccurrence { kind: 'message'; messageId: string; start: number; end: number; ordinal: number; key: string }
 export function searchableMessageText(message: Pick<UiMessage, 'text'> & Partial<Pick<UiMessage, 'role'>>): string {
 	if (message.role !== 'assistant') return message.text;
 	type Node = { type: string; value?: string; tagName?: string; children?: Node[] };
@@ -23,7 +23,7 @@ export function findOccurrences(messages: (Pick<UiMessage, 'id' | 'text'> & Part
 	if (!needle) return [];
 	// RegExp's Unicode case folding preserves source offsets (lowercasing İ does not).
 	const expression = new RegExp(needle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'giu');
-	return messages.flatMap((message) => Array.from(searchableMessageText(message).matchAll(expression), (hit, ordinal) => ({ messageId: message.id, start: hit.index!, end: hit.index! + hit[0].length, ordinal, key: `${message.id}:${hit.index}` })));
+	return messages.flatMap((message) => Array.from(searchableMessageText(message).matchAll(expression), (hit, ordinal) => ({ kind: 'message' as const, messageId: message.id, start: hit.index!, end: hit.index! + hit[0].length, ordinal, key: `${message.id}:${hit.index}` })));
 }
 
 export interface ReadingPosition { messageId: string | null; offset: number; followsBottom: boolean }
