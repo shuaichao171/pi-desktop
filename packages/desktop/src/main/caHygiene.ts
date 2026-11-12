@@ -3,21 +3,32 @@
  * (cf. Claude Desktop nodeHost — the bundled default set is rebuilt once at
  * startup with known-replaced roots removed, failures only warn).
  *
- * The deprecated list matches by exact normalized subject, so user- and
- * system-added CAs (`getCACertificates('system'|'extra')`) are never touched:
- * only the "default" set is rebuilt from its own members.
+ * The deprecated list matches by exact normalized subject. Node's "default"
+ * set is not just the bundled Mozilla store: it also folds in the OS trust
+ * store (`--use-system-ca`, and on Windows by default) and NODE_EXTRA_CA_CERTS.
+ * Any certificate that the system or extra set also carries is therefore kept:
+ * an OS/user trust decision is never overridden, only Node's own bundled copy
+ * of a retired root is dropped.
  */
 import { X509Certificate } from 'node:crypto';
 import * as nodeTls from 'node:tls';
 
 /**
- * Subjects of roots deprecated or replaced by major root programs and still
- * bundled in Node's default set (eMudhra/emSign series, distrusted by the
- * Chrome and Microsoft root programs in 2025). Normalize-insensitive exact
- * matching; append new entries here when a root is retired.
+ * Subjects of roots that major root programs have actually removed or are
+ * retiring, while Node still bundles them. Only list a root once a root program
+ * has acted on it: removing a root that browsers still trust breaks sites that
+ * work everywhere else.
+ *
+ * - emSign ECC Root CA - G3: removed from the Chrome Root Store and by Mozilla
+ *   (2026-10) after the compromised-intermediate incident.
+ * - emSign Root CA - C1 / emSign ECC Root CA - C3: being retired by Mozilla
+ *   under eMudhra's own transition plan.
+ * - Deliberately NOT listed: emSign Root CA - G1. Mozilla is not removing it
+ *   and Chrome has not decided; add it only once a root program distrusts it.
+ *
+ * Normalize-insensitive exact matching; append entries as roots are retired.
  */
 export const DEPRECATED_ROOT_SUBJECTS: readonly string[] = [
-	'CN=emSign Root CA - G1,OU=emSign PKI,O=eMudhra Technologies Limited,C=IN',
 	'CN=emSign ECC Root CA - G3,OU=emSign PKI,O=eMudhra Technologies Limited,C=IN',
 	'CN=emSign Root CA - C1,OU=emSign PKI,O=eMudhra Inc,C=US',
 	'CN=emSign ECC Root CA - C3,OU=emSign PKI,O=eMudhra Inc,C=US',
@@ -72,10 +83,12 @@ export function readCertificateSubject(certificate: string): string | null {
 /**
  * Filters a CA list down to the non-deprecated roots. Certificates whose
  * subject cannot be read are always preserved — the list only ever removes
- * exact deprecated-subject matches.
+ * exact deprecated-subject matches — and so is every certificate in
+ * `preserved` (the system/extra sets: OS and user trust decisions).
  */
-export function pruneDeprecatedRoots(certificates: readonly string[], readSubject: (certificate: string) => string | null = readCertificateSubject): string[] {
+export function pruneDeprecatedRoots(certificates: readonly string[], readSubject: (certificate: string) => string | null = readCertificateSubject, preserved: ReadonlySet<string> = new Set()): string[] {
 	return certificates.filter((certificate) => {
+		if (preserved.has(certificate)) return true;
 		const subject = readSubject(certificate);
 		return subject === null || !isDeprecatedRootSubject(subject);
 	});
@@ -107,7 +120,16 @@ export function applyCaHygiene(tls: CaTls = nodeTls, warn: (message: string) => 
 			warn('CA 卫生：默认 CA 集返回非数组，已跳过 / CA hygiene skipped: default set is not an array');
 			return { applied: false, removed: 0 };
 		}
-		const pruned = pruneDeprecatedRoots(defaults, readSubject);
+		// The default set also carries system/extra CAs: those are trust decisions of
+		// the OS or the user and must survive even when they repeat a retired root.
+		const preserved = new Set<string>();
+		for (const type of ['system', 'extra'] as const) {
+			try {
+				const list = partial.getCACertificates(type);
+				if (Array.isArray(list)) for (const certificate of list) preserved.add(certificate);
+			} catch { /* A missing store just protects nothing extra. */ }
+		}
+		const pruned = pruneDeprecatedRoots(defaults, readSubject, preserved);
 		partial.setDefaultCACertificates(pruned);
 		return { applied: true, removed: defaults.length - pruned.length };
 	} catch (error) {

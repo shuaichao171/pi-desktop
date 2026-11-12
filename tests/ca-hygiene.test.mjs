@@ -10,8 +10,7 @@ import { test } from 'node:test';
 // Subject in both the multiline X509Certificate.subject form and RFC 2253
 // comma form with different RDN order/casing — all must match the same entry.
 const deprecatedSubjects = [
-	'C=IN\nOU=emSign PKI\nO=eMudhra Technologies Limited\nCN=emSign Root CA - G1',
-	'CN=emSign ECC Root CA - G3,OU=emSign PKI,O=eMudhra Technologies Limited,C=IN',
+	'C=IN\nOU=emSign PKI\nO=eMudhra Technologies Limited\nCN=emSign ECC Root CA - G3',
 	'cn=emsign root ca - c1,ou=emsign pki,o=eMudhra Inc,c=US',
 	'C=US\nOU=emSign PKI\nO=eMudhra Inc\nCN=emSign ECC Root CA - C3',
 ];
@@ -19,6 +18,8 @@ const deprecatedSubjects = [
 const benignSubjects = [
 	'C=US\nO=DigiCert Inc\nCN=DigiCert Global Root G2',
 	'CN=ISRG Root X1,O=Internet Security Research Group,C=US',
+	// Still trusted by root programs (Mozilla keeps it, Chrome undecided): must survive.
+	'C=IN\nOU=emSign PKI\nO=eMudhra Technologies Limited\nCN=emSign Root CA - G1',
 	// Similar names but different organizations/CNs: exact-subject matching must keep them.
 	'CN=emSign Root CA - G1,OU=Private PKI,O=Example Corp,C=US',
 	'CN=emSign Intermediate CA,O=eMudhra Technologies Limited,C=IN',
@@ -38,7 +39,7 @@ test('isDeprecatedRootSubject matches exactly the eMudhra/emSign series, nothing
 	for (const subject of benignSubjects) assert.equal(isDeprecatedRootSubject(subject), false, subject);
 	// The list itself is written in oneline form and must match through normalization.
 	assert.equal(DEPRECATED_ROOT_SUBJECTS.every((entry) => isDeprecatedRootSubject(entry)), true);
-	assert.equal(DEPRECATED_ROOT_SUBJECTS.length, 4, 'initial list: the four eMudhra/emSign roots bundled in Node');
+	assert.equal(DEPRECATED_ROOT_SUBJECTS.length, 3, 'only roots a root program removed or is retiring (G3, C1, C3), not G1');
 });
 
 test('pruneDeprecatedRoots removes exactly the listed roots and preserves the rest', async () => {
@@ -86,6 +87,7 @@ test('applyCaHygiene sets the pruned default set and reports removals', async ()
 	const bySubject = new Map([...deprecatedSubjects, ...benignSubjects].map((subject, index) => [`pem-${index}`, subject]));
 	const tls = {
 		getCACertificates(type) {
+			if (type === 'system' || type === 'extra') return [];
 			assert.equal(type, 'default', 'only the default set is rebuilt');
 			return [...bySubject.keys(), 'pem-unparseable'];
 		},
@@ -97,8 +99,33 @@ test('applyCaHygiene sets the pruned default set and reports removals', async ()
 	assert.equal(calls.length, 1);
 	assert.equal(calls[0].length, benignSubjects.length + 1, 'benign + unparseable certificates survive');
 	assert.deepEqual(warnings, [], 'success is silent');
-	// A user/system CA list is never passed to the setter, let alone filtered.
 	assert.equal(DEPRECATED_ROOT_SUBJECTS.length > 0, true);
+});
+
+test('a retired root that the system or extra store also trusts is kept (OS/user trust wins)', async () => {
+	const { applyCaHygiene } = await import('../packages/desktop/src/main/caHygiene.ts');
+	// Node's default set folds in the OS store (Windows by default, --use-system-ca)
+	// and NODE_EXTRA_CA_CERTS: their certificates appear in "default" too.
+	const bySubject = new Map([['pem-bundled-g3', deprecatedSubjects[0]], ['pem-system-c1', deprecatedSubjects[1]], ['pem-extra-c3', deprecatedSubjects[2]], ['pem-ok', benignSubjects[0]]]);
+	const sets = { default: [...bySubject.keys()], system: ['pem-system-c1'], extra: ['pem-extra-c3'] };
+	let installed = null;
+	const result = applyCaHygiene({
+		getCACertificates: (type) => sets[type],
+		setDefaultCACertificates: (certificates) => { installed = certificates; },
+	}, () => {}, (certificate) => bySubject.get(certificate) ?? null);
+	assert.deepEqual(result, { applied: true, removed: 1 }, 'only the bundled-only retired root goes');
+	assert.deepEqual(installed, ['pem-system-c1', 'pem-extra-c3', 'pem-ok']);
+});
+
+test('the live default set keeps every system and extra certificate', async () => {
+	const tls = await import('node:tls');
+	const { applyCaHygiene } = await import('../packages/desktop/src/main/caHygiene.ts');
+	if (typeof tls.getCACertificates !== 'function') return;
+	let installed = null;
+	applyCaHygiene({ getCACertificates: (type) => tls.getCACertificates(type), setDefaultCACertificates: (certificates) => { installed = certificates; } }, () => {});
+	assert.ok(Array.isArray(installed));
+	const kept = new Set(installed);
+	for (const type of ['system', 'extra']) for (const certificate of tls.getCACertificates(type)) assert.ok(kept.has(certificate), `a ${type} certificate was pruned`);
 });
 
 test('applyCaHygiene skips with only a warning when the API is missing or fails', async () => {

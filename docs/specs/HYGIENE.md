@@ -37,7 +37,8 @@
 `packages/desktop/src/main/caHygiene.ts` 在启动时重建 Node 侧默认 CA 集，剔除名单中的废弃／被替换根证书，语义参考 Claude Desktop nodeHost 的 TLS 卫生（round3/PERIPHERY.md）：重建默认 CA 集剔除废弃根（eMudhra/emSign 系列），`tls.setDefaultCACertificates`，失败仅告警。
 
 - **应用点**：主进程（`index.ts` 的 `app.whenReady()` 首步）与 Pi agent host utility process（`agentHost.ts` 的 bootstrap，先于 SDK 导入）各应用一次，覆盖 Node 侧出站 HTTPS：更新检查（`updateService` 走 Electron net 栈不受影响，但 npm 插件发现 `pluginDiscovery`、自定义引擎 npm 操作、SDK 供应商连接均走 Node 栈）。
-- **永不碰用户/系统 CA**：只重建 `tls.getCACertificates('default')`（Node 内置 Mozilla 集），`system`／`extra`（用户/系统自定义 CA）从不读取或过滤；名单只按具体废弃根主题精确匹配。
+- **永不碰用户/系统 CA**：重建的是 `tls.getCACertificates('default')`，但它**不只是** Node 内置 Mozilla 集，还并入了系统信任库（Windows 默认即并入，其他平台需 `--use-system-ca`）与 `NODE_EXTRA_CA_CERTS`（实测 Windows 上 Node 24：default 557 = bundled 120 + system 437）。因此凡同时出现在 `system`／`extra` 集中的证书一律保留（`pruneDeprecatedRoots` 的 `preserved`），只剔除仅由 Node 自带的那份废弃根；名单只按具体废弃根主题精确匹配。
+- **名单只收根证书计划已采取行动的根**：emSign ECC Root CA - G3（Chrome Root Store 与 Mozilla 于 2026-10 移除）、emSign Root CA - C1／emSign ECC Root CA - C3（Mozilla 按 eMudhra 自身过渡计划退役）。**不含** emSign Root CA - G1：Mozilla 暂不移除、Chrome 未决；剔除浏览器仍信任的根，会让在浏览器里正常的站点在应用里 TLS 失败。
 - **优雅降级**：运行时无 `tls.setDefaultCACertificates`（旧 Electron/Node）时 console.warn 一条并跳过；重建过程任何异常仅 console.warn，不阻断启动（返回 `{ applied, removed }` 供调用力诊断）。
 
 ### 名单维护
@@ -46,15 +47,14 @@
 
 ```ts
 export const DEPRECATED_ROOT_SUBJECTS: readonly string[] = [
-	'CN=emSign Root CA - G1,OU=emSign PKI,O=eMudhra Technologies Limited,C=IN',
 	'CN=emSign ECC Root CA - G3,OU=emSign PKI,O=eMudhra Technologies Limited,C=IN',
 	'CN=emSign Root CA - C1,OU=emSign PKI,O=eMudhra Inc,C=US',
 	'CN=emSign ECC Root CA - C3,OU=emSign PKI,O=eMudhra Inc,C=US',
 ];
 ```
 
-初始值即 Node 24 默认集中实际存在的 4 个 eMudhra/emSign 根（2025 年被 Chrome 与 Microsoft 根计划废弃，`node -e "new (require('node:crypto').X509Certificate)(c).subject"` 可验证主题原文）。有根被新程序废弃时，向数组追加其主题即可，无需改其它代码；无法解析主题的证书一律保留（从不猜测）。
+当前值是 Node 24 内置集中、已被根证书计划移除或退役的 3 个 eMudhra/emSign 根（G3：Chrome Root Store 与 Mozilla 于 2026-10 移除；C1/C3：Mozilla 按 eMudhra 过渡计划退役。`node -e "new (require('node:crypto').X509Certificate)(c).subject"` 可验证主题原文）。emSign Root CA - G1 **刻意不列**：Mozilla 暂不移除、Chrome 未决。**只在根证书计划实际采取行动后**才向数组追加主题（无需改其它代码），不要预判；无法解析主题的证书一律保留（从不猜测）。
 
-测试见 `tests/ca-hygiene.test.mjs`：归一化、名单精确匹配（相似名不误伤）、过滤恰好剔除名单项、真实默认集集成断言、API 缺失/异常仅告警。
+测试见 `tests/ca-hygiene.test.mjs`：归一化、名单精确匹配（相似名与 G1 不误伤）、过滤恰好剔除名单项、系统/额外 CA 集中的同名根保留、真实默认集集成断言（system/extra 证书一个不少）、API 缺失/异常仅告警。
 
 已知限制：仅影响 Node 网络栈（fetch/https/tls）；渲染进程与 `net.fetch` 走 Chromium 网络栈与系统证书库，不在本机制范围（与 Claude Desktop 同口径，其 Chromium 侧另有 SPKI 黑名单，此处未引入）。
