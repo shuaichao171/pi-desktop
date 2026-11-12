@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { useT } from '../i18n';
 import { useChatStore } from '../store';
@@ -7,6 +7,7 @@ import { bindingKeysFor, matchesShortcut } from '../shortcuts/bindings';
 import type { ModelManagementTarget } from '../modelManagement';
 import type { UiFileDiffScope } from '@pidesktop/shared';
 import { buildConversationTimeline, entryContainsMessage, type ConversationTimelineEntry } from '../conversationTimeline';
+import { anchorBranchForks, buildConversationTreeIndex, type UiBranchFork } from '@pidesktop/shared';
 import { ConversationDisclosureProvider } from '../conversationDisclosure';
 import { ConversationRail } from './ConversationRail';
 import { useExtensionRequestPending } from './ExtensionDialogHost';
@@ -25,6 +26,7 @@ import { Icon } from './Icons';
 import { MessageItem } from './MessageItem';
 import { QueuedTranscriptMessages } from './QueuedTranscriptMessages';
 import { ConversationTurn } from './ConversationTurn';
+import { BranchSwitcher } from './BranchSwitcher';
 import { ActivityLabel } from './ActivityDisclosure';
 import { TranscriptFind } from './TranscriptFind';
 import { useConversationCopy } from '../conversationCopy';
@@ -118,7 +120,38 @@ export function ChatView({ onOpenModelManagement, searchTarget, historyControls,
 		timelineRef.current = { revision: timelineRevision, runs, entries: buildConversationTimeline(messages, activities, runs) };
 	}
 	const timeline = timelineRef.current.entries;
+	// Branch navigation (conversation tree): forks sit at entries of the visible
+	// path with sibling subtrees; a switcher renders directly below the nearest
+	// visible message at or above the fork point so the alternatives below it
+	// (edited prompts, forked continuations) swap in place. Forks with no visible
+	// message above them (several roots, or an edit of the opening prompt, which
+	// forks at the session's leading model/thinking entries) lead the transcript.
+	const branchTree = useChatStore((s) => s.branchTree);
+	const branchSwitchPending = useChatStore((s) => s.branchSwitchPending);
+	const branchIndex = useMemo(() => branchTree ? buildConversationTreeIndex(branchTree) : null, [branchTree]);
+	const branchAnchors = useMemo(() => {
+		if (!branchIndex) return null;
+		const visible = new Set(messages.map(message => message.id));
+		return anchorBranchForks(branchIndex, id => visible.has(id));
+	}, [branchIndex, messages]);
+	const switchBranch = useCallback((targetId: string) => {
+		void useChatStore.getState().switchConversationBranch(targetId).catch(() => { /* The store surfaces the failure. */ });
+	}, []);
+	const branchSwitchers = useCallback((forks: readonly UiBranchFork[]) => forks.map(fork => (
+		<BranchSwitcher key={`branch:${fork.forkId}`} fork={fork} disabled={agentStatus !== 'idle' || branchSwitchPending} onSwitch={switchBranch} />
+	)), [agentStatus, branchSwitchPending, switchBranch]);
+	const switchersAfter = useCallback((entry: ConversationTimelineEntry) => {
+		if (!branchAnchors) return null;
+		const ids = entry.kind === 'message' ? [entry.id] : entry.entries.flatMap(item => item.kind === 'message' ? [item.id] : []);
+		const forks = ids.flatMap(id => branchAnchors.after.get(id) ?? []);
+		return forks.length ? branchSwitchers(forks) : null;
+	}, [branchAnchors, branchSwitchers]);
 	const hasOlderHistory = historyTotal > messages.length + activities.length;
+	// Leading forks belong above the conversation's opening; while only a recent
+	// window is loaded that opening is not on screen, so they wait for older pages.
+	// They render inside the first timeline row (not as a list sibling) so a
+	// virtualized list measures them instead of overlapping the first row.
+	const leadingSwitchers = branchAnchors && !hasOlderHistory && branchAnchors.leading.length ? branchSwitchers(branchAnchors.leading) : null;
 	const emptyTimeline = timeline.length === 0 && fileChanges.length === 0;
 	const layoutPending = !sessionPreparation && (sessionLoading || navigationPending || agentStatus === 'starting' || agentStatus === 'uninitialized' || !sessionId && agentStatus !== 'error');
 	useLayoutEffect(() => {
@@ -674,7 +707,9 @@ export function ChatView({ onOpenModelManagement, searchTarget, historyControls,
 	}
 	const canRegenerateLatest = agentStatus === 'idle' && lastReplyId !== null;
 	// Plugin notices pop above the composer instead of joining the transcript.
-	const renderEntry = (entry: ConversationTimelineEntry) => entry.kind === 'message'
+	const renderEntry = (entry: ConversationTimelineEntry): ReactNode => {
+		const switchers = switchersAfter(entry);
+		const content = entry.kind === 'message'
 		? (messages[entry.index]!.systemKind === 'extension-notice' ? null : <MessageItem
 			key={`message-${entry.id}`}
 			message={messages[entry.index]!}
@@ -688,6 +723,11 @@ export function ChatView({ onOpenModelManagement, searchTarget, historyControls,
 			highlightedId={activeFindId ?? (highlightedMessage?.sessionPath === sessionPath ? highlightedMessage.messageId : null)}
 			findIds={findOpen ? findMatchSet : new Set()} query={findOpen ? findQuery : ''} reveal={revealMessage?.scope === disclosureScope ? revealMessage : null}
 			canRegenerateId={canRegenerateLatest ? lastReplyId : null} />;
+		const leading = entry === timeline[0] ? leadingSwitchers : null;
+		// Always the same keyed wrapper, so a switcher appearing below a row after an
+		// edit never changes the row's element type (which would remount the message).
+		return <Fragment key={entry.kind === 'message' ? `message-${entry.id}` : `${disclosureScope}:${entry.id}`}>{leading}{content}{switchers}</Fragment>;
+	};
 
 	return (
 		<JumpToMessageContext.Provider value={jumpToMessage}>

@@ -19,6 +19,7 @@ import { detectMessageProject, getProjectAutoAssignEnabled, projectPathCandidate
 import { sidebarProjectPaths, sidebarWorkspaceKey } from './sidebarOrganization.ts';
 import { readModelCatalogCache, writeModelCatalogCache, type ModelCatalogSnapshot } from './modelCatalogCache.ts';
 import type { UiAgentError } from '@pidesktop/shared';
+import { activeTreeLeafId, buildConversationTreeIndex, isOnBranchPath, sessionTreesEqual } from '@pidesktop/shared';
 import type {
 	AgentBridge,
 	AgentEventEnvelope,
@@ -46,6 +47,7 @@ import type {
 	UiToolActivity,
 	UiSubagentFleetSnapshot,
 	UiSubagentInspectReply,
+	UiSessionTreeNode,
 } from '@pidesktop/shared';
 
 /** A detected project directory for the open conversation; `registered` = already an opened project. */
@@ -97,6 +99,10 @@ interface ChatState {
 	/** Latest /subagents-inspect-rpc reply; correlated by requestId in FleetCard. */
 	subagentInspect: UiSubagentInspectReply | null;
 	timelineRevision: number;
+	/** Session entry tree of the loaded conversation (branch navigation); null until fetched. */
+	branchTree: UiSessionTreeNode[] | null;
+	/** A branch switch (view change) is in flight. */
+	branchSwitchPending: boolean;
 	/** Changes when ready/reset replaces the branch, but not on live appends. */
 	historyGeneration: number;
 	/** Full timeline entry count of the loaded branch; older entries load via loadOlderMessages. */
@@ -170,6 +176,12 @@ interface ChatState {
 	regenerate(replyId?: string): Promise<void>;
 	/** Fork the conversation at an assistant message (rewinds the visible branch to it). */
 	forkMessage(entryId: string): Promise<void>;
+	/** Refetch the session entry tree so branch switchers follow the current branch state. */
+	refreshBranchTree(): Promise<void>;
+	/** Switch the visible branch onto another entry (‹ k/n › switcher / session tree). */
+	switchConversationBranch(targetId: string): Promise<void>;
+	/** Re-applies the persisted branch selection after a session load and keeps it current. */
+	syncBranchView(sessionPath: string): Promise<void>;
 	/** Edit, remove, or steer-early a queued instruction while the agent is busy (Codex-style queue management). */
 	updateQueuedMessage(id: string, action: 'edit' | 'remove' | 'steer', text?: string): Promise<void>;
 	/** Kill the conversation's running bash/powershell commands without aborting the turn. Returns how many were interrupted. */
@@ -212,6 +224,17 @@ let historyLoadRequest = 0;
 // in-flight session peek that resolves after that point no longer matters (its
 // switch already ended) and must never paint over the settled conversation.
 let peekInvalidator = 0;
+// Branch-view bookkeeping (module refs: they must outlive store state resets and
+// belong to this renderer's bridge session, not to any one conversation).
+let lastRecordedBranchLeaf = '';
+let appliedBranchSelectionPath: string | null = null;
+let branchViewSyncToken = 0;
+// A ready that lands while a session navigation is still settling pends its
+// branch sync here until that navigation finishes (P1-1: the host fires ready
+// before switchSession resolves, so the ready-time sync would always hit the
+// navigationPending guard and the remembered branch would never be restored at
+// load time).
+let pendingBranchViewSyncPath: string | null = null;
 const MAX_BOOTSTRAP_EVENTS = 256;
 const MAX_BOOTSTRAP_RESYNCS = 3;
 const SNAPSHOT_TIMEOUT_MS = 15_000;
@@ -324,6 +347,8 @@ const store = createStore<ChatState>((set, get) => ({
 	activities: [],
 	runs: [],
 	timelineRevision: 0,
+	branchTree: null,
+	branchSwitchPending: false,
 	historyGeneration: 0,
 	historyTotal: 0,
 	loadingOlder: false,
@@ -363,6 +388,13 @@ const store = createStore<ChatState>((set, get) => ({
 		sessionListRequests.clear();
 		// A new host may not share session files; keep-warm previews never cross bridges.
 		sessionConversationPreviews.clear();
+		// Branch bookkeeping belongs to this bridge: reset the one-time apply and the
+		// last recorded leaf so the new host re-reads and re-applies its own records.
+		lastRecordedBranchLeaf = '';
+		appliedBranchSelectionPath = null;
+		branchViewSyncToken += 1;
+		pendingBranchViewSyncPath = null;
+		set({ branchTree: null, branchSwitchPending: false });
 		resetSettingsRequests();
 		set({
 			...store.getInitialState(),
@@ -486,7 +518,7 @@ void get().refreshModelProviders().catch(() => {});
 			if (!currentSessionNavigation(bridge, request)) return;
 			set({ status: 'error', error: errorMessage(error) });
 			throw error;
-		} finally { finishSessionNavigation(bridge, request); }
+		} finally { finishSessionNavigation(bridge, request); flushPendingBranchViewSync(bridge, request); }
 	},
 
 	handleEvent(event) {
@@ -534,6 +566,8 @@ modelProviders: [...get().modelProviders],
 					// switch flash a blank transcript.
 					historyGeneration: get().historyGeneration + 1,
 					loadingOlder: false,
+					branchTree: null,
+					branchSwitchPending: false,
 					error: null,
 				});
 				return;
@@ -598,6 +632,9 @@ modelProviders: [...get().modelProviders],
 						error: null,
 					});
 					captureSettledConversation();
+					// Even a short-circuited ready is this session's first authoritative view
+					// in this renderer: restore the remembered branch and keep the record current.
+					requestBranchViewSync(event.sessionPath);
 					if (!get().modelProviders.length) void get().refreshModelProviders().catch(() => {});
 					return;
 				}
@@ -647,6 +684,9 @@ modelProviders: [...get().modelProviders],
 				});
 				// agent_settled resyncs re-send only the newest window; restore pages the user already opened.
 				if (olderLoaded > 0) void get().loadOlderMessages(Math.min(olderLoaded, 500));
+				// Branch bookkeeping: restore the remembered branch once per load and keep
+				// the record current as the visible leaf moves (turns, edits, switches).
+				requestBranchViewSync(event.sessionPath);
 				// This ready is the authoritative conversation view; remember it so a
 				// later failed navigation can put the renderer back on the session the
 				// host still shows.
@@ -902,7 +942,7 @@ if (!get().modelProviders.length) void get().refreshModelProviders().catch(() =>
 		} catch (error) {
 			if (currentSessionNavigation(bridge, request)) set({ error: errorMessage(error) });
 			throw error;
-		} finally { finishSessionNavigation(bridge, request); }
+		} finally { finishSessionNavigation(bridge, request); flushPendingBranchViewSync(bridge, request); }
 	},
 
 	async removeWorkspace(cwd) {
@@ -1247,7 +1287,7 @@ if (!get().modelProviders.length) void get().refreshModelProviders().catch(() =>
 		} catch (error) {
 			if (currentSessionNavigation(bridge, request)) { restoreSettledConversation(set); set({ error: errorMessage(error) }); }
 			throw error;
-		} finally { finishSessionNavigation(bridge, request); finishSessionLoadIndicator(set, loadingGeneration); }
+		} finally { finishSessionNavigation(bridge, request); finishSessionLoadIndicator(set, loadingGeneration); flushPendingBranchViewSync(bridge, request); }
 	},
 
 	async selectResidentSession(cwd, sessionId, sessionPath) {
@@ -1267,7 +1307,7 @@ if (!get().modelProviders.length) void get().refreshModelProviders().catch(() =>
 		} catch (error) {
 			if (currentSessionNavigation(bridge, request)) { restoreSettledConversation(set); set({ error: errorMessage(error) }); }
 			throw error;
-		} finally { finishSessionNavigation(bridge, request); finishSessionLoadIndicator(set, generation); }
+		} finally { finishSessionNavigation(bridge, request); finishSessionLoadIndicator(set, generation); flushPendingBranchViewSync(bridge, request); }
 	},
 
 	async selectSession(cwd, path) {
@@ -1308,7 +1348,7 @@ if (!get().modelProviders.length) void get().refreshModelProviders().catch(() =>
 			restoreSettledConversation(set);
 			set({ error: errorMessage(error) });
 			throw error;
-		} finally { finishSessionNavigation(bridge, request); finishSessionLoadIndicator(set, loadingGeneration); }
+		} finally { finishSessionNavigation(bridge, request); finishSessionLoadIndicator(set, loadingGeneration); flushPendingBranchViewSync(bridge, request); }
 	},
 
 	async send(text, behavior, attachments, inputId) {
@@ -1389,6 +1429,102 @@ if (!get().modelProviders.length) void get().refreshModelProviders().catch(() =>
 		}
 	},
 
+	async refreshBranchTree() {
+		const { bridge, sessionPath, navigationPending, sessionLoading } = get();
+		if (!bridge || !sessionPath || navigationPending || sessionLoading) return;
+		try {
+			const tree = await bridge.getSessionTree();
+			// A switch or navigation may have landed while the tree was in flight.
+			if (get().bridge === bridge && get().sessionPath === sessionPath) applyBranchTree(tree);
+		} catch {
+			// Branch UI is decorative: a failed fetch leaves the previous tree in place.
+		}
+	},
+
+	async switchConversationBranch(targetId) {
+		const { bridge, status, cwd, sessionId, navigationPending, sessionLoading, branchSwitchPending } = get();
+		if (!bridge || !targetId) return;
+		if (status !== 'idle' || navigationPending || sessionLoading || branchSwitchPending) {
+			const error = new Error(translate('store.sessionBusy'));
+			set({ error: error.message });
+			throw error;
+		}
+		set({ error: null, branchSwitchPending: true });
+		// A ready-time sync already in flight fetched its tree before this switch
+		// moved the leaf; retire it so its late reply cannot repaint the old branch.
+		branchViewSyncToken += 1;
+		try {
+			await bridge.switchSessionBranch(targetId);
+			// The host has already navigated; the tree fetch is authoritative even
+			// before the paired ready event reaches the store.
+			await get().refreshBranchTree();
+			const leafId = activeTreeLeafId(get().branchTree ?? []);
+			const path = get().sessionPath;
+			if (leafId && path) {
+				lastRecordedBranchLeaf = `${path}\0${leafId}`;
+				await bridge.setSessionBranchSelection?.(path, leafId).catch(() => {});
+			}
+		} catch (error) {
+			if (get().bridge === bridge && get().cwd === cwd && get().sessionId === sessionId) set({ error: errorMessage(error) });
+			throw error;
+		} finally {
+			if (get().branchSwitchPending) set({ branchSwitchPending: false });
+		}
+	},
+
+	async syncBranchView(sessionPath) {
+		const state = get();
+		const bridge = state.bridge;
+		if (!bridge || !sessionPath || sessionPath !== state.sessionPath || state.navigationPending || state.sessionLoading) return;
+		const token = ++branchViewSyncToken;
+		const superseded = () => token !== branchViewSyncToken || get().bridge !== bridge || get().sessionPath !== sessionPath;
+		try {
+			// Every ready re-reads the tree: edits, regenerations and forks grow sibling
+			// branches through navigateTree + prompt without any reset, so a tree cached
+			// from the load would hide their switchers and freeze the record on the old
+			// leaf (the next load would then "restore" the pre-edit branch).
+			const tree = await bridge.getSessionTree().catch(() => null);
+			if (superseded() || !tree) return;
+			applyBranchTree(tree);
+			// First ready for this conversation in this renderer: restore the branch the
+			// user last viewed. Pi itself always reloads the last-appended branch, so a
+			// merely viewed (older) branch needs this desktop-side record.
+			if (appliedBranchSelectionPath !== sessionPath) {
+				const stored = await bridge.getSessionBranchSelection?.(sessionPath).catch(() => null) ?? null;
+				if (superseded()) return;
+				const index = buildConversationTreeIndex(tree);
+				const current = get();
+				// A busy run defers the restore itself: until it has actually run, the
+				// keep-warm below must not overwrite the remembered branch with the
+				// natural leaf (it would yank the view back on the next load).
+				if (current.status !== 'idle' || current.branchSwitchPending) return;
+				appliedBranchSelectionPath = sessionPath;
+				// A stored leaf that is an ancestor of the natural leaf means the loaded
+				// branch already continues it; only a true sibling swap needs restoring.
+				if (stored && index.leafId && stored !== index.leafId && !isOnBranchPath(index, index.leafId, stored)) {
+					if (!index.parentOf.has(stored)) {
+						// A stale record (its leaf is no longer in the tree) degrades silently;
+						// the keep-warm below replaces it with the actually visible leaf.
+						console.warn(`Recorded branch leaf ${stored} no longer exists in ${sessionPath}; ignoring the record`);
+					} else {
+						await get().switchConversationBranch(stored).catch(() => {});
+						return;
+					}
+				}
+			}
+			// Keep the record current: chats and edits grow/move the natural leaf, and a
+			// stale record would rewind the view on the next load. Writes only on change
+			// (reachable only after the restore above has run for this conversation).
+			const leafId = activeTreeLeafId(tree);
+			if (leafId && lastRecordedBranchLeaf !== `${sessionPath}\0${leafId}`) {
+				lastRecordedBranchLeaf = `${sessionPath}\0${leafId}`;
+				await bridge.setSessionBranchSelection?.(sessionPath, leafId).catch(() => {});
+			}
+		} catch {
+			// Branch persistence is best-effort; the visible conversation is unaffected.
+		}
+	},
+
 	async updateQueuedMessage(id, action, text) {
 		const { bridge, cwd, sessionId, navigationPending, sessionLoading } = get();
 		if (!bridge || !id) return;
@@ -1466,7 +1602,7 @@ if (!get().modelProviders.length) void get().refreshModelProviders().catch(() =>
 		} catch (error) {
 			if (currentSessionNavigation(bridge, request)) set({ error: errorMessage(error) });
 			throw error;
-		} finally { finishSessionNavigation(bridge, request); }
+		} finally { finishSessionNavigation(bridge, request); flushPendingBranchViewSync(bridge, request); }
 	},
 }));
 
@@ -1666,7 +1802,7 @@ async function sendInput(text: string, behavior?: 'steer' | 'followUp', attachme
 		if (store.getState().bridge === bridge && store.getState().cwd === cwd && store.getState().sessionId === sessionId
 			&& (navigationRequest === undefined || currentSessionNavigation(bridge, navigationRequest))) store.setState({ error: errorMessage(error) });
 		throw error;
-	} finally { if (navigationRequest !== undefined) finishSessionNavigation(bridge, navigationRequest); }
+	} finally { if (navigationRequest !== undefined) { finishSessionNavigation(bridge, navigationRequest); flushPendingBranchViewSync(bridge, navigationRequest); } }
 }
 
 function activePreparation(): SessionPreparation | null {
@@ -2265,6 +2401,40 @@ function finishSessionNavigation(bridge: AgentBridge, request: number): void {
 		sessionOpenMetrics.settled(request, Boolean(state.error) || state.status === 'error');
 		store.setState({ navigationPending: false });
 	}
+}
+
+/** Publishes a freshly fetched session tree, keeping the old reference when nothing
+ *  changed so a warm (no-flash) ready does not re-render the transcript's switchers. */
+function applyBranchTree(tree: UiSessionTreeNode[]): void {
+	const current = store.getState().branchTree;
+	if (current && sessionTreesEqual(current, tree)) return;
+	store.setState({ branchTree: tree });
+}
+
+/** Runs the ready-time branch sync now, or pends it while a navigation settles. */
+function requestBranchViewSync(sessionPath: string | null): void {
+	if (!sessionPath) return;
+	const state = store.getState();
+	// A load's ready lands before its switchSession resolves (navigationPending),
+	// so an immediate sync would be skipped: pend it for that navigation's finish.
+	if (state.navigationPending || state.sessionLoading) {
+		pendingBranchViewSyncPath = sessionPath;
+		return;
+	}
+	void state.syncBranchView(sessionPath);
+}
+
+/** Runs the branch sync a ready pended while its navigation was settling. */
+function flushPendingBranchViewSync(bridge: AgentBridge, request: number): void {
+	const path = pendingBranchViewSyncPath;
+	if (!path) return;
+	const state = store.getState();
+	// A newer navigation still settling re-arms the pending sync and flushes it in
+	// its own finish; anything else that made the pended ready stale drops it.
+	if (state.navigationPending || state.sessionLoading) return;
+	pendingBranchViewSyncPath = null;
+	if (!currentSessionNavigation(bridge, request) || state.error || state.sessionPath !== path) return;
+	void state.syncBranchView(path);
 }
 
 // An accepted offer waits for the turn to settle; re-check whenever the state that

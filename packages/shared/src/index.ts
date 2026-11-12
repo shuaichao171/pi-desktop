@@ -24,6 +24,7 @@ import type { WorkbenchFeaturesBridge } from './workbenchFeatures';
 import type { CloudSyncFeaturesBridge } from './cloudSync';
 import type { UiDebugApiConfig, UiDebugApiState } from './debugApi';
 export * from './inputFeatures.ts';
+export * from './conversationTree.ts';
 export * from './dataFeatures.ts';
 export * from './workbenchFeatures.ts';
 export * from './cloudSync.ts';
@@ -96,6 +97,8 @@ export const IPC_CHANNELS = {
   agentExportSession: 'agent:export-session',
   agentSessionTree: 'agent:session-tree',
   agentSwitchBranch: 'agent:switch-branch',
+  agentGetBranchSelection: 'agent:get-branch-selection',
+  agentSetBranchSelection: 'agent:set-branch-selection',
   agentListSessions: 'agent:list-sessions',
   agentListSessionsPage: 'agent:list-sessions-page',
   agentSearchSessions: 'agent:search-sessions',
@@ -1302,6 +1305,11 @@ export interface AgentBridge extends InputFeatureBridge, DataFeaturesBridge, Wor
   getSessionTree(): Promise<UiSessionTreeNode[]>;
   /** Moves the visible branch leaf onto another entry (zcode-style branch switch). */
   switchSessionBranch(entryId: string): Promise<void>;
+  /** Last-viewed branch leaf of a session file (pi-desktop-side persistence; Pi itself
+   *  always reloads the last-appended branch). Optional for older bridges and harnesses. */
+  getSessionBranchSelection?(sessionPath: string): Promise<string | null>;
+  /** Records the leaf to restore on the next load; null clears the preference. */
+  setSessionBranchSelection?(sessionPath: string, leafId: string | null): Promise<void>;
   listSessions(cwd?: string): Promise<UiSessionSummary[]>;
   /** Paged sidebar listing: the first screen arrives first and the remaining pages
    *  stream in behind it. Optional so older bridges and test harnesses fall back

@@ -42,7 +42,11 @@ export function SessionTreePanel({ returnFocus, onClose }: { returnFocus: HTMLEl
 	async function switchTo(targetId = selectedId) {
 		if (!bridge || busy || !targetId || targetId !== selectedRef.current || targetId === leaf?.id || !all.some(({ node }) => node.id === targetId) || pending.current) return;
 		const token = request.current; pending.current = true; setSwitchingId(targetId); setError(null);
-		try { await bridge.switchSessionBranch(targetId); if (token === request.current) { await load(); focus(targetId); } }
+		try {
+			// The store action records the selection so the viewed branch survives reloads.
+			await useChatStore.getState().switchConversationBranch(targetId);
+			if (token === request.current) { await load(); focus(targetId); }
+		}
 		catch (cause) { if (token === request.current && selectedRef.current === targetId) setError({ kind: 'switch', targetId, message: cause instanceof Error ? cause.message : String(cause) }); }
 		finally { pending.current = false; setSwitchingId(null); }
 	}

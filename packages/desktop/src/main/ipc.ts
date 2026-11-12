@@ -32,6 +32,7 @@ import { flushDiagnostics, initializeDiagnostics, recordDiagnostic } from './dia
 import { createInterface } from 'node:readline';
 import { createReadStream } from 'node:fs';
 import { normalizeSessionPath, pruneMissingSessionMeta } from './sessionPaths';
+import { conversationBranchStore } from './conversationBranchStore';
 import { rendererLaunchUrl, validatePaiSession, validatePaiWorkspace } from './desktopLaunch';
 import { prepareWorkspaceDrop } from './workspaceDrop';
 import { resolveProjectCandidate } from './projectCandidate';
@@ -1889,6 +1890,17 @@ export function registerIpc(options: {
 		if (typeof entryId !== 'string' || !entryId.trim()) throw new Error('目标条目无效');
 		return agentFor(event).switchSessionBranch(entryId);
 	});
+	// Branch-view persistence lives on the desktop side: Pi always reloads the
+	// last-appended branch, so the viewed-leaf preference is pi-desktop's own state.
+	handleRendererInvoke(IPC_CHANNELS.agentGetBranchSelection, (_event, path: unknown) => {
+		const target = normalizeSessionPath(path);
+		return conversationBranchStore().get(target);
+	});
+	handleRendererInvoke(IPC_CHANNELS.agentSetBranchSelection, (_event, path: unknown, leafId: unknown) => {
+		const target = normalizeSessionPath(path);
+		if (leafId !== null && (typeof leafId !== 'string' || !leafId.trim() || leafId.length > 256)) throw new Error('分支节点无效');
+		conversationBranchStore().record(target, leafId === null ? null : leafId);
+	});
 	handleRendererInvoke(IPC_CHANNELS.agentListSessions, async (_event, cwd?: string) => {
 		const targetCwd = cwd ?? activeWorkspace;
 		if (targetCwd && !(await listWorkspaces()).includes(targetCwd)) throw new Error('未知工作区');
@@ -2161,6 +2173,7 @@ export function registerIpc(options: {
 			await rm(target, { force: true });
 			sessionOwnerByPath.delete(target);
 			invalidateSessionListing(owner);
+			conversationBranchStore().clear(target);
 			await withSessionMeta(async (meta) => {
 				delete meta[target];
 				await saveSessionMeta(meta);

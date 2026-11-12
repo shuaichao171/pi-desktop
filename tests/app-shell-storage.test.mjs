@@ -27,7 +27,7 @@ function mountShell(storage, chatState = { appInfo: { platform: 'win32' } }) {
     require: (specifier) => {
       if (specifier === 'react') return {
         useEffect: (callback) => effects.push(callback), useLayoutEffect: (callback) => effects.push(callback),
-        useRef: (value) => ({ current: value }),
+        useRef: (value) => ({ current: value }), useMemo: (factory) => factory(),
         useState: (initial) => {
           const value = typeof initial === 'function' ? initial() : initial;
           state.push(value);
