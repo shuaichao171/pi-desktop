@@ -91,10 +91,18 @@ type FallbackFile = { kind: UiFileChange['kind']; stats: FallbackStats; statless
  * call has parseable counts (a write rewrites the whole file, so mixing one in
  * makes exact counts unknowable). Kind stays 'modified': without before-state
  * snapshots added/deleted cannot be told apart.
+ *
+ * `trackedRunIds` are the runs the tracker has records for. Once the transcript
+ * reaches the first of them the tracker was running, and from there on its
+ * silence is authoritative: an edit that was reverted, or a write of identical
+ * bytes, is a net-zero change the tracker deliberately drops. Aggregating those
+ * calls would resurrect them as phantom "modified" files, so the fallback only
+ * covers the calls recorded before the tracker's first run.
  */
-export function fallbackTurnChanges(cwd: string, activities: readonly UiToolActivity[]): Map<string | null, UiFileChange[]> {
+export function fallbackTurnChanges(cwd: string, activities: readonly UiToolActivity[], trackedRunIds: ReadonlySet<string | null> = new Set()): Map<string | null, UiFileChange[]> {
 	const files = new Map<string | null, Map<string, FallbackFile>>();
 	for (const activity of activities) {
+		if (trackedRunIds.has(activity.runId ?? null)) break;
 		if (activity.status !== 'done' || !WRITING_TOOLS.has(activity.tool) || !activity.files?.length) continue;
 		const stats = activity.tool === 'edit' && activity.diff ? editDiffStats(activity.diff) : null;
 		for (const raw of activity.files) {
@@ -151,13 +159,21 @@ export function unionFileChanges(turns: readonly UiFileChangeTurn[]): UiFileChan
 	return [...byPath.values()].sort((a, b) => a.path.localeCompare(b.path));
 }
 
-/** Session-scope stats must match the conversation-scope diff body (the tracker's
- * first-baseline → final net diff). Overlay the tracker's session-level records
- * onto the cross-turn union; fallback paths with no session record keep the
- * union's first-seen approximation. */
-export function overlaySessionStats(union: readonly UiFileChange[], session: readonly UiFileChange[]): UiFileChange[] {
-	const byPath = new Map(session.map(item => [item.path, item]));
-	return union.map(item => byPath.get(item.path) ?? item);
+/**
+ * Session-scope change list for the capsule and the conversation review. The
+ * tracker's session records are the net first-baseline → final diff (the same
+ * source as the conversation-scope diff body), so they are taken as-is. A path
+ * the tracker saw in some turn but that is absent from its session records
+ * netted out to no change (created then deleted, edited then reverted) and is
+ * not counted. Only paths the tracker never saw at all — fallback-only paths
+ * from pre-tracker turns — join from the merged turns' union, with the
+ * union's first-seen approximation.
+ */
+export function sessionFileChanges(tracked: readonly UiFileChangeTurn[], session: readonly UiFileChange[], merged: readonly UiFileChangeTurn[]): UiFileChange[] {
+	const known = new Set(session.map(item => item.path));
+	for (const turn of tracked) for (const item of turn.items) known.add(item.path);
+	const fallbackOnly = unionFileChanges(merged).filter(item => !known.has(item.path));
+	return [...session, ...fallbackOnly].sort((a, b) => a.path.localeCompare(b.path));
 }
 
 /**

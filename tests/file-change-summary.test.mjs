@@ -6,7 +6,7 @@ import { test } from 'node:test';
 
 const {
 	normalizeToolFilePath, editDiffStats, fallbackTurnChanges,
-	mergeTurnFileChanges, overlaySessionStats, unionFileChanges, withUnavailableDiffs,
+	mergeTurnFileChanges, sessionFileChanges, unionFileChanges, withUnavailableDiffs,
 } = await import('../packages/ui/src/fileChangeSummary.ts');
 
 const uiSource = (relative) => readFileSync(fileURLToPath(new URL(`../packages/ui/src/${relative}`, import.meta.url)), 'utf8');
@@ -140,7 +140,8 @@ test('挂点约定：轮次变更卡、会话汇总与回退聚合的接线', ()
 	const composerChanges = uiSource('components/ComposerChanges.tsx');
 	// ChatView 用「记录优先 + 转录回退」的合并轮次派生 changesByRun / 会话并集。
 	assert.match(chat, /mergeTurnFileChanges\(fileChangeTurns, fallbackChanges\)/);
-	assert.match(chat, /unionFileChanges\(mergedTurns\)/);
+	assert.match(chat, /fallbackTurnChanges\(cwd, activities, trackedRunIds\)/);
+	assert.match(chat, /sessionFileChanges\(fileChangeTurns, fileChanges, mergedTurns\)/);
 	// 每轮的结算卡来自 changesByRun，且只在 lastForRun 的轮尾挂一次。
 	assert.match(chat, /changes=\{entry\.runId && entry\.lastForRun \? changesByRun\.get\(entry\.runId\) : undefined\}/);
 	assert.match(turn, /entry\.runId && <div className="pd-turn-changes"><ChangesCard/);
@@ -181,17 +182,39 @@ test('mergeTurnFileChanges 合并回退路径后同轮清单保持路径排序',
 	assert.deepEqual(merged[0].items.map(item => item.path), ['src/a.ts', 'src/b.ts', 'src/z.ts']);
 });
 
-test('overlaySessionStats 会话级净差覆盖并集首见统计', () => {
-	const union = [
-		{ path: 'a.ts', kind: 'modified', additions: 10, deletions: 2 }, // 轮次首见（r1 的统计）
-		{ path: 'b.ts', kind: 'modified', additions: 3, deletions: 0 },  // 纯回退路径，无会话记录
+test('sessionFileChanges 取跟踪器会话级净差，净零路径不计，只补跟踪器从未见过的回退路径', () => {
+	// x.ts：r1 新建、r2 删除，会话净差为零——跟踪器会话级记录里没有它。
+	// a.ts：r1、r2 都改，会话级净差 +15 −3。
+	const tracked = [
+		{ runId: 'r1', items: [{ path: 'a.ts', kind: 'modified', additions: 10, deletions: 2 }, { path: 'x.ts', kind: 'added', additions: 10, deletions: 0 }] },
+		{ runId: 'r2', items: [{ path: 'a.ts', kind: 'modified', additions: 5, deletions: 1 }, { path: 'x.ts', kind: 'deleted', additions: 0, deletions: 10 }] },
 	];
-	const session = [
-		{ path: 'a.ts', kind: 'modified', additions: 15, deletions: 3 }, // 跟踪器会话级净差（r1+r2）
+	const session = [{ path: 'a.ts', kind: 'modified', additions: 15, deletions: 3 }];
+	// 跟踪器之前的老轮次只有回退数据：old.ts 跟踪器从未见过。
+	const merged = [{ runId: 'r0', items: [{ path: 'old.ts', kind: 'modified', additions: 3, deletions: 0 }, { path: 'a.ts', kind: 'modified', additions: 1, deletions: 0 }] }, ...tracked];
+	const result = sessionFileChanges(tracked, session, merged);
+	assert.deepEqual(result, [
+		{ path: 'a.ts', kind: 'modified', additions: 15, deletions: 3 }, // 净差，与会话范围差异正文同源
+		{ path: 'old.ts', kind: 'modified', additions: 3, deletions: 0 }, // 纯回退路径保持近似
+	]);
+	assert.ok(!result.some(item => item.path === 'x.ts'), '先建后删的文件不算本次对话修改');
+	// 纯老会话（无跟踪器数据）：汇总即回退并集。
+	assert.deepEqual(sessionFileChanges([], [], merged.slice(0, 1)).map(item => item.path), ['a.ts', 'old.ts']);
+	// 不修改输入。
+	assert.equal(session.length, 1);
+});
+
+test('fallbackTurnChanges 在跟踪器首个记录轮次之后停止：先改后还原的净零编辑不会冒出幻影改动', () => {
+	const activities = [
+		activity({ id: 'o', runId: 'r0', files: ['old.ts'], diff: '+1 o' }), // 跟踪器之前的老轮次
+		activity({ id: 'a', runId: 'r1', files: ['a.ts'], diff: '+1 x' }),
+		activity({ id: 'b1', runId: 'r2', files: ['b.ts'], diff: '-1 old\n+1 new' }),
+		activity({ id: 'b2', runId: 'r2', files: ['b.ts'], diff: '-1 new\n+1 old' }), // 还原：跟踪器净零、不记录 r2
 	];
-	const overlay = overlaySessionStats(union, session);
-	assert.deepEqual(overlay[0], session[0]); // 覆盖为净差，与差异正文同源
-	assert.deepEqual(overlay[1], union[1]);   // 回退路径保持近似
-	// 不修改输入数组。
-	assert.equal(union[0].additions, 10);
+	const changes = fallbackTurnChanges('/work/app', activities, new Set(['r1']));
+	assert.deepEqual([...changes.keys()], ['r0'], '只有跟踪器之前的轮次走回退');
+	const merged = mergeTurnFileChanges([{ runId: 'r1', items: [{ path: 'a.ts', kind: 'modified', additions: 1, deletions: 0 }] }], changes);
+	assert.ok(!merged.some(turn => turn.items.some(item => item.path === 'b.ts')), 'b.ts 不得作为幻影改动出现');
+	// 没有跟踪器记录时（老会话）照旧全量回退。
+	assert.deepEqual([...fallbackTurnChanges('/work/app', activities).keys()], ['r0', 'r1', 'r2']);
 });
