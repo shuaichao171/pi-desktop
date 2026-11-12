@@ -111,5 +111,6 @@ test('find wiring keeps folded turns findable: placeholders, turn rows and reset
 	assert.ok(find.includes('focusRequest'), 'the bar re-focuses on rising focus requests');
 	const css = readFileSync(new URL('../packages/ui/src/components/conversationTurn.css', import.meta.url), 'utf8');
 	assert.ok(css.includes('.pd-find-omitted'), 'the placeholder is visually hidden');
+	assert.match(css, /\.pd-find-omitted \{[^}]*user-select:none/, 'the placeholder never lands in copied transcript text');
 	assert.ok(css.includes('.pd-conversation-turn.is-find-match'), 'turns with hits get a match outline');
 });

@@ -16,8 +16,10 @@ button.pd-turn-summary:hover { color:var(--pd-text); background:var(--pd-surface
 .pd-turn-answer { margin-top:12px; }
 .pd-conversation-turn.is-find-match>.pd-message-column>.pd-turn-summary { outline:1px dashed color-mix(in srgb, var(--pd-brand) 45%, transparent); outline-offset:3px; }
 .pd-conversation-turn.is-search-match>.pd-message-column>.pd-turn-summary { outline:2px solid var(--pd-brand); outline-offset:3px; }
-/* sr-only placeholder for a folded turn's omitted find content (data-find-omitted). */
-.pd-find-omitted { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap; }
+/* sr-only placeholder for a folded turn's omitted find content (data-find-omitted).
+   user-select:none keeps it out of copied transcript text (selection serialization
+   otherwise includes visually hidden text); screen readers still read it. */
+.pd-find-omitted { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap; user-select:none; }
 .pd-conversation-turn:not(:has(.pd-turn-summary)) .pd-turn-answer { margin-top:0; }
 .pd-turn-answer>.pd-message-row>.pd-message-column { width:100%; }
 @media(max-width:700px) { .pd-turn-summary { column-gap:6px; row-gap:4px; } .pd-turn-steps { padding-left:10px; margin-left:5px; } }

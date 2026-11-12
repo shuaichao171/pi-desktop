@@ -40,6 +40,7 @@
 占位机制（对应 Claude 的 `data-find-omitted` sr-only 占位）：
 
 - 折叠轮次（`hasProcess && !expanded`）渲染 sr-only 占位（`omittedFindText`：工具标题行 + 过程消息文本，按序拼接，总量封顶 `OMITTED_FIND_TEXT_LIMIT`=4000 字符加省略号；封顶只影响占位文本的屏读体量，**不影响命中**——匹配枚举是数据驱动的，不依赖 DOM）。
+- 占位带 `user-select:none`：视觉隐藏的文本默认会进入选区序列化（实测 Electron 中跨折叠轮次选中复制会带出占位文本），加它后复制对话不含占位，屏幕阅读器仍可读。
 - 占位对屏幕阅读器友好：折叠期间过程内容不在可访问树（未挂载或 `aria-hidden`），占位是其唯一可读表示，前置本地化标签 `chat.find.omittedLabel`（「已折叠的工具与过程消息：」）；轮次展开后占位随之消失，避免重复朗读。
 - 命中折叠内容（工具标题 / 折叠的过程消息）时：定位到所属轮次（`data-turn-id` 行 + `entryContainsRow` 虚拟化解析），`searchExpands` 检测到命中后自动展开该轮，用户即可看到原文。
 - 匹配枚举（`transcriptFindMatches`）与 UI 状态（当前命中、命中集合）完全由数据模型驱动：消息命中按消息 id 定位（`findMatchSet`），工具标题命中按轮次 id 定位（`findTurnIds`）。
