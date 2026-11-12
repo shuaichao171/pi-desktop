@@ -6,7 +6,7 @@ import { Icon } from './Icons';
  * In-conversation find bar (Ctrl+F): counts matches across visible messages,
  * steps through them with Enter/Shift+Enter and returns focus on Escape.
  */
-export function TranscriptFind({ query, onQueryChange, index, total, onStep, onClose, loadedMessages, hasOlder = false, loadingOlder = false, onLoadOlder, scope = 'conversation', onScopeChange, hasChanges = false, changesSummary }: {
+export function TranscriptFind({ query, onQueryChange, index, total, onStep, onClose, loadedMessages, hasOlder = false, loadingOlder = false, onLoadOlder, focusRequest, scope = 'conversation', onScopeChange, hasChanges = false, changesSummary }: {
 	query: string;
 	onQueryChange(query: string): void;
 	/** Zero-based active match; null when there is no active match. */
@@ -18,6 +18,8 @@ export function TranscriptFind({ query, onQueryChange, index, total, onStep, onC
 	hasOlder?: boolean;
 	loadingOlder?: boolean;
 	onLoadOlder?(): void;
+	/** Increments on every Ctrl+F; a rising edge re-focuses and re-selects the input (bar already open). */
+	focusRequest?: number;
 	/** Find scope: visible conversation text or recorded file changes (12). */
 	scope?: 'conversation' | 'changes';
 	onScopeChange?(scope: 'conversation' | 'changes'): void;
@@ -32,6 +34,11 @@ export function TranscriptFind({ query, onQueryChange, index, total, onStep, onC
 		inputRef.current?.focus();
 		inputRef.current?.select();
 	}, []);
+	useEffect(() => {
+		if (!focusRequest) return;
+		inputRef.current?.focus();
+		inputRef.current?.select();
+	}, [focusRequest]);
 	const count = scope === 'changes'
 		? query.trim()
 			? (changesSummary && changesSummary.total > 0

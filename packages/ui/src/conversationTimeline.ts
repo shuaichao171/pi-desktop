@@ -58,6 +58,11 @@ export function entryContainsMessage(entry: ConversationTimelineEntry, id: strin
   return entry.kind === 'message' ? entry.id === id : entry.entries.some(item => item.kind === 'message' && item.id === id);
 }
 
+/** Find/jump rows address messages by id and whole turns by their entry id (tool-title hits). */
+export function entryContainsRow(entry: ConversationTimelineEntry, id: string): boolean {
+  return entry.kind === 'turn' ? entry.id === id || entryContainsMessage(entry, id) : entry.id === id;
+}
+
 /** Live replies stay with their thinking until the whole run identifies its final answer. */
 export function turnAnswer(entry: ConversationTurnEntry, messages: UiMessage[], running = false): UiMessage | undefined {
   if (running || !entry.lastForRun) return undefined;

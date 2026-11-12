@@ -336,6 +336,7 @@ export const translations: Record<string, { 'zh-CN': string; 'en-US': string }> 
   'chat.find.previous': { 'zh-CN': '上一个匹配', 'en-US': 'Previous match' },
   'chat.find.next': { 'zh-CN': '下一个匹配', 'en-US': 'Next match' },
   'chat.find.close': { 'zh-CN': '关闭查找', 'en-US': 'Close find' },
+  'chat.find.omittedLabel': { 'zh-CN': '已折叠的工具与过程消息：', 'en-US': 'Collapsed tool and process messages: ' },
   'chat.loadingOlder': { 'zh-CN': '正在加载更早消息…', 'en-US': 'Loading earlier messages…' },
   'chat.hasOlder': { 'zh-CN': '向上滚动加载更早消息', 'en-US': 'Scroll up for earlier messages' },
   'chat.runStatus.retrying': { 'zh-CN': '自动重试中（{attempt}/{max}）', 'en-US': 'Auto-retrying ({attempt}/{max})' },

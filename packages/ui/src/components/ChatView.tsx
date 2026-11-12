@@ -5,8 +5,8 @@ import { useChatStore } from '../store';
 import { sessionOpenMetrics } from '../sessionOpenMetrics';
 import { bindingKeysFor, matchesShortcut } from '../shortcuts/bindings';
 import type { ModelManagementTarget } from '../modelManagement';
-import type { UiFileDiffScope } from '@pidesktop/shared';
-import { buildConversationTimeline, entryContainsMessage, type ConversationTimelineEntry } from '../conversationTimeline';
+import type { UiFileDiffScope, UiMessage } from '@pidesktop/shared';
+import { buildConversationTimeline, entryContainsMessage, entryContainsRow, type ConversationTimelineEntry } from '../conversationTimeline';
 import { anchorBranchForks, buildConversationTreeIndex, type UiBranchFork } from '@pidesktop/shared';
 import { ConversationDisclosureProvider } from '../conversationDisclosure';
 import { ConversationRail } from './ConversationRail';
@@ -30,7 +30,8 @@ import { BranchSwitcher } from './BranchSwitcher';
 import { ActivityLabel } from './ActivityDisclosure';
 import { TranscriptFind } from './TranscriptFind';
 import { useConversationCopy } from '../conversationCopy';
-import { findOccurrences, readReading, recentReading, readingKey, saveReading, type ReadingPosition } from '../conversationState';
+import { readReading, recentReading, readingKey, saveReading, type ReadingPosition } from '../conversationState';
+import { transcriptFindMatches, stepFindIndex } from '../transcriptFind';
 import { resolveFollowsBottom } from '../scrollFollow';
 import { locateHistoryMessage } from '../conversationNavigation';
 import { TranscriptSearchContext, paintTranscriptMatches, revealTranscriptRange } from '../transcriptSearch';
@@ -243,10 +244,13 @@ export function ChatView({ onOpenModelManagement, searchTarget, historyControls,
 	const [findOpen, setFindOpen] = useState(false);
 	const [findQuery, setFindQuery] = useState('');
 	const [findKey, setFindKey] = useState<string | null>(null);
-	// Plugin notices are transient popups, never transcript rows: keep them out of
-	// find so a hit can never point at a row that is not rendered.
-	const findSource = useMemo(() => messages.filter((message) => message.systemKind !== 'extension-notice'), [messages]);
-	const findMatches = useMemo(() => findOccurrences(findSource, findQuery), [findSource, findQuery]);
+	// Repeated Ctrl+F re-focuses the bar even while it is already open.
+	const [findFocusTick, setFindFocusTick] = useState(0);
+	const findOpenRef = useRef(findOpen);
+	findOpenRef.current = findOpen;
+	// The domain is the loaded transcript window in timeline order: message text
+	// plus tool activity titles. Folded turns keep their hits via the turn id.
+	const findMatches = useMemo(() => transcriptFindMatches(timeline, messages, activities, findQuery), [timeline, messages, activities, findQuery]);
 	// Changes find scope (12): matches inside recorded diffs, stepping opens the review dialog.
 	const [findScope, setFindScope] = useState<'conversation' | 'changes'>('conversation');
 	// -1: no file opened yet, so the first step lands on the first (or last) match.
@@ -284,25 +288,45 @@ export function ChatView({ onOpenModelManagement, searchTarget, historyControls,
 	}, [findDiffs]);
 	const findIndex = Math.max(0, findMatches.findIndex((item) => item.key === findKey));
 	const activeFind = findOpen ? findMatches[findIndex] : undefined;
-	const activeFindId = activeFind?.messageId ?? null;
-	const findMatchSet = useMemo(() => new Set(findMatches.map((item) => item.messageId)), [findMatches]);
+	const activeFindId = activeFind?.kind === 'message' ? activeFind.messageId : null;
+	const activeFindTurnId = activeFind?.kind === 'tool' ? activeFind.turnId : null;
+	const findMatchSet = useMemo(() => new Set(findMatches.flatMap((item) => item.kind === 'message' ? [item.messageId] : [])), [findMatches]);
+	const findTurnIds = useMemo(() => new Set(findMatches.flatMap((item) => item.kind === 'tool' ? [item.turnId] : [])), [findMatches]);
 	useEffect(() => { if (findOpen && findMatches.length && !findMatches.some((item) => item.key === findKey)) setFindKey(findMatches[0]!.key); }, [findOpen, findMatches, findKey]);
-	// Mark the user turns (rail markers) that contain a find hit.
+	// Session switches reset find (sideQuestionTarget semantics): the next
+	// conversation starts with a clean bar instead of another session's matches.
+	useEffect(() => { setFindOpen(false); setFindQuery(''); setFindKey(null); }, [cwd, sessionId, sessionPath]);
+	// Mark the user turns (rail markers) that contain a find hit — tool-title hits
+	// light the user turn whose segment owns their turn.
 	const railMarkedIds = useMemo(() => {
 		if (!findOpen || findMatches.length === 0) return null;
 		const marked = new Set<string>();
 		let currentUser: string | null = null;
 		let segmentHit = false;
-		for (const message of messages) {
+		const visitMessage = (message: UiMessage) => {
 			if (message.role === 'user') {
 				if (currentUser && segmentHit) marked.add(currentUser);
 				currentUser = message.id;
 				segmentHit = findMatchSet.has(message.id);
 			} else if (findMatchSet.has(message.id)) segmentHit = true;
+		};
+		for (const entry of timeline) {
+			if (entry.kind === 'message') visitMessage(messages[entry.index]!);
+			else for (const item of entry.entries) {
+				if (item.kind === 'message') visitMessage(messages[item.index]!);
+				else if (findTurnIds.has(entry.id)) segmentHit = true;
+			}
 		}
 		if (currentUser && segmentHit) marked.add(currentUser);
 		return marked;
-	}, [findOpen, findMatches.length, findMatchSet, messages]);
+	}, [findOpen, findMatches.length, findMatchSet, findTurnIds, timeline, messages]);
+
+	const closeFind = useCallback(() => {
+		setFindOpen(false);
+		setFindQuery('');
+		setFindKey(null);
+		document.querySelector<HTMLTextAreaElement>('.pd-composer-shell textarea')?.focus();
+	}, []);
 
 	useEffect(() => {
 		const onKeyDown = (event: KeyboardEvent) => {
@@ -310,7 +334,18 @@ export function ChatView({ onOpenModelManagement, searchTarget, historyControls,
 			if (matchesShortcut(event, bindingKeysFor('findInTranscript'))) {
 				event.preventDefault();
 				setFindOpen(true);
+				setFindFocusTick((tick) => tick + 1);
 				return;
+			}
+			// Escape outside the bar and editable surfaces closes an open find; the
+			// bar's own input closes itself and editable owners keep their Escape.
+			if (event.key === 'Escape' && findOpenRef.current) {
+				const origin = event.target instanceof Element ? event.target : null;
+				if (!origin?.closest('.pd-transcript-find, textarea, input, [contenteditable="true"], [contenteditable=""]')) {
+					event.preventDefault();
+					closeFind();
+					return;
+				}
 			}
 			if (matchesShortcut(event, bindingKeysFor('stopGeneration'))) {
 				const state = useChatStore.getState();
@@ -330,14 +365,7 @@ export function ChatView({ onOpenModelManagement, searchTarget, historyControls,
 		};
 		window.addEventListener('keydown', onKeyDown);
 		return () => window.removeEventListener('keydown', onKeyDown);
-	}, []);
-
-	const closeFind = useCallback(() => {
-		setFindOpen(false);
-		setFindQuery('');
-		setFindKey(null);
-		document.querySelector<HTMLTextAreaElement>('.pd-composer-shell textarea')?.focus();
-	}, []);
+	}, [closeFind]);
 
 	// --- Virtualized transcript (2.6) ---
 	const virtualize = timeline.length > VIRTUALIZE_THRESHOLD;
@@ -409,7 +437,7 @@ export function ChatView({ onOpenModelManagement, searchTarget, historyControls,
 	const scrollToRow = useCallback((id: string) => {
 		const transcript = scrollRef.current;
 		if (!transcript) return false;
-		const row = transcript.querySelector<HTMLElement>(`[data-message-id="${CSS.escape(id)}"]`);
+		const row = transcript.querySelector<HTMLElement>(`[data-message-id="${CSS.escape(id)}"]`) ?? transcript.querySelector<HTMLElement>(`[data-turn-id="${CSS.escape(id)}"]`);
 		if (!row || row.closest('[inert],[hidden],[aria-hidden="true"]')) return false;
 		// Scroll ONLY the transcript container: native scrollIntoView also walks
 		// every scrollable ancestor, dragging the composer column and app body
@@ -432,7 +460,7 @@ export function ChatView({ onOpenModelManagement, searchTarget, historyControls,
 		readingAnchor.current = null;
 		setRevealMessage(previous => ({ id, request: (previous?.request ?? 0) + 1, scope: disclosureScope }));
 		if (virtualize) {
-			const index = timelineRef.current?.entries.findIndex((entry) => entryContainsMessage(entry, id)) ?? -1;
+			const index = timelineRef.current?.entries.findIndex((entry) => entryContainsRow(entry, id)) ?? -1;
 			if (index >= 0) virtualizer.scrollToIndex(index, { align: 'center' });
 		}
 		// Wait for disclosure/virtual rows to mount, keeping only the latest target.
@@ -450,10 +478,11 @@ export function ChatView({ onOpenModelManagement, searchTarget, historyControls,
 	useLayoutEffect(() => cancelPendingJump, [cancelPendingJump, cwd, sessionId, sessionPath, historyGeneration, sessionLoading]);
 
 	useEffect(() => {
-		if (activeFindId) jumpToMessage(activeFindId);
+		const rowId = activeFindId ?? activeFindTurnId;
+		if (rowId) jumpToMessage(rowId);
 		let frame = requestAnimationFrame(() => { frame = requestAnimationFrame(() => {
 			const node = scrollRef.current; if (!node) return;
-			const range = paintTranscriptMatches(node, findOpen && findScope === 'conversation' ? findQuery : '', activeFindId, activeFind?.ordinal ?? 0);
+			const range = paintTranscriptMatches(node, findOpen && findScope === 'conversation' ? findQuery : '', activeFindId, activeFind?.kind === 'message' ? activeFind.ordinal : 0);
 			if (range) revealTranscriptRange(range, node);
 		}); });
 		return () => cancelAnimationFrame(frame);
@@ -464,7 +493,7 @@ export function ChatView({ onOpenModelManagement, searchTarget, historyControls,
 		// An empty query only needs one clear pass; skip the rescan while find stays closed.
 		if (!query.trim() && findClearedRef.current) return;
 		findClearedRef.current = !query.trim();
-		if (scrollRef.current) paintTranscriptMatches(scrollRef.current, query, activeFindId, activeFind?.ordinal ?? 0);
+		if (scrollRef.current) paintTranscriptMatches(scrollRef.current, query, activeFindId, activeFind?.kind === 'message' ? activeFind.ordinal : 0);
 	});
 
 	useLayoutEffect(() => {
@@ -722,6 +751,7 @@ export function ChatView({ onOpenModelManagement, searchTarget, historyControls,
 			run={runs.find(run => run.id === entry.runId)} changes={entry.runId && entry.lastForRun ? changesByRun.get(entry.runId) : undefined} changesReview={openChangesReview} legacyRunning={agentStatus === 'busy' && entry === timeline.at(-1)}
 			highlightedId={activeFindId ?? (highlightedMessage?.sessionPath === sessionPath ? highlightedMessage.messageId : null)}
 			findIds={findOpen ? findMatchSet : new Set()} query={findOpen ? findQuery : ''} reveal={revealMessage?.scope === disclosureScope ? revealMessage : null}
+			findTurnIds={findOpen ? findTurnIds : undefined} activeFindTurnId={activeFindTurnId}
 			canRegenerateId={canRegenerateLatest ? lastReplyId : null} />;
 		const leading = entry === timeline[0] ? leadingSwitchers : null;
 		// Always the same keyed wrapper, so a switcher appearing below a row after an
@@ -742,6 +772,7 @@ export function ChatView({ onOpenModelManagement, searchTarget, historyControls,
 						<TranscriptFind
 							query={findQuery}
 							onQueryChange={(query) => { setFindQuery(query); setFindKey(null); }}
+							focusRequest={findFocusTick}
 							index={findMatches.length > 0 ? Math.min(findIndex, findMatches.length - 1) : null}
 							total={findMatches.length}
 							loadedMessages={messages.length}
@@ -751,7 +782,7 @@ export function ChatView({ onOpenModelManagement, searchTarget, historyControls,
 							onStep={(delta) => {
 								if (findScope === 'changes') { stepChangesFind(delta); return; }
 								if (findMatches.length === 0) return;
-								setFindKey(findMatches[(findIndex + delta + findMatches.length) % findMatches.length]!.key);
+								setFindKey(findMatches[stepFindIndex(findIndex, findMatches.length, delta)]!.key);
 							}}
 							scope={findScope}
 							onScopeChange={(next) => {
