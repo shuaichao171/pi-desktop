@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { UiSessionStats, UiUsageQueryResult } from '@pidesktop/shared';
 import { useChatStore } from '../store';
 import { useT } from '../i18n';
+import { useFocusAwarePoll } from '../focusStore';
 import { useConversationMetricsPreferences } from '../conversationMetricsPreferences';
 import { conversationMetricsAt, formatMetricDuration, formatMetricTokens } from '../conversationMetrics';
 import { formatUsageBalance, usageBalanceTooltip } from '../usageDisplay';
@@ -42,8 +43,9 @@ export function ConversationMetrics() {
 			finally { pending = false; }
 		}
 		void refresh();
-		const interval = status === 'busy' ? window.setInterval(() => { setNow(Date.now()); void refresh(); }, 1_000) : undefined;
-		return () => { active = false; if (interval !== undefined) window.clearInterval(interval); };
+		// 会话统计轮询（非关键）：未聚焦降频 3 倍、持续未聚焦 10 分钟暂停，重新聚焦立即刷新一次。
+		useFocusAwarePoll(() => { setNow(Date.now()); void refresh(); }, status === 'busy' ? 1_000 : 0);
+		return () => { active = false; };
 	}, [enabled, bridge, scope, sessionId, navigating, status, runs, messageCount]);
 	// Nothing has run yet: an all-zero stats line is just noise under a fresh composer.
 	// A pending switch transiently clears runs/messages — keep the row mounted
@@ -100,8 +102,9 @@ function ProviderBalance({ pending: switching = false }: { pending?: boolean }) 
 			finally { pending = false; if (active) setBusy(false); }
 		};
 		void query();
-		const timer = intervalMinutes > 0 ? window.setInterval(() => { void query(); }, intervalMinutes * 60_000) : undefined;
-		return () => { active = false; if (timer !== undefined) window.clearInterval(timer); };
+		// 用量查询轮询（非关键）：未聚焦降频 3 倍、持续未聚焦 10 分钟暂停，重新聚焦立即刷新一次。
+		useFocusAwarePoll(() => { void query(); }, intervalMinutes > 0 ? intervalMinutes * 60_000 : 0);
+		return () => { active = false; };
 	}, [bridge, providerId, usageQuery?.enabled, intervalMinutes, tick, switching]);
 	if (switching) return <button type="button" className="pd-metric-group pd-metric-balance" data-action="refresh-balance" title={t('usage.refreshing')} aria-label={t('usage.refreshing')} disabled>—</button>;
 	if (!usageQuery?.enabled) return null;
