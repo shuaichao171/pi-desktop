@@ -339,9 +339,16 @@ export function ChatView({ onOpenModelManagement, searchTarget, historyControls,
 			}
 			// Escape outside the bar and editable surfaces closes an open find; the
 			// bar's own input closes itself and editable owners keep their Escape.
+			// Any other focus inside the bar (step/scope/close buttons) also closes
+			// find — it must never fall through to the stop-generation binding.
 			if (event.key === 'Escape' && findOpenRef.current) {
 				const origin = event.target instanceof Element ? event.target : null;
-				if (!origin?.closest('.pd-transcript-find, textarea, input, [contenteditable="true"], [contenteditable=""]')) {
+				if (origin?.closest('.pd-transcript-find')) {
+					event.preventDefault();
+					closeFind();
+					return;
+				}
+				if (!origin?.closest('textarea, input, [contenteditable="true"], [contenteditable=""]')) {
 					event.preventDefault();
 					closeFind();
 					return;
