@@ -5,7 +5,7 @@ import { WORKBENCH_FEATURE_CHANNELS } from '@pidesktop/shared/workbenchFeatures'
 import { DATA_FEATURE_CHANNELS } from '@pidesktop/shared/dataFeatures';
 import { INPUT_FEATURE_CHANNELS } from '@pidesktop/shared/inputFeatures';
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
-import { CLOUD_SYNC_FEATURE_CHANNELS, DEBUG_API_CHANNELS, IPC_CHANNELS, type AgentBridge, type AgentEventEnvelope, type UiAppCommand, type UiAutomationSnapshot, type UiCloudSyncState, type UiDebugApiConfig, type UiDebugApiState, type UiExtensionDialogRequest, type UiSplitPaneState, type UiUpdateState, type WindowChromeState, type WorkspaceChangeEvent, type WorkspaceCommandEvent } from '@pidesktop/shared';
+import { CLOUD_SYNC_FEATURE_CHANNELS, DEBUG_API_CHANNELS, IPC_CHANNELS, SIDE_QUESTION_CHANNELS, type AgentBridge, type AgentEventEnvelope, type UiAppCommand, type UiAutomationSnapshot, type UiCloudSyncState, type UiDebugApiConfig, type UiDebugApiState, type UiExtensionDialogRequest, type UiSideQuestion, type UiSplitPaneState, type UiUpdateState, type WindowChromeState, type WorkspaceChangeEvent, type WorkspaceCommandEvent } from '@pidesktop/shared';
 import { unwrapIpcError } from './ipcErrors';
 
 /**
@@ -313,6 +313,14 @@ const bridge: AgentBridge = {
 		interruptShellTools: (toolCallId) => invoke(IPC_CHANNELS.agentInterruptShellTools, toolCallId),
 		generateCommitMessage: (context) => invoke(IPC_CHANNELS.agentGenerateCommitMessage, context),
 		suggestNextInput: (request) => invoke(IPC_CHANNELS.agentSuggestNextInput, request),
+		listSideQuestions: (sessionPath) => invoke(SIDE_QUESTION_CHANNELS.list, sessionPath),
+		askSideQuestion: (request) => invoke(SIDE_QUESTION_CHANNELS.ask, request),
+		deleteSideQuestion: (sessionPath, id) => invoke(SIDE_QUESTION_CHANNELS.delete, sessionPath, id),
+		onSideQuestionsChanged: (listener) => {
+			const wrapped = (_e: Electron.IpcRendererEvent, sessionPath: string, records: UiSideQuestion[]): void => listener(sessionPath, records);
+			ipcRenderer.on(SIDE_QUESTION_CHANNELS.changed, wrapped);
+			return () => ipcRenderer.removeListener(SIDE_QUESTION_CHANNELS.changed, wrapped);
+		},
 	abort: () => invoke(IPC_CHANNELS.agentAbort),
 	newSession: (options) => invoke(IPC_CHANNELS.agentNewSession, options),
 	onExtensionDialog,

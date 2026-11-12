@@ -18,7 +18,8 @@ import { operationFeedback } from './operationFeedback.ts';
 import { detectMessageProject, getProjectAutoAssignEnabled, projectPathCandidates } from './projectAutoAssign.ts';
 import { sidebarProjectPaths, sidebarWorkspaceKey } from './sidebarOrganization.ts';
 import { readModelCatalogCache, writeModelCatalogCache, type ModelCatalogSnapshot } from './modelCatalogCache.ts';
-import type { UiAgentError } from '@pidesktop/shared';
+import { buildSideQuestionContext } from './sideQuestionContext.ts';
+import type { UiAgentError, UiSideQuestion } from '@pidesktop/shared';
 import { activeTreeLeafId, buildConversationTreeIndex, isOnBranchPath, sessionTreesEqual } from '@pidesktop/shared';
 import type {
 	AgentBridge,
@@ -133,6 +134,10 @@ interface ChatState {
 	backgroundDraftTransfers: Array<{ requestId: number; from: UiInputScope; to: UiInputScope }>;
 	/** A project directory found in the first message of an unassigned conversation, shown above the composer. */
 	projectOffer: ProjectOffer | null;
+	/** Aside Q&A records of the loaded conversation, keyed to turn anchors (never in the Pi transcript). */
+	sideQuestions: UiSideQuestion[];
+	/** The turn whose inline aside input is open; editOfId pre-fills a re-ask of that record. */
+	sideQuestionTarget: { anchorEntryId: string; editOfId?: string; initialText?: string } | null;
 
 	setBridge(bridge: AgentBridge, options?: { hostedChatWindow?: boolean }): void;
 	retryAgent(): Promise<void>;
@@ -169,6 +174,13 @@ interface ChatState {
 	/** Move the offered conversation into its project once the current turn has finished. */
 	acceptProjectOffer(): void;
 	dismissProjectOffer(): void;
+	/** Opens the non-modal aside input under a turn (side question). */
+	openSideQuestion(anchorEntryId: string, options?: { editOfId?: string; initialText?: string }): void;
+	closeSideQuestion(): void;
+	/** Runs an aside ask: standalone model call, answer stored beside the conversation only. */
+	askSideQuestion(anchorEntryId: string, question: string, options?: { id?: string; model?: { provider: string; id: string; name: string } }): Promise<void>;
+	/** Removes one aside record. */
+	deleteSideQuestion(id: string): Promise<void>;
 	send(text: string, behavior?: 'steer' | 'followUp', attachments?: UiAttachment[], inputId?: string): Promise<void>;
 	/** Rewind to a sent user message and resend the edited text (zcode-style edit). */
 	editMessage(entryId: string, text: string, attachments?: UiAttachment[], fileMode?: 'keep' | 'rewind'): Promise<void>;
@@ -218,6 +230,7 @@ function rememberCatalog(patch: Partial<ModelCatalogSnapshot>): void {
 }
 let providerAuthRequest = 0;
 let unsubscribeAgentEvent: (() => void) | null = null;
+let unsubscribeSideQuestions: (() => void) | null = null;
 let bridgeGeneration = 0;
 let historyLoadRequest = 0;
 // Bumped whenever a ready event lands or a failed navigation rolls back: an
@@ -371,6 +384,8 @@ const store = createStore<ChatState>((set, get) => ({
 	draftTransfer: null,
 	backgroundDraftTransfers: [],
 	projectOffer: null,
+	sideQuestions: [],
+	sideQuestionTarget: null,
 
 	setBridge(bridge, options) {
 		if (get().bridge === bridge) return;
@@ -396,12 +411,21 @@ const store = createStore<ChatState>((set, get) => ({
 		pendingBranchViewSyncPath = null;
 		set({ branchTree: null, branchSwitchPending: false });
 		resetSettingsRequests();
+		unsubscribeSideQuestions?.();
+		unsubscribeSideQuestions = null;
 		set({
 			...store.getInitialState(),
 			bridge,
 			hostedChatWindow: options?.hostedChatWindow ?? false,
 			timelineRevision: get().timelineRevision + 1,
 		});
+		// Aside records live beside the conversation in pi-desktop storage; pushes keep
+		// every window showing this session in sync (asked here or in another pane).
+		unsubscribeSideQuestions = bridge.onSideQuestionsChanged?.((changedPath, records) => {
+			if (generation !== bridgeGeneration || get().bridge !== bridge) return;
+			if (changedPath !== get().sessionPath) return;
+			set({ sideQuestions: [...records].sort((left, right) => left.createdAt - right.createdAt) });
+		}) ?? null;
 		let bootstrapping = true;
 		let needsRecovery = false;
 		let overflowed = false;
@@ -469,6 +493,7 @@ const store = createStore<ChatState>((set, get) => ({
 				}
 				buffered.length = 0;
 				captureSettledConversation();
+				refreshSideQuestions(bridge, snapshot.sessionPath);
 				void get().refreshSessions();
 				void get().refreshWorkspaces();
 				return;
@@ -635,6 +660,7 @@ modelProviders: [...get().modelProviders],
 					// Even a short-circuited ready is this session's first authoritative view
 					// in this renderer: restore the remembered branch and keep the record current.
 					requestBranchViewSync(event.sessionPath);
+					refreshSideQuestions(get().bridge, event.sessionPath);
 					if (!get().modelProviders.length) void get().refreshModelProviders().catch(() => {});
 					return;
 				}
@@ -687,6 +713,8 @@ modelProviders: [...get().modelProviders],
 				// Branch bookkeeping: restore the remembered branch once per load and keep
 				// the record current as the visible leaf moves (turns, edits, switches).
 				requestBranchViewSync(event.sessionPath);
+				// Aside records belong to this conversation only; a switch already cleared them.
+				refreshSideQuestions(get().bridge, event.sessionPath);
 				// This ready is the authoritative conversation view; remember it so a
 				// later failed navigation can put the renderer back on the session the
 				// host still shows.
@@ -1368,6 +1396,70 @@ if (!get().modelProviders.length) void get().refreshModelProviders().catch(() =>
 
 	dismissProjectOffer() {
 		if (get().projectOffer?.state !== 'moving') set({ projectOffer: null });
+	},
+
+	openSideQuestion(anchorEntryId, options) {
+		if (!anchorEntryId) return;
+		set({ sideQuestionTarget: { anchorEntryId, ...(options?.editOfId ? { editOfId: options.editOfId } : {}), ...(options?.initialText ? { initialText: options.initialText } : {}) } });
+	},
+
+	closeSideQuestion() {
+		set({ sideQuestionTarget: null });
+	},
+
+	async askSideQuestion(anchorEntryId, question, options) {
+		const { bridge, sessionPath, messages, model, modelName, modelProvider } = get();
+		const trimmed = question.trim();
+		if (!bridge || !sessionPath || !anchorEntryId || !trimmed) return;
+		// The slice comes from the loaded transcript window; an anchor that is not
+		// (or no longer) visible cannot host an aside.
+		const slice = buildSideQuestionContext(messages, anchorEntryId);
+		if (!slice) throw new Error(translate('sideQuestion.anchorMissing'));
+		const id = options?.id ?? crypto.randomUUID();
+		const chosen = options?.model ?? { provider: modelProvider, id: model, name: modelName ?? model };
+		const optimistic: UiSideQuestion = {
+			id,
+			sessionPath,
+			anchorEntryId,
+			question: trimmed,
+			answer: null,
+			status: 'running',
+			modelProvider: chosen.provider,
+			modelId: chosen.id,
+			modelName: chosen.name ?? null,
+			contextTruncated: slice.truncated,
+			createdAt: Date.now(),
+			finishedAt: null,
+		};
+		const upsert = (record: UiSideQuestion): void => set((state) => ({
+			sideQuestions: [...state.sideQuestions.filter((item) => item.id !== record.id), record]
+				.sort((left, right) => left.createdAt - right.createdAt),
+		}));
+		upsert(optimistic);
+		try {
+			const settled = await bridge.askSideQuestion({
+				id,
+				sessionPath,
+				anchorEntryId,
+				question: trimmed,
+				context: slice.text,
+				contextTruncated: slice.truncated,
+				...(options?.model ? { model: options.model } : {}),
+			});
+			// A push may have delivered the same record already; upsert is idempotent.
+			if (get().sessionPath === sessionPath) upsert(settled);
+		} catch (cause) {
+			if (get().sessionPath === sessionPath) upsert({ ...optimistic, status: 'error', error: cause instanceof Error ? cause.message : String(cause), finishedAt: Date.now() });
+			// The record (not a banner) shows the failure; swallow for the caller.
+		}
+	},
+
+	async deleteSideQuestion(id) {
+		const { bridge, sessionPath, sideQuestions } = get();
+		if (!bridge || !sessionPath || !sideQuestions.some((item) => item.id === id)) return;
+		set((state) => ({ sideQuestions: state.sideQuestions.filter((item) => item.id !== id) }));
+		try { await bridge.deleteSideQuestion(sessionPath, id); }
+		catch { /* A failed delete resurfaces via the push channel's record set. */ }
 	},
 
 	async editMessage(entryId, text, attachments, fileMode) {
@@ -2409,6 +2501,17 @@ function applyBranchTree(tree: UiSessionTreeNode[]): void {
 	const current = store.getState().branchTree;
 	if (current && sessionTreesEqual(current, tree)) return;
 	store.setState({ branchTree: tree });
+}
+
+/** Restores a conversation's aside records after a ready/bootstrap; best-effort. */
+function refreshSideQuestions(bridge: AgentBridge | null, sessionPath: string | null): void {
+	if (!bridge || !sessionPath || !bridge.listSideQuestions) return;
+	void bridge.listSideQuestions(sessionPath)
+		.then((records) => {
+			if (store.getState().bridge !== bridge || store.getState().sessionPath !== sessionPath) return;
+			store.setState({ sideQuestions: [...records].sort((left, right) => left.createdAt - right.createdAt) });
+		})
+		.catch(() => { /* A failed fetch keeps the previous records; asks still work. */ });
 }
 
 /** Runs the ready-time branch sync now, or pends it while a navigation settles. */

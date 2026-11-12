@@ -12,6 +12,8 @@ import { ConversationMarkdown } from './ConversationMarkdown';
 import { MessageImages } from './MessageAttachments';
 import { useConversationCopy } from '../conversationCopy';
 import { operationFeedback } from '../operationFeedback';
+import { sideQuestionAnchorFor } from '../sideQuestionContext';
+import { SideQuestionRegion } from './SideQuestion';
 import { useMessageStreamShowReasoning } from '../messageStreamShowReasoning';
 import { TranscriptSearchContext } from '../transcriptSearch';
 import { StreamingContentContext } from '../streamingContent';
@@ -204,7 +206,9 @@ const UserMessageItem = memo(function UserMessageItem({ message, highlighted, fi
 				<div className="pd-message-actions">
 					<HoverTooltip title={t(copied ? 'message.copied' : 'message.copy')}><button type="button" className="pd-message-action" onClick={() => void copy()} disabled={!message.text} aria-label={t(copied ? 'message.copied' : 'message.copy')}><Icon name={copied ? 'check' : 'copy'} width="14" height="14" /></button></HoverTooltip>
 					<HoverTooltip title={t('message.edit')}><button type="button" className="pd-message-action" onClick={startEdit} aria-label={t('message.edit')}><Icon name="pencil" width="14" height="14" /></button></HoverTooltip>
+					<HoverTooltip title={t('sideQuestion.action')} description={t('sideQuestion.placeholder')}><button type="button" className="pd-message-action" onClick={() => useChatStore.getState().openSideQuestion(message.id)} aria-label={t('sideQuestion.action')}><Icon name="spark" width="14" height="14" /></button></HoverTooltip>
 				</div>
+				<SideQuestionRegion anchorEntryId={message.id} />
 			</div>
 		</div>
 	);
@@ -302,6 +306,11 @@ const AssistantMessageItem = memo(function AssistantMessageItem({ message, highl
 						{canRegenerate && <HoverTooltip title={t('message.regenerate')} description={c('regenerateHint')}><button type="button" className="pd-message-action" onClick={() => void regenerate()} disabled={regenerating || !idle} aria-label={t('message.regenerate')}><Icon name="rotateCcw" width="14" height="14" />{regenerating && <span role="status">{c('regenerating')}</span>}</button></HoverTooltip>}
 						<HoverTooltip title={t('message.fork')} description={c('forkHint')}><button type="button" className="pd-message-action" onClick={() => void fork()} disabled={forking || !idle} aria-label={t('message.fork')}><Icon name="gitBranch" width="14" height="14" />{forking && <span role="status">{c('forking')}</span>}</button></HoverTooltip>
 						{jumpToMessage && <HoverTooltip title={t('message.jumpToStart')}><button type="button" className="pd-message-action" onClick={() => jumpToMessage(message.id)} aria-label={t('message.jumpToStart')}><Icon name="arrowUp" width="14" height="14" /></button></HoverTooltip>}
+						<HoverTooltip title={t('sideQuestion.action')} description={t('sideQuestion.placeholder')}><button type="button" className="pd-message-action" onClick={() => {
+							// An aside anchors on the turn's opening user message (btw_history semantics).
+							const anchor = sideQuestionAnchorFor(useChatStore.getState().messages, message.id);
+							if (anchor) useChatStore.getState().openSideQuestion(anchor);
+						}} aria-label={t('sideQuestion.action')}><Icon name="spark" width="14" height="14" /></button></HoverTooltip>
 					</div>
 				)}
 			</div>

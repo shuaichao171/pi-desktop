@@ -108,6 +108,7 @@ import { sessionTiming } from './sessionMetrics.ts';
 import { requestDesktopConfirmation } from './extensionApproval.ts';
 export type { DesktopApprovalOptions } from './extensionApproval.ts';
 import { requireInputQueueScope, type UiInputQueue, type UiInputQueueScope, type UiInputQueueMutation, type UiInputReceipt, type UiNextInputRequest, type UiSubmitInput } from '../../shared/src/inputFeatures.ts';
+import type { UiSideQuestionAskRequest, UiSideQuestionAnswer } from '../../shared/src/sideQuestions.ts';
 import type { ModelTestRequest, ProjectDefaultsWrite, UiSaveProviderUsageQueryRequest, UiUsageQueryConfig, UiUsageQueryResult } from '../../shared/src/managementFeatures.ts';
 import { runProviderUsageQuery, usageQueryInfo, normalizeUsageQueryConfig, validateUsageQueryRequest } from './providerUsageQuery.ts';
 import { applyCanonicalThinkingLevel, normalizeThinkingLevel } from './thinkingLevels.ts';
@@ -120,6 +121,7 @@ import type { UiMcpSaveRequest, UiMcpTarget } from '../../shared/src/mcpFeatures
 import type { PluginUpdateCheck } from '../../shared/src/pluginUpdates.ts';
 import { checkPluginUpdate } from './pluginUpdates.ts';
 import { buildNextInputContext, cleanNextInputSuggestion, NEXT_INPUT_SYSTEM_PROMPT, NEXT_INPUT_TIMEOUT_MS } from './nextInputSuggestion.ts';
+import { buildSideQuestionPrompt, cleanSideQuestionAnswer, SIDE_QUESTION_SYSTEM_PROMPT, SIDE_QUESTION_TIMEOUT_MS } from './sideQuestion.ts';
 
 export interface AgentInitOptions {
 	cwd: string;
@@ -1479,6 +1481,38 @@ class SingleAgentService {
 			return cleanNextInputSuggestion(message.content
 				.filter((block): block is { type: 'text'; text: string } => block.type === 'text')
 				.map((block) => block.text).join(''));
+		} finally { clearTimeout(timer); }
+	}
+
+	/**
+	 * 侧问：用父消息附近的上下文片段回答一个旁路问题。与 suggestNextInput
+	 * 同构的单次独立模型调用，不经过会话转录；主对话流式进行中也可安全调用。
+	 * 上下文片段由渲染端从已加载的转录窗口拼装并在请求中携带。
+	 * 返回答案与实际使用的模型，供 pi-desktop 自己的记录落盘。
+	 */
+	async answerSideQuestion(request: UiSideQuestionAskRequest): Promise<UiSideQuestionAnswer> {
+		const runtime = this.runtime;
+		if (!runtime) throw new Error('Agent is not initialized');
+		if (!request || typeof request.sessionPath !== 'string' || request.sessionPath !== this.state.sessionPath) throw new Error('会话已切换');
+		const session = runtime.session;
+		const requested = request.model
+			? session.modelRuntime.getAvailableSnapshot().find((item) => item.provider === request.model!.provider && item.id === request.model!.id)
+			: undefined;
+		if (request.model && !requested) throw new Error(`模型不可用：${request.model.provider}/${request.model.id}`);
+		const model = requested ?? session.model;
+		if (!model) throw new Error('未选择模型');
+		const controller = new AbortController();
+		const timer = setTimeout(() => controller.abort(), SIDE_QUESTION_TIMEOUT_MS);
+		try {
+			const message = await session.modelRuntime.completeSimple(model, {
+				systemPrompt: SIDE_QUESTION_SYSTEM_PROMPT,
+				messages: [{ role: 'user', content: buildSideQuestionPrompt(request), timestamp: Date.now() }],
+			}, { signal: controller.signal });
+			const answer = cleanSideQuestionAnswer(message.content
+				.filter((block): block is { type: 'text'; text: string } => block.type === 'text')
+				.map((block) => block.text).join(''));
+			if (!answer) throw new Error('模型未返回侧问答案');
+			return { answer, modelProvider: model.provider, modelId: model.id, modelName: model.name ?? null };
 		} finally { clearTimeout(timer); }
 	}
 
@@ -3179,6 +3213,10 @@ export class AgentService {
 	suggestNextInput(request: UiNextInputRequest): Promise<string> {
 		if (this.pluginOperation) return Promise.reject(new Error('插件设置正在更新，请稍后再试'));
 		return this.requireActive().suggestNextInput(request);
+	}
+	answerSideQuestion(request: UiSideQuestionAskRequest): Promise<UiSideQuestionAnswer> {
+		if (this.pluginOperation) return Promise.reject(new Error('插件设置正在更新，请稍后再重试'));
+		return this.requireActive().answerSideQuestion(request);
 	}
 	abort(): Promise<void> { return this.active?.abort() ?? Promise.resolve(); }
 

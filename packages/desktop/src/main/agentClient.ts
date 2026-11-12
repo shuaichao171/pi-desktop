@@ -31,7 +31,7 @@ function defaultCallTimeout(method: AgentHostMethod): number {
 	if (method === 'mutatePlugin') return 0;
 	if (method === 'abort') return 30_000;
 	if (method === 'dispose') return 10_000;
-	if (['init', 'switchWorkspace', 'switchSession', 'newSession', 'setExtensionEnabled', 'prompt', 'executeSlashCommand'].includes(method)) return 300_000;
+	if (['init', 'switchWorkspace', 'switchSession', 'newSession', 'setExtensionEnabled', 'prompt', 'executeSlashCommand', 'answerSideQuestion'].includes(method)) return 300_000;
 	if (method === 'peekSession') return 5_000;
 	return 120_000;
 }
