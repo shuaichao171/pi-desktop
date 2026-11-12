@@ -106,6 +106,7 @@ const bridge: AgentBridge = {
 	searchSessionsPage: (...args) => invoke(DATA_FEATURE_CHANNELS.searchSessionsPage, ...args),
 	searchProjectFiles: (...args) => invoke(DATA_FEATURE_CHANNELS.searchProjectFiles, ...args),
 	cancelDataSearch: (...args) => invoke(DATA_FEATURE_CHANNELS.cancelDataSearch, ...args),
+	sessionPreview: (...args) => invoke(DATA_FEATURE_CHANNELS.sessionPreview, ...args),
 	getWorkspaceCommitPreview: (...args) => invoke(WORKBENCH_FEATURE_CHANNELS.getWorkspaceCommitPreview, ...args),
 	commitWorkspacePreview: (...args) => invoke(WORKBENCH_FEATURE_CHANNELS.commitWorkspacePreview, ...args),
 	createTaskWorktree: (...args) => invoke(WORKBENCH_FEATURE_CHANNELS.createTaskWorktree, ...args),

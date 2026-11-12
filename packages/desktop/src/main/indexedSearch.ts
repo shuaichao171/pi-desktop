@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { lstat, opendir, readFile, realpath, stat } from 'node:fs/promises';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
-import type { IndexedSessionResult, ProjectSearchMatch, ProjectSearchPage, ProjectSearchRequest, ProjectSearchRules, SessionSearchMetadata, SessionSearchPage, SessionSearchRequest } from '@pidesktop/shared';
+import type { IndexedSessionResult, ProjectSearchMatch, ProjectSearchPage, ProjectSearchRequest, ProjectSearchRules, SessionSearchMetadata, SessionSearchPage, SessionSearchRequest, UiSessionPreview } from '@pidesktop/shared';
 import { readSessionForIndex, type ParsedSession, type SearchMessage } from './searchService.ts';
 import { writeStateFileAsync } from './stateFiles.ts';
 
@@ -88,6 +88,68 @@ async function cacheFor(root: string): Promise<SessionCache> {
 		} catch { cache.entries.clear(); /* Index is disposable; original sessions are untouched. */ }
 	}
 	return cache;
+}
+/** One session's parsed form through the shared index cache; re-read once when its fingerprint changed. */
+async function cachedSessionFor(sessionsRoot: string, cwd: string, path: string): Promise<ParsedSession | null> {
+	const cache = await cacheFor(resolve(sessionsRoot));
+	try {
+		const details = await lstat(path);
+		if (!details.isFile() || details.isSymbolicLink()) return null;
+		const fingerprint = `${cwd}:${details.size}:${details.mtimeMs}:${details.ctimeMs}`;
+		const cached = cache.entries.get(path);
+		if (cached?.fingerprint === fingerprint && cached.parsed) return cached.parsed;
+		if (details.size > MAX_SESSION_BYTES) { cache.entries.set(path, { fingerprint, parsed: null, oversized: true }); return null; }
+		const parsed = await readSessionForIndex(path, cwd, () => false);
+		// In-memory only; the next search persists refreshed entries with its own dirty flag.
+		cache.entries.set(path, { fingerprint, parsed });
+		return parsed;
+	} catch { return null; }
+}
+/** Messages of the branch the sidebar is viewing; the latest leaf chain when no branch is selected. */
+export function messagesForBranchHead(parsed: ParsedSession, branchHead?: string | null): SearchMessage[] {
+	if (branchHead == null || branchHead === parsed.branchLeafId) return parsed.messages;
+	const nodes = new Map(parsed.nodes), seen = new Set<string>(), messages: SearchMessage[] = [];
+	let cursor: string | null = branchHead;
+	while (cursor && !seen.has(cursor)) {
+		seen.add(cursor);
+		const node = nodes.get(cursor);
+		if (!node) break;
+		if (node.message) messages.unshift(node.message);
+		cursor = node.parentId;
+	}
+	return messages;
+}
+/** Single collapsed line for a hover-card summary; never splits a surrogate pair at the cut. */
+function previewLine(text: string): string {
+	return text.trim().split(/\r?\n/u)[0]!.replace(/\s+/gu, ' ').slice(0, 240).replace(/[\uD800-\uDBFF]$/u, '');
+}
+/** Pure hover-card extraction so summary semantics stay unit-testable. */
+export function sessionPreviewFrom(parsed: ParsedSession | null, branchHead?: string | null): UiSessionPreview | null {
+	if (!parsed) return null;
+	const messages = messagesForBranchHead(parsed, branchHead);
+	let lastUser: string | undefined, lastAssistant: string | undefined;
+	for (let index = messages.length - 1; index >= 0; index -= 1) {
+		const message = messages[index]!;
+		if (message.role === 'user' && lastUser === undefined) lastUser = message.text;
+		else if (message.role === 'assistant' && lastAssistant === undefined) lastAssistant = message.text;
+		if (lastUser !== undefined && lastAssistant !== undefined) break;
+	}
+	const preview: UiSessionPreview = {};
+	if (lastUser !== undefined && previewLine(lastUser)) preview.lastUser = previewLine(lastUser);
+	if (lastAssistant !== undefined && previewLine(lastAssistant)) preview.lastAssistant = previewLine(lastAssistant);
+	return preview.lastUser || preview.lastAssistant ? preview : null;
+}
+/** Lazily read a hover summary; rejects for foreign paths like readSessionContext does. */
+export async function readSessionPreview(sessionsRoot: string, cwd: string, path: string, branchHead?: string | null): Promise<UiSessionPreview | null> {
+	if (typeof cwd !== 'string' || !isAbsolute(cwd) || typeof path !== 'string' || !isAbsolute(path) || path.includes('\0')) throw new Error('会话路径无效');
+	// Same ownership rule as readSessionContext: only transcripts under this workspace's session directory.
+	const root = await realpath(sessionsRoot);
+	const directory = piSessionDirectory(resolve(sessionsRoot), cwd);
+	const realDirectory = await realpath(directory);
+	if ((await lstat(directory)).isSymbolicLink() || !within(root, realDirectory)
+		|| !within(resolve(directory), resolve(path)) || (await lstat(path)).isSymbolicLink()
+		|| !within(realDirectory, await realpath(path))) throw new Error('会话不属于此工作区');
+	return sessionPreviewFrom(await cachedSessionFor(sessionsRoot, cwd, path), branchHead);
 }
 export async function rebuildSearchIndex(root: string, workspaces: string[]): Promise<{ indexed: number }> {
 	sessionCaches.delete(resolve(root));

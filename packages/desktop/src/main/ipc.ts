@@ -2128,6 +2128,9 @@ export function registerIpc(options: {
 		},
 		searchFiles: (cwd, request) => agentService.searchProjectFiles(cwd, request),
 		cancelSearch: id => agentService.cancelDataSearch(id),
+		// Hover summaries read through the same agent-side index as search, with the
+		// sidebar's branch memory applied so previews follow the viewed branch.
+		sessionPreview: (workspace, path) => queueWorkspaceActivation(() => agentService.readSessionPreview(workspace, normalizeSessionPath(path), conversationBranchStore().get(normalizeSessionPath(path)))),
 	});
 	// Session management page: every transcript under the local pi sessions root,
 	// including workspaces the app has never opened (native pi's listAll scope).

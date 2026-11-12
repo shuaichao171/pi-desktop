@@ -25,6 +25,10 @@ export interface HoverTooltipProps {
 	side?: 'top' | 'right';
 	/** Interactive hints stay open while hovered; plain ones vanish as soon as the pointer leaves the trigger. */
 	interactive?: boolean;
+	/** Pointer hints wait this long before opening, so a quick swipe never loads content. Keyboard focus opens instantly. */
+	openDelayMs?: number;
+	/** Fires once each time the hint actually opens (lazy content trigger). */
+	onOpen?: () => void;
 }
 
 type TriggerProps = ButtonHTMLAttributes<HTMLButtonElement> & RefAttributes<HTMLButtonElement>;
@@ -35,11 +39,12 @@ const CLOSE_DELAY = 180;
 const interactivePopoverOpen = () => [...document.querySelectorAll<HTMLElement>('.pd-sidebar-popover, .pd-composer-config-popover, .pd-search-dialog')].some(element => element.getClientRects().length > 0 && getComputedStyle(element).visibility !== 'hidden');
 
 /** A layout-neutral hint for a native button, including aria-disabled buttons. */
-export function HoverTooltip({ children, title, description, shortcut, disabled = false, align = 'center', side: preferredSide = 'top', interactive = false }: HoverTooltipProps) {
+export function HoverTooltip({ children, title, description, shortcut, disabled = false, align = 'center', side: preferredSide = 'top', interactive = false, openDelayMs = 0, onOpen }: HoverTooltipProps) {
 	const trigger = children as ReactElement<TriggerProps>;
 	const triggerRef = useRef<HTMLButtonElement | null>(null);
 	const tooltipRef = useRef<HTMLDivElement | null>(null);
 	const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+	const openTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 	const pointerInTrigger = useRef(false);
 	const pointerInTooltip = useRef(false);
 	const selectionPointer = useRef<number | null>(null);
@@ -67,14 +72,20 @@ export function HoverTooltip({ children, title, description, shortcut, disabled 
 		closeTimer.current = null;
 	}, []);
 
+	const clearOpenTimer = useCallback(() => {
+		if (openTimer.current !== null) clearTimeout(openTimer.current);
+		openTimer.current = null;
+	}, []);
+
 	const close = useCallback(() => {
 		clearCloseTimer();
+		clearOpenTimer();
 		selectionPointer.current = null;
 		pointerInTrigger.current = false;
 		pointerInTooltip.current = false;
 		setOpen(false);
 		setPosition(null);
-	}, [clearCloseTimer]);
+	}, [clearCloseTimer, clearOpenTimer]);
 
 	const hasSelectedText = useCallback(() => {
 		const selection = window.getSelection();
@@ -100,7 +111,22 @@ export function HoverTooltip({ children, title, description, shortcut, disabled 
 		setOpen(true);
 	}, [clearCloseTimer, disabled, tooltipId]);
 
+	// Delayed hints open only while the pointer is still around: leaving during the
+	// delay cancels them, so swiping across rows never flashes or loads content.
+	const scheduleShow = useCallback(() => {
+		if (!(openDelayMs > 0)) { show(); return; }
+		if (openTimer.current !== null || disabled || interactivePopoverOpen()) return;
+		openTimer.current = setTimeout(() => {
+			openTimer.current = null;
+			if (!pointerInTrigger.current && !pointerInTooltip.current) return;
+			show();
+		}, openDelayMs);
+	}, [show, disabled, openDelayMs]);
+
+	useEffect(() => { if (visible) onOpen?.(); }, [visible]);
+
 	useEffect(() => clearCloseTimer, [clearCloseTimer]);
+	useEffect(() => clearOpenTimer, [clearOpenTimer]);
 	useEffect(() => { if (disabled) close(); }, [disabled, close]);
 	useEffect(() => {
 		if (!visible) return;
@@ -203,12 +229,13 @@ export function HoverTooltip({ children, title, description, shortcut, disabled 
 				trigger.props.onPointerEnter?.(event);
 				if (!event.defaultPrevented && event.pointerType !== 'touch') {
 					pointerInTrigger.current = true;
-					show();
+					scheduleShow();
 				}
 			},
 			onPointerLeave: (event) => {
 				trigger.props.onPointerLeave?.(event);
 				pointerInTrigger.current = false;
+				clearOpenTimer();
 				// Plain hints vanish the moment the pointer leaves their trigger.
 				if (interactive) leave();
 				else close();

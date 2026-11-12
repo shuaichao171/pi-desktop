@@ -42,14 +42,24 @@ export interface UiMachineSessionSummary extends UiSessionSummary {
 	/** Transcript file size in bytes. */
 	bytes: number;
 }
+/** Sidebar hover-card summary: first lines of a conversation's latest visible messages. */
+export interface UiSessionPreview {
+	/** First line of the last user message on the visible branch. */
+	lastUser?: string;
+	/** First line of the last assistant message on the visible branch. */
+	lastAssistant?: string;
+}
 export interface DataFeaturesBridge {
 	listMachineSessions(): Promise<UiMachineSessionSummary[]>;
 	searchSessionsPage(request: SessionSearchRequest): Promise<SessionSearchPage>;
 	searchProjectFiles(request: ProjectSearchRequest): Promise<ProjectSearchPage>;
 	cancelDataSearch(requestId: string): Promise<void>;
+	/** Lazily loaded hover summary; null when the transcript has no readable summary. */
+	sessionPreview(workspace: string, path: string): Promise<UiSessionPreview | null>;
 }
 export const DATA_FEATURE_CHANNELS = {
 	listMachineSessions: 'data:sessions:list-all',
 	searchSessionsPage: 'data:search:sessions', searchProjectFiles: 'data:search:project',
 	cancelDataSearch: 'data:search:cancel',
+	sessionPreview: 'data:sessions:preview',
 } as const;

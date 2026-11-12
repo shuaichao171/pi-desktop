@@ -34,3 +34,9 @@
 .pd-hover-tooltip-title { min-width: 0; font-weight: var(--pd-weight-medium); white-space: pre-line; overflow-wrap: anywhere; }
 .pd-hover-tooltip-description { margin-top: 6px; color: var(--pd-tooltip-subtle); line-height: 1.55; overflow-wrap: anywhere; }
 .pd-hover-tooltip-shortcut { display: inline-flex; flex: 0 0 auto; align-items: center; min-height: 17px; padding: 0 5px; border-radius: var(--pd-radius-xs); background: var(--pd-tooltip-tag-bg); color: var(--pd-tooltip-tag-text); font-family: ui-monospace, Consolas, monospace; font-size: var(--pd-font-xs); font-weight: var(--pd-weight-medium); white-space: nowrap; }
+
+/* 会话行悬停摘要（B5 懒加载）：每行最多两条，长行两行截断。 */
+.pd-session-preview { display: grid; gap: 4px; margin-top: 2px; }
+.pd-session-preview-line { display: flex; gap: 7px; margin: 0; min-width: 0; align-items: baseline; }
+.pd-session-preview-role { flex: 0 0 auto; color: var(--pd-tooltip-subtle); font-size: var(--pd-font-xs); }
+.pd-session-preview-text { min-width: 0; overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
