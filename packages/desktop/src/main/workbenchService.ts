@@ -3,11 +3,12 @@ import { execFile, spawn, type ChildProcessWithoutNullStreams, type ExecFileExce
 import { randomUUID } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { mkdtempSync } from 'node:fs';
-import { lstat, mkdir, open, readFile, readdir, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, open, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
 import { detectEditors, launchEditor, type DetectedEditor } from './editorCatalog.ts';
+import { canonicalRealpath, isBeneath, resolveBeneathRoot } from './workspaceBeneath.ts';
 import type { WorkspaceBranches, WorkspaceCommandEvent, WorkspaceEntry, WorkspaceEntryPage, WorkspaceGitCheckoutIssue, WorkspaceGitCheckoutResult, WorkspaceGitGraphCommit, WorkspaceGitLogEntry, WorkspaceGitStatus, WorkspaceOpener, WorkspaceProjectNickname } from '@pidesktop/shared';
 
 const execFileAsync = promisify(execFile);
@@ -109,10 +110,6 @@ export function describeCheckoutFailure(stderr: string): string {
 	return `切换分支失败：${parseCheckoutFailure(stderr).message}`;
 }
 
-function isWithin(root: string, candidate: string): boolean {
-	const rel = relative(root, candidate);
-	return rel === '' || (rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel));
-}
 
 export class WorkbenchService {
 	private commandGeneration = 0;
@@ -135,7 +132,7 @@ export class WorkbenchService {
 
 	private async workspaceRoot(cwd = this.getWorkspace()): Promise<string> {
 		if (!cwd) throw new Error('请先打开工作区');
-		const root = await realpath(cwd);
+		const root = await canonicalRealpath(cwd);
 		if (!(await stat(root)).isDirectory()) throw new Error('工作区不是文件夹');
 		return root;
 	}
@@ -335,15 +332,9 @@ export class WorkbenchService {
 	}
 
 	private async resolveEntry(relativePath: string, root?: string): Promise<{ root: string; path: string; relativePath: string }> {
-		if (typeof relativePath !== 'string' || relativePath.includes('\0') || isAbsolute(relativePath)) {
-			throw new Error('文件路径无效');
-		}
-		root ??= await this.workspaceRoot();
-		const candidate = resolve(root, relativePath);
-		if (!isWithin(root, candidate)) throw new Error('文件不属于当前工作区');
-		const path = await realpath(candidate);
-		if (!isWithin(root, path)) throw new Error('文件不属于当前工作区');
-		return { root, path, relativePath: relative(root, path).split(sep).join('/') };
+		// Beneath semantics (workspaceBeneath): the realpathed target must stay
+		// inside the realpathed workspace root; escapes are rejected, never fallen back.
+		return resolveBeneathRoot(root ?? await this.workspaceRoot(), relativePath);
 	}
 
 	private gitPrefix(root: string): string[] {
@@ -441,7 +432,7 @@ export class WorkbenchService {
 		const { root, path: parent } = await this.resolveEntry(parentRelativePath);
 		if (!(await stat(parent)).isDirectory()) throw new Error('目标不是文件夹');
 		const target = resolve(parent, name);
-		if (!isWithin(root, target)) throw new Error('目标不属于当前工作区');
+		if (!isBeneath(root, target)) throw new Error('目标不属于当前工作区');
 		await this.mutateGuard(generation, approvedCwd, root);
 		if (kind === 'directory') {
 			try { await mkdir(target); }
@@ -461,9 +452,9 @@ export class WorkbenchService {
 		const approvedCwd = this.getWorkspace();
 		const { root, path } = await this.resolveEntry(relativePath);
 		const parent = resolve(path, '..');
-		if (!isWithin(root, parent) || resolve(root) === resolve(path)) throw new Error('不能重命名工作区根目录');
+		if (!isBeneath(root, parent) || resolve(root) === resolve(path)) throw new Error('不能重命名工作区根目录');
 		const target = resolve(parent, newName);
-		if (!isWithin(root, target)) throw new Error('目标不属于当前工作区');
+		if (!isBeneath(root, target)) throw new Error('目标不属于当前工作区');
 		if (resolve(target) === resolve(path)) return;
 		// On case-insensitive file systems "readme.md" → "README.md" stats the
 		// source itself; only a different file (another inode) is a conflict.
@@ -578,7 +569,7 @@ export class WorkbenchService {
 			}
 			// Porcelain paths are relative to the repository, even when -C selects a subdirectory.
 			const candidate = resolve(repositoryRoot, record.slice(3));
-			if (!isWithin(root, candidate)) continue;
+			if (!isBeneath(root, candidate)) continue;
 			entries.push({ path: relative(root, candidate).split(sep).join('/'), status });
 		}
 		return entries;
@@ -629,7 +620,7 @@ export class WorkbenchService {
 	private validateGitPath(input: string, root: string): string {
 		if (typeof input !== 'string' || input.length === 0 || input.length > 4096 || input.includes('\0') || isAbsolute(input)) throw new Error('文件路径无效');
 		const candidate = resolve(root, input);
-		if (!isWithin(root, candidate)) throw new Error('文件不属于当前工作区');
+		if (!isBeneath(root, candidate)) throw new Error('文件不属于当前工作区');
 		return relative(root, candidate).split(sep).join('/');
 	}
 
@@ -833,7 +824,7 @@ export class WorkbenchService {
 		const root = await this.workspaceRoot();
 		const prefix = this.gitPrefix(root);
 		const candidate = resolve(root, relativePath);
-		if (!isWithin(root, candidate)) throw new Error('文件不属于当前工作区');
+		if (!isBeneath(root, candidate)) throw new Error('文件不属于当前工作区');
 		const safePath = relative(root, candidate).split(sep).join('/');
 		if (!safePath) throw new Error('请选择文件');
 		const status = await execFileAsync('git', [...prefix, 'status', '--porcelain=v1', '-z', '--untracked-files=normal', '--', safePath], {
@@ -1020,7 +1011,7 @@ export class WorkbenchService {
 			const target = resolve(this.safeHooksPath);
 			// Detach first: a git call during the removal creates a fresh directory.
 			this.safeHooksPath = null;
-			if (isWithin(resolve(tmpdir()), target) && basename(target).startsWith('pi-desktop-no-git-hooks-')) {
+			if (isBeneath(resolve(tmpdir()), target) && basename(target).startsWith('pi-desktop-no-git-hooks-')) {
 				try { await rm(target, { recursive: true, force: true }); }
 				catch { /* A stale empty temporary directory does not affect the workspace. */ }
 			}
