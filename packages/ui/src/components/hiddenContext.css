@@ -54,3 +54,5 @@
 .pd-hidden-context-save { border-color: transparent; background: var(--pd-send-bg); color: var(--pd-send-ink); font-weight: var(--pd-weight-semibold); }
 .pd-hidden-context-save:hover:not(:disabled) { filter: brightness(1.05); }
 .pd-hidden-context-clear { color: var(--pd-danger, #d13438); }
+.pd-hidden-context-toggle.is-inactive { opacity: 0.55; }
+.pd-hidden-context-toggle.is-inactive:hover { opacity: 1; }

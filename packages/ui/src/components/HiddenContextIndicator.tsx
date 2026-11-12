@@ -6,25 +6,25 @@ import { HoverTooltip } from './HoverTooltip';
 import { Icon } from './Icons';
 import './hiddenContext.css';
 
-/** True when the open conversation carries a hidden instruction. */
-function useHiddenContextActive(): boolean {
-	const sessionPath = useChatStore((s) => s.sessionPath);
-	const hiddenContext = useChatStore((s) => s.hiddenContext);
-	return sessionPath !== null && hiddenContext !== null && hiddenContext.trim().length > 0;
-}
-
 /**
- * Transparency indicator for the composer edge: a small eye that appears only
- * while a hidden instruction is active. Hovering says what it means; clicking
- * reveals the editor — the content stays out of the transcript either way.
+ * Transparency indicator for the composer edge. Rendered whenever the
+ * conversation has a session file: an open eye while a hidden instruction is
+ * active, a dimmed eye-off that still opens the editor when none is set — the
+ * write path must stay reachable, otherwise the first instruction could never
+ * be created.
  */
 export function HiddenContextIndicator({ onToggle, open }: { onToggle(): void; open: boolean }) {
 	const { t } = useT();
-	const active = useHiddenContextActive();
-	if (!active && !open) return null;
+	const sessionPath = useChatStore((s) => s.sessionPath);
+	const hiddenContext = useChatStore((s) => s.hiddenContext);
+	const available = sessionPath !== null && hiddenContext !== null;
+	const active = available && hiddenContext.trim().length > 0;
+	if (!available && !open) return null;
 	return (
-		<HoverTooltip title={t('hiddenContext.indicatorTitle')} description={t('hiddenContext.indicatorDescription')}>
-			<button type="button" className={`pd-hidden-context-toggle${open ? ' is-open' : ''}`} onMouseDown={(event) => event.preventDefault()} onClick={onToggle} aria-label={t('hiddenContext.open')} aria-pressed={open} aria-haspopup="dialog" aria-expanded={open}><Icon name="eye" width="16" height="16" /></button>
+		<HoverTooltip
+			title={t(active ? 'hiddenContext.indicatorTitle' : 'hiddenContext.indicatorInactiveTitle')}
+			description={t(active ? 'hiddenContext.indicatorDescription' : 'hiddenContext.indicatorInactiveDescription')}>
+			<button type="button" className={`pd-hidden-context-toggle${active ? '' : ' is-inactive'}${open ? ' is-open' : ''}`} onMouseDown={(event) => event.preventDefault()} onClick={onToggle} aria-label={t(active ? 'hiddenContext.open' : 'hiddenContext.add')} aria-pressed={open} aria-haspopup="dialog" aria-expanded={open}><Icon name={active ? 'eye' : 'eyeOff'} width="16" height="16" /></button>
 		</HoverTooltip>
 	);
 }

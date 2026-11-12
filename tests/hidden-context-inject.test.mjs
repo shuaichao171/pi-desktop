@@ -79,3 +79,21 @@ test('the hidden extension injects its own system prompt section on before_agent
 	handlers.get('unset:before_agent_start')(unsetEvent);
 	assert.deepEqual(unsetEvent.systemPromptOptions.sections, {}, 'a missing store path disables the injector');
 });
+
+test('changing or clearing the instruction takes effect on the next run', async (t) => {
+	const { hiddenContextExtension, HIDDEN_CONTEXT_SECTION, hiddenContextSection } = await import('../packages/agent/src/hiddenContext.ts');
+	const temp = mkdtempSync(join(tmpdir(), 'pi-hidden-ext-'));
+	t.after(async () => { rmSync(temp, { recursive: true, force: true }); });
+	const storePath = join(temp, 'hidden-context.json');
+	writeFileSync(storePath, JSON.stringify({ version: 1, contexts: { 'C:\sessions\a.jsonl': 'v1' } }));
+
+	const handlers = new Map();
+	hiddenContextExtension(() => 'C:\sessions\a.jsonl', () => storePath)({ on: (name, handler) => handlers.set(name, handler) });
+	const fire = () => { const event = { systemPromptOptions: { sections: {} } }; handlers.get('before_agent_start')(event); return event; };
+
+	assert.equal(fire().systemPromptOptions.sections[HIDDEN_CONTEXT_SECTION], hiddenContextSection('v1'), 'first run reads the initial value');
+	writeFileSync(storePath, JSON.stringify({ version: 1, contexts: { 'C:\sessions\a.jsonl': 'v2' } }));
+	assert.equal(fire().systemPromptOptions.sections[HIDDEN_CONTEXT_SECTION], hiddenContextSection('v2'), 'the next run re-reads the file and sees the edit');
+	writeFileSync(storePath, JSON.stringify({ version: 1, contexts: {} }));
+	assert.deepEqual(fire().systemPromptOptions.sections, {}, 'clearing the key drops the section on the next run');
+});
