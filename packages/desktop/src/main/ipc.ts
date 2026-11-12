@@ -57,6 +57,8 @@ import { registerWorkbenchFeatureIpc } from './workbenchFeatureIpc';
 import { registerInputAttachmentIpc } from './inputAttachmentIpc';
 import { registerDataFeaturesIpc } from './dataFeaturesIpc';
 import { DATA_FEATURE_CHANNELS, INPUT_FEATURE_CHANNELS, WORKBENCH_FEATURE_CHANNELS, MANAGEMENT_FEATURE_CHANNELS, requireInputQueueScope, type UiMachineSessionSummary } from '@pidesktop/shared';
+import { requireSideQuestionAskRequest, SIDE_QUESTION_CHANNELS, type UiSideQuestion } from '@pidesktop/shared';
+import { sideQuestionStore } from './sideQuestionStore';
 import type { UiPluginMutation, UiPluginResourceKind, UiPluginScope, UiSaveInstructionRequest } from '@pidesktop/shared';
 import { requireDialogResponse, type UiExtensionDialogResponse } from '@pidesktop/shared';
 
@@ -2174,6 +2176,7 @@ export function registerIpc(options: {
 			sessionOwnerByPath.delete(target);
 			invalidateSessionListing(owner);
 			conversationBranchStore().clear(target);
+			sideQuestionStore().clear(target);
 			await withSessionMeta(async (meta) => {
 				delete meta[target];
 				await saveSessionMeta(meta);
@@ -2288,6 +2291,63 @@ export function registerIpc(options: {
 		if (!isRecord(request) || typeof request.sessionPath !== 'string' || !request.sessionPath || request.sessionPath.length > 32768
 			|| (request.provider !== undefined && typeof request.provider !== 'string') || (request.model !== undefined && typeof request.model !== 'string')) throw new Error('建议请求无效');
 		return agentFor(event).suggestNextInput({ sessionPath: request.sessionPath, ...(request.provider && request.model ? { provider: request.provider, model: request.model } : {}) });
+	});
+
+	// --- 侧问（side question）：一次性旁路问答，答案挂轮次下方、不进主对话上下文 ---
+	/** Every renderer that may show this conversation hears the new record set. */
+	const broadcastSideQuestions = (sessionPath: string): void => {
+		const records = sideQuestionStore().list(sessionPath);
+		const targets = [...BrowserWindow.getAllWindows().map((win) => win.webContents), ...paneSlots().map((pane) => pane.webContents)];
+		for (const target of targets) {
+			try { if (!target.isDestroyed()) target.send(SIDE_QUESTION_CHANNELS.changed, sessionPath, records); }
+			catch (error) { console.error('Failed to send side-questions:changed:', error); }
+		}
+	};
+	handleRendererInvoke(SIDE_QUESTION_CHANNELS.list, (_event, path: unknown) => {
+		return sideQuestionStore().list(normalizeSessionPath(path));
+	});
+	handleRendererInvoke(SIDE_QUESTION_CHANNELS.ask, async (event, request: unknown) => {
+		const ask = requireSideQuestionAskRequest(request);
+		const sessionPath = normalizeSessionPath(ask.sessionPath);
+		const createdAt = Date.now();
+		const base: UiSideQuestion = {
+			id: ask.id,
+			sessionPath,
+			anchorEntryId: ask.anchorEntryId,
+			question: ask.question.trim(),
+			answer: null,
+			status: 'running',
+			modelProvider: ask.model?.provider ?? '',
+			modelId: ask.model?.id ?? '',
+			modelName: ask.model?.name ?? null,
+			contextTruncated: ask.contextTruncated,
+			createdAt,
+			finishedAt: null,
+		};
+		sideQuestionStore().record(sessionPath, base);
+		broadcastSideQuestions(sessionPath);
+		let settled: UiSideQuestion;
+		try {
+			// A standalone model call (never the session transcript) answers the ask;
+			// the main conversation can keep streaming while it runs.
+			const reply = await agentFor(event).answerSideQuestion({ ...ask, sessionPath });
+			settled = { ...base, answer: reply.answer, status: 'done', finishedAt: Date.now(),
+				modelProvider: reply.modelProvider, modelId: reply.modelId, modelName: reply.modelName };
+		} catch (cause) {
+			settled = { ...base, status: 'error', error: cause instanceof Error ? cause.message : String(cause), finishedAt: Date.now() };
+		}
+		// A delete that raced the run wins: never resurrect a removed record.
+		if (sideQuestionStore().list(sessionPath).some((item) => item.id === ask.id)) {
+			sideQuestionStore().record(sessionPath, settled);
+			broadcastSideQuestions(sessionPath);
+		}
+		return settled;
+	});
+	handleRendererInvoke(SIDE_QUESTION_CHANNELS.delete, (_event, path: unknown, id: unknown) => {
+		const sessionPath = normalizeSessionPath(path);
+		if (typeof id !== 'string' || !id || id.length > 128) throw new Error('侧问标识无效');
+		sideQuestionStore().remove(sessionPath, id);
+		broadcastSideQuestions(sessionPath);
 	});
 
 	handleRendererInvoke(IPC_CHANNELS.agentAbort, (event) => agentFor(event).abort());

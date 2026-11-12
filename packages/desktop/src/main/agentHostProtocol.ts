@@ -73,6 +73,7 @@ export const AGENT_HOST_METHODS = [
 	'interruptShellTools',
 	'generateCommitMessage',
 	'suggestNextInput',
+	'answerSideQuestion',
 	'loadSession',
 	'unloadSession',
 	'abort',
