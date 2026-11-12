@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import type { ProjectTrustDecision } from '@pidesktop/agent';
 import type { AgentEventEnvelope, AgentSnapshot, UiExtensionDialogRequest, UiExtensionDialogResponse, UiPiEngineSelection } from '@pidesktop/shared';
 import { createAgentHostProxy, type AgentHostMethod, type AgentHostToMain, type MainToAgentHost } from './agentHostProtocol';
+import { hiddenContextStorePath } from './hiddenContextStore';
 import { probePiEngine, readBuiltinEngineInfo } from './piEngine';
 
 export interface AgentHostUiHandlers {
@@ -104,7 +105,9 @@ export class AgentHostClient {
 			: { mode: 'builtin', version: readBuiltinEngineInfo()?.version ?? null };
 		const host = utilityProcess.fork(join(app.getAppPath(), 'out', 'main', 'agentHost.js'), [], {
 			serviceName: 'Pi Agent',
-			...(engineDir ? { env: { ...process.env, PI_DESKTOP_ENGINE_DIR: engineDir } } : {}),
+			// The hidden-context store file is main-owned; the host gets its path so the
+			// injector can read the same bytes (read-only) without another IPC channel.
+			env: { ...process.env, PI_DESKTOP_HIDDEN_CONTEXT_FILE: hiddenContextStorePath(), ...(engineDir ? { PI_DESKTOP_ENGINE_DIR: engineDir } : {}) },
 		});
 		this.host = host;
 		let resolveExit!: () => void;

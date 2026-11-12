@@ -5,7 +5,7 @@ import { WORKBENCH_FEATURE_CHANNELS } from '@pidesktop/shared/workbenchFeatures'
 import { DATA_FEATURE_CHANNELS } from '@pidesktop/shared/dataFeatures';
 import { INPUT_FEATURE_CHANNELS } from '@pidesktop/shared/inputFeatures';
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
-import { CLOUD_SYNC_FEATURE_CHANNELS, DEBUG_API_CHANNELS, IPC_CHANNELS, SIDE_QUESTION_CHANNELS, type AgentBridge, type AgentEventEnvelope, type UiAppCommand, type UiAutomationSnapshot, type UiCloudSyncState, type UiDebugApiConfig, type UiDebugApiState, type UiExtensionDialogRequest, type UiSideQuestion, type UiSplitPaneState, type UiUpdateState, type WindowChromeState, type WorkspaceChangeEvent, type WorkspaceCommandEvent } from '@pidesktop/shared';
+import { CLOUD_SYNC_FEATURE_CHANNELS, DEBUG_API_CHANNELS, HIDDEN_CONTEXT_CHANNELS, IPC_CHANNELS, SIDE_QUESTION_CHANNELS, type AgentBridge, type AgentEventEnvelope, type UiAppCommand, type UiAutomationSnapshot, type UiCloudSyncState, type UiDebugApiConfig, type UiDebugApiState, type UiExtensionDialogRequest, type UiSideQuestion, type UiSplitPaneState, type UiUpdateState, type WindowChromeState, type WorkspaceChangeEvent, type WorkspaceCommandEvent } from '@pidesktop/shared';
 import { unwrapIpcError } from './ipcErrors';
 
 /**
@@ -321,6 +321,13 @@ const bridge: AgentBridge = {
 			const wrapped = (_e: Electron.IpcRendererEvent, sessionPath: string, records: UiSideQuestion[]): void => listener(sessionPath, records);
 			ipcRenderer.on(SIDE_QUESTION_CHANNELS.changed, wrapped);
 			return () => ipcRenderer.removeListener(SIDE_QUESTION_CHANNELS.changed, wrapped);
+		},
+		getHiddenContext: (sessionPath) => invoke(HIDDEN_CONTEXT_CHANNELS.get, sessionPath),
+		setHiddenContext: (sessionPath, text) => invoke(HIDDEN_CONTEXT_CHANNELS.set, sessionPath, text),
+		onHiddenContextChanged: (listener) => {
+			const wrapped = (_e: Electron.IpcRendererEvent, sessionPath: string, text: string): void => listener(sessionPath, text);
+			ipcRenderer.on(HIDDEN_CONTEXT_CHANNELS.changed, wrapped);
+			return () => ipcRenderer.removeListener(HIDDEN_CONTEXT_CHANNELS.changed, wrapped);
 		},
 	abort: () => invoke(IPC_CHANNELS.agentAbort),
 	newSession: (options) => invoke(IPC_CHANNELS.agentNewSession, options),
