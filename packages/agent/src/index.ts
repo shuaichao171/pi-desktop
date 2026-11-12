@@ -121,7 +121,7 @@ import type { UiMcpSaveRequest, UiMcpTarget } from '../../shared/src/mcpFeatures
 import type { PluginUpdateCheck } from '../../shared/src/pluginUpdates.ts';
 import { checkPluginUpdate } from './pluginUpdates.ts';
 import { buildNextInputContext, cleanNextInputSuggestion, NEXT_INPUT_SYSTEM_PROMPT, NEXT_INPUT_TIMEOUT_MS } from './nextInputSuggestion.ts';
-import { buildSideQuestionPrompt, cleanSideQuestionAnswer, SIDE_QUESTION_SYSTEM_PROMPT, SIDE_QUESTION_TIMEOUT_MS } from './sideQuestion.ts';
+import { buildSideQuestionPrompt, sideQuestionAnswerFrom, SIDE_QUESTION_SYSTEM_PROMPT, SIDE_QUESTION_TIMEOUT_MS } from './sideQuestion.ts';
 
 export interface AgentInitOptions {
 	cwd: string;
@@ -1508,10 +1508,7 @@ class SingleAgentService {
 				systemPrompt: SIDE_QUESTION_SYSTEM_PROMPT,
 				messages: [{ role: 'user', content: buildSideQuestionPrompt(request), timestamp: Date.now() }],
 			}, { signal: controller.signal });
-			const answer = cleanSideQuestionAnswer(message.content
-				.filter((block): block is { type: 'text'; text: string } => block.type === 'text')
-				.map((block) => block.text).join(''));
-			if (!answer) throw new Error('模型未返回侧问答案');
+			const answer = sideQuestionAnswerFrom(message, controller.signal.aborted);
 			return { answer, modelProvider: model.provider, modelId: model.id, modelName: model.name ?? null };
 		} finally { clearTimeout(timer); }
 	}

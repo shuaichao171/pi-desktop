@@ -15,6 +15,9 @@ interface SideQuestionsFile { version: 1; records: Record<string, UiSideQuestion
 
 const MAX_RECORDS_PER_SESSION = 200;
 
+/** Error text for an ask the previous app run never finished. */
+export const SIDE_QUESTION_INTERRUPTED = '侧问在应用退出时中断，请重试';
+
 const isRecord = (value: unknown): value is UiSideQuestion => {
 	if (!value || typeof value !== 'object') return false;
 	const record = value as Partial<UiSideQuestion>;
@@ -63,6 +66,18 @@ export class SideQuestionStore {
 		}
 		this.records = stored.records;
 		this.lastWritten = JSON.stringify(stored);
+		// The store is created once per process, so a record still "running" here was
+		// cut off by an earlier exit (quit/crash mid-ask): nothing will ever settle it.
+		// Settle it as failed so the card offers retry/delete instead of spinning forever.
+		let interrupted = false;
+		for (const records of Object.values(this.records)) {
+			for (const [index, record] of records.entries()) {
+				if (record.status !== 'running') continue;
+				records[index] = { ...record, status: 'error', error: SIDE_QUESTION_INTERRUPTED, finishedAt: record.finishedAt ?? record.createdAt };
+				interrupted = true;
+			}
+		}
+		if (interrupted) this.persist();
 	}
 
 	/** One conversation's records, oldest first. */

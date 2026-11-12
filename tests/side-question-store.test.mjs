@@ -84,3 +84,22 @@ test('a deleted record is not resurrected by a late settled write (guards live i
 	store.record(session, record({ status: 'done', answer: '晚到的答案' }));
 	assert.equal(store.list(session).at(0)?.answer, '晚到的答案', 'an explicit re-record is an upsert, not a resurrection bug');
 });
+
+test('records left running by an earlier exit settle as interrupted errors on load', async (t) => {
+	const temp = mkdtempSync(join(tmpdir(), 'pi-side-question-store-'));
+	t.after(async () => { rmSync(temp, { recursive: true, force: true }); });
+	const { SideQuestionStore, SIDE_QUESTION_INTERRUPTED } = await import('../packages/desktop/src/main/sideQuestionStore.ts');
+	const path = join(temp, 'side-questions.json');
+	writeFileSync(path, JSON.stringify({ version: 1, records: { 'C:\sessions\a.jsonl': [
+		record({ id: 'stuck', status: 'running', createdAt: 5 }),
+		record({ id: 'done', status: 'done', answer: '好', createdAt: 6, finishedAt: 7 }),
+	] } }), 'utf8');
+	const store = new SideQuestionStore(path);
+	const [stuck, done] = store.list('C:\sessions\a.jsonl');
+	assert.equal(stuck.status, 'error', 'nothing can settle a run from a previous process');
+	assert.equal(stuck.error, SIDE_QUESTION_INTERRUPTED);
+	assert.equal(stuck.finishedAt, 5);
+	assert.equal(done.status, 'done', 'settled records are untouched');
+	const onDisk = JSON.parse(readFileSync(path, 'utf8')).records['C:\sessions\a.jsonl'];
+	assert.equal(onDisk.find((item) => item.id === 'stuck').status, 'error', 'the repair is persisted');
+});

@@ -660,6 +660,7 @@ modelProviders: [...get().modelProviders],
 					// Even a short-circuited ready is this session's first authoritative view
 					// in this renderer: restore the remembered branch and keep the record current.
 					requestBranchViewSync(event.sessionPath);
+					dropForeignSideQuestions(event.sessionPath);
 					refreshSideQuestions(get().bridge, event.sessionPath);
 					if (!get().modelProviders.length) void get().refreshModelProviders().catch(() => {});
 					return;
@@ -714,7 +715,9 @@ modelProviders: [...get().modelProviders],
 				// Branch bookkeeping: restore the remembered branch once per load and keep
 				// the record current as the visible leaf moves (turns, edits, switches).
 				requestBranchViewSync(event.sessionPath);
-				// Aside records belong to this conversation only; a switch already cleared them.
+				// Aside records belong to this conversation only: drop the ones the view is
+				// leaving right away (a failed list must not keep them), then reload.
+				dropForeignSideQuestions(event.sessionPath);
 				refreshSideQuestions(get().bridge, event.sessionPath);
 				// This ready is the authoritative conversation view; remember it so a
 				// later failed navigation can put the renderer back on the session the
@@ -2505,6 +2508,12 @@ function applyBranchTree(tree: UiSessionTreeNode[]): void {
 	const current = store.getState().branchTree;
 	if (current && sessionTreesEqual(current, tree)) return;
 	store.setState({ branchTree: tree });
+}
+
+/** Keeps only the aside records of the conversation a ready just bound. */
+function dropForeignSideQuestions(sessionPath: string | null): void {
+	const records = store.getState().sideQuestions;
+	if (records.some((item) => item.sessionPath !== sessionPath)) store.setState({ sideQuestions: records.filter((item) => item.sessionPath === sessionPath) });
 }
 
 /** Restores a conversation's aside records after a ready/bootstrap; best-effort. */

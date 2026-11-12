@@ -26,7 +26,7 @@
 - 入口：用户消息/助手回答悬停操作行的「侧问此轮」（spark 图标）。助手消息点击时锚点解析为其所属轮次的**用户消息**（`sideQuestionAnchorFor` 回溯最近前置用户消息；无前置用户消息时点击无操作）。右键菜单未做（悬停按钮 + 键盘可达已覆盖入口，见限制）。
 - 输入：锚点用户消息下方**内联展开**的非模态输入框（textarea + 模型选择 + 提问/取消）。Enter 提问、Shift+Enter 换行、Esc 关闭。模型默认当前会话模型，可改选（已配置供应商的可用模型）。
 - 卡片：提问后在同一位置出现折叠卡片，运行中显示 spinner + 计时；完成后自动展开一次（Markdown 渲染复用 `ConversationMarkdown`），再点击折叠/展开。
-- 卡片操作：复制答案、重新问（原问题预填回输入框，提交**复用同一记录 id** 原位重跑）、删除记录；失败显示错误 + 重试按钮（同 id 重跑）。
+- 卡片操作：复制答案、重新问（原问题预填回输入框，提交**复用同一记录 id** 原位重跑）、删除记录；失败显示错误 + 重试按钮（同 id 重跑）。错误文本取供应商真实原因：pi-ai 失败时以 `stopReason: 'error'`/`errorMessage` 正常返回而非抛出，超时则为 `aborted`（`sideQuestionAnswerFrom`），失败前已流出的半截文本不作为答案保存。上次应用退出时仍在 `running` 的记录，状态文件加载时落定为「已中断」错误（可重试/删除），不会永久转圈。
 - 边界：同一轮可并存多条侧问；侧问运行中主对话可继续（含流式中提问）；每会话记录上限 200 条（超出丢最旧）。
 
 ## 上下文切片规则
@@ -78,4 +78,5 @@
 - `tests/side-question-context.test.mjs`：切片纯逻辑（锚点解析、窗口顺序、系统行过滤、预算丢弃、取尾截断、前轮优先）。
 - `tests/side-question-prompt.test.mjs`：提示词拼装与答案清理。
 - `tests/side-question-store.test.mjs`：状态文件损坏备份、round-trip、同 id upsert、删除、清空。
+- `tests/side-question-render.test.mjs`：React 19 真实挂载侧问区域，选择器不得因每次返回新数组而无限重渲染（区域挂在每条用户消息下）。
 - `tests/side-question-actions.test.mjs`：渲染 store 动作（乐观 running、按 id 落定、失败记录、跨会话推送过滤、重跑复用 id、删除）。

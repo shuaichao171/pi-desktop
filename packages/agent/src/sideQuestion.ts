@@ -29,6 +29,30 @@ export function buildSideQuestionPrompt(request: Pick<UiSideQuestionAskRequest, 
 	return `${quoted}用户针对这个轮次的旁路问题：${request.question.trim()}`;
 }
 
+/** The slice of a completeSimple reply the answer extraction reads. */
+export interface SideQuestionReply {
+	stopReason?: string;
+	errorMessage?: string;
+	content: readonly { type: string; text?: string }[];
+}
+
+/**
+ * Turns a completeSimple reply into the answer text. pi-ai reports provider
+ * failures by resolving with `stopReason: 'error'` (plus `errorMessage`) rather
+ * than rejecting, and an abort (our timeout) as `stopReason: 'aborted'`; both
+ * must fail the ask with their real reason instead of a generic "no answer",
+ * and any text streamed before the failure must never be stored as a done answer.
+ */
+export function sideQuestionAnswerFrom(reply: SideQuestionReply, timedOut = false): string {
+	if (reply.stopReason === 'aborted') throw new Error(timedOut ? `侧问超时（${SIDE_QUESTION_TIMEOUT_MS / 1000} 秒）` : '侧问已取消');
+	if (reply.stopReason === 'error') throw new Error(reply.errorMessage?.trim() || '模型调用失败');
+	const answer = cleanSideQuestionAnswer(reply.content
+		.filter((block) => block.type === 'text' && typeof block.text === 'string')
+		.map((block) => block.text!).join(''));
+	if (!answer) throw new Error('模型未返回侧问答案');
+	return answer;
+}
+
 /** Keeps the model answer as-is except for whitespace and a stray full-body code fence. */
 export function cleanSideQuestionAnswer(raw: string): string {
 	return raw.trim()

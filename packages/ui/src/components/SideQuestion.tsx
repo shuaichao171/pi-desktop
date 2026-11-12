@@ -1,4 +1,5 @@
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import type { UiSideQuestion } from '@pidesktop/shared';
 import { useT } from '../i18n';
 import { useChatStore } from '../store';
@@ -153,7 +154,10 @@ export const SideQuestionComposer = memo(function SideQuestionComposer({ anchorE
 
 /** Cards plus the open inline input of one anchored turn. */
 export const SideQuestionRegion = memo(function SideQuestionRegion({ anchorEntryId }: { anchorEntryId: string }) {
-  const records = useChatStore((s) => s.sideQuestions.filter((item) => item.anchorEntryId === anchorEntryId));
+  // useShallow keeps the filtered list referentially stable: under zustand 5 /
+  // React 19 a selector returning a fresh array each call never settles
+  // ("Maximum update depth exceeded"), and this region mounts under every user message.
+  const records = useChatStore(useShallow((s: ReturnType<typeof useChatStore.getState>) => s.sideQuestions.filter((item) => item.anchorEntryId === anchorEntryId)));
   const target = useChatStore((s) => s.sideQuestionTarget);
   const open = target?.anchorEntryId === anchorEntryId;
   if (!open && records.length === 0) return null;
