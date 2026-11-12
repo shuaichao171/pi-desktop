@@ -102,11 +102,24 @@ test('sessionPreviewFrom summarizes the latest leaf chain and follows the select
 	// 侧栏记忆的分支头改变可见链路：摘要跟随被查看的分支。
 	assert.deepEqual(sessionPreviewFrom(tree, 'a1b'), { lastUser: 'original question', lastAssistant: 'branched answer' });
 	assert.deepEqual(sessionPreviewFrom(tree, 'a2'), { lastUser: 'revised question', lastAssistant: 'revised answer' }, 'the leaf chain needs no branch head');
+	// 记忆的分支头已不在转录中（过期记录）：退回最新叶子链，而不是空卡片。
+	assert.deepEqual(sessionPreviewFrom(tree, 'gone'), { lastUser: 'revised question', lastAssistant: 'revised answer' });
 	// 环状分支头不会死循环。
 	const cyclic = parsed([message('u1', 'u1', 'user', 'loop')], 'u1');
 	assert.equal(messagesForBranchHead(cyclic, 'u1').length, 1);
 	assert.equal(sessionPreviewFrom(null), null);
 	assert.equal(sessionPreviewFrom(parsed([], null)), null, 'no user/assistant text means no summary area');
+});
+
+test('hover previews never wait in the workspace activation queue', () => {
+	// 悬停预览排在会话切换的串行队列里会让点击切换等预览读盘（最大 64MB 解析）。
+	const ipc = readFileSync(new URL('../packages/desktop/src/main/ipc.ts', import.meta.url), 'utf8');
+	const start = ipc.indexOf('sessionPreview: (workspace, path)');
+	assert.ok(start >= 0, 'the preview wiring is present');
+	// The handler body ends at the first closing "}," after its start.
+	const wiring = ipc.slice(start, ipc.indexOf('},', start));
+	assert.match(wiring, /readSessionPreview/);
+	assert.doesNotMatch(wiring, /queueWorkspaceActivation/);
 });
 
 test('sidebar rows wire the delayed hover card and lazy summary trigger', () => {

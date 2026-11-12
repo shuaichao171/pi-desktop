@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { focusAwarePollDelayMs, FOCUS_AWARE_POLL_DEFAULTS, type FocusAwarePollOptions, type FocusPollState } from './focusAwarePolling';
+import { focusAwarePollDelayMs, focusRegainedDelayMs, FOCUS_AWARE_POLL_DEFAULTS, type FocusAwarePollOptions, type FocusPollState } from './focusAwarePolling';
 
 /**
  * Window focus tracking shared by every focus-aware poll. The app already
@@ -47,21 +47,26 @@ export function useFocusAwarePoll(callback: () => void, baseIntervalMs: number, 
 		const resolved: FocusAwarePollOptions = { unfocusedMultiplier: multiplier, idleCutoffMs };
 		let timer: ReturnType<typeof setTimeout> | null = null;
 		let stopped = false;
+		// The consumer refreshes on mount itself, so the poll's start counts as a run.
+		let lastRun = Date.now();
 		const clear = () => { if (timer !== null) { clearTimeout(timer); timer = null; } };
+		const tick = () => { timer = null; if (stopped) return; lastRun = Date.now(); callbackRef.current(); schedule(); };
 		const schedule = () => {
 			if (stopped || timer !== null) return;
 			// null delay = idle cutoff: no timer. Refocus reschedules through the listener.
 			const delay = focusAwarePollDelayMs(baseIntervalMs, windowFocusState(), resolved);
 			if (delay === null) return;
-			timer = setTimeout(() => { timer = null; if (!stopped) { callbackRef.current(); schedule(); } }, delay);
+			timer = setTimeout(tick, delay);
 		};
 		const onFocusChange = () => {
 			clear();
-			if (windowFocusState().focused && !stopped) {
-				// Refocus refreshes once immediately, then resumes the normal cadence.
-				callbackRef.current();
-			}
-			schedule();
+			if (stopped) return;
+			if (!windowFocusState().focused) { schedule(); return; }
+			// Refocus refreshes right away only when a tick is due (e.g. after the idle
+			// pause); otherwise it waits out the rest of the base interval.
+			const wait = focusRegainedDelayMs(baseIntervalMs, Date.now() - lastRun);
+			if (wait === 0) tick();
+			else timer = setTimeout(tick, wait);
 		};
 		schedule();
 		const unsubscribe = subscribeWindowFocus(onFocusChange);

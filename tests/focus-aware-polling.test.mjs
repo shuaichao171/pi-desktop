@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
-import { FOCUS_AWARE_POLL_DEFAULTS, focusAwarePollDelayMs } from '../packages/ui/src/focusAwarePolling.ts';
+import { FOCUS_AWARE_POLL_DEFAULTS, focusAwarePollDelayMs, focusRegainedDelayMs } from '../packages/ui/src/focusAwarePolling.ts';
 
 test('focused windows poll at the base interval', () => {
 	assert.equal(focusAwarePollDelayMs(60_000, { focused: true, unfocusedMs: 0 }), 60_000);
@@ -52,4 +52,13 @@ test('useFocusAwarePoll stays at component top level, never inside an effect cal
 	for (const line of callLines) {
 		assert.match(line, /^\tuseFocusAwarePoll\(/, 'hook calls sit at exactly one tab of indentation (component top level)');
 	}
+});
+
+test('regaining focus refreshes at once only when a tick is due', () => {
+	// 用量查询等按用户配置间隔运行：频繁切回窗口不得每次都额外请求。
+	assert.equal(focusRegainedDelayMs(300_000, 10_000), 290_000, 'a recent run waits out the rest of the interval');
+	assert.equal(focusRegainedDelayMs(300_000, 300_000), 0, 'a due tick fires immediately');
+	assert.equal(focusRegainedDelayMs(300_000, 11 * 60_000), 0, 'after the idle pause the refresh is immediate');
+	assert.equal(focusRegainedDelayMs(1_000, Number.NaN), 0);
+	assert.equal(focusRegainedDelayMs(1_000, -5), 0, 'clock skew never delays past the interval');
 });

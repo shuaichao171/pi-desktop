@@ -25,6 +25,17 @@ export interface FocusPollState {
 }
 
 /**
+ * Delay before the first tick after the window regains focus: immediately when
+ * a tick is due (the base interval elapsed, e.g. after an idle-cutoff pause),
+ * otherwise the remainder of the base interval. Refocusing must not turn every
+ * alt-tab into an extra request against a user-configured cadence.
+ */
+export function focusRegainedDelayMs(baseIntervalMs: number, sinceLastRunMs: number): number {
+	if (!Number.isFinite(sinceLastRunMs) || sinceLastRunMs < 0) return 0;
+	return Math.max(0, baseIntervalMs - sinceLastRunMs);
+}
+
+/**
  * The delay a poll should wait right now: the base interval while focused,
  * a stretched one while unfocused, or null once the idle cutoff has paused it.
  */

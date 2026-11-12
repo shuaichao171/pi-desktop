@@ -108,7 +108,11 @@ async function cachedSessionFor(sessionsRoot: string, cwd: string, path: string)
 /** Messages of the branch the sidebar is viewing; the latest leaf chain when no branch is selected. */
 export function messagesForBranchHead(parsed: ParsedSession, branchHead?: string | null): SearchMessage[] {
 	if (branchHead == null || branchHead === parsed.branchLeafId) return parsed.messages;
-	const nodes = new Map(parsed.nodes), seen = new Set<string>(), messages: SearchMessage[] = [];
+	const nodes = new Map(parsed.nodes);
+	// A remembered head that is no longer in the transcript (stale record) previews
+	// the latest chain, as if no branch were remembered, instead of an empty card.
+	if (!nodes.has(branchHead)) return parsed.messages;
+	const seen = new Set<string>(), messages: SearchMessage[] = [];
 	let cursor: string | null = branchHead;
 	while (cursor && !seen.has(cursor)) {
 		seen.add(cursor);

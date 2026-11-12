@@ -34,7 +34,7 @@ export function ConversationMetrics() {
 	// 经 ref 间接调用当前 effect 的 refresh，每次 effect 运行刷新闭包。
 	const refreshRef = useRef(() => {});
 	// 会话统计轮询（非关键）：未聚焦降频 3 倍、持续未聚焦 10 分钟暂停，重新聚焦立即刷新一次。
-	useFocusAwarePoll(() => { setNow(Date.now()); void refreshRef.current(); }, status === 'busy' ? 1_000 : 0);
+	useFocusAwarePoll(() => { setNow(Date.now()); void refreshRef.current(); }, enabled && status === 'busy' ? 1_000 : 0);
 	useEffect(() => {
 		if (!enabled || !sessionId || !bridge?.getSessionStats || navigating || status === 'uninitialized' || status === 'starting') return;
 		let active = true, pending = false;
