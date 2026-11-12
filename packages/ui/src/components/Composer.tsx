@@ -16,6 +16,7 @@ import { ADD_CONTEXT_EVENT, hasWorkspaceEntryDrag, isWorkspaceEntryContext, read
 import { completeSlashCommand, slashTriggerAt, type SlashTrigger } from '../composerSlash';
 import { ComposerSlashPicker, type ComposerSlashPickerHandle } from './ComposerSlashPicker';
 import { ComposerQueue } from './ComposerQueue';
+import { HiddenContextEditor, HiddenContextIndicator } from './HiddenContextIndicator';
 import { useNextInputSuggestion } from '../useNextInputSuggestion';
 import './composerLayout.css';
 import { appendQuote } from '../conversationState';
@@ -112,6 +113,10 @@ export function Composer({ header, onOpenModelManagement, changesSlotRef }: { he
 	const [missingAttachments, setMissingAttachments] = useState<UiStoredAttachment[]>([]);
 	const [queueEditorTarget, setQueueEditorTarget] = useState<HTMLDivElement | null>(null);
 	const [queueEditing, setQueueEditing] = useState(false);
+	const [hiddenContextOpen, setHiddenContextOpen] = useState(false);
+	// The editor edits one conversation's instruction; a switch retires it so a
+	// save can never land on the conversation the draft did not come from.
+	useEffect(() => { setHiddenContextOpen(false); }, [sessionPath]);
 	const [defaultBusyBehavior, setDefaultBusyBehavior] = useBusyInputBehavior();
 	const [restoredDraftKey, setRestoredDraftKey] = useState<string | null>(null);
 	const [pdfCount, setPdfCount] = useState(0);
@@ -702,6 +707,7 @@ export function Composer({ header, onOpenModelManagement, changesSlotRef }: { he
 				<div ref={shellRef} className={`pd-composer-shell${queuedMessages.length ? ' has-queue' : ''}`} data-composer-layout="multiline" onDragOver={(event) => { if (event.dataTransfer.types.includes('Files') || hasWorkspaceEntryDrag(event.dataTransfer)) event.preventDefault(); }} onDrop={onDrop}>
 					<div ref={setQueueEditorTarget} className="pd-queue-editor-slot" />
 					{header ? <div className="pd-composer-header">{header}</div> : null}
+					{hiddenContextOpen && <HiddenContextEditor onClose={() => setHiddenContextOpen(false)} />}
 					{attachments.length > 0 && <div className="pd-composer-attachments" aria-label={t('composer.pendingAttachments')}>{attachments.map((attachment, index) => <div className={`pd-composer-attachment${attachment.kind === 'text' && attachment.source ? ' is-context' : ''}`} key={`${attachment.name}-${index}`}>
 						{attachment.kind === 'image' ? <button type="button" className="pd-composer-image-preview" aria-label={`${c('preview')}: ${attachment.name}`} onClick={(event) => setImagePreview({ index: attachments.slice(0, index).filter((item) => item.kind === 'image').length, trigger: event.currentTarget })}><img src={`data:${attachment.mimeType};base64,${attachment.data}`} alt="" /></button> : <span className="pd-composer-attachment-type">{attachment.source ? <Icon name={attachment.source.kind === 'session' ? 'message' : attachment.source.kind === 'directory' ? 'folder' : 'file'} width="16" height="16" /> : 'TXT'}</span>}
 						<HoverTooltip title={attachment.name} description={attachment.kind === 'text' && attachment.source ? `${attachment.source.workspace}\n${attachment.source.path}${attachment.source.truncated ? `\n${t('composer.contextTruncated')}` : ''}` : attachmentLabel(attachment, t)}><span className="pd-composer-attachment-name" tabIndex={0}>{attachment.name}<small>{attachmentLabel(attachment, t)}{attachment.kind === 'text' && attachment.source?.truncated ? ` · ${t('composer.contextTruncatedShort')}` : ''}</small></span></HoverTooltip>
@@ -727,6 +733,7 @@ export function Composer({ header, onOpenModelManagement, changesSlotRef }: { he
 						<div className="pd-composer-meta">
 							<input ref={fileInputRef} type="file" multiple className="pd-composer-file-input" tabIndex={-1} aria-hidden="true" onChange={onFileChange} />
 							<HoverTooltip title={t('composer.contextAddTitle')} shortcut="@"><button ref={contextButtonRef} type="button" className="pd-composer-add-attachment" onMouseDown={(event) => event.preventDefault()} onClick={() => { closeSlash(); setContextPicker((current) => current?.mode === 'menu' ? null : { mode: 'menu' }); }} disabled={contextUnavailable || attaching || restoringDraft || attachments.length >= MAX_ATTACHMENTS} aria-label={t('composer.contextAddTitle')} aria-haspopup="dialog" aria-expanded={contextPicker !== null}><Icon name="plus" width="16" height="16" /></button></HoverTooltip>
+							<HiddenContextIndicator open={hiddenContextOpen} onToggle={() => setHiddenContextOpen((current) => !current)} />
 						</div>
 						<div className="pd-composer-actions">
 							<ComposerControls onOpenModelManagement={onOpenModelManagement} hasImages={attachments.some((item) => item.kind === 'image')} />
