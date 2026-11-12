@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
-import { realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join, relative, sep } from 'node:path';
 import { test } from 'node:test';
@@ -31,10 +30,11 @@ test('opening the workspace validates the directory and propagates native failur
   const openPath = async path => { opened.push(path); return ''; };
   try {
     await service.openWorkspaceFolder(workspace, openPath);
-    assert.deepEqual(opened, [await realpath(workspace)]);
+    // The service canonicalizes with native realpath (8.3/case), so compare the same way.
+    assert.deepEqual(opened, [realpathSync.native(workspace)]);
     // Another project's conversation menu passes a non-active workspace; it opens normally.
     await service.openWorkspaceFolder(other, openPath);
-    assert.deepEqual(opened, [await realpath(workspace), await realpath(other)]);
+    assert.deepEqual(opened, [realpathSync.native(workspace), realpathSync.native(other)]);
     for (const invalid of [null, '', '.', 'https://example.invalid', 'file:\/\/\/tmp', workspace + '\0']) {
       await assert.rejects(service.openWorkspaceFolder(invalid, openPath), /工作区路径无效/);
     }

@@ -1,3 +1,4 @@
+import { applyCaHygiene } from './caHygiene';
 import { initializeDiagnostics, recordDiagnostic } from './diagnostics.ts';
 import { userInfo } from 'node:os';
 import { app, BrowserWindow, dialog, Menu, nativeImage, nativeTheme, session } from 'electron';
@@ -578,6 +579,9 @@ if (!hasSingleInstanceLock) {
 	});
 
 	void app.whenReady().then(async () => {
+		// Rebuild Node's default CA set without deprecated roots (eMudhra/emSign);
+		// outbound HTTPS from the main process starts only after this point.
+		applyCaHygiene();
 		initializeDiagnostics(join(app.getPath('userData'), 'diagnostics'));
 		recordDiagnostic({ stage: 'startup', action: 'app-ready', outcome: 'success' });
 		startupMetrics.mark('app-ready');

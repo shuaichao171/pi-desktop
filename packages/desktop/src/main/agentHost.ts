@@ -8,6 +8,7 @@
  * process as a `fatal` message and exit the process so the crash path stays
  * observable.
  */
+import { applyCaHygiene } from './caHygiene';
 import { installEngineRedirect, missingSdkExports } from './piEngine';
 
 const parent = process.parentPort;
@@ -20,6 +21,9 @@ function fatal(message: string): void {
 }
 
 async function bootstrap(): Promise<void> {
+	// TLS hygiene runs before any SDK import so every outbound connection in
+	// this utility process sees the pruned default CA set from the start.
+	applyCaHygiene();
 	const engineDir = process.env.PI_DESKTOP_ENGINE_DIR?.trim();
 	if (engineDir) {
 		const redirect = installEngineRedirect(engineDir);
