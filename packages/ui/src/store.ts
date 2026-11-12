@@ -19,7 +19,7 @@ import { detectMessageProject, getProjectAutoAssignEnabled, projectPathCandidate
 import { sidebarProjectPaths, sidebarWorkspaceKey } from './sidebarOrganization.ts';
 import { readModelCatalogCache, writeModelCatalogCache, type ModelCatalogSnapshot } from './modelCatalogCache.ts';
 import type { UiAgentError } from '@pidesktop/shared';
-import { activeTreeLeafId, buildConversationTreeIndex, isOnBranchPath } from '@pidesktop/shared';
+import { activeTreeLeafId, buildConversationTreeIndex, isOnBranchPath, sessionTreesEqual } from '@pidesktop/shared';
 import type {
 	AgentBridge,
 	AgentEventEnvelope,
@@ -1435,7 +1435,7 @@ if (!get().modelProviders.length) void get().refreshModelProviders().catch(() =>
 		try {
 			const tree = await bridge.getSessionTree();
 			// A switch or navigation may have landed while the tree was in flight.
-			if (get().bridge === bridge && get().sessionPath === sessionPath) set({ branchTree: tree });
+			if (get().bridge === bridge && get().sessionPath === sessionPath) applyBranchTree(tree);
 		} catch {
 			// Branch UI is decorative: a failed fetch leaves the previous tree in place.
 		}
@@ -1450,6 +1450,9 @@ if (!get().modelProviders.length) void get().refreshModelProviders().catch(() =>
 			throw error;
 		}
 		set({ error: null, branchSwitchPending: true });
+		// A ready-time sync already in flight fetched its tree before this switch
+		// moved the leaf; retire it so its late reply cannot repaint the old branch.
+		branchViewSyncToken += 1;
 		try {
 			await bridge.switchSessionBranch(targetId);
 			// The host has already navigated; the tree fetch is authoritative even
@@ -1474,17 +1477,22 @@ if (!get().modelProviders.length) void get().refreshModelProviders().catch(() =>
 		const bridge = state.bridge;
 		if (!bridge || !sessionPath || sessionPath !== state.sessionPath || state.navigationPending || state.sessionLoading) return;
 		const token = ++branchViewSyncToken;
+		const superseded = () => token !== branchViewSyncToken || get().bridge !== bridge || get().sessionPath !== sessionPath;
 		try {
+			// Every ready re-reads the tree: edits, regenerations and forks grow sibling
+			// branches through navigateTree + prompt without any reset, so a tree cached
+			// from the load would hide their switchers and freeze the record on the old
+			// leaf (the next load would then "restore" the pre-edit branch).
+			const tree = await bridge.getSessionTree().catch(() => null);
+			if (superseded() || !tree) return;
+			applyBranchTree(tree);
 			// First ready for this conversation in this renderer: restore the branch the
 			// user last viewed. Pi itself always reloads the last-appended branch, so a
 			// merely viewed (older) branch needs this desktop-side record.
 			if (appliedBranchSelectionPath !== sessionPath) {
 				const stored = await bridge.getSessionBranchSelection?.(sessionPath).catch(() => null) ?? null;
-				if (token !== branchViewSyncToken || get().sessionPath !== sessionPath) return;
-				const initial = get().branchTree ?? await bridge.getSessionTree().catch(() => null);
-				if (token !== branchViewSyncToken || get().sessionPath !== sessionPath || !initial) return;
-				if (!get().branchTree) set({ branchTree: initial });
-				const index = buildConversationTreeIndex(initial);
+				if (superseded()) return;
+				const index = buildConversationTreeIndex(tree);
 				const current = get();
 				// A busy run defers the restore itself: until it has actually run, the
 				// keep-warm below must not overwrite the remembered branch with the
@@ -1507,9 +1515,6 @@ if (!get().modelProviders.length) void get().refreshModelProviders().catch(() =>
 			// Keep the record current: chats and edits grow/move the natural leaf, and a
 			// stale record would rewind the view on the next load. Writes only on change
 			// (reachable only after the restore above has run for this conversation).
-			const tree = get().branchTree ?? await bridge.getSessionTree().catch(() => null);
-			if (token !== branchViewSyncToken || get().sessionPath !== sessionPath || !tree) return;
-			if (!get().branchTree) set({ branchTree: tree });
 			const leafId = activeTreeLeafId(tree);
 			if (leafId && lastRecordedBranchLeaf !== `${sessionPath}\0${leafId}`) {
 				lastRecordedBranchLeaf = `${sessionPath}\0${leafId}`;
@@ -2396,6 +2401,14 @@ function finishSessionNavigation(bridge: AgentBridge, request: number): void {
 		sessionOpenMetrics.settled(request, Boolean(state.error) || state.status === 'error');
 		store.setState({ navigationPending: false });
 	}
+}
+
+/** Publishes a freshly fetched session tree, keeping the old reference when nothing
+ *  changed so a warm (no-flash) ready does not re-render the transcript's switchers. */
+function applyBranchTree(tree: UiSessionTreeNode[]): void {
+	const current = store.getState().branchTree;
+	if (current && sessionTreesEqual(current, tree)) return;
+	store.setState({ branchTree: tree });
 }
 
 /** Runs the ready-time branch sync now, or pends it while a navigation settles. */

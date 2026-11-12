@@ -60,6 +60,24 @@ export function activeTreeLeafId(nodes: readonly UiSessionTreeNode[]): string | 
 	return leaf;
 }
 
+/** Structural equality of two tree projections (ids, marks, labels, shape). */
+export function sessionTreesEqual(a: readonly UiSessionTreeNode[], b: readonly UiSessionTreeNode[]): boolean {
+	// Iterative: an unbranched session is one chain as deep as its entry count.
+	const pending: [readonly UiSessionTreeNode[], readonly UiSessionTreeNode[]][] = [[a, b]];
+	while (pending.length) {
+		const [left, right] = pending.pop()!;
+		if (left === right) continue;
+		if (left.length !== right.length) return false;
+		for (let index = 0; index < left.length; index += 1) {
+			const x = left[index]!;
+			const y = right[index]!;
+			if (x.id !== y.id || x.active !== y.active || x.kind !== y.kind || x.label !== y.label || x.timestamp !== y.timestamp) return false;
+			pending.push([x.children, y.children]);
+		}
+	}
+	return true;
+}
+
 /** Deepest (most recently appended) entry of a subtree, by timestamp then pre-order. */
 export function subtreeTipId(node: UiSessionTreeNode): string {
 	let tip = node.id;
@@ -137,6 +155,42 @@ export function buildConversationTreeIndex(nodes: readonly UiSessionTreeNode[]):
 	let leafCount = 0;
 	if (flat.length) for (const { node } of flat) if (!node.children.length) leafCount += 1;
 	return { forks, byForkId, leafId, parentOf, leafCount };
+}
+
+/** Where the transcript renders each fork's switcher. */
+export interface UiBranchForkAnchors {
+	/** Forks with no visible message at or above them: they lead the transcript. */
+	leading: UiBranchFork[];
+	/** Forks keyed by the visible message they render directly below. */
+	after: Map<string, UiBranchFork[]>;
+}
+
+/**
+ * Anchor every fork to the nearest visible entry at or above its fork point.
+ * Fork points are often not transcript rows: a new Pi session opens with
+ * model_change/thinking_level_change entries, so editing the first prompt forks
+ * at thinking_level_change, and a mid-session model switch puts a model_change
+ * between a reply and the next prompt. Walking up to the nearest visible message
+ * keeps such switchers at the same reading position (below the previous turn, or
+ * at the top when nothing precedes them). Forks whose ancestors are all
+ * invisible (or several roots) lead the transcript; callers that only show a
+ * recent history window decide whether leading forks are on screen.
+ */
+export function anchorBranchForks(index: UiConversationTreeIndex, isVisible: (entryId: string) => boolean): UiBranchForkAnchors {
+	const leading: UiBranchFork[] = [];
+	const after = new Map<string, UiBranchFork[]>();
+	for (const fork of index.forks) {
+		if (fork.alternatives.length < 2) continue;
+		let anchor: string | null = fork.forkId;
+		const seen = new Set<string>();
+		while (anchor !== null && !isVisible(anchor) && !seen.has(anchor)) {
+			seen.add(anchor);
+			anchor = index.parentOf.get(anchor) ?? null;
+		}
+		if (anchor === null || !isVisible(anchor)) leading.push(fork);
+		else after.set(anchor, [...after.get(anchor) ?? [], fork]);
+	}
+	return { leading, after };
 }
 
 /** Entry ids on the path root → leafId (inclusive, reading order). Unknown leaf yields an empty set. */

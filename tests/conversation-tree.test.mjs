@@ -2,11 +2,13 @@ import assert from 'node:assert/strict';
 import { beforeEach, test } from 'node:test';
 import {
 	activeTreeLeafId,
+	anchorBranchForks,
 	branchPathIds,
 	buildConversationTreeIndex,
 	flattenSessionTree,
 	isOnBranchPath,
 	selectedChildrenByFork,
+	sessionTreesEqual,
 	subtreeTipId,
 	treeFromLinearMessages,
 } from '../packages/shared/src/conversationTree.ts';
@@ -279,4 +281,93 @@ test('an explicit switch and the following sync agree on the recorded leaf (no d
 	await useChatStore.getState().syncBranchView('C:\\sessions\\dedupe.jsonl');
 	assert.deepEqual(host.calls.switch, ['a1']);
 	assert.deepEqual(host.calls.selections, [['C:\\sessions\\dedupe.jsonl', 'a1']], 'the ready keep-warm must not re-write the same leaf');
+});
+
+test('forks on non-message entries anchor to the nearest visible message, or lead the transcript', () => {
+	// A new Pi session opens with model_change → thinking_level_change; editing the
+	// first prompt forks at thinking_level_change. A mid-session model switch puts a
+	// model_change between a reply and the next prompt, and editing that prompt forks there.
+	const tree = [node('mc', 'other', 'model_change', [
+		node('tl', 'other', 'thinking_level_change', [
+			node('u1', 'user', 'first prompt', [], { timestamp: '1' }),
+			node('u1b', 'user', 'edited first prompt', [
+				node('a1', 'assistant', 'answer', [
+					node('mc2', 'other', 'model_change', [
+						node('u2', 'user', 'second', [], { timestamp: '4' }),
+						node('u2b', 'user', 'edited second', [node('a2', 'assistant', 'answer 2', [], { active: true, timestamp: '6' })], { active: true, timestamp: '5' }),
+					], { active: true, timestamp: '3' }),
+				], { active: true, timestamp: '2.5' }),
+			], { active: true, timestamp: '2' }),
+		], { active: true }),
+	], { active: true })];
+	const index = buildConversationTreeIndex(tree);
+	assert.deepEqual(index.forks.map((fork) => fork.forkId), ['tl', 'mc2']);
+	const visible = new Set(['u1b', 'a1', 'u2b', 'a2']);
+	const anchors = anchorBranchForks(index, (id) => visible.has(id));
+	assert.deepEqual(anchors.leading.map((fork) => fork.forkId), ['tl'], 'an edit of the opening prompt leads the transcript');
+	assert.deepEqual([...anchors.after].map(([id, forks]) => [id, forks.map((fork) => fork.forkId)]), [['a1', ['mc2']]], 'a model_change fork renders below the previous reply');
+	// A fork that is itself a visible message anchors to itself; several roots always lead.
+	const own = anchorBranchForks(buildConversationTreeIndex(editBranchTree()), () => true);
+	assert.deepEqual(own.leading.map((fork) => fork.forkId), [null]);
+});
+
+test('tree equality compares shape, marks and labels', () => {
+	assert.equal(sessionTreesEqual(editBranchTree(), editBranchTree()), true);
+	const moved = editBranchTree();
+	for (const { node: item } of flattenSessionTree(moved)) item.active = item.id === 'u1' || item.id === 'a1';
+	assert.equal(sessionTreesEqual(editBranchTree(), moved), false);
+	const grown = editBranchTree();
+	grown[0].children[0].children.push(node('x', 'user', 'more'));
+	assert.equal(sessionTreesEqual(editBranchTree(), grown), false);
+});
+
+test('a ready after an edit refetches the tree and advances the record to the new branch', async () => {
+	const P = 'C:\sessions\edit.jsonl';
+	const before = [node('u1', 'user', 'q', [node('a1', 'assistant', 'a', [], { active: true, timestamp: '2' })], { active: true, timestamp: '1' })];
+	const after = [
+		node('u1', 'user', 'q', [node('a1', 'assistant', 'a', [], { timestamp: '2' })], { timestamp: '1' }),
+		node('u1b', 'user', 'q edited', [node('a1b', 'assistant', 'a2', [], { active: true, timestamp: '4' })], { active: true, timestamp: '3' }),
+	];
+	let tree = before;
+	const host = bridgeWithTree({ a1: before });
+	host.bridge.getSessionTree = async () => tree;
+	useChatStore.setState({
+		bridge: host.bridge, status: 'idle', cwd: 'C:\w', sessionId: 's1',
+		sessionPath: P, navigationPending: false, sessionLoading: false,
+	});
+	await useChatStore.getState().syncBranchView(P);
+	const loaded = useChatStore.getState().branchTree;
+	await useChatStore.getState().syncBranchView(P);
+	assert.equal(useChatStore.getState().branchTree, loaded, 'an unchanged tree keeps its reference (warm ready, no re-render)');
+	tree = after; // host: editUserMessage → navigateTree + prompt, then the settled resync ready
+	await useChatStore.getState().syncBranchView(P);
+	assert.deepEqual(host.calls.selections, [[P, 'a1'], [P, 'a1b']], 'the record follows the edited branch');
+	assert.equal(buildConversationTreeIndex(useChatStore.getState().branchTree).forks.length, 1, 'the new fork reaches the switchers');
+	assert.deepEqual(host.calls.switch, []);
+});
+
+test('an explicit switch retires a ready sync whose tree fetch predates it', async () => {
+	const natural = editBranchTree(); // active leaf a2
+	const viewed = editBranchTree();
+	for (const { node: item } of flattenSessionTree(viewed)) item.active = item.id === 'u1' || item.id === 'a1';
+	const host = bridgeWithTree({ a2: natural });
+	const P = 'C:\sessions\race.jsonl';
+	let releaseStale;
+	let calls = 0;
+	host.bridge.getSessionTree = () => {
+		calls += 1;
+		if (calls === 1) return new Promise((resolve) => { releaseStale = () => resolve(natural); });
+		return Promise.resolve(host.leafRef.current === 'a1' ? viewed : natural);
+	};
+	host.bridge.switchSessionBranch = async (entryId) => { host.calls.switch.push(entryId); host.leafRef.current = entryId; };
+	useChatStore.setState({
+		bridge: host.bridge, status: 'idle', cwd: 'C:\w', sessionId: 's1',
+		sessionPath: P, navigationPending: false, sessionLoading: false,
+	});
+	const sync = useChatStore.getState().syncBranchView(P); // fetch in flight (pre-switch tree)
+	await useChatStore.getState().switchConversationBranch('a1');
+	releaseStale();
+	await sync;
+	assert.equal(activeTreeLeafId(useChatStore.getState().branchTree ?? []), 'a1', 'the stale reply must not repaint the old branch');
+	assert.deepEqual(host.calls.selections, [[P, 'a1']]);
 });
