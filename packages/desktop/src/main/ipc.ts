@@ -2130,6 +2130,15 @@ export function registerIpc(options: {
 		},
 		searchFiles: (cwd, request) => agentService.searchProjectFiles(cwd, request),
 		cancelSearch: id => agentService.cancelDataSearch(id),
+		// Hover summaries read through the same agent-side index as search, with the
+		// sidebar's branch memory applied so previews follow the viewed branch.
+		// Not queued behind workspace activation (unlike session switches): a hover
+		// must never delay a click, and a burst of keyboard-focus previews must not
+		// stall the switch the user asks for next. Search above runs unqueued too.
+		sessionPreview: (workspace, path) => {
+			const target = normalizeSessionPath(path);
+			return agentService.readSessionPreview(workspace, target, conversationBranchStore().get(target));
+		},
 	});
 	// Session management page: every transcript under the local pi sessions root,
 	// including workspaces the app has never opened (native pi's listAll scope).

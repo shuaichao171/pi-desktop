@@ -698,6 +698,8 @@ export const translations: Record<string, { 'zh-CN': string; 'en-US': string }> 
   'sidebar.older': { 'zh-CN': '更早', 'en-US': 'Older' },
   'sidebar.pinned': { 'zh-CN': '置顶', 'en-US': 'Pinned' },
   'sidebar.unnamed': { 'zh-CN': '未命名会话', 'en-US': 'Untitled session' },
+  'sidebar.previewUser': { 'zh-CN': '用户', 'en-US': 'You' },
+  'sidebar.previewAssistant': { 'zh-CN': '助手', 'en-US': 'Assistant' },
   'sidebar.subagentChild': { 'zh-CN': '子代理', 'en-US': 'Sub-agent' },
   'sidebar.justNow': { 'zh-CN': '刚刚', 'en-US': 'Just now' },
   'sidebar.minutesAgo': { 'zh-CN': '{count}分', 'en-US': '{count}m ago' },

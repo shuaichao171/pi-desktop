@@ -9,6 +9,8 @@ export interface DataFeaturesIpcContext {
 	searchSessions(request: SessionSearchRequest): ReturnType<typeof Search.searchSessionsPage>;
 	searchFiles(cwd: string, request: ProjectSearchRequest): ReturnType<typeof Search.searchProjectFiles>;
 	cancelSearch(id: string): Promise<void>;
+	/** Hover-card summary for one sidebar row; branch heads come from the branch store. */
+	sessionPreview(workspace: string, path: string): Promise<import('@pidesktop/shared').UiSessionPreview | null>;
 }
 /** Search wiring for the renderer search dialog. Session management lives in ipc.ts. */
 export function registerDataFeaturesIpc(context: DataFeaturesIpcContext): void {
@@ -22,4 +24,9 @@ export function registerDataFeaturesIpc(context: DataFeaturesIpcContext): void {
 		return context.searchFiles(cwd, request);
 	});
 	handleRendererInvoke(DATA_FEATURE_CHANNELS.cancelDataSearch, (_event, id: string) => context.cancelSearch(id));
+	handleRendererInvoke(DATA_FEATURE_CHANNELS.sessionPreview, async (_event, workspace: unknown, path: unknown) => {
+		if (typeof workspace !== 'string' || typeof path !== 'string') throw new Error('会话预览参数无效');
+		await ensureWorkspace(workspace);
+		return context.sessionPreview(workspace, path);
+	});
 }

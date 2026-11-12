@@ -22,6 +22,7 @@ import { ProjectCreationDialog } from './ProjectCreationDialog';
 import { ProjectRemovalDialog, type ProjectRemovalSummary } from './ProjectRemovalDialog';
 import { assignProjectToGroup, buildSidebarGroups, buildSidebarProjectGroups, clearPinnedProjects, collectSidebarSessions, groupSidebarProjects, groupSessionsByDate, mergeSidebarProjectOrder, moveProjectToGroupPosition, orderSidebarProjects, readPinnedProjects, readSidebarPreferences, readSidebarProjectGroups, readSidebarSectionLayout, reorderSidebarProjectPositions, saveSidebarPreferences, saveSidebarProjectGroups, saveSidebarSectionLayout, selectSidebarSessions, sidebarProjectPaths, sidebarWorkspaceKey, splitSidebarProjects, type SidebarPreferences, type SidebarSession } from '../sidebarOrganization';
 import { HoverTooltip } from './HoverTooltip';
+import { SessionHoverPreview } from './SessionHoverPreview';
 import { Icon, type IconName } from './Icons';
 import { SidebarPopover } from './SidebarPopover';
 import { SidebarSubmenu } from './SidebarSubmenu';
@@ -1051,7 +1052,8 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 				if (event.key === 'Enter') event.currentTarget.blur();
 				if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); renameCancelled.current = true; setRenaming(null); }
 			}} onBlur={() => { if (renameCancelled.current) return; setRenaming(null); void perform(() => updateSessionMeta(session.path, { name: renameDraft.trim() })); }} /> : <>
-				<button type="button" className="pd-session-row" onClick={() => openSession(session)} aria-current={active ? 'page' : undefined} aria-haspopup="menu" aria-expanded={menuOpen} onKeyDown={(event) => {
+				{/* 悬停预览卡片：首次悬停才懒加载摘要（见 SessionHoverPreview），加载失败静默降级为仅标题。 */}
+				<SessionHoverPreview session={session} title={title} row={<button type="button" className="pd-session-row" onClick={() => openSession(session)} aria-current={active ? 'page' : undefined} aria-haspopup="menu" aria-expanded={menuOpen} onKeyDown={(event) => {
 						if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) {
 							event.preventDefault();
 							event.stopPropagation();
@@ -1067,7 +1069,7 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 					{/* pi-subagents child sessions derive names as "<agent>: <task excerpt>". */}
 					{SUBAGENT_CHILD_TITLE_PATTERN.test(title) && <span className="pd-session-child-badge">{t('sidebar.subagentChild')}</span>}
 					{!archived && <SessionTime modified={session.modified} locale={locale} />}
-				</button>
+				</button>} />
 				{!archived && pinButton('pd-session-pin')}
 				<div className="pd-session-actions">
 					{archived && pinButton('pd-session-action pd-icon-button')}

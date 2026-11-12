@@ -8,7 +8,7 @@
 import { AgentService, configureProviderNetwork } from '@pidesktop/agent';
 import { getAgentDir } from '@earendil-works/pi-coding-agent';
 import { join } from 'node:path';
-import { readSessionContext, searchSessions, searchWorkspaceFiles, searchSessionsPage, searchProjectFiles, rebuildSearchIndex, cancelDataSearch, getProjectSearchRules, setProjectSearchRules } from './searchService';
+import { readSessionContext, readSessionPreview, searchSessions, searchWorkspaceFiles, searchSessionsPage, searchProjectFiles, rebuildSearchIndex, cancelDataSearch, getProjectSearchRules, setProjectSearchRules } from './searchService';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import type { ProjectTrustDecision } from '@pidesktop/agent';
 import type { UiExtensionDialogRequest, UiExtensionDialogResponse } from '@pidesktop/shared';
@@ -76,6 +76,7 @@ const methods = createAgentHostMethods(agent, {
 	searchSessions: (workspaces, query) => searchSessions(join(getAgentDir(), 'sessions'), workspaces, query),
 	searchWorkspaceFiles,
 	readSessionContext: (cwd, path) => readSessionContext(join(getAgentDir(), 'sessions'), cwd, path),
+	readSessionPreview: (cwd, path, branchHead) => readSessionPreview(join(getAgentDir(), 'sessions'), cwd, path, branchHead),
 });
 parent.on('message', (event) => {
 	const message = event.data as MainToAgentHost;

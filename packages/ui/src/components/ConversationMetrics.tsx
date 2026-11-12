@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { UiSessionStats, UiUsageQueryResult } from '@pidesktop/shared';
 import { useChatStore } from '../store';
 import { useT } from '../i18n';
+import { useFocusAwarePoll } from '../focusStore';
 import { useConversationMetricsPreferences } from '../conversationMetricsPreferences';
 import { conversationMetricsAt, formatMetricDuration, formatMetricTokens } from '../conversationMetrics';
 import { formatUsageBalance, usageBalanceTooltip } from '../usageDisplay';
@@ -29,6 +30,11 @@ export function ConversationMetrics() {
 	const scope = JSON.stringify([cwd, sessionPath, sessionId, generation]);
 	const [sample, setSample] = useState<{ scope: string; stats: UiSessionStats } | null>(null);
 	const [now, setNow] = useState(Date.now);
+	// Hooks 规则：轮询 hook 必须在组件顶层（effect 内调用会在 React 19.3 抛 Invalid hook call）。
+	// 经 ref 间接调用当前 effect 的 refresh，每次 effect 运行刷新闭包。
+	const refreshRef = useRef(() => {});
+	// 会话统计轮询（非关键）：未聚焦降频 3 倍、持续未聚焦 10 分钟暂停，重新聚焦立即刷新一次。
+	useFocusAwarePoll(() => { setNow(Date.now()); void refreshRef.current(); }, enabled && status === 'busy' ? 1_000 : 0);
 	useEffect(() => {
 		if (!enabled || !sessionId || !bridge?.getSessionStats || navigating || status === 'uninitialized' || status === 'starting') return;
 		let active = true, pending = false;
@@ -41,9 +47,9 @@ export function ConversationMetrics() {
 			} catch { if (active) setSample(null); }
 			finally { pending = false; }
 		}
+		refreshRef.current = refresh;
 		void refresh();
-		const interval = status === 'busy' ? window.setInterval(() => { setNow(Date.now()); void refresh(); }, 1_000) : undefined;
-		return () => { active = false; if (interval !== undefined) window.clearInterval(interval); };
+		return () => { active = false; refreshRef.current = () => {}; };
 	}, [enabled, bridge, scope, sessionId, navigating, status, runs, messageCount]);
 	// Nothing has run yet: an all-zero stats line is just noise under a fresh composer.
 	// A pending switch transiently clears runs/messages — keep the row mounted
@@ -82,6 +88,10 @@ function ProviderBalance({ pending: switching = false }: { pending?: boolean }) 
 	const [busy, setBusy] = useState(false);
 	const [tick, setTick] = useState(0);
 	const wasBusy = useRef(false);
+	// Hooks 规则：轮询 hook 在组件顶层，经 ref 间接调用当前 effect 的 query（同上）。
+	const queryRef = useRef(() => {});
+	// 用量查询轮询（非关键）：未聚焦降频 3 倍、持续未聚焦 10 分钟暂停，重新聚焦立即刷新一次。
+	useFocusAwarePoll(() => { void queryRef.current(); }, intervalMinutes > 0 ? intervalMinutes * 60_000 : 0);
 	// A finished generation is when the balance actually moved; refresh then.
 	useEffect(() => {
 		if (wasBusy.current && status !== 'busy') setTick((current) => current + 1);
@@ -99,9 +109,9 @@ function ProviderBalance({ pending: switching = false }: { pending?: boolean }) 
 			} catch { if (active) setResult(null); }
 			finally { pending = false; if (active) setBusy(false); }
 		};
+		queryRef.current = query;
 		void query();
-		const timer = intervalMinutes > 0 ? window.setInterval(() => { void query(); }, intervalMinutes * 60_000) : undefined;
-		return () => { active = false; if (timer !== undefined) window.clearInterval(timer); };
+		return () => { active = false; queryRef.current = () => {}; };
 	}, [bridge, providerId, usageQuery?.enabled, intervalMinutes, tick, switching]);
 	if (switching) return <button type="button" className="pd-metric-group pd-metric-balance" data-action="refresh-balance" title={t('usage.refreshing')} aria-label={t('usage.refreshing')} disabled>—</button>;
 	if (!usageQuery?.enabled) return null;

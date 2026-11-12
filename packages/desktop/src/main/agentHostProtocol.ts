@@ -1,6 +1,6 @@
 import type { AgentEventEnvelope, UiExtensionDialogRequest, UiExtensionDialogResponse } from '@pidesktop/shared';
 import type { AgentService, ProjectTrustDecision } from '@pidesktop/agent';
-import type { readSessionContext, searchSessions, searchWorkspaceFiles, searchSessionsPage, searchProjectFiles, rebuildSearchIndex, cancelDataSearch, getProjectSearchRules, setProjectSearchRules } from './searchService';
+import type { readSessionContext, readSessionPreview, searchSessions, searchWorkspaceFiles, searchSessionsPage, searchProjectFiles, rebuildSearchIndex, cancelDataSearch, getProjectSearchRules, setProjectSearchRules } from './searchService';
 
 type AgentServiceMethod = { [Key in keyof AgentService]: AgentService[Key] extends (...args: never[]) => unknown ? Key : never }[keyof AgentService];
 type SearchMethods = {
@@ -13,6 +13,7 @@ type SearchMethods = {
 	searchSessions: (workspaces: string[], query: string) => ReturnType<typeof searchSessions>;
 	searchWorkspaceFiles: typeof searchWorkspaceFiles;
 	readSessionContext: (cwd: string, path: string) => ReturnType<typeof readSessionContext>;
+	readSessionPreview: (cwd: string, path: string, branchHead?: string | null) => ReturnType<typeof readSessionPreview>;
 };
 
 export const AGENT_HOST_METHODS = [
@@ -38,6 +39,7 @@ export const AGENT_HOST_METHODS = [
 	'searchSessions',
 	'searchWorkspaceFiles',
 	'readSessionContext',
+	'readSessionPreview',
 	'listSlashCommands',
 	'executeSlashCommand',
 	'switchSession',

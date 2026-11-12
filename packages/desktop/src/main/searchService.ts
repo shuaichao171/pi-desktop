@@ -327,4 +327,4 @@ export async function searchWorkspaceFilesUncached(cwd: string, query: string, o
 }
 
 // Compatibility entrypoints share the same cache/rules as the richer search UI.
-export { searchSessions, searchWorkspaceFiles, searchSessionsPage, searchProjectFiles, rebuildSearchIndex, cancelDataSearch, setProjectSearchRules, getProjectSearchRules } from './indexedSearch.ts';
+export { searchSessions, searchWorkspaceFiles, searchSessionsPage, searchProjectFiles, rebuildSearchIndex, cancelDataSearch, setProjectSearchRules, getProjectSearchRules, readSessionPreview, sessionPreviewFrom, messagesForBranchHead } from './indexedSearch.ts';
