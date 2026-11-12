@@ -452,6 +452,9 @@ test('workspace setup failure reports an error instead of leaving the startup lo
 test('agent initialization failure closes the hidden shell and reports the startup error', async (t) => {
   const harness = await createStartupHarness(t);
   const main = await harness.start();
+  // init fires only after the real workspace stat resolves; rejecting before
+  // startup attaches its handler is an unhandled rejection on slow runners.
+  await waitFor(() => harness.calls.init.length === 1, 'the agent boot to start');
   main.emit('ready-to-show');
   main.load.resolve();
   harness.initialization.reject(new Error('Failed to restore the last conversation'));
