@@ -117,15 +117,24 @@ test('a retired root that the system or extra store also trusts is kept (OS/user
 	assert.deepEqual(installed, ['pem-system-c1', 'pem-extra-c3', 'pem-ok']);
 });
 
-test('the live default set keeps every system and extra certificate', async () => {
+test('the live default set keeps every system and extra certificate it carries', async () => {
 	const tls = await import('node:tls');
 	const { applyCaHygiene } = await import('../packages/desktop/src/main/caHygiene.ts');
 	if (typeof tls.getCACertificates !== 'function') return;
+	// Whether "default" folds in the OS store depends on the Node version and flags
+	// (Node 24 on Windows does by default, Node 22 does not): a system/extra
+	// certificate that was never in the default set cannot be pruned from it, so
+	// only the ones the default set actually carries must survive.
+	const defaults = new Set(tls.getCACertificates('default'));
 	let installed = null;
 	applyCaHygiene({ getCACertificates: (type) => tls.getCACertificates(type), setDefaultCACertificates: (certificates) => { installed = certificates; } }, () => {});
 	assert.ok(Array.isArray(installed));
 	const kept = new Set(installed);
-	for (const type of ['system', 'extra']) for (const certificate of tls.getCACertificates(type)) assert.ok(kept.has(certificate), `a ${type} certificate was pruned`);
+	for (const type of ['system', 'extra']) {
+		for (const certificate of tls.getCACertificates(type)) {
+			if (defaults.has(certificate)) assert.ok(kept.has(certificate), `a ${type} certificate was pruned`);
+		}
+	}
 });
 
 test('applyCaHygiene skips with only a warning when the API is missing or fails', async () => {
