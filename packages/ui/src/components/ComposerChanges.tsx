@@ -113,3 +113,17 @@ export function LiveChangesSummary({ items, scope, target, review }: { items: Ui
 		{liveFilesOpen && <div id={listId} className="pd-changes-live-popover" role="region" aria-label={t('changes.files')}><div className="pd-changes-live-scope">{t('composerChanges.thisTurn')}</div>{fileRows(items)}</div>}
 	</section>, target);
 }
+
+/** Idle session summary in the composer dock: "N files changed this conversation". */
+export function SessionChangesSummary({ items, target, review }: { items: UiFileChange[]; target: HTMLElement | null; review: ChangesReviewApi }) {
+	const { t } = useT();
+	if (!items.length || !target) return null;
+	const label = t('composerChanges.sessionSummary', { count: items.length });
+	return createPortal(<section className="pd-composer-changes is-session" aria-label={t('changes.files')}>
+		<div className="pd-composer-changes-summary">
+			<button type="button" className="pd-changes-live-main" aria-haspopup="dialog" aria-label={label} title={label} onClick={event => review({ kind: 'conversation' }, items[0]!.path, event.currentTarget)}>
+				<Icon name="file" width="15" height="15" /><span className="pd-changes-session-scope">{t('composerChanges.thisConversation')}</span><span>{t('changes.count', { count: items.length })}</span><ChangeStats items={items} />
+			</button>
+		</div>
+	</section>, target);
+}

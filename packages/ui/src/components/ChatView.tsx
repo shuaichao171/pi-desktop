@@ -14,9 +14,10 @@ import { useExtensionRequestPending } from './ExtensionDialogHost';
 import { Composer } from './Composer';
 import { GoalBeacon } from './GoalBeacon';
 import { FleetCard } from './FleetCard';
-import { ChangesCard, LiveChangesSummary } from './ComposerChanges';
+import { ChangesCard, LiveChangesSummary, SessionChangesSummary } from './ComposerChanges';
 import { ChangesDialog } from './ChangesDialog';
 import { useFileChangeDiffs } from '../fileChangeDiffs';
+import { fallbackTurnChanges, mergeTurnFileChanges, unionFileChanges, withUnavailableDiffs } from '../fileChangeSummary';
 import { useChangesFind } from '../useChangesFind';
 import { createViewportOwnership } from '../viewportOwnership';
 import { RunStatusBar } from './RunStatusBar';
@@ -90,6 +91,7 @@ export function ChatView({ onOpenModelManagement, searchTarget, historyControls,
 	const historyGeneration = useChatStore((s) => s.historyGeneration);
 	const activities = useChatStore((s) => s.activities);
 	const runs = useChatStore((s) => s.runs);
+	const cwd = useChatStore((s) => s.cwd);
 	const fileChanges = useChatStore((s) => s.fileChanges);
 	const [changesDock, setChangesDock] = useState<HTMLDivElement | null>(null);
 	const changesRegionRef = useRef<HTMLDivElement>(null);
@@ -97,14 +99,19 @@ export function ChatView({ onOpenModelManagement, searchTarget, historyControls,
 	const fileChangeTurns = useChatStore((s) => s.fileChangeTurns);
 	const fileChangeActiveRunId = useChatStore((s) => s.fileChangeActiveRunId);
 	// Turn-level settlement: each completed run's changes render at that turn's tail.
-	const changesByRun = useMemo(() => new Map(fileChangeTurns.map(turn => [turn.runId, turn.items])), [fileChangeTurns]);
+	// Sessions recorded before the tracker existed fall back to aggregating
+	// edit/write tool calls from the transcript (paths only, approximate stats).
+	const fallbackChanges = useMemo(() => fallbackTurnChanges(cwd, activities), [cwd, activities]);
+	const mergedTurns = useMemo(() => mergeTurnFileChanges(fileChangeTurns, fallbackChanges), [fileChangeTurns, fallbackChanges]);
+	const changesByRun = useMemo(() => new Map(mergedTurns.map(turn => [turn.runId, turn.items])), [mergedTurns]);
+	const sessionChanges = useMemo(() => unionFileChanges(mergedTurns), [mergedTurns]);
+	const hasTurnScopedChanges = mergedTurns.some(turn => turn.runId !== null && turn.items.length > 0);
 	const liveChanges = fileChangeActiveRunId
 		? changesByRun.get(fileChangeActiveRunId) ?? []
-		: changesByRun.get(null) ?? fileChanges;
+		: changesByRun.get(null) ?? sessionChanges;
 	const legacyChanges = changesByRun.get(null) ?? [];
 	const sessionPath = useChatStore((s) => s.sessionPath);
 	const sessionId = useChatStore((s) => s.sessionId);
-	const cwd = useChatStore((s) => s.cwd);
 	const agentError = useChatStore((s) => s.error);
 	const agentStatus = useChatStore((s) => s.status);
 	const error = navigationError ?? agentError;
@@ -258,12 +265,18 @@ export function ChatView({ onOpenModelManagement, searchTarget, historyControls,
 	}, []);
 	const reviewItems = useMemo(() => {
 		if (!changesReview) return [];
-		if (changesReview.scope.kind === 'conversation') return fileChanges;
+		if (changesReview.scope.kind === 'conversation') return sessionChanges;
 		return changesByRun.get(changesReview.scope.runId) ?? [];
-	}, [changesReview, fileChanges, changesByRun]);
+	}, [changesReview, sessionChanges, changesByRun]);
 	useEffect(() => { if (changesReview && reviewItems.length === 0) setChangesReview(null); }, [changesReview, reviewItems.length]);
 	const reviewDiffs = useFileChangeDiffs(changesReview?.scope ?? null);
 	const findDiffs = useFileChangeDiffs(findOpen && findScope === 'changes' ? { kind: 'conversation' } : null);
+	// Fallback-listed paths have no recorded diff; once a scope's diffs load they
+	// degrade to "recorded but unavailable" instead of "no text differences".
+	const reviewDialogDiffs = useMemo(() => {
+		const loaded = changesReview && changesReview.scope.kind === 'conversation' && findOpen && findScope === 'changes' ? findDiffs : reviewDiffs;
+		return loaded === null || !changesReview ? null : withUnavailableDiffs(loaded, reviewItems);
+	}, [changesReview, findOpen, findScope, findDiffs, reviewDiffs, reviewItems]);
 	const changesFindable = fileChanges.length > 0;
 	// Below the size limit this stays the old synchronous memo; larger scans run in the diff worker.
 	const changesFind = useChangesFind(findScope === 'changes' && findOpen, fileChanges, findQuery, findDiffs);
@@ -786,6 +799,7 @@ export function ChatView({ onOpenModelManagement, searchTarget, historyControls,
 							<div ref={queuedRegionRef} className="pd-transcript-queued">{!isEmpty && !sessionLoading && <QueuedTranscriptMessages />}</div>
 							<div ref={changesRegionRef} className="pd-transcript-end pd-transcript-changes">{!sessionLoading && <>
 								{agentStatus === 'busy' && liveChanges.length > 0 && <LiveChangesSummary items={liveChanges} scope={fileChangeActiveRunId ? { kind: 'turn', runId: fileChangeActiveRunId } : { kind: 'conversation' }} target={changesDock} review={openChangesReview} />}
+								{agentStatus !== 'busy' && hasTurnScopedChanges && sessionChanges.length > 0 && <SessionChangesSummary items={sessionChanges} target={changesDock} review={openChangesReview} />}
 								{agentStatus !== 'busy' && legacyChanges.length > 0 && <ChangesCard key={`legacy:${disclosureScope}`} items={legacyChanges} scope={{ kind: 'conversation' }} variant="conversation" review={openChangesReview} />}
 							</>}</div>
 						{awaitingResponse && <div className="pd-transcript-end"><div className="pd-message-column"><div className="pd-response-pending" role="status"><ActivityLabel active>{t('message.preparing')}</ActivityLabel></div></div></div>}
@@ -810,9 +824,9 @@ export function ChatView({ onOpenModelManagement, searchTarget, historyControls,
 			</div>
 			{changesReview !== null && reviewItems.length > 0 && <ChangesDialog
 				key={`${changesReview.scope.kind}:${changesReview.scope.kind === 'turn' ? changesReview.scope.runId : ''}:${changesReview.path}`}
-				items={reviewItems} diffs={changesReview.scope.kind === 'conversation' && findOpen && findScope === 'changes' ? findDiffs : reviewDiffs}
+				items={reviewItems} diffs={reviewDialogDiffs}
 				initialPath={changesReview.path} returnFocus={changesReview.trigger}
-				getReturnFocus={() => document.querySelector<HTMLElement>('.pd-conversation-changes .pd-changes-card-main, .pd-composer-changes.is-running .pd-changes-live-main') ?? document.querySelector<HTMLTextAreaElement>('.pd-composer-shell textarea')}
+				getReturnFocus={() => document.querySelector<HTMLElement>('.pd-conversation-changes .pd-changes-card-main, .pd-composer-changes.is-running .pd-changes-live-main, .pd-composer-changes.is-session .pd-changes-live-main') ?? document.querySelector<HTMLTextAreaElement>('.pd-composer-shell textarea')}
 				onClose={() => setChangesReview(null)} />}
 
 		</main>
