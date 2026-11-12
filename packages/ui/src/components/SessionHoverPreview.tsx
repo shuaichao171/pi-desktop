@@ -33,6 +33,9 @@ export function SessionHoverPreview({ session, title, row }: { session: SidebarS
 		return JSON.stringify([lastUser, lastAssistant]);
 	});
 	const key = sessionPreviewCacheKey(session.path, session.modified);
+	// 悬停在途期间修订键可能变化：resolve 时用最新键比对，旧摘要丢弃。
+	const keyRef = useRef(key);
+	keyRef.current = key;
 	const [fetched, setFetched] = useState<UiSessionPreview | null>(() => sessionPreviewCache.peek(key) ?? null);
 	const requested = useRef(false);
 	// A new revision (the conversation changed) starts a fresh lazy cycle.
@@ -40,7 +43,8 @@ export function SessionHoverPreview({ session, title, row }: { session: SidebarS
 	const open = useCallback(() => {
 		if (requested.current) return;
 		requested.current = true;
-		void loadSessionPreview(bridge, session.workspace, session.path, session.modified).then((value) => { if (value) setFetched(value); });
+		const requestedKey = sessionPreviewCacheKey(session.path, session.modified);
+		void loadSessionPreview(bridge, session.workspace, session.path, session.modified).then((value) => { if (value && requestedKey === keyRef.current) setFetched(value); });
 	}, [bridge, session.workspace, session.path, session.modified]);
 	const [lastUser, lastAssistant] = JSON.parse(inlineSummary || '["",""]') as [string, string];
 	const summary: UiSessionPreview | null = inlineSummary ? { ...(lastUser ? { lastUser } : {}), ...(lastAssistant ? { lastAssistant } : {}) } : fetched;

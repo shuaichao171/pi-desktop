@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { focusAwarePollDelayMs, type FocusAwarePollOptions, type FocusPollState } from './focusAwarePolling';
+import { focusAwarePollDelayMs, FOCUS_AWARE_POLL_DEFAULTS, type FocusAwarePollOptions, type FocusPollState } from './focusAwarePolling';
 
 /**
  * Window focus tracking shared by every focus-aware poll. The app already
@@ -39,8 +39,8 @@ export function subscribeWindowFocus(listener: () => void): () => void {
 export function useFocusAwarePoll(callback: () => void, baseIntervalMs: number, options?: FocusAwarePollOptions): void {
 	const callbackRef = useRef(callback);
 	callbackRef.current = callback;
-	const multiplier = options?.unfocusedMultiplier ?? 3;
-	const idleCutoffMs = options?.idleCutoffMs !== undefined ? options.idleCutoffMs : 10 * 60_000;
+	const multiplier = options?.unfocusedMultiplier ?? FOCUS_AWARE_POLL_DEFAULTS.unfocusedMultiplier;
+	const idleCutoffMs = options?.idleCutoffMs !== undefined ? options.idleCutoffMs : FOCUS_AWARE_POLL_DEFAULTS.idleCutoffMs;
 	const optionsKey = `${multiplier}:${idleCutoffMs ?? 'off'}`;
 	useEffect(() => {
 		if (!Number.isFinite(baseIntervalMs) || baseIntervalMs <= 0) return;

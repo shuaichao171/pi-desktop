@@ -33,6 +33,8 @@ export function focusAwarePollDelayMs(baseIntervalMs: number, state: FocusPollSt
 	if (state.focused) return baseIntervalMs;
 	const idleCutoffMs = options?.idleCutoffMs !== undefined ? options.idleCutoffMs : FOCUS_AWARE_POLL_DEFAULTS.idleCutoffMs;
 	if (idleCutoffMs !== null && Number.isFinite(idleCutoffMs) && idleCutoffMs >= 0 && state.unfocusedMs >= idleCutoffMs) return null;
-	const multiplier = Math.max(1, options?.unfocusedMultiplier ?? FOCUS_AWARE_POLL_DEFAULTS.unfocusedMultiplier);
+	// 非有限倍率（如 NaN）按默认处理：Math.max(1, NaN) = NaN 会让 setTimeout 立即触发。
+	const requestedMultiplier = options?.unfocusedMultiplier ?? FOCUS_AWARE_POLL_DEFAULTS.unfocusedMultiplier;
+	const multiplier = Number.isFinite(requestedMultiplier) ? Math.max(1, requestedMultiplier) : FOCUS_AWARE_POLL_DEFAULTS.unfocusedMultiplier;
 	return baseIntervalMs * multiplier;
 }

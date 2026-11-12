@@ -62,6 +62,24 @@ test('preview cache stays bounded by evicting the oldest revision', async () => 
 	assert.notEqual(sessionPreviewCacheKey('p', 'm1'), sessionPreviewCacheKey('p', 'm2'), 'a new revision is a new key');
 });
 
+test('a settled value answers directly even after the pending entry was evicted', async () => {
+	// 淘汰穿透防护（P2-2）：慢请求在 pending 中被逐出、晚于后来者落定后，settled 仍有值，
+	// get 直接命中而不重读（旧实现会因 pending 未命中而再发一次请求）。
+	const cache = createSessionPreviewCache(1);
+	let releaseSlow;
+	const slow = new Promise((resolve) => { releaseSlow = resolve; });
+	let calls = 0;
+	const fetchA = () => { calls += 1; return slow.then(() => ({ lastUser: 'kept' })); };
+	const first = cache.get('a', fetchA);
+	await cache.get('b', async () => null);
+	assert.equal(cache.peek('a'), undefined, 'the slow entry is evicted from pending and not settled yet');
+	releaseSlow();
+	assert.deepEqual(await first, { lastUser: 'kept' });
+	assert.deepEqual(cache.peek('a'), { lastUser: 'kept' }, 'settled late, it outlived the pending eviction');
+	assert.deepEqual(await cache.get('a', fetchA), { lastUser: 'kept' }, 'get serves the settled value instead of refetching');
+	assert.equal(calls, 1);
+});
+
 const message = (id, parentId, role, text) => ({ parentId, message: { id, role, text } });
 const parsed = (entries, leaf) => {
 	const nodes = entries.map((entry) => [entry.message.id, entry]);

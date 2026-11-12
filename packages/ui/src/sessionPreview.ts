@@ -50,6 +50,9 @@ export function createSessionPreviewCache(limit = SESSION_PREVIEW_CACHE_LIMIT): 
 	const settled = new Map<string, UiSessionPreview | null>();
 	return {
 		get(key, fetch) {
+			// pending 已被容量淘汰但 settled 仍有值时直接命中，避免跨重挂载多读一次。
+			const cached = settled.get(key);
+			if (cached !== undefined) return Promise.resolve(cached);
 			const existing = pending.get(key);
 			if (existing) return existing;
 			// A failed probe degrades quietly: the resolved null caches like a value,
