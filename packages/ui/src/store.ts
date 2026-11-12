@@ -704,8 +704,9 @@ modelProviders: [...get().modelProviders],
 					fileChangeTurns: event.fileChangeTurns ?? [],
 					fileChangeActiveRunId: event.fileChangeActiveRunId ?? null,
 					// Host-side switches (extension navigation) land without an optimistic
-					// switch; a different session's ready must also retire a foreign fleet.
-					...(!sameSession ? { subagentFleet: null, subagentInspect: null } : {}),
+					// switch; a different session's ready must also retire a foreign fleet
+					// and the aside composer anchored on the conversation being left.
+					...(!sameSession ? { subagentFleet: null, subagentInspect: null, sideQuestionTarget: null } : {}),
 					error: null,
 				});
 				// agent_settled resyncs re-send only the newest window; restore pages the user already opened.
@@ -1408,9 +1409,10 @@ if (!get().modelProviders.length) void get().refreshModelProviders().catch(() =>
 	},
 
 	async askSideQuestion(anchorEntryId, question, options) {
-		const { bridge, sessionPath, messages, model, modelName, modelProvider } = get();
+		const { bridge, sessionPath, messages, model, modelName, modelProvider, navigationPending, sessionLoading } = get();
 		const trimmed = question.trim();
-		if (!bridge || !sessionPath || !anchorEntryId || !trimmed) return;
+		// A switch in flight would persist this ask into a session the view is leaving.
+		if (!bridge || !sessionPath || !anchorEntryId || !trimmed || navigationPending || sessionLoading) return;
 		// The slice comes from the loaded transcript window; an anchor that is not
 		// (or no longer) visible cannot host an aside.
 		const slice = buildSideQuestionContext(messages, anchorEntryId);
@@ -2405,8 +2407,10 @@ function beginOptimisticSessionSwitch(set: (partial: Partial<ChatState>) => void
 		sessions: state.sessionsByWorkspace[nextCwd] ?? [],
 		// The fleet card belongs to the conversation being left: the host re-emits the
 		// target session's fleet (if any) once its session binds, so a stale card must
-		// never survive a switch — warm-painted or cold.
-		...(identityChanged ? { subagentFleet: null, subagentInspect: null } : {}),
+		// never survive a switch — warm-painted or cold. The open aside composer
+		// anchors on the conversation being left too: closing it here keeps a keep-over
+		// view from submitting an ask into a session it no longer shows.
+		...(identityChanged ? { subagentFleet: null, subagentInspect: null, sideQuestionTarget: null } : {}),
 		...(painted ? {} : {
 			// Cold switch: keep the conversation being left on screen so the wait
 			// never blanks the view. The painted transcript still belongs to the

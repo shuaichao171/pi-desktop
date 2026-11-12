@@ -138,3 +138,49 @@ test('a re-ask reuses the record id and delete removes it everywhere', async () 
 	assert.equal(useChatStore.getState().sideQuestions.length, 0);
 	assert.deepEqual(host.deletes, [['C:\\sessions\\one.jsonl', first.id]]);
 });
+
+test('an ask submitted while a switch is in flight is rejected without any record (P2-1)', async () => {
+	const host = createBridge();
+	// Real host ordering: the switch RPC settles only after the renderer is already navigating.
+	let finishSwitch;
+	host.bridge.switchSession = () => new Promise((resolve) => { finishSwitch = resolve; });
+	useChatStore.getState().setBridge(host.bridge);
+	await settle();
+	useChatStore.getState().openSideQuestion('u2');
+	assert.ok(useChatStore.getState().sideQuestionTarget, 'the composer is open on the conversation being left');
+	const switching = useChatStore.getState().switchSession('C:\\sessions\\two.jsonl');
+	assert.equal(useChatStore.getState().navigationPending, true);
+	assert.equal(useChatStore.getState().sessionLoading, true);
+	await useChatStore.getState().askSideQuestion('u2', '切换在途时的提问');
+	assert.equal(useChatStore.getState().sideQuestions.length, 0, 'a mid-switch ask never creates a record');
+	assert.deepEqual(host.asks, [], 'the host never receives the ask');
+	finishSwitch();
+	await switching;
+	for (let i = 0; i < 10; i += 1) await settle();
+	assert.equal(useChatStore.getState().navigationPending, false);
+});
+
+test('a session switch drops the open aside composer at switch start and on a foreign ready (P2-2)', async () => {
+	const host = createBridge();
+	host.bridge.switchSession = async () => {};
+	useChatStore.getState().setBridge(host.bridge);
+	await settle();
+	useChatStore.getState().openSideQuestion('u1');
+	assert.ok(useChatStore.getState().sideQuestionTarget);
+	// The optimistic switch commits the target identity before the host loads it.
+	const switching = useChatStore.getState().switchSession('C:\\sessions\\two.jsonl');
+	assert.equal(useChatStore.getState().sideQuestionTarget, null, 'switching identity closes the stale composer immediately');
+	await switching;
+	for (let i = 0; i < 10; i += 1) await settle();
+	assert.equal(useChatStore.getState().navigationPending, false);
+	assert.equal(useChatStore.getState().sessionPath, 'C:\\sessions\\two.jsonl', 'the keep-over view already carries the target identity');
+	// A host-side switch (extension navigation, no optimistic commit) lands as a foreign ready.
+	useChatStore.getState().openSideQuestion('u1');
+	assert.ok(useChatStore.getState().sideQuestionTarget);
+	host.emitAgent({
+		type: 'ready', cwd: 'C:\\workspace', sessionId: 'session-2', sessionPath: 'C:\\sessions\\two.jsonl',
+		messages: [], activities: [], fileChanges: [], model: 'chat-model', modelProvider: 'test-provider',
+		thinkingLevel: 'medium', availableThinkingLevels: [], contextUsage: null,
+	});
+	assert.equal(useChatStore.getState().sideQuestionTarget, null, 'a foreign session ready retires the composer');
+});

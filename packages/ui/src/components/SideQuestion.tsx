@@ -120,8 +120,9 @@ export const SideQuestionComposer = memo(function SideQuestionComposer({ anchorE
         ...(chosen && (chosen.provider !== modelProvider || chosen.id !== model) ? { model: { provider: chosen.provider, id: chosen.id, name: chosen.name } } : {}),
       });
       useChatStore.getState().closeSideQuestion();
-    } catch {
-      // The record (or the anchor-missing error surfaced by the store) carries the failure.
+    } catch (error) {
+      // Bridge failures live on the record; only the anchor-missing rejection reaches the caller.
+      operationFeedback.show({ id: 'side-question-submit', kind: 'error', title: error instanceof Error && error.message ? error.message : t('sideQuestion.anchorMissing') });
     } finally { setAsking(false); }
   };
 
