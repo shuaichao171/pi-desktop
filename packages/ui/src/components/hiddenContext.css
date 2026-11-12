@@ -56,3 +56,4 @@
 .pd-hidden-context-clear { color: var(--pd-danger, #d13438); }
 .pd-hidden-context-toggle.is-inactive { opacity: 0.55; }
 .pd-hidden-context-toggle.is-inactive:hover { opacity: 1; }
+.pd-hidden-context-toggle.is-open { opacity: 1; }
