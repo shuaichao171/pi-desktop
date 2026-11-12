@@ -29,3 +29,32 @@
 无名单。新增文件树操作时直接复用 `resolveBeneathRoot`／`isBeneath`（从 `./workspaceBeneath.ts` 导入），不要在调用点重新实现字符串前缀判断。判定纯函数支持注入 realpath（`resolveBeneathRoot(root, relativePath, realpath)`），测试见 `tests/workspace-beneath.test.mjs`（含 `..`、symlink、junction、短名别名、大小写、根别名等用例与真实文件系统集成断言）。
 
 已知限制：8.3 短名用例在测试中通过注入 realpath 模拟（真实生成 8.3 名依赖宿主配置，不可移植）；Windows 家族系统上 junction 由 Node 以 symlink 形式呈现，已被同一判定覆盖。
+
+## 默认 CA 集废弃根剔除（B11）
+
+### 行为
+
+`packages/desktop/src/main/caHygiene.ts` 在启动时重建 Node 侧默认 CA 集，剔除名单中的废弃／被替换根证书，语义参考 Claude Desktop nodeHost 的 TLS 卫生（round3/PERIPHERY.md）：重建默认 CA 集剔除废弃根（eMudhra/emSign 系列），`tls.setDefaultCACertificates`，失败仅告警。
+
+- **应用点**：主进程（`index.ts` 的 `app.whenReady()` 首步）与 Pi agent host utility process（`agentHost.ts` 的 bootstrap，先于 SDK 导入）各应用一次，覆盖 Node 侧出站 HTTPS：更新检查（`updateService` 走 Electron net 栈不受影响，但 npm 插件发现 `pluginDiscovery`、自定义引擎 npm 操作、SDK 供应商连接均走 Node 栈）。
+- **永不碰用户/系统 CA**：只重建 `tls.getCACertificates('default')`（Node 内置 Mozilla 集），`system`／`extra`（用户/系统自定义 CA）从不读取或过滤；名单只按具体废弃根主题精确匹配。
+- **优雅降级**：运行时无 `tls.setDefaultCACertificates`（旧 Electron/Node）时 console.warn 一条并跳过；重建过程任何异常仅 console.warn，不阻断启动（返回 `{ applied, removed }` 供调用力诊断）。
+
+### 名单维护
+
+`DEPRECATED_ROOT_SUBJECTS` 是常量数组（OpenSSL oneline 主题格式），匹配经 `normalizeSubject` 归一（兼容多行/逗号两种主题形式、转义字符、顺序与大小写差异），因此**只需原根新主题字符串**：
+
+```ts
+export const DEPRECATED_ROOT_SUBJECTS: readonly string[] = [
+	'CN=emSign Root CA - G1,OU=emSign PKI,O=eMudhra Technologies Limited,C=IN',
+	'CN=emSign ECC Root CA - G3,OU=emSign PKI,O=eMudhra Technologies Limited,C=IN',
+	'CN=emSign Root CA - C1,OU=emSign PKI,O=eMudhra Inc,C=US',
+	'CN=emSign ECC Root CA - C3,OU=emSign PKI,O=eMudhra Inc,C=US',
+];
+```
+
+初始值即 Node 24 默认集中实际存在的 4 个 eMudhra/emSign 根（2025 年被 Chrome 与 Microsoft 根计划废弃，`node -e "new (require('node:crypto').X509Certificate)(c).subject"` 可验证主题原文）。有根被新程序废弃时，向数组追加其主题即可，无需改其它代码；无法解析主题的证书一律保留（从不猜测）。
+
+测试见 `tests/ca-hygiene.test.mjs`：归一化、名单精确匹配（相似名不误伤）、过滤恰好剔除名单项、真实默认集集成断言、API 缺失/异常仅告警。
+
+已知限制：仅影响 Node 网络栈（fetch/https/tls）；渲染进程与 `net.fetch` 走 Chromium 网络栈与系统证书库，不在本机制范围（与 Claude Desktop 同口径，其 Chromium 侧另有 SPKI 黑名单，此处未引入）。
