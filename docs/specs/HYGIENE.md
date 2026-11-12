@@ -28,7 +28,7 @@
 
 无名单。新增文件树操作时直接复用 `resolveBeneathRoot`／`isBeneath`（从 `./workspaceBeneath.ts` 导入），不要在调用点重新实现字符串前缀判断。判定纯函数支持注入 realpath（`resolveBeneathRoot(root, relativePath, realpath)`），测试见 `tests/workspace-beneath.test.mjs`（含 `..`、symlink、junction、短名别名、大小写、根别名等用例与真实文件系统集成断言）。
 
-已知限制：8.3 短名用例在测试中通过注入 realpath 模拟（真实生成 8.3 名依赖宿主配置，不可移植）；Windows 家族系统上 junction 由 Node 以 symlink 形式呈现，已被同一判定覆盖。
+已知限制：8.3 短名用例在测试中通过注入 realpath 模拟（真实生成 8.3 名依赖宿主配置，不可移植）；Windows 家族系统上 junction 由 Node 以 symlink 形式呈现，已被同一判定覆盖；realpath 验证与后续实际写操作（open('wx')/rename/回收站）之间存在固有 TOCTOU 窗口（Node/Windows 无 O_RESOLVE_BENEATH/openat2 等价物），与参考实现同级。
 
 ## 默认 CA 集废弃根剔除（B11）
 

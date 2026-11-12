@@ -103,7 +103,10 @@ export function applyCaHygiene(tls: CaTls = nodeTls, warn: (message: string) => 
 	}
 	try {
 		const defaults = partial.getCACertificates('default');
-		if (!Array.isArray(defaults)) return { applied: false, removed: 0 };
+		if (!Array.isArray(defaults)) {
+			warn('CA 卫生：默认 CA 集返回非数组，已跳过 / CA hygiene skipped: default set is not an array');
+			return { applied: false, removed: 0 };
+		}
 		const pruned = pruneDeprecatedRoots(defaults, readSubject);
 		partial.setDefaultCACertificates(pruned);
 		return { applied: true, removed: defaults.length - pruned.length };
