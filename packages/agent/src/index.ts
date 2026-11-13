@@ -116,6 +116,7 @@ import { clearDisabledModelsForProvider } from './customProviders.ts';
 import { ModelTestService } from './modelTest.ts';
 import { ProjectDefaultsService } from './projectDefaults.ts';
 import { McpManager } from './mcpManager.ts';
+import { CuaSessionState, cuaExtension } from './cua/index.ts';
 import { createInterruptibleShellTools, shellRunRegistry } from './shellInterrupt.ts';
 import type { UiMcpSaveRequest, UiMcpTarget } from '../../shared/src/mcpFeatures.ts';
 import type { PluginUpdateCheck } from '../../shared/src/pluginUpdates.ts';
@@ -417,6 +418,7 @@ function createRuntimeFactory(
 		}
 		const settingsManager = SettingsManager.create(cwd, agentDir, { projectTrusted });
 		const fileChanges = new SessionFileChanges(cwd, sessionManager, (changes) => publishFileChanges(sessionManager.getSessionId(), changes));
+		const cuaState = new CuaSessionState();
 		const services = await createAgentSessionServices({
 			cwd,
 			agentDir,
@@ -424,6 +426,7 @@ function createRuntimeFactory(
 			resourceLoaderOptions: { extensionFactories: [
 				{ name: 'desktop-file-changes', hidden: true, factory: fileChanges.extension },
 				{ name: 'desktop-mcp', hidden: true, factory: mcp.extension(cwd, sessionManager.getSessionId()) },
+				{ name: 'desktop-cua', hidden: true, factory: cuaExtension({ state: cuaState }) },
 			] },
 			resourceLoaderReloadOptions: shouldPrompt && nativeNeedsTrust ? {
 				resolveProjectTrust: async () => {
