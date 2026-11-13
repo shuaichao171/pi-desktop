@@ -75,7 +75,7 @@ export function ConversationStorageSettings({ onDraftStateChange }: { onDraftSta
 				<div className="pd-conversation-storage-field">
 					<input id={`${id}-title`} name="conversationStorageDirectory" aria-label={t('settings.conversationStorage')} aria-describedby={`${id}-description`} value={directory} disabled={disabled} autoComplete="off" spellCheck={false} title={directory || undefined} onChange={event => { setDirectory(event.target.value); setError(null); setSaved(false); }} />
 					<button type="button" className="pd-conversation-storage-choose" data-action="choose-conversation-storage" disabled={disabled} onClick={() => void chooseDirectory()}><Icon name="folder" width="15" height="15" />{t(pending === 'pick' ? 'projectCreate.choosing' : 'settings.conversationStorageChoose')}</button>
-					{dirty && <button type="submit" className="pd-settings-primary" data-action="save-conversation-storage" disabled={disabled || !directory.trim()}>{t(pending === 'save' ? 'settings.processing' : 'settings.save')}</button>}
+					{dirty && <button type="submit" className="pd-btn is-primary pd-settings-primary" data-action="save-conversation-storage" disabled={disabled || !directory.trim()}>{t(pending === 'save' ? 'settings.processing' : 'settings.save')}</button>}
 				</div>
 				{error && <p className="pd-conversation-storage-error" role="alert">{error}</p>}
 				{saved && <p className="pd-settings-feedback is-success" role="status"><Icon name="check" width="13" height="13" />{t('settings.conversationStorageSaved')}</p>}

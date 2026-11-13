@@ -137,7 +137,7 @@ function ProviderCredentialRow({ provider, configured, source, supportsApiKey, o
 				<label htmlFor={`pd-api-key-${provider}`}>{t('settings.apiKey')}</label>
 				<div className="pd-provider-form-row">
 					<input id={`pd-api-key-${provider}`} type="password" value={secret} onChange={(event) => setSecret(event.target.value)} autoComplete="off" spellCheck={false} placeholder={t(configured ? 'settings.replaceKey' : 'settings.enterKey')} disabled={!canChange} />
-					<button type="submit" className="pd-settings-primary" disabled={!secret.trim() || !canChange}>{t(pending ? 'settings.processing' : 'settings.save')}</button>
+					<button type="submit" className="pd-btn is-primary pd-settings-primary" disabled={!secret.trim() || !canChange}>{t(pending ? 'settings.processing' : 'settings.save')}</button>
 				</div>
 			</form> : <p className="pd-provider-method-note">{t('settings.unsupportedKey')}</p>}
 			{source === 'stored' && <button type="button" className="pd-settings-remove" onClick={() => onRemoveRequest ? onRemoveRequest(() => { void remove(); }) : void remove()} disabled={!canChange}>{t('settings.removeKey')}</button>}
@@ -412,7 +412,7 @@ export function SettingsPanel({ initialPage = 'general', modelManagementTarget, 
 		<div className="pd-settings-overlay" onMouseDown={(event) => { if (event.target === event.currentTarget && !pendingLeave) requestLeave(); }}>
 			<div ref={dialogRef} className="pd-settings-dialog" role="dialog" aria-modal="true" aria-labelledby="pd-settings-title" onKeyDown={onDialogKeyDown}>
 				<header className="pd-settings-header" inert={Boolean(pendingLeave)}><div><h1 id="pd-settings-title">{t('settings.title')}</h1></div><button ref={closeRef} type="button" className="pd-icon-button" disabled={draftState.saving} onClick={() => requestLeave()} aria-label={t('settings.close')}><Icon name="close" /></button></header>
-				{pendingLeave && <div className="pd-settings-discard" role="alertdialog" aria-modal="true" aria-labelledby="pd-discard-title" aria-describedby="pd-discard-description"><h2 id="pd-discard-title">{t('settings.discardTitle')}</h2><p id="pd-discard-description">{t('settings.discardDescription')}</p><div className="pd-instruction-actions"><button ref={keepEditingRef} className="pd-instruction-button" type="button" disabled={savingLeave} onClick={keepEditing}>{t('personalization.keepEditing')}</button><button className="pd-instruction-button" type="button" disabled={savingLeave} onClick={discardChanges}>{t('personalization.discard')}</button>{draftState.save && <button className="pd-settings-primary" data-action="save-settings-and-leave" type="button" disabled={savingLeave} onClick={() => void saveAndLeave()}>{savingLeave ? t('personalization.saving') : t('settings.saveAndContinue')}</button>}</div>{leaveError && <p role="alert">{t('settings.leaveSaveFailed')}</p>}</div>}
+				{pendingLeave && <div className="pd-settings-discard" role="alertdialog" aria-modal="true" aria-labelledby="pd-discard-title" aria-describedby="pd-discard-description"><h2 id="pd-discard-title">{t('settings.discardTitle')}</h2><p id="pd-discard-description">{t('settings.discardDescription')}</p><div className="pd-instruction-actions"><button ref={keepEditingRef} className="pd-instruction-button" type="button" disabled={savingLeave} onClick={keepEditing}>{t('personalization.keepEditing')}</button><button className="pd-instruction-button" type="button" disabled={savingLeave} onClick={discardChanges}>{t('personalization.discard')}</button>{draftState.save && <button className="pd-btn is-primary pd-settings-primary" data-action="save-settings-and-leave" type="button" disabled={savingLeave} onClick={() => void saveAndLeave()}>{savingLeave ? t('personalization.saving') : t('settings.saveAndContinue')}</button>}</div>{leaveError && <p role="alert">{t('settings.leaveSaveFailed')}</p>}</div>}
 				<div className="pd-settings-layout" inert={Boolean(pendingLeave)}>
 					<nav className="pd-settings-nav" aria-label={t('settings.category')}>
 						{SETTINGS_NAV.map((group) => <div key={group.id} className="pd-settings-nav-group" role="group" aria-label={t(`settings.navGroup.${group.id}`)}>
@@ -430,7 +430,7 @@ export function SettingsPanel({ initialPage = 'general', modelManagementTarget, 
 							<div className="pd-settings-section-head"><h2>{t('settings.general')}</h2><p>{t('settings.generalDescription')}</p></div>
 							<SettingsGroup title={t('settings.groupBasics')}>
 								<SettingsRow title={t('settings.language')} description={t('settings.languageDescription')}>
-									<div className="pd-language-options" data-setting="language" role="group" aria-label={t('settings.language')}>
+									<div className="pd-language-options pd-seg" data-setting="language" role="group" aria-label={t('settings.language')}>
 										<button type="button" className={locale === 'zh-CN' ? 'is-selected' : ''} aria-pressed={locale === 'zh-CN'} onClick={() => setLocale('zh-CN')}>{t('settings.languageZh')}</button>
 										<button type="button" className={locale === 'en-US' ? 'is-selected' : ''} aria-pressed={locale === 'en-US'} onClick={() => setLocale('en-US')}>{t('settings.languageEn')}</button>
 									</div>
@@ -440,7 +440,7 @@ export function SettingsPanel({ initialPage = 'general', modelManagementTarget, 
 							<SettingsGroup title={t('settings.groupConversation')}>
 								<SettingsRow title={t('settings.busyInputBehavior')} description={t('settings.busyInputBehaviorDescription', { modifier: appInfo?.platform === 'darwin' ? 'Cmd' : 'Ctrl' })}
 									footer={busyInputSaveFailed && <p className="pd-settings-feedback" role="status">{t('settings.busyInputSaveFailed')}</p>}>
-									<div className="pd-language-options" data-setting="busy-input-behavior" role="group" aria-label={t('settings.busyInputBehavior')}>
+									<div className="pd-language-options pd-seg" data-setting="busy-input-behavior" role="group" aria-label={t('settings.busyInputBehavior')}>
 										<button type="button" className={busyInputBehavior === 'followUp' ? 'is-selected' : ''} aria-pressed={busyInputBehavior === 'followUp'} onClick={() => setBusyInputSaveFailed(!setBusyInputBehavior('followUp'))}>{t('settings.busyInputQueue')}</button>
 										<button type="button" className={busyInputBehavior === 'steer' ? 'is-selected' : ''} aria-pressed={busyInputBehavior === 'steer'} onClick={() => setBusyInputSaveFailed(!setBusyInputBehavior('steer'))}>{t('settings.busyInputSteer')}</button>
 									</div>
@@ -496,7 +496,7 @@ export function SettingsPanel({ initialPage = 'general', modelManagementTarget, 
 							</SettingsGroup>
 							{desktopSettings && <SettingsGroup title={t('settings.groupSystem')}>
 								{!paiMode && appInfo?.platform === 'win32' && <SettingsRow title={t('settings.closeBehavior')} description={t('settings.closeBehaviorDescription')}>
-									<div className="pd-language-options" data-setting="tray" role="group" aria-label={t('settings.closeBehavior')}>
+									<div className="pd-language-options pd-seg" data-setting="tray" role="group" aria-label={t('settings.closeBehavior')}>
 										<button type="button" className={desktopSettings.closeBehavior === 'tray' ? 'is-selected' : ''} aria-pressed={desktopSettings.closeBehavior === 'tray'}
 											disabled={savingDesktopSettings} onClick={() => { void saveDesktopSettings({ closeBehavior: 'tray' }); }}>{t('settings.closeBehaviorTray')}</button>
 										<button type="button" className={desktopSettings.closeBehavior === 'quit' ? 'is-selected' : ''} aria-pressed={desktopSettings.closeBehavior === 'quit'}
@@ -556,9 +556,9 @@ export function SettingsPanel({ initialPage = 'general', modelManagementTarget, 
 								<div className="pd-language-options" data-setting="debug-api" role="group" aria-label={t('settings.debugApi')}>
 									<label className="pd-debug-field"><span>{t('settings.debugApiPort')}</span>
 										<input type="number" min={1} max={65535} value={debugApiPortDraft} onChange={(event) => setDebugApiPortDraft(event.target.value)} /></label>
-									<button type="button" className={debugApiState.enabled ? 'is-selected' : ''} aria-pressed={debugApiState.enabled} disabled={debugApiBusy}
+									<button type="button" className="pd-btn" aria-pressed={debugApiState.enabled} disabled={debugApiBusy}
 										onClick={() => { void saveDebugApiConfig({ enabled: !debugApiState.enabled }); }}>{t(debugApiState.enabled ? 'settings.debugApiStop' : 'settings.debugApiStart')}</button>
-									<button type="button" className={debugApiState.authEnabled ? 'is-selected' : ''} aria-pressed={debugApiState.authEnabled} disabled={debugApiBusy}
+									<button type="button" className="pd-btn" aria-pressed={debugApiState.authEnabled} disabled={debugApiBusy}
 										onClick={() => { void saveDebugApiConfig({ authEnabled: !debugApiState.authEnabled }); }}>{t('settings.debugApiAuth')} · {t(debugApiState.authEnabled ? 'settings.debugApiOn' : 'settings.debugApiOff')}</button>
 								</div>
 							)}
@@ -566,8 +566,8 @@ export function SettingsPanel({ initialPage = 'general', modelManagementTarget, 
 								<div className="pd-language-options" data-setting="debug-api-token" role="group" aria-label={t('settings.debugApiToken')}>
 									<label className="pd-debug-field pd-debug-token"><span>{t('settings.debugApiToken')}</span>
 										<input type="text" value={debugApiTokenDraft} onChange={(event) => setDebugApiTokenDraft(event.target.value)} /></label>
-									<button type="button" disabled={debugApiBusy} onClick={() => { void saveDebugApiConfig({}); }}>{t('settings.debugApiApply')}</button>
-									<button type="button" disabled={debugApiBusy} onClick={() => { setDebugApiTokenDraft(''); void saveDebugApiConfig({ token: '' }); }}>{t('settings.debugApiGenerateToken')}</button>
+									<button type="button" className="pd-btn" disabled={debugApiBusy} onClick={() => { void saveDebugApiConfig({}); }}>{t('settings.debugApiApply')}</button>
+									<button type="button" className="pd-btn" disabled={debugApiBusy} onClick={() => { setDebugApiTokenDraft(''); void saveDebugApiConfig({ token: '' }); }}>{t('settings.debugApiGenerateToken')}</button>
 								</div>
 							)}
 							{debugApiState && <p className="pd-settings-feedback" role="status">{debugApiState.running ? t('settings.debugApiRunning', { url: debugApiState.baseUrl ?? '' }) : t('settings.debugApiStopped')}</p>}

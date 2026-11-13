@@ -167,10 +167,10 @@ export function CloudSyncPanel({ disabled }: { disabled: boolean }) {
 				<label className="pd-model-switch pd-cloud-sync-auto" title={t('settings.cloudSyncAutoSyncHint')}><input type="checkbox" role="switch" checked={autoSync} disabled={locked} aria-label={t('settings.cloudSyncAutoSync')} onChange={(event) => setAutoSync(event.target.checked)} /><span className="pd-model-switch-track" aria-hidden="true"><span className="pd-model-switch-thumb" /></span><span className="pd-cloud-sync-auto-copy"><strong>{t('settings.cloudSyncAutoSync')}</strong><small>{t('settings.cloudSyncAutoSyncHint')}</small></span></label>
 			</div>
 			<div className="pd-cloud-sync-actions">
-				<button type="button" data-action="cloud-sync-test" className="pd-model-settings-button" disabled={locked} onClick={() => void test()}>{busy === 'test' ? t('settings.cloudSyncTesting') : t('settings.cloudSyncTest')}</button>
-				<button type="button" data-action="cloud-sync-save" className="pd-settings-primary" disabled={locked} onClick={() => void save()}>{busy === 'save' ? t('personalization.saving') : t('settings.cloudSyncSave')}</button>
-				<button type="button" data-action="cloud-sync-upload" className="pd-model-settings-button" disabled={locked || !state?.configured} onClick={() => void upload()}>{busy === 'upload' ? t('settings.cloudSyncUploading') : t('settings.cloudSyncUpload')}</button>
-				<button type="button" data-action="cloud-sync-download" className="pd-model-settings-button" disabled={locked || !state?.configured} onClick={() => void download()}>{busy === 'download' ? t('settings.cloudSyncDownloading') : t('settings.cloudSyncDownload')}</button>
+				<button type="button" data-action="cloud-sync-test" className="pd-btn pd-model-settings-button" disabled={locked} onClick={() => void test()}>{busy === 'test' ? t('settings.cloudSyncTesting') : t('settings.cloudSyncTest')}</button>
+				<button type="button" data-action="cloud-sync-save" className="pd-btn is-primary pd-settings-primary" disabled={locked} onClick={() => void save()}>{busy === 'save' ? t('personalization.saving') : t('settings.cloudSyncSave')}</button>
+				<button type="button" data-action="cloud-sync-upload" className="pd-btn pd-model-settings-button" disabled={locked || !state?.configured} onClick={() => void upload()}>{busy === 'upload' ? t('settings.cloudSyncUploading') : t('settings.cloudSyncUpload')}</button>
+				<button type="button" data-action="cloud-sync-download" className="pd-btn pd-model-settings-button" disabled={locked || !state?.configured} onClick={() => void download()}>{busy === 'download' ? t('settings.cloudSyncDownloading') : t('settings.cloudSyncDownload')}</button>
 			</div>
 			{remote && (remote.uploadedAt !== null
 				? <div className="pd-cloud-sync-remote" role="region" aria-label={t('settings.cloudSyncDownload')}>
@@ -179,8 +179,8 @@ export function CloudSyncPanel({ disabled }: { disabled: boolean }) {
 					<p className="pd-settings-hint">{t('settings.cloudSyncRestoreConfirm')}</p>
 					<p className="pd-settings-hint">{t('settings.cloudSyncRestoreHint')}</p>
 					<div className="pd-model-settings-form-actions">
-						<button type="button" className="pd-model-settings-button" disabled={locked} onClick={() => setRemote(null)}>{t('settings.modelSettingsCancel')}</button>
-						<button type="button" data-action="cloud-sync-restore" className="pd-model-settings-button is-danger" disabled={locked} onClick={() => void confirmRestore()}>{busy === 'restore' ? t('settings.cloudSyncDownloading') : t('settings.cloudSyncConfirmRestore')}</button>
+						<button type="button" className="pd-btn pd-model-settings-button" disabled={locked} onClick={() => setRemote(null)}>{t('settings.modelSettingsCancel')}</button>
+						<button type="button" data-action="cloud-sync-restore" className="pd-btn pd-model-settings-button is-danger" disabled={locked} onClick={() => void confirmRestore()}>{busy === 'restore' ? t('settings.cloudSyncDownloading') : t('settings.cloudSyncConfirmRestore')}</button>
 					</div>
 				</div>
 				: <p className="pd-model-settings-notice">{t('settings.cloudSyncNoBackup')}</p>)}

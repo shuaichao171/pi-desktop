@@ -63,7 +63,7 @@ export function ColorThemeSettings({ themePreference, preferences, onChange, sav
 	function reset() { onChange({ ...preferences, [mode]: getPresetColors('default', mode) }); }
 
 	return <section className="pd-theme-colors" aria-label={t('settings.color.title')}>
-		{themePreference === 'system' && <SegmentedIndicator activeKey={mode} className="pd-theme-modes" label={t('settings.color.editMode')}>
+		{themePreference === 'system' && <SegmentedIndicator activeKey={mode} className="pd-theme-modes pd-seg" label={t('settings.color.editMode')}>
 			{(['light', 'dark'] as const).map((item) => <button className="pd-theme-mode" data-color-mode={item} data-segment-key={item} key={item} type="button" aria-pressed={mode === item} onClick={() => setEditingMode(item)}>{t(`settings.color.${item}`)}</button>)}
 		</SegmentedIndicator>}
 		<div className="pd-theme-preset-row">

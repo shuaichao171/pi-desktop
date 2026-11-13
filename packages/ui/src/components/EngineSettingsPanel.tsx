@@ -138,7 +138,7 @@ export function EngineSettingsPanel({ onDraftStateChange }: { onDraftStateChange
 	const builtinVersion = status?.builtinVersion ?? null;
 	const active = status?.active ?? null;
 	const activeName = active ? t(active.mode === 'builtin' ? 'settings.engineBuiltinTitle' : 'settings.engineCustom') : null;
-	const restartButton = (action: string) => <button type="button" className="pd-engine-button" data-action={action} disabled={pending !== null} onClick={() => void relaunch()}>
+	const restartButton = (action: string) => <button type="button" className="pd-btn pd-engine-button" data-action={action} disabled={pending !== null} onClick={() => void relaunch()}>
 		<Icon name="refresh" width="14" height="14" />{t(restarting ? 'settings.engineRestarting' : 'settings.engineRestart')}
 	</button>;
 	const modes: Array<{ value: EngineMode; title: string; hint: string; icon: 'spark' | 'folder' }> = [
@@ -148,7 +148,7 @@ export function EngineSettingsPanel({ onDraftStateChange }: { onDraftStateChange
 
 	return <section className="pd-engine" data-setting="pi-engine" aria-labelledby={`${id}-title`}>
 		<div className="pd-settings-section-head"><h2 id={`${id}-title`}>{t('settings.engine')}</h2><p id={`${id}-description`}>{t('settings.engineDescription')}</p></div>
-		{loadError ? <div className="pd-engine-callout is-error" role="alert"><p>{t('settings.engineLoadFailed')}：{loadError}</p><button type="button" className="pd-engine-button" onClick={() => setAttempt(value => value + 1)}>{t('projectCreate.retry')}</button></div>
+		{loadError ? <div className="pd-engine-callout is-error" role="alert"><p>{t('settings.engineLoadFailed')}：{loadError}</p><button type="button" className="pd-btn pd-engine-button" onClick={() => setAttempt(value => value + 1)}>{t('projectCreate.retry')}</button></div>
 			: savedMode === null ? <p className="pd-engine-loading" role="status">{t('settings.engineLoading')}</p>
 			: <form className="pd-engine-form" onSubmit={event => { event.preventDefault(); if (dirty) void save(); }} aria-busy={pending !== null}>
 				<div ref={statusRef} className={`pd-engine-status${status?.pendingRestart ? ' is-pending' : ''}`} aria-label={t('settings.engineStatus')}>
@@ -180,8 +180,8 @@ export function EngineSettingsPanel({ onDraftStateChange }: { onDraftStateChange
 					<div className="pd-engine-path">
 						<input name="piEngineDirectory" aria-label={t('settings.enginePath')} aria-describedby={`${id}-description`} value={path} disabled={disabled} autoComplete="off" spellCheck={false} title={path || undefined}
 							placeholder={t('engine.pathPlaceholder')} onChange={event => { setPath(event.target.value); setError(null); setSaved(false); }} />
-						<button type="button" className="pd-engine-button" data-action="choose-engine-directory" disabled={disabled} onClick={() => void chooseDirectory()}><Icon name="folder" width="14" height="14" />{t(pending === 'pick' ? 'projectCreate.choosing' : 'settings.engineChoose')}</button>
-						<button type="button" className="pd-engine-button" data-action="check-engine-directory" disabled={disabled || !path.trim() || probing} onClick={() => runProbe(path)}>{t(probing ? 'settings.engineChecking' : 'settings.engineCheck')}</button>
+						<button type="button" className="pd-btn pd-engine-button" data-action="choose-engine-directory" disabled={disabled} onClick={() => void chooseDirectory()}><Icon name="folder" width="14" height="14" />{t(pending === 'pick' ? 'projectCreate.choosing' : 'settings.engineChoose')}</button>
+						<button type="button" className="pd-btn pd-engine-button" data-action="check-engine-directory" disabled={disabled || !path.trim() || probing} onClick={() => runProbe(path)}>{t(probing ? 'settings.engineChecking' : 'settings.engineCheck')}</button>
 					</div>
 					{probing && <p className="pd-engine-probe" role="status"><Icon name="loader" width="14" height="14" className="is-spinning" />{t('settings.engineChecking')}</p>}
 					{!probing && probe?.ok && <div className="pd-engine-probe is-ok" role="status">
@@ -203,8 +203,8 @@ export function EngineSettingsPanel({ onDraftStateChange }: { onDraftStateChange
 				{error && <p className="pd-engine-callout is-error" role="alert">{error}</p>}
 				{dirty && <div className="pd-engine-savebar">
 					<span>{t('settings.engineUnsaved')}</span>
-					<button type="button" className="pd-engine-button is-ghost" disabled={pending !== null} onClick={discard}>{t('settings.engineDiscard')}</button>
-					<button type="submit" className="pd-engine-button is-primary" data-action="save-engine-settings" disabled={disabled || (mode === 'custom' && !path.trim())}>{t(pending === 'save' ? 'settings.processing' : 'settings.engineSave')}</button>
+					<button type="button" className="pd-btn pd-engine-button is-ghost" disabled={pending !== null} onClick={discard}>{t('settings.engineDiscard')}</button>
+					<button type="submit" className="pd-btn pd-engine-button is-primary" data-action="save-engine-settings" disabled={disabled || (mode === 'custom' && !path.trim())}>{t(pending === 'save' ? 'settings.processing' : 'settings.engineSave')}</button>
 				</div>}
 			</form>}
 	</section>;

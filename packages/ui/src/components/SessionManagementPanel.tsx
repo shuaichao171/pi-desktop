@@ -73,8 +73,8 @@ function RenameDialog({ initial, onSave, onClose }: { initial: string; onSave(na
     <h3 id={id}>{t('sessions.renameTitle')}</h3>
     <input autoFocus value={draft} maxLength={200} onChange={event => setDraft(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') submit(); }} placeholder={t('sessions.namePlaceholder')} aria-label={t('sessions.nameLabel')} />
     <footer>
-      <button type="button" onClick={onClose}>{t('sessions.cancel')}</button>
-      <button type="button" className="is-primary" disabled={!draft.trim()} onClick={submit}>{t('sessions.save')}</button>
+      <button type="button" className="pd-btn" onClick={onClose}>{t('sessions.cancel')}</button>
+      <button type="button" className="pd-btn is-primary" disabled={!draft.trim()} onClick={submit}>{t('sessions.save')}</button>
     </footer>
   </dialog>, document.body);
 }
@@ -243,7 +243,7 @@ export function SessionManagementPanel() {
         <Icon name="search" width="15" height="15" />
         <input type="search" value={query} onChange={event => setQuery(event.target.value)} placeholder={t('sessions.searchPlaceholder')} aria-label={t('sessions.searchLabel')} />
       </label>
-      <div className="pd-session-management-segmented" role="group" aria-label={t('sessions.filter')}>
+      <div className="pd-session-management-segmented pd-seg" role="group" aria-label={t('sessions.filter')}>
         {filters.map(item => <button key={item.key} type="button" className={filter === item.key ? 'is-active' : ''} aria-pressed={filter === item.key} onClick={() => setFilter(item.key)}>{item.text}</button>)}
       </div>
     </div>

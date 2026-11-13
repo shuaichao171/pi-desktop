@@ -24,10 +24,6 @@
 .pd-extension-request textarea { min-height: 66px; max-height: 140px; resize: vertical; font-family: ui-monospace, Consolas, monospace; }
 .pd-extension-request :is(button, input, textarea):focus-visible { outline: 2px solid var(--pd-focus-border); outline-offset: -2px; }
 .pd-extension-request-actions { display: flex; justify-content: flex-end; gap: 7px; margin-top: 9px; }
-.pd-extension-request-actions > button { min-height: 29px; padding: 4px 10px; border: 1px solid var(--pd-border-strong); border-radius: var(--pd-radius-sm); background: transparent; color: var(--pd-text-subtle); font: inherit; line-height: 1.4; }
-.pd-extension-request-actions > button:hover:not(:disabled) { background: var(--pd-surface-hover); color: var(--pd-text); }
-.pd-extension-request-actions > .is-primary { border-color: var(--pd-brand); background: var(--pd-brand); color: var(--pd-brand-ink); }
-.pd-extension-request-actions > .is-primary:hover:not(:disabled) { background: var(--pd-brand-hover); color: var(--pd-brand-ink); }
 .pd-extension-request :is(button, input, textarea):disabled { opacity: .55; cursor: default; }
 .pd-extension-request-error { margin: 0 0 9px; color: var(--pd-danger); font-size: var(--pd-font-sm); line-height: 1.5; overflow-wrap: anywhere; }
 .pd-extension-request.is-collapsed { padding-block: 9px; }

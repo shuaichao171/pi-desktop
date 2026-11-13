@@ -1,7 +1,5 @@
 .pd-theme-colors { min-width: 0; }
-.pd-theme-modes { display: inline-flex; gap: 2px; padding: 3px; margin-bottom: 16px; border: 1px solid var(--pd-border-soft); border-radius: var(--pd-radius-md); background: var(--pd-surface-muted); }
-.pd-theme-mode { min-height: 28px; padding: 4px 12px; border: 0; border-radius: var(--pd-radius-xs); background: transparent; color: var(--pd-text-subtle); font-size: var(--pd-font-caption); }
-.pd-theme-mode[aria-pressed='true'] { color: var(--pd-text); }
+.pd-theme-modes { margin-bottom: 16px; }
 .pd-theme-preset-row { display: flex; align-items: center; gap: 12px; margin-bottom: 17px; }
 .pd-theme-preset-row > label { color: var(--pd-text-subtle); font-size: var(--pd-font-caption); }
 .pd-theme-preset-select { flex: 1; min-width: 0; max-width: 230px; height: 34px; padding: 0 9px; border: 1px solid var(--pd-border); border-radius: var(--pd-radius-sm); background: var(--pd-surface); color: var(--pd-text); font: inherit; font-size: var(--pd-font-caption); }

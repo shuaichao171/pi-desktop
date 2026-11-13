@@ -101,7 +101,7 @@ export function PersonalizationPanel({ active, onDraftStateChange }: {
 					</div>}
 				</div>}
 				{errors[doc.id] && <p className="pd-settings-error" role="alert">{errors[doc.id]}</p>}
-				<div className="pd-instruction-footer"><span role="status">{pending === doc.id ? t('personalization.saving') : saved === doc.id ? t('personalization.saved') : changed ? t('personalization.unsaved') : t('personalization.shortcut')}</span><button className="pd-settings-primary pd-instruction-save" type="submit" disabled={!changed || pending !== null || Boolean(doc.error) || Boolean(conflict)}>{t(pending === doc.id ? 'personalization.saving' : 'settings.save')}</button></div>
+				<div className="pd-instruction-footer"><span role="status">{pending === doc.id ? t('personalization.saving') : saved === doc.id ? t('personalization.saved') : changed ? t('personalization.unsaved') : t('personalization.shortcut')}</span><button className="pd-btn is-primary pd-settings-primary pd-instruction-save" type="submit" disabled={!changed || pending !== null || Boolean(doc.error) || Boolean(conflict)}>{t(pending === doc.id ? 'personalization.saving' : 'settings.save')}</button></div>
 			</form>;
 		})}
 		{documents && <p className="pd-settings-hint">{t('personalization.applyHint')}</p>}

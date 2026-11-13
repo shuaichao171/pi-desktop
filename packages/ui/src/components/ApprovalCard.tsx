@@ -18,6 +18,6 @@ export function ApprovalCard({ approval, pending, onRespond }: { approval: UiApp
     </details>)}
     <label className="pd-approval-scope">{t('approval.scope')}<select value={scope} disabled={pending} onChange={event => setScope(event.target.value as UiApprovalScope)}>{scopes.map(value => <option key={value} value={value}>{names[value]}</option>)}</select></label>
     <label className="pd-approval-feedback">{t('approval.feedback')}<textarea maxLength={4000} rows={2} value={feedback} disabled={pending} onChange={event => setFeedback(event.target.value)} placeholder={t('approval.feedbackPlaceholder')} /></label>
-    <div className="pd-extension-request-actions"><button type="button" disabled={pending} onClick={() => onRespond({ approved: false, scope: 'once', ...(feedback.trim() ? { feedback: feedback.trim() } : {}) })}>{t('approval.decline')}</button><button type="button" className="is-primary" disabled={pending} onClick={() => onRespond({ approved: true, scope })}>{t('approval.allow')}</button></div>
+    <div className="pd-extension-request-actions"><button type="button" className="pd-btn is-sm" disabled={pending} onClick={() => onRespond({ approved: false, scope: 'once', ...(feedback.trim() ? { feedback: feedback.trim() } : {}) })}>{t('approval.decline')}</button><button type="button" className="pd-btn is-sm is-primary" disabled={pending} onClick={() => onRespond({ approved: true, scope })}>{t('approval.allow')}</button></div>
   </div>;
 }

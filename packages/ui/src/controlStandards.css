@@ -47,8 +47,49 @@ select option { background: var(--pd-surface); color: var(--pd-text); }
 :root[data-theme='light'] .pd-project-create-name:focus-within { border-color: var(--pd-focus-border); box-shadow: 0 0 0 3px color-mix(in srgb, var(--pd-brand) 16%, transparent); }
 /* Large settings panel: header and navigation on the dialog tone, content on an inset with white cards. */
 :root[data-theme='light'] .pd-settings-content { --pd-surface: var(--pd-dialog); background: var(--pd-dialog-inset); }
+/* ---- Buttons ----------------------------------------------------------------
+   One text-button component for pages, settings and dialogs. Markup keeps its
+   component class (layout hook, test selector) and adds `pd-btn` plus at most
+   one tone (is-primary / is-ghost / is-danger) and one size (is-sm = 28px;
+   the default follows --pd-control-height). Rules are scoped under :root so
+   the shared geometry wins over older per-component sizing in later sheets;
+   components still own placement (margins, flex, alignment). */
+:root .pd-btn { display: inline-flex; flex-shrink: 0; align-items: center; justify-content: center; gap: 6px; min-height: var(--pd-control-height); max-width: 100%; padding: 0 12px; border: 1px solid var(--pd-border); border-radius: var(--pd-control-radius); background: var(--pd-surface); color: var(--pd-text); font: inherit; font-size: var(--pd-font-caption); font-weight: var(--pd-weight-medium); line-height: 1.3; white-space: nowrap; cursor: pointer; transition: background-color var(--pd-motion-fast) ease, border-color var(--pd-motion-fast) ease, color var(--pd-motion-fast) ease; }
+:root .pd-btn.is-sm { min-height: 28px; padding: 0 10px; font-size: var(--pd-font-sm); }
+:root .pd-btn > svg { flex: 0 0 auto; }
+:root .pd-btn:hover:not(:disabled) { border-color: var(--pd-border-strong); background: var(--pd-surface-hover); color: var(--pd-text); }
+:root .pd-btn.is-primary { border-color: transparent; background: var(--pd-brand); color: var(--pd-brand-ink); }
+:root .pd-btn.is-primary:hover:not(:disabled) { border-color: transparent; background: var(--pd-brand-hover); color: var(--pd-brand-ink); }
+:root .pd-btn.is-ghost { border-color: transparent; background: transparent; color: var(--pd-text-subtle); }
+:root .pd-btn.is-ghost:hover:not(:disabled) { border-color: transparent; background: var(--pd-surface-hover); color: var(--pd-text); }
+:root .pd-btn.is-danger { border-color: var(--pd-danger-border); background: var(--pd-danger-surface); color: var(--pd-danger); }
+:root .pd-btn.is-danger:hover:not(:disabled) { border-color: var(--pd-danger-border); background: color-mix(in srgb, var(--pd-danger) 14%, transparent); color: var(--pd-danger); }
+/* Toggle buttons (aria-pressed) show their on state with the selection tint. */
+:root .pd-btn[aria-pressed='true']:not(.is-primary, .is-danger) { border-color: var(--pd-focus-border); background: var(--pd-selected); color: var(--pd-text); }
+:root .pd-btn:disabled { cursor: not-allowed; opacity: .45; }
+@media (prefers-reduced-motion: reduce) { :root .pd-btn { transition: none; } }
+
+/* ---- Segmented controls -------------------------------------------------------
+   One look for every two-to-five-way choice: a recessed track with a raised
+   selected segment. Static groups mark the choice with is-active / is-selected /
+   aria-pressed / aria-checked; <SegmentedIndicator> adds `pd-segmented` and a
+   sliding .pd-segmented-indicator, which then carries the raised surface.
+   `is-fill` stretches the segments across the track (tab bars). */
+:root .pd-seg { display: inline-flex; flex: 0 0 auto; align-items: stretch; gap: 2px; max-width: 100%; padding: 2px; border: 1px solid var(--pd-border-soft); border-radius: var(--pd-control-radius); background: var(--pd-surface-muted); }
+:root .pd-seg.is-fill { display: flex; }
+:root .pd-seg > button { display: inline-flex; flex: 0 0 auto; align-items: center; justify-content: center; gap: 6px; min-width: 0; min-height: calc(var(--pd-control-height) - 6px); margin: 0; padding: 0 12px; border: 0; border-radius: calc(var(--pd-control-radius) - 2px); background: transparent; color: var(--pd-text-subtle); font: inherit; font-size: var(--pd-font-caption); font-weight: var(--pd-weight-medium); line-height: 1.3; white-space: nowrap; box-shadow: none; cursor: pointer; transition: color var(--pd-motion-fast) ease; }
+:root .pd-seg.is-fill > button { flex: 1 1 0; }
+:root .pd-seg > button > svg { flex: 0 0 auto; }
+/* Hover only brightens the label: it must not clear the selected segment's surface. */
+:root .pd-seg > button:hover:not(:disabled) { color: var(--pd-text); }
+:root .pd-seg > button:is(.is-active, .is-selected, [aria-pressed='true'], [aria-checked='true']) { background: var(--pd-surface-raised); color: var(--pd-text); box-shadow: var(--pd-shadow-low); }
+:root .pd-seg.pd-segmented[data-indicator-ready='true'] > button:is(.is-active, .is-selected, [aria-pressed='true'], [aria-checked='true']) { background: transparent; box-shadow: none; }
+:root .pd-seg > .pd-segmented-indicator { border: 0; border-radius: calc(var(--pd-control-radius) - 2px); background: var(--pd-surface-raised); box-shadow: var(--pd-shadow-low); }
+:root .pd-seg > button:disabled { cursor: not-allowed; opacity: .45; }
+:root .pd-seg > button:focus-visible { outline-offset: -2px; }
+
 /* Disabled primary actions turn neutral instead of a washed-out accent. */
-:root :is(.pd-settings-primary, .pd-automation-button.is-primary, .pd-plugin-button.is-primary, .pd-mcp-button.is-primary, .pd-engine-button.is-primary, .pd-extension-request-actions > .is-primary, .pd-session-management-rename footer button.is-primary, .pd-branch-switch-dialog footer button.is-primary, .pd-commit-primary, .pd-project-create-submit, .pd-workbench-sync-primary, .pd-update-notice-primary, .pd-send-button, .pd-sidebar-update):disabled { border-color: transparent; background: color-mix(in srgb, var(--pd-text) 9%, transparent); color: var(--pd-text-weak); opacity: 1; }
+:root :is(.pd-btn.is-primary, .pd-project-create-submit, .pd-send-button, .pd-sidebar-update):disabled { border-color: transparent; background: color-mix(in srgb, var(--pd-text) 9%, transparent); color: var(--pd-text-weak); opacity: 1; }
 /* Selected choice cards use the accent tint, not a grey block. */
 :root .pd-model-template-card.is-custom { background: color-mix(in srgb, var(--pd-brand) 8%, var(--pd-dialog)); }
 /* Light composer reads as an input: white field with a soft lift. */

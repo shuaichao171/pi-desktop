@@ -66,8 +66,8 @@ export function UpdateNotice() {
 				<p>{t('update.noticeReady', { version: state.availableVersion ?? '' })}</p>
 				{error && <p className="pd-update-notice-error">{error}</p>}
 				<div className="pd-update-notice-actions">
-					<button type="button" className="pd-update-notice-secondary" onClick={() => setDismissed(true)}>{t('update.noticeLater')}</button>
-					<button type="button" className="pd-update-notice-primary" onClick={() => {
+					<button type="button" className="pd-btn is-sm pd-update-notice-secondary" onClick={() => setDismissed(true)}>{t('update.noticeLater')}</button>
+					<button type="button" className="pd-btn is-primary is-sm pd-update-notice-primary" onClick={() => {
 						setPending(true);
 						setError(null);
 						void bridge.installUpdate().catch((cause: unknown) => {

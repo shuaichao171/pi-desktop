@@ -151,7 +151,7 @@ function BranchSwitchAssist({ initial, onClose, onSwitched }: { initial: BranchS
 		{failure.issue.paths.length > 0 && <ul className="pd-branch-switch-files">{failure.issue.paths.slice(0, 12).map((path) => <li key={path}><code>{path}</code></li>)}{failure.issue.paths.length > 12 && <li>{t('composer.branchMoreFiles', { count: failure.issue.paths.length - 12 })}</li>}</ul>}
 		{failure.issue.code === 'dirty' && <label>{t('composer.branchCommitMessage')}<input value={message} maxLength={4000} disabled={busy} onChange={(event) => setMessage(event.target.value)} /></label>}
 		{error && <p className="pd-branch-switch-error" role="alert">{error}</p>}
-		<footer><button autoFocus type="button" disabled={busy} onClick={onClose}>{t('sidebar.cancel')}</button>{failure.issue.code === 'dirty' ? <button type="button" className="is-primary" disabled={busy || !message.trim()} onClick={() => void retry(true)}>{t(busy ? 'composer.branchCommitting' : 'composer.branchCommitAndSwitch')}</button> : <button type="button" className="is-primary" disabled={busy} onClick={() => void retry(false)}>{t(busy ? 'composer.branchSwitching' : 'composer.branchRetrySwitch')}</button>}</footer>
+		<footer><button autoFocus type="button" className="pd-btn" disabled={busy} onClick={onClose}>{t('sidebar.cancel')}</button>{failure.issue.code === 'dirty' ? <button type="button" className="pd-btn is-primary" disabled={busy || !message.trim()} onClick={() => void retry(true)}>{t(busy ? 'composer.branchCommitting' : 'composer.branchCommitAndSwitch')}</button> : <button type="button" className="pd-btn is-primary" disabled={busy} onClick={() => void retry(false)}>{t(busy ? 'composer.branchSwitching' : 'composer.branchRetrySwitch')}</button>}</footer>
 	</dialog>, document.body);
 }
 

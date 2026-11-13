@@ -6,14 +6,6 @@
 .pd-engine code { font-family: var(--pd-font-mono, ui-monospace, Consolas, monospace); }
 
 /* Buttons -------------------------------------------------------------------- */
-.pd-engine-button { display: inline-flex; flex: 0 0 auto; align-items: center; justify-content: center; gap: 6px; height: 34px; padding: 0 12px; border: 1px solid var(--pd-border); border-radius: var(--pd-radius-sm); background: var(--pd-surface); color: var(--pd-text); font: inherit; font-size: var(--pd-font-sm); white-space: nowrap; cursor: pointer; transition: background var(--pd-motion-fast, 120ms) ease; }
-.pd-engine-button:hover:not(:disabled) { background: var(--pd-surface-hover); }
-.pd-engine-button:disabled { opacity: .45; cursor: not-allowed; }
-.pd-engine-button:focus-visible { outline: 2px solid var(--pd-brand); outline-offset: 1px; }
-.pd-engine-button.is-primary { border-color: var(--pd-brand); background: var(--pd-brand); color: var(--pd-brand-ink, #fff); font-weight: var(--pd-weight-semibold); }
-.pd-engine-button.is-primary:hover:not(:disabled) { background: var(--pd-brand-hover, var(--pd-brand)); }
-.pd-engine-button.is-ghost { border-color: transparent; background: transparent; color: var(--pd-text-subtle); }
-.pd-engine-button.is-ghost:hover:not(:disabled) { background: var(--pd-surface-hover); color: var(--pd-text); }
 
 /* Status card ------------------------------------------------------------------ */
 .pd-engine-status { display: flex; align-items: center; gap: 12px; min-width: 0; padding: 14px; border: 1px solid var(--pd-border); border-radius: var(--pd-radius-md); background: color-mix(in srgb, var(--pd-text) 3%, var(--pd-surface)); }

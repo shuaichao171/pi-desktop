@@ -75,7 +75,7 @@ export function McpSettingsPanel() {
 	const status = (server: UiMcpServer) => ({ disconnected: t('mcp.statusDisconnected'), connecting: t('mcp.statusConnecting'), connected: t('mcp.statusConnected'), error: t('mcp.statusError') })[server.status];
 	const isNew = editing !== null && !snapshot.servers.some((server) => server.id === editing.id);
 	const canAdd = supported && !busy && !loading && Boolean(snapshot.sessionId);
-	const addButton = <button type="button" className="pd-mcp-button is-primary" disabled={!canAdd} onClick={() => edit()}><Icon name="plus" width="15" height="15" />{t('mcp.addServer')}</button>;
+	const addButton = <button type="button" className="pd-btn pd-mcp-button is-primary" disabled={!canAdd} onClick={() => edit()}><Icon name="plus" width="15" height="15" />{t('mcp.addServer')}</button>;
 
 	return <div className="pd-mcp-panel" data-settings-page="mcp">
 		<header className="pd-mcp-head">
@@ -134,8 +134,8 @@ export function McpSettingsPanel() {
 				<code className="pd-mcp-command" title={commandLine(server)}>{commandLine(server)}</code>
 				{server.error && <p className="pd-mcp-callout pd-mcp-error" role="alert">{server.error}</p>}
 				<footer>
-					<button type="button" className={`pd-mcp-button${live ? '' : ' is-primary'}`} disabled={busy && server.status !== 'connecting' || !server.enabled} onClick={() => void toggleConnection(server)}>{live ? t('mcp.disconnect') : t('mcp.connect')}</button>
-					<button type="button" className="pd-mcp-button" disabled={busy || !server.enabled} onClick={() => void run(async () => { const result = await bridge!.testMcpServer(target(server)); return t('mcp.testPassed', { count: result.tools.length, elapsed: result.elapsedMs }); })}>{t('mcp.test')}</button>
+					<button type="button" className={`pd-btn pd-mcp-button${live ? '' : ' is-primary'}`} disabled={busy && server.status !== 'connecting' || !server.enabled} onClick={() => void toggleConnection(server)}>{live ? t('mcp.disconnect') : t('mcp.connect')}</button>
+					<button type="button" className="pd-btn pd-mcp-button" disabled={busy || !server.enabled} onClick={() => void run(async () => { const result = await bridge!.testMcpServer(target(server)); return t('mcp.testPassed', { count: result.tools.length, elapsed: result.elapsedMs }); })}>{t('mcp.test')}</button>
 					<span className="pd-mcp-footer-spacer" />
 					<HoverTooltip title={t('mcp.edit')} align="end">
 						<button type="button" className="pd-mcp-icon-button is-ghost" disabled={busy} onClick={() => edit(server)}><Icon name="pencil" width="15" height="15" /><span className="pd-mcp-sr-only">{t('mcp.edit')}</span></button>
@@ -191,7 +191,7 @@ export function McpSettingsPanel() {
 					<label>{t('mcp.name')}<input required maxLength={80} value={editing.name} onChange={(event) => setEditing({ ...editing, name: event.target.value })} placeholder={t('mcp.namePlaceholder')} /></label>
 					<div className="pd-mcp-field">
 						<span>{t('mcp.transport')}</span>
-						<div className="pd-mcp-segmented" role="radiogroup" aria-label={t('mcp.transport')}>
+						<div className="pd-mcp-segmented pd-seg is-fill" role="radiogroup" aria-label={t('mcp.transport')}>
 							{(['stdio', 'http'] as const).map((value) => <button key={value} type="button" role="radio" aria-checked={editing.transport === value} className={editing.transport === value ? 'is-active' : ''} onClick={() => { if (editing.transport !== value) { setEditing({ ...editing, transport: value }); setReferences(''); } }}>
 								<Icon name={value === 'stdio' ? 'terminal' : 'globe'} width="14" height="14" />{value === 'stdio' ? t('mcp.transportStdio') : 'Streamable HTTP'}
 							</button>)}
@@ -213,8 +213,8 @@ export function McpSettingsPanel() {
 				</fieldset>
 				<footer>
 					<label className="pd-mcp-checkbox"><input type="checkbox" checked={editing.enabled} disabled={busy} onChange={(event) => setEditing({ ...editing, enabled: event.target.checked })} />{t('mcp.enableConfig')}</label>
-					<button type="button" className="pd-mcp-button" disabled={busy} onClick={() => setEditing(null)}>{t('mcp.cancel')}</button>
-					<button type="submit" className="pd-mcp-button is-primary" disabled={busy}>{t('mcp.save')}</button>
+					<button type="button" className="pd-btn pd-mcp-button" disabled={busy} onClick={() => setEditing(null)}>{t('mcp.cancel')}</button>
+					<button type="submit" className="pd-btn pd-mcp-button is-primary" disabled={busy}>{t('mcp.save')}</button>
 				</footer>
 			</form>}
 		</dialog>
@@ -224,8 +224,8 @@ export function McpSettingsPanel() {
 			<strong>{removing?.name}</strong>
 			<p>{t('mcp.removeDescription')}</p>
 			<footer>
-				<button type="button" className="pd-mcp-button" disabled={busy} onClick={() => setRemoving(null)}>{t('mcp.cancel')}</button>
-				<button type="button" className="pd-mcp-button is-danger" disabled={busy || !removing} onClick={() => void run(async () => { const result = await bridge!.removeMcpServer(target(removing!)); setRemoving(null); return result; })}>{t('mcp.confirmRemove')}</button>
+				<button type="button" className="pd-btn pd-mcp-button" disabled={busy} onClick={() => setRemoving(null)}>{t('mcp.cancel')}</button>
+				<button type="button" className="pd-btn pd-mcp-button is-danger" disabled={busy || !removing} onClick={() => void run(async () => { const result = await bridge!.removeMcpServer(target(removing!)); setRemoving(null); return result; })}>{t('mcp.confirmRemove')}</button>
 			</footer>
 		</dialog>
 	</div>;

@@ -150,7 +150,7 @@ export function ChatCommitDialog({ onClose }: { onClose(): void }) {
 					<p>{t('chat.commitDescription')}</p>
 				</header>
 				<label className="pd-commit-label">提交范围<select disabled={busy} value={scope} onChange={event => { setScope(event.target.value as CommitScope); setMessage(''); }}><option value="all">当前工作区全部更改</option><option value="stagedOnly">仅已暂存（保留未暂存内容）</option></select></label>
-				<button type="button" className="pd-commit-secondary" disabled={busy || loading} onClick={() => setRevision(value => value + 1)}>刷新范围预览</button>
+				<button type="button" className="pd-btn pd-commit-secondary" disabled={busy || loading} onClick={() => setRevision(value => value + 1)}>刷新范围预览</button>
 				{preview?.truncated && <p role="status">差异说明上下文已截断，实际提交范围以下列文件和已确认索引为准。</p>}
 				{loading && <p className="pd-commit-status">{t('chat.commitLoading')}</p>}
 				{status && !status.isRepository && <p className="pd-commit-status pd-commit-warning">{t('chat.commitNoRepo')}</p>}
@@ -189,18 +189,18 @@ export function ChatCommitDialog({ onClose }: { onClose(): void }) {
 				</>}
 				{notice && <p className={notice.tone === 'error' ? 'pd-commit-status pd-commit-warning' : 'pd-commit-status pd-commit-ok'}>{notice.text}</p>}
 				<footer className="pd-commit-actions">
-					<button type="button" className="pd-commit-secondary" disabled={busy} onClick={onClose}>{t('chat.commitCancel')}</button>
+					<button type="button" className="pd-btn pd-commit-secondary" disabled={busy} onClick={onClose}>{t('chat.commitCancel')}</button>
 				{status?.isRepository && entries.length > 0 && <>
-					<button type="button" className="pd-commit-secondary" disabled={busy || typeof api?.syncWorkspaceGit !== 'function'} onClick={() => { void pushOnly(); }}>
+					<button type="button" className="pd-btn pd-commit-secondary" disabled={busy || typeof api?.syncWorkspaceGit !== 'function'} onClick={() => { void pushOnly(); }}>
 						{working === 'push' ? t('chat.pushing') : t('chat.pushOnly')}
 					</button>
-					<button type="button" className="pd-commit-secondary" data-action="generate-commit-message" disabled={busy} onClick={() => { void generate(); }}>
+					<button type="button" className="pd-btn pd-commit-secondary" data-action="generate-commit-message" disabled={busy} onClick={() => { void generate(); }}>
 						{working === 'generate' ? t('chat.commitGenerating') : t('chat.commitGenerate')}
 					</button>
-					<button type="button" className="pd-commit-primary" data-action="commit-and-push" disabled={!canCommit || typeof api?.syncWorkspaceGit !== 'function'} onClick={() => { void submit(true); }}>
+					<button type="button" className="pd-btn is-primary pd-commit-primary" data-action="commit-and-push" disabled={!canCommit || typeof api?.syncWorkspaceGit !== 'function'} onClick={() => { void submit(true); }}>
 						{working === 'commit' ? t('chat.commitSubmitting') : t('chat.commitAndPush')}
 					</button>
-					<button type="button" className="pd-commit-primary" data-action="commit" disabled={!canCommit} onClick={() => { void submit(); }}>
+					<button type="button" className="pd-btn is-primary pd-commit-primary" data-action="commit" disabled={!canCommit} onClick={() => { void submit(); }}>
 						{working === 'commit' ? t('chat.commitSubmitting') : t('chat.commitSubmit')}
 					</button>
 				</>}
