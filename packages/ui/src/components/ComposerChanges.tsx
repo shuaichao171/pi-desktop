@@ -108,7 +108,7 @@ export function LiveChangesSummary({ items, scope, target, review }: { items: Ui
 	return createPortal(<section ref={liveRoot} className="pd-composer-changes is-running" aria-label={t('changes.files')} onFocusCapture={() => { entryHasFocus.current = true; }} onBlurCapture={event => trackBlur(event, entryHasFocus)}>
 		<div className="pd-composer-changes-summary">
 			<button ref={primary} type="button" className="pd-composer-changes-review pd-changes-live-main" aria-haspopup="dialog" title={t('changes.files')} onClick={event => openReview(items[0]!.path, event)}>
-				<Icon name="file" width="15" height="15" /><span>{t('changes.count', { count: items.length })}</span><ChangeStats items={items} />
+				<Icon name="file" width="14" height="14" /><span className="pd-changes-live-label">{t('changes.count', { count: items.length })}</span><ChangeStats items={items} />
 			</button>
 			<button ref={popupToggle} type="button" className="pd-composer-changes-toggle" aria-expanded={liveFilesOpen} aria-controls={listId} aria-label={t('composerChanges.show')} onClick={() => setLiveFilesOpen(value => !value)}><Icon name="chevronDown" width="14" height="14" /></button>
 		</div>
@@ -124,7 +124,10 @@ export function SessionChangesSummary({ items, target, review }: { items: UiFile
 	return createPortal(<section className="pd-composer-changes is-session" aria-label={t('changes.files')}>
 		<div className="pd-composer-changes-summary">
 			<button type="button" className="pd-changes-live-main" aria-haspopup="dialog" aria-label={label} title={label} onClick={event => review({ kind: 'conversation' }, items[0]!.path, event.currentTarget)}>
-				<Icon name="file" width="15" height="15" /><span className="pd-changes-session-scope">{t('composerChanges.thisConversation')}</span><span>{t('changes.count', { count: items.length })}</span><ChangeStats items={items} />
+				<Icon name="file" width="14" height="14" />
+				<span className="pd-changes-live-label"><span className="pd-changes-session-scope">{t('composerChanges.thisConversation')}</span><span className="pd-changes-session-sep" aria-hidden="true">·</span>{t('changes.count', { count: items.length })}</span>
+				<ChangeStats items={items} />
+				<Icon className="pd-changes-live-chevron" name="chevronRight" width="13" height="13" />
 			</button>
 		</div>
 	</section>, target);
