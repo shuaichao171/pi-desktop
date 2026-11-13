@@ -10,6 +10,11 @@
 
 ## 已完成
 
+- [x] 子代理 FleetCard 条目顺序稳定：运行和刷新过程中 run / 子节点不再上下换位（2026-11-13 提出并完成）
+  - 根因：pi-subagents 生成 `subagent-async` 快照时用 `asyncJobOrder` 排序——先按状态（运行中 > 排队 > 已结束），再按 `updatedAt` 倒序；`updatedAt` 随每次工具调用/回合刷新，宿主 `projectSubagentFleetSnapshot` 和 `FleetCard` 又原样按数组顺序渲染，所以哪个子代理刚有动静就跳到最上面，状态变化（运行→完成）也会整体换组；未被工作流步骤认领的子 run 同样按这个规则排。顶栏 headline 取「第一个运行中」也跟着来回切换。
+  - 修复：`packages/agent` 新增 `stabilizeSubagentFleetOrder(next, previous)`，在 `consumeSubagentWidget` 收到快照后以上一份 fleet 为参照：已出现过的 run / 子节点（按 `kind:id` 匹配，逐层递归）保持原相对位置，新 run 追加在后并按 `startedAt` 从早到晚，新子节点保持插件顺序（工作流步骤本就按步骤序号）；数据本身照常更新、不修改输入；fleet 被清空或会话切换置 null 后重新开始排序。`FleetCard` 的 headline 改为「最早的运行中 run，全部结束时取最新一条」。
+  - 验证：新增 `tests/subagent-fleet-order.test.mjs`（按插件同款排序模拟 40 次进度/状态更新，断言插件原始顺序确实会洗牌而稳定后顺序不变；新增 run 追加、移除 run 退出、子节点保持首次顺序且不改输入、清空后重新排序）；渲染器夹具 `../ui-polish/agents-goal.mjs` 截图确认 FleetCard 收起/展开正常（该夹具直接向渲染端推 fleet，不经宿主投影；顺带给 `tests/fixtures/model-settings/fixture.mjs` 补上 `getSessionBranchSelection` 桩（返回 null，即没有记忆的分支），深浅主题场景均 passed）；全量 1287 项（1285 通过、0 失败、2 跳过）；四个包 typecheck 通过。
+
 - [x] 结果文件预览弹窗对 markdown 文件做语法着色：点开会话中提到的 .md 文件时（ResultFilePreviewDialog → WorkbenchTextView 纯文本视图），按 markdown 语法（标题/加粗/斜体/行内代码/代码块/链接/列表/引用）分色显示，配色主题参考 VSCode 的 Monokai（背景 #272822、标题黄 #a6e22e、强调橙 #fd971f、关键字紫 #f92672、字符串绿 #e6db74 等）（2026-11-13 提出并完成）
   - 现状：`.md` 早已交给阅读 worker 的 highlight.js markdown 语法分词，但阅读视图没有 `hljs-section` / `hljs-strong` / `hljs-bullet` 等类的样式，所以看起来仍是纯文本；代码块也只是一整段扁平的 `hljs-code`。
   - 落地：`readingHighlight.ts` 新增 `highlightMarkdownLines`，围栏代码块（``` / ~~~，含未闭合到文件尾）按信息串语言单独高亮、未知语言保持扁平代码色，仍保证每个源码行一段 HTML；`.markdown` / `.mdx` 也按 markdown 处理。`ResultFilePreviewDialog` 给 markdown 预览加 `is-markdown`，`resultFilePreview.css` 里定义 Monokai 配色（标题 #a6e22e 加粗、加粗/斜体 #fd971f、列表符 #f92672、行内与围栏代码 #e6db74、链接文字 #66d9ef、地址 #ae81ff 下划线、引用 #75715e 斜体，代码块内关键字/字符串/数字/注释也按 Monokai），深浅主题下都固定使用；搜索高亮与选区颜色同步适配。仅作用于结果文件预览弹窗，工作台文件页不变。

@@ -80,6 +80,8 @@ export function installModelSettingsFixture(options = {}) {
     listSessionsPage: () => ({ sessions: [], total: 0, hasMore: false, revision: 0 }),
     listSideQuestions: () => [],
     getHiddenContext: () => '',
+    // No remembered branch: the renderer keeps the branch Pi itself loaded.
+    getSessionBranchSelection: () => null,
     listPinnedWorkspaces: () => [],
     listSessionGroups: () => [],
     getPendingExtensionDialogs: () => [],

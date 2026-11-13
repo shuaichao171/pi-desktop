@@ -184,7 +184,9 @@ export function FleetCard() {
 	if (!fleet || fleet.runs.length === 0) return null;
 
 	const running = liveCount(fleet.runs);
-	const headline = fleet.runs.find(isLive) ?? fleet.runs[0];
+	// Runs arrive in stable first-seen order (oldest first): headline the earliest
+	// live run, or the newest one once everything has settled.
+	const headline = fleet.runs.find(isLive) ?? fleet.runs[fleet.runs.length - 1];
 	const matchedInspect = inspectRequest && inspectReply?.requestId === inspectRequest ? inspectReply : null;
 
 	return (

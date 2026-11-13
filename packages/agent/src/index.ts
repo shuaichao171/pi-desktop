@@ -260,6 +260,44 @@ function projectSubagentFleetSnapshot(raw: unknown): UiSubagentFleetSnapshot | n
 	};
 }
 
+function fleetNodeKey(node: UiSubagentFleetNode): string {
+	return `${node.kind}:${node.id}`;
+}
+
+/** Reorder `next` siblings so nodes already shown keep their previous relative
+ * position; nodes seen for the first time follow them in `fresh` order. */
+function stableFleetNodes(
+	next: UiSubagentFleetNode[],
+	previous: UiSubagentFleetNode[] | undefined,
+	fresh: (nodes: UiSubagentFleetNode[]) => UiSubagentFleetNode[],
+): UiSubagentFleetNode[] {
+	const previousByKey = new Map((previous ?? []).map((node, index) => [fleetNodeKey(node), { node, index }]));
+	const known: { node: UiSubagentFleetNode; index: number }[] = [];
+	const added: UiSubagentFleetNode[] = [];
+	for (const node of next) {
+		const prior = previousByKey.get(fleetNodeKey(node));
+		const children = node.children ? stableFleetNodes(node.children, prior?.node.children, (nodes) => nodes) : undefined;
+		const stabilized = children ? { ...node, children } : node;
+		if (prior) known.push({ node: stabilized, index: prior.index });
+		else added.push(stabilized);
+	}
+	known.sort((left, right) => left.index - right.index);
+	return [...known.map((entry) => entry.node), ...fresh(added)];
+}
+
+/** pi-subagents sorts runs by status, then most-recent `updatedAt` first, so
+ * every progress tick reshuffles the list. Pin each run (and child) to the
+ * position it first appeared at: known nodes keep their previous order, new
+ * root runs are appended oldest-start first, new children keep plugin order
+ * (workflow steps arrive in step-index order). State changes never move a row. */
+export function stabilizeSubagentFleetOrder(next: UiSubagentFleetSnapshot, previous: UiSubagentFleetSnapshot | null): UiSubagentFleetSnapshot {
+	const byStart = (nodes: UiSubagentFleetNode[]) => nodes
+		.map((node, index) => ({ node, index }))
+		.sort((left, right) => (left.node.startedAt ?? Number.POSITIVE_INFINITY) - (right.node.startedAt ?? Number.POSITIVE_INFINITY) || left.index - right.index)
+		.map((entry) => entry.node);
+	return { ...next, runs: stableFleetNodes(next.runs, previous?.runs, byStart) };
+}
+
 /** True when the fleet snapshot still contains running children (any depth; queued runs do not count). */
 function subagentFleetHasRunning(fleet: UiSubagentFleetSnapshot | null): boolean {
 	if (!fleet) return false;
@@ -569,8 +607,10 @@ class SingleAgentService {
 				return;
 			}
 			try {
-				const fleet = projectSubagentFleetSnapshot(JSON.parse(line.slice(SUBAGENT_ASYNC_WIDGET_PREFIX.length)));
-				if (fleet) {
+				const projected = projectSubagentFleetSnapshot(JSON.parse(line.slice(SUBAGENT_ASYNC_WIDGET_PREFIX.length)));
+				if (projected) {
+					// Keep rows where they first appeared; the plugin re-sorts by recency on every tick.
+					const fleet = stabilizeSubagentFleetOrder(projected, this.subagentFleet);
 					this.subagentFleet = fleet;
 					this.fire({ type: 'subagent-fleet', fleet });
 					this.rememberSubagentLiveness(subagentFleetHasRunning(fleet));
