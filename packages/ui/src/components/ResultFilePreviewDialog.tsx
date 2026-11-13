@@ -51,6 +51,8 @@ export function ResultFilePreviewDialog({ target, onClose }: { target: ResultFil
 	// A fully sandboxed data: iframe is an opaque, inert document. It inherits the
 	// renderer CSP (no inline scripts) anyway, so scripts and forms stay disabled
 	// and the preview says so instead of rendering interactive pages half-broken.
+	// Markdown sources read in a Monokai-styled code view (resultFilePreview.css).
+	const markdown = preview?.kind === 'text' && /\.(?:md|markdown|mdx)$/i.test(preview.path);
 	const htmlSource = preview?.kind === 'html' && typeof preview.text === 'string' ? `data:text/html;charset=utf-8,${encodeURIComponent(preview.text)}` : undefined;
 
 	function sameContext() {
@@ -149,7 +151,7 @@ export function ResultFilePreviewDialog({ target, onClose }: { target: ResultFil
 			<button type="button" disabled={!bridge || busy !== null} onClick={() => void act('reveal')}><Icon name="folder" width="14" height="14" />{busy === 'reveal' ? t('filePreview.opening') : t('filePreview.reveal')}</button>
 		</div>
 		{actionError && <p className="pd-result-file-preview-error" role="alert">{actionError}</p>}
-		<ScopedErrorBoundary scope="preview" resetKeys={[targetKey, retry]}><div className={`pd-result-file-preview-body${preview ? ` is-${preview.kind}` : ''}`} aria-busy={loading}>
+		<ScopedErrorBoundary scope="preview" resetKeys={[targetKey, retry]}><div className={`pd-result-file-preview-body${preview ? ` is-${preview.kind}` : ''}${markdown ? ' is-markdown' : ''}`} aria-busy={loading}>
 			{loadError ? <div className="pd-result-file-preview-state" role="alert"><Icon name="file" width="32" height="32" /><strong>{t('filePreview.failed')}</strong><p>{loadError}</p><button type="button" onClick={retryPreview}>{t('filePreview.retry')}</button></div> : loading ?
 				<div className="pd-result-file-preview-state" role="status"><p>{t('filePreview.loading')}</p></div> : preview?.kind === 'text' ?
 				<WorkbenchTextView key={`${targetKey}:${retry}`} path={preview.path} text={preview.text ?? ''} omitted={preview.truncated} onQuote={(quote) => requestCodeQuote({ cwd: target.cwd, path: target.path, ...quote })} /> : preview?.kind === 'image' ? <>

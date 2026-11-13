@@ -77,6 +77,9 @@ export function installModelSettingsFixture(options = {}) {
     listConversationWorkspaces: async () => [await window.piDesktop.getDefaultWorkspace()],
     getDefaultWorkspace: () => state.snapshot.cwd,
     listSessions: () => [],
+    listSessionsPage: () => ({ sessions: [], total: 0, hasMore: false, revision: 0 }),
+    listSideQuestions: () => [],
+    getHiddenContext: () => '',
     listPinnedWorkspaces: () => [],
     listSessionGroups: () => [],
     getPendingExtensionDialogs: () => [],
@@ -195,7 +198,7 @@ export function installModelSettingsFixture(options = {}) {
     describeSplitPanes: () => [],
     takeInterruptedRuns: () => [],
   };
-  const subscriptions = ['onAgentEvent', 'onUpdateStateChanged', 'onAppCommand', 'onWindowChromeStateChanged', 'onExtensionDialog', 'onExtensionDialogClosed', 'onWorkspaceCommandEvent', 'onAutomationChanged', 'onWorkspaceChanged', 'onGoalChanged', 'onCloudSyncChanged', 'onWorkspaceTerminalEvent', 'onSplitPaneChanged', 'onSplitPaneClosed'];
+  const subscriptions = ['onAgentEvent', 'onUpdateStateChanged', 'onAppCommand', 'onWindowChromeStateChanged', 'onExtensionDialog', 'onExtensionDialogClosed', 'onWorkspaceCommandEvent', 'onAutomationChanged', 'onWorkspaceChanged', 'onGoalChanged', 'onCloudSyncChanged', 'onWorkspaceTerminalEvent', 'onSplitPaneChanged', 'onSplitPaneClosed', 'onSideQuestionsChanged', 'onHiddenContextChanged'];
   const bridge = {};
   for (const name of subscriptions) bridge[name] = (listener) => {
     if (!listeners.has(name)) listeners.set(name, new Set());

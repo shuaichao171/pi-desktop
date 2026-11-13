@@ -7,9 +7,14 @@
 ## 计划中
 
 - [ ] 支持渲染 LaTeX 公式：会话内容中的 LaTeX（$...$ / $$...$$）渲染为公式（候选方案 KaTeX，注意与现有 markdown 管线的集成与转义冲突）（2026-11-06 提出；2026-11-10 按用户要求暂缓，本批跳过）
-- [ ] 结果文件预览弹窗对 markdown 文件做语法着色：点开会话中提到的 .md 文件时（ResultFilePreviewDialog → WorkbenchTextView 纯文本视图），按 markdown 语法（标题/加粗/斜体/行内代码/代码块/链接/列表/引用）分色显示，配色主题参考 VSCode 的 Monokai（背景 #272822、标题黄 #a6e22e、强调橙 #fd971f、关键字紫 #f92672、字符串绿 #e6db74 等）（2026-11-13 提出）
 
 ## 已完成
+
+- [x] 结果文件预览弹窗对 markdown 文件做语法着色：点开会话中提到的 .md 文件时（ResultFilePreviewDialog → WorkbenchTextView 纯文本视图），按 markdown 语法（标题/加粗/斜体/行内代码/代码块/链接/列表/引用）分色显示，配色主题参考 VSCode 的 Monokai（背景 #272822、标题黄 #a6e22e、强调橙 #fd971f、关键字紫 #f92672、字符串绿 #e6db74 等）（2026-11-13 提出并完成）
+  - 现状：`.md` 早已交给阅读 worker 的 highlight.js markdown 语法分词，但阅读视图没有 `hljs-section` / `hljs-strong` / `hljs-bullet` 等类的样式，所以看起来仍是纯文本；代码块也只是一整段扁平的 `hljs-code`。
+  - 落地：`readingHighlight.ts` 新增 `highlightMarkdownLines`，围栏代码块（``` / ~~~，含未闭合到文件尾）按信息串语言单独高亮、未知语言保持扁平代码色，仍保证每个源码行一段 HTML；`.markdown` / `.mdx` 也按 markdown 处理。`ResultFilePreviewDialog` 给 markdown 预览加 `is-markdown`，`resultFilePreview.css` 里定义 Monokai 配色（标题 #a6e22e 加粗、加粗/斜体 #fd971f、列表符 #f92672、行内与围栏代码 #e6db74、链接文字 #66d9ef、地址 #ae81ff 下划线、引用 #75715e 斜体，代码块内关键字/字符串/数字/注释也按 Monokai），深浅主题下都固定使用；搜索高亮与选区颜色同步适配。仅作用于结果文件预览弹窗，工作台文件页不变。
+  - 验证：`tests/reading-analysis.test.mjs`（结构分色、围栏按语言、未知语言、未闭合围栏、CRLF、HTML 转义）；渲染器回归 `tests/fixtures/result-files/scenarios.mjs` 新增 Monokai 背景/前景、各语法元素颜色、围栏内关键字/字符串颜色断言，截图 `_ai_work/markdown-preview/monokai-preview.png`；全量 1282 项（1280 通过、0 失败）、四个包 typecheck 通过。
+  - 顺带：截图夹具补齐 `onSideQuestionsChanged` / `onHiddenContextChanged` 订阅与 `listSessionsPage` / `listSideQuestions` / `getHiddenContext` 桩（此前缺这些桩，依赖默认夹具的场景在启动时就因 `structuredClone` 回调失败）。
 
 - [x] 项目的聚焦悬浮框不再挡住右侧按钮（2026-11-06 提出，2026-11-10 完成）
   - 根因：项目行标题提示已在 6e20bd7 修过；剩下的是行内操作按钮（新建对话、置顶等）的 `side="right"` 提示以按钮自身右缘为锚点，盖住同排相邻按钮。

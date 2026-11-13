@@ -36,7 +36,10 @@ function installResultFilesFixture() {
       path, name, size: 104, kind: 'image',
       dataUrl: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAL0lEQVR4nO3OIQEAAAgDMCKSjpKEgBg3E/Ornr2kEhAQEBAQEBAQEBAQEBAQSAcenKxApp8SuhsAAAAASUVORK5CYII=',
     };
-    return { path, name, size: 144, kind: 'text', text: '# 文件预览\n\n这是报告的完整内容，可在软件内阅读。\n\n验证标记：preview-file-content-ready', truncated: false };
+    const text = path.endsWith('.md')
+      ? ['# 文件预览', '', '这是报告的**完整内容**，可在*软件内*阅读，见 `src/main.ts` 与 [文档](https://example.com/docs)。', '', '- 列表项', '> 引用说明', '', '```ts', 'const marker = "preview-file-content-ready";', '```'].join('\n')
+      : '# 文件预览\n\n这是报告的完整内容，可在软件内阅读。\n\n验证标记：preview-file-content-ready';
+    return { path, name, size: 144, kind: 'text', text, truncated: false };
   };
   Object.assign(fixture.snapshot, {
     status: 'idle', error: null, activities: [], historyTotal: 2,
@@ -98,6 +101,13 @@ export default async function resultFilesScenarios(review) {
   await review.clickText(menu + ' button', '打开预览');
   await review.waitFor(`document.querySelector(${q(dialog + ' .pd-workbench-reader')})?.textContent.includes('preview-file-content-ready')`);
   await review.assert(`document.querySelector(${q(dialog + ' h2')})?.textContent === '报告 final.md' && !document.querySelector(${q(menu)})`, 'Preview opens a readable in-app file dialog and closes the context menu');
+  // Markdown is colored in a background worker; wait for its tokens before reading colors.
+  const md = dialog + ' .pd-result-file-preview-body.is-markdown';
+  await review.waitFor(`Boolean(document.querySelector(${q(md + ' .pd-md-fence .hljs-keyword')}))`);
+  const color = selector => `getComputedStyle(document.querySelector(${q(md + ' ' + selector)})).color`;
+  await review.assert(`getComputedStyle(document.querySelector(${q(md + ' .pd-workbench-reader-body')})).backgroundColor === 'rgb(39, 40, 34)' && ${color('.pd-workbench-code-line code')} === 'rgb(248, 248, 242)'`, 'Markdown previews use the Monokai background and foreground');
+  await review.assert(`${color('.hljs-section')} === 'rgb(166, 226, 46)' && ${color('.hljs-strong')} === 'rgb(253, 151, 31)' && ${color('.hljs-emphasis')} === 'rgb(253, 151, 31)' && ${color('.hljs-bullet')} === 'rgb(249, 38, 114)' && ${color('.hljs-code')} === 'rgb(230, 219, 116)' && ${color('.hljs-link')} === 'rgb(174, 129, 255)' && ${color('.hljs-quote')} === 'rgb(117, 113, 94)'`, 'Markdown headings, emphasis, list markers, code, links and quotes take distinct Monokai colors');
+  await review.assert(`${color('.pd-md-fence .hljs-keyword')} === 'rgb(249, 38, 114)' && ${color('.pd-md-fence .hljs-string')} === 'rgb(230, 219, 116)'`, 'Fenced code blocks are highlighted with their own language inside the markdown preview');
   await review.screenshot('result-files-text-preview');
   await review.key('Escape');
   await review.waitFor(`!document.querySelector(${q(dialog)})`);
