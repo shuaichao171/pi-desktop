@@ -138,8 +138,6 @@ interface ChatState {
 	sideQuestions: UiSideQuestion[];
 	/** The turn whose inline aside input is open; editOfId pre-fills a re-ask of that record. */
 	sideQuestionTarget: { anchorEntryId: string; editOfId?: string; initialText?: string } | null;
-	/** The loaded conversation's hidden instruction ('' = none; null = no session file yet / not fetched). */
-	hiddenContext: string | null;
 
 	setBridge(bridge: AgentBridge, options?: { hostedChatWindow?: boolean }): void;
 	retryAgent(): Promise<void>;
@@ -183,8 +181,6 @@ interface ChatState {
 	askSideQuestion(anchorEntryId: string, question: string, options?: { id?: string; model?: { provider: string; id: string; name: string } }): Promise<void>;
 	/** Removes one aside record. */
 	deleteSideQuestion(id: string): Promise<void>;
-	/** Saves (or clears with '') the loaded conversation's hidden instruction; rejects while no session file exists. */
-	saveHiddenContext(text: string): Promise<void>;
 	send(text: string, behavior?: 'steer' | 'followUp', attachments?: UiAttachment[], inputId?: string): Promise<void>;
 	/** Rewind to a sent user message and resend the edited text (zcode-style edit). */
 	editMessage(entryId: string, text: string, attachments?: UiAttachment[], fileMode?: 'keep' | 'rewind'): Promise<void>;
@@ -235,7 +231,6 @@ function rememberCatalog(patch: Partial<ModelCatalogSnapshot>): void {
 let providerAuthRequest = 0;
 let unsubscribeAgentEvent: (() => void) | null = null;
 let unsubscribeSideQuestions: (() => void) | null = null;
-let unsubscribeHiddenContext: (() => void) | null = null;
 let bridgeGeneration = 0;
 let historyLoadRequest = 0;
 // Bumped whenever a ready event lands or a failed navigation rolls back: an
@@ -391,7 +386,6 @@ const store = createStore<ChatState>((set, get) => ({
 	projectOffer: null,
 	sideQuestions: [],
 	sideQuestionTarget: null,
-	hiddenContext: null,
 
 	setBridge(bridge, options) {
 		if (get().bridge === bridge) return;
@@ -419,8 +413,6 @@ const store = createStore<ChatState>((set, get) => ({
 		resetSettingsRequests();
 		unsubscribeSideQuestions?.();
 		unsubscribeSideQuestions = null;
-		unsubscribeHiddenContext?.();
-		unsubscribeHiddenContext = null;
 		set({
 			...store.getInitialState(),
 			bridge,
@@ -433,13 +425,6 @@ const store = createStore<ChatState>((set, get) => ({
 			if (generation !== bridgeGeneration || get().bridge !== bridge) return;
 			if (changedPath !== get().sessionPath) return;
 			set({ sideQuestions: [...records].sort((left, right) => left.createdAt - right.createdAt) });
-		}) ?? null;
-		// The hidden instruction belongs to the open conversation; a push here keeps
-		// panes editing the same session in sync without a re-fetch.
-		unsubscribeHiddenContext = bridge.onHiddenContextChanged?.((changedPath, text) => {
-			if (generation !== bridgeGeneration || get().bridge !== bridge) return;
-			if (changedPath !== get().sessionPath) return;
-			set({ hiddenContext: text });
 		}) ?? null;
 		let bootstrapping = true;
 		let needsRecovery = false;
@@ -509,7 +494,6 @@ const store = createStore<ChatState>((set, get) => ({
 				buffered.length = 0;
 				captureSettledConversation();
 				refreshSideQuestions(bridge, snapshot.sessionPath);
-				refreshHiddenContext(bridge, snapshot.sessionPath);
 				void get().refreshSessions();
 				void get().refreshWorkspaces();
 				return;
@@ -678,7 +662,6 @@ modelProviders: [...get().modelProviders],
 					requestBranchViewSync(event.sessionPath);
 					dropForeignSideQuestions(event.sessionPath);
 					refreshSideQuestions(get().bridge, event.sessionPath);
-					refreshHiddenContext(get().bridge, event.sessionPath);
 					if (!get().modelProviders.length) void get().refreshModelProviders().catch(() => {});
 					return;
 				}
@@ -736,7 +719,6 @@ modelProviders: [...get().modelProviders],
 				// leaving right away (a failed list must not keep them), then reload.
 				dropForeignSideQuestions(event.sessionPath);
 				refreshSideQuestions(get().bridge, event.sessionPath);
-				refreshHiddenContext(get().bridge, event.sessionPath);
 				// This ready is the authoritative conversation view; remember it so a
 				// later failed navigation can put the renderer back on the session the
 				// host still shows.
@@ -1483,15 +1465,6 @@ if (!get().modelProviders.length) void get().refreshModelProviders().catch(() =>
 		set((state) => ({ sideQuestions: state.sideQuestions.filter((item) => item.id !== id) }));
 		try { await bridge.deleteSideQuestion(sessionPath, id); }
 		catch { /* A failed delete resurfaces via the push channel's record set. */ }
-	},
-
-	async saveHiddenContext(text) {
-		const { bridge, sessionPath } = get();
-		// A hidden instruction is keyed by the conversation file; a fresh session has
-		// no key until its first message lands, so refuse rather than write elsewhere.
-		if (!bridge || !sessionPath) throw new Error(translate('hiddenContext.noSession'));
-		await bridge.setHiddenContext(sessionPath, text);
-		if (get().sessionPath === sessionPath) set({ hiddenContext: text });
 	},
 
 	async editMessage(entryId, text, attachments, fileMode) {
@@ -2554,18 +2527,6 @@ function refreshSideQuestions(bridge: AgentBridge | null, sessionPath: string | 
 		.catch(() => { /* A failed fetch keeps the previous records; asks still work. */ });
 }
 
-/** Loads the open conversation's hidden instruction ('' when none, null without a session file). */
-function refreshHiddenContext(bridge: AgentBridge | null, sessionPath: string | null): void {
-	if (!bridge) return;
-	if (!sessionPath || !bridge.getHiddenContext) { store.setState({ hiddenContext: null }); return; }
-	void bridge.getHiddenContext(sessionPath)
-		.then((text) => {
-			if (store.getState().bridge !== bridge || store.getState().sessionPath !== sessionPath) return;
-			store.setState({ hiddenContext: text });
-		})
-		.catch(() => { /* A failed fetch keeps the previous value; saving still works. */ });
-}
-
 /** Runs the ready-time branch sync now, or pends it while a navigation settles. */
 function requestBranchViewSync(sessionPath: string | null): void {
 	if (!sessionPath) return;
@@ -2602,13 +2563,6 @@ store.subscribe((state, previous) => {
 	}
 });
 
-// The hidden instruction belongs to one conversation file. Any identity change
-// (optimistic switch, foreign ready, new session) drops the previous value at
-// once: until the new conversation's fetch lands — or forever, if it fails — the
-// indicator and the editor seed must never show another session's instruction.
-store.subscribe((state, previous) => {
-	if (state.sessionPath !== previous.sessionPath && state.hiddenContext !== null) store.setState({ hiddenContext: null });
-});
 
 /** Convenience selector: is the agent currently producing output? */
   return store;

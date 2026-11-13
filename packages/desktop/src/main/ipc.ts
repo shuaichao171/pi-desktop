@@ -59,8 +59,6 @@ import { registerDataFeaturesIpc } from './dataFeaturesIpc';
 import { DATA_FEATURE_CHANNELS, INPUT_FEATURE_CHANNELS, WORKBENCH_FEATURE_CHANNELS, MANAGEMENT_FEATURE_CHANNELS, requireInputQueueScope, type UiMachineSessionSummary } from '@pidesktop/shared';
 import { requireSideQuestionAskRequest, SIDE_QUESTION_CHANNELS, type UiSideQuestion } from '@pidesktop/shared';
 import { sideQuestionStore } from './sideQuestionStore';
-import { hiddenContextStore } from './hiddenContextStore';
-import { HIDDEN_CONTEXT_CHANNELS, requireHiddenContextText } from '@pidesktop/shared';
 import type { UiPluginMutation, UiPluginResourceKind, UiPluginScope, UiSaveInstructionRequest } from '@pidesktop/shared';
 import { requireDialogResponse, type UiExtensionDialogResponse } from '@pidesktop/shared';
 
@@ -2188,7 +2186,6 @@ export function registerIpc(options: {
 			invalidateSessionListing(owner);
 			conversationBranchStore().clear(target);
 			sideQuestionStore().clear(target);
-			hiddenContextStore().clear(target);
 			await withSessionMeta(async (meta) => {
 				delete meta[target];
 				await saveSessionMeta(meta);
@@ -2360,26 +2357,6 @@ export function registerIpc(options: {
 		if (typeof id !== 'string' || !id || id.length > 128) throw new Error('侧问标识无效');
 		sideQuestionStore().remove(sessionPath, id);
 		broadcastSideQuestions(sessionPath);
-	});
-
-	// --- 隐藏上下文（hidden context）：会话作用域指令，注入系统提示词而不进消息流 ---
-	/** Every renderer that may show this conversation hears the new instruction. */
-	const broadcastHiddenContext = (sessionPath: string): void => {
-		const text = hiddenContextStore().get(sessionPath);
-		const targets = [...BrowserWindow.getAllWindows().map((win) => win.webContents), ...paneSlots().map((pane) => pane.webContents)];
-		for (const target of targets) {
-			try { if (!target.isDestroyed()) target.send(HIDDEN_CONTEXT_CHANNELS.changed, sessionPath, text); }
-			catch (error) { console.error('Failed to send hidden-context:changed:', error); }
-		}
-	};
-	handleRendererInvoke(HIDDEN_CONTEXT_CHANNELS.get, (_event, path: unknown) => {
-		return hiddenContextStore().get(normalizeSessionPath(path));
-	});
-	handleRendererInvoke(HIDDEN_CONTEXT_CHANNELS.set, (_event, path: unknown, text: unknown) => {
-		const sessionPath = normalizeSessionPath(path);
-		const instruction = requireHiddenContextText(text);
-		hiddenContextStore().record(sessionPath, instruction);
-		broadcastHiddenContext(sessionPath);
 	});
 
 	handleRendererInvoke(IPC_CHANNELS.agentAbort, (event) => agentFor(event).abort());

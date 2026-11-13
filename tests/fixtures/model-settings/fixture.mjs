@@ -79,7 +79,6 @@ export function installModelSettingsFixture(options = {}) {
     listSessions: () => [],
     listSessionsPage: () => ({ sessions: [], total: 0, hasMore: false, revision: 0 }),
     listSideQuestions: () => [],
-    getHiddenContext: () => '',
     // No remembered branch: the renderer keeps the branch Pi itself loaded.
     getSessionBranchSelection: () => null,
     listPinnedWorkspaces: () => [],
@@ -200,7 +199,7 @@ export function installModelSettingsFixture(options = {}) {
     describeSplitPanes: () => [],
     takeInterruptedRuns: () => [],
   };
-  const subscriptions = ['onAgentEvent', 'onUpdateStateChanged', 'onAppCommand', 'onWindowChromeStateChanged', 'onExtensionDialog', 'onExtensionDialogClosed', 'onWorkspaceCommandEvent', 'onAutomationChanged', 'onWorkspaceChanged', 'onGoalChanged', 'onCloudSyncChanged', 'onWorkspaceTerminalEvent', 'onSplitPaneChanged', 'onSplitPaneClosed', 'onSideQuestionsChanged', 'onHiddenContextChanged'];
+  const subscriptions = ['onAgentEvent', 'onUpdateStateChanged', 'onAppCommand', 'onWindowChromeStateChanged', 'onExtensionDialog', 'onExtensionDialogClosed', 'onWorkspaceCommandEvent', 'onAutomationChanged', 'onWorkspaceChanged', 'onGoalChanged', 'onCloudSyncChanged', 'onWorkspaceTerminalEvent', 'onSplitPaneChanged', 'onSplitPaneClosed', 'onSideQuestionsChanged'];
   const bridge = {};
   for (const name of subscriptions) bridge[name] = (listener) => {
     if (!listeners.has(name)) listeners.set(name, new Set());

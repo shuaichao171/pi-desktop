@@ -21,8 +21,6 @@ export * from './usageTemplates.ts';
 import type { InputFeatureBridge, UiInputScope } from './inputFeatures';
 import type { SideQuestionFeatureBridge } from './sideQuestions';
 export * from './sideQuestions.ts';
-import type { HiddenContextFeatureBridge } from './hiddenContext';
-export * from './hiddenContext.ts';
 import type { DataFeaturesBridge } from './dataFeatures';
 import type { WorkbenchFeaturesBridge } from './workbenchFeatures';
 import type { CloudSyncFeaturesBridge } from './cloudSync';
@@ -1157,7 +1155,7 @@ export interface UiInterruptedRun { cwd: string; path: string }
 
 export type UiAppCommand = { type: 'new-session' } | { type: 'switch-session'; path: string; cwd?: string } | { type: 'open-settings' } | { type: 'appearance-changed'; appearance: UiAppearanceState } | { type: 'cycle-loaded-session'; direction: 1 | -1 };
 
-export interface AgentBridge extends InputFeatureBridge, DataFeaturesBridge, WorkbenchFeaturesBridge, ManagementFeaturesBridge, PluginUpdatesBridge, McpFeaturesBridge, ResultFilesBridge, CloudSyncFeaturesBridge, GoalFeaturesBridge, SideQuestionFeatureBridge, HiddenContextFeatureBridge {
+export interface AgentBridge extends InputFeatureBridge, DataFeaturesBridge, WorkbenchFeaturesBridge, ManagementFeaturesBridge, PluginUpdatesBridge, McpFeaturesBridge, ResultFilesBridge, CloudSyncFeaturesBridge, GoalFeaturesBridge, SideQuestionFeatureBridge {
   getPersonalization(): Promise<UiInstructionDocument[]>;
   saveInstruction(request: UiSaveInstructionRequest): Promise<UiSaveInstructionResult>;
   getPluginCatalog(cwd: string): Promise<UiPluginCatalog>;

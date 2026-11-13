@@ -4,7 +4,7 @@ import { registerHooks } from 'node:module';
 import { test } from 'node:test';
 
 const electronStub = `
-  // getPath: the host fork passes the main-owned hidden-context store path (userData).
+  // Minimal electron app stub for the main-process module graph under test.
   export const app = { getAppPath: () => 'test-app', getPath: () => 'test-user-data' };
   export const utilityProcess = { fork: () => globalThis.__piTestHost };
   export const session = { defaultSession: { resolveProxy: (url) => globalThis.__piResolveProxy(url) } };
