@@ -140,7 +140,13 @@ try {
     await delay(100);
   }
   assert(port, 'Dedicated headless browser did not publish its debugging port');
-  const targets = await fetch(`http://127.0.0.1:${port}/json/list`).then((response) => response.json());
+  // DevToolsActivePort can appear a moment before the HTTP endpoint accepts
+  // connections; retry within the same launch budget instead of failing the run.
+  let targets;
+  for (;;) {
+    try { targets = await fetch(`http://127.0.0.1:${port}/json/list`).then((response) => response.json()); break; }
+    catch (error) { if (Date.now() >= launchDeadline || child.exitCode !== null) throw error; await delay(100); }
+  }
   const target = targets.find((entry) => entry.type === 'page' && entry.url === 'about:blank');
   assert(target, 'Owned test target missing');
   socket = new WebSocket(target.webSocketDebuggerUrl);
@@ -239,7 +245,9 @@ try {
     record: async (name, expression) => { logs.steps.push({ name, evidence: await evaluate(expression) }); },
     assert: async (expression, message) => { assert.equal(await evaluate(expression), true, message); logs.steps.push({ assertion: message }); },
     click: async (selector) => { logs.steps.push({ click: selector }); await waitFor(`Boolean(document.querySelector(${JSON.stringify(selector)}))`); await clickElement(`document.querySelector(${JSON.stringify(selector)})`); },
-    clickText: async (selector, text) => { logs.steps.push({ clickText: text, selector }); await clickElement(`[...document.querySelectorAll(${JSON.stringify(selector)})].find(e => e.textContent.trim() === ${JSON.stringify(text)})`); },
+    // Like `click`, wait for the target first: lazily loaded surfaces (settings,
+    // dialogs) mount a frame or more after the action that opens them.
+    clickText: async (selector, text) => { logs.steps.push({ clickText: text, selector }); const target = `[...document.querySelectorAll(${JSON.stringify(selector)})].find(e => e.textContent.trim() === ${JSON.stringify(text)})`; await waitFor(`Boolean(${target})`); await clickElement(target); },
     fill: async (selector, value) => {
       logs.steps.push({ fill: selector, characters: value.length });
       const tag = await evaluate(`(() => { const e = document.querySelector(${JSON.stringify(selector)}); if (!e || e.disabled || e.readOnly) throw new Error('Input missing, disabled, or readonly'); e.scrollIntoView({block:'center'}); e.focus(); if(document.activeElement!==e) throw new Error('Input could not receive focus'); return e.tagName; })()`);

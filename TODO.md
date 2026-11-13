@@ -10,6 +10,11 @@
 
 ## 已完成
 
+- [x] 修复默认模型设置截图场景与设置页的漂移：`node tests/fixtures/model-settings/run.mjs --run` 重新稳定通过（2026-11-13 提出并完成）
+  - 根因：设置面板在 11-02 改为懒加载后，点开设置的那一刻导航还没挂载；夹具的 `click` 会先等待选择器出现，`clickText` 却直接查找，于是第一步 `clickText('.pd-settings-nav button', '模型管理')` 报 `Click target missing or disabled`。另有一个启动竞态：无头浏览器写出 `DevToolsActivePort` 时 HTTP 调试端口偶尔还没监听，`/json/list` 首次请求会 `fetch failed`。此外夹具缺少 `getSessionBranchSelection` 桩，场景末尾会报意外调用（已在上一条补上）。
+  - 修复：`tests/fixtures/model-settings/run.mjs` 中 `clickText` 与 `click` 一致，先等待匹配文字的目标出现再点击；`/json/list` 在原有 10 秒启动时限内重试。只改夹具，不动产品代码，场景断言本身没有改动。
+  - 验证：默认场景连续 3 次 passed（26 张截图，深浅主题 × 680/900/1440 宽，312 步，无意外调用和控制台错误），抽查 `01-dark-1440-custom-provider` / `01-light-680-add-provider` 截图正常；`../ui-polish/agents-goal.mjs` 深浅主题回归 passed。
+
 - [x] 子代理 FleetCard 条目顺序稳定：运行和刷新过程中 run / 子节点不再上下换位（2026-11-13 提出并完成）
   - 根因：pi-subagents 生成 `subagent-async` 快照时用 `asyncJobOrder` 排序——先按状态（运行中 > 排队 > 已结束），再按 `updatedAt` 倒序；`updatedAt` 随每次工具调用/回合刷新，宿主 `projectSubagentFleetSnapshot` 和 `FleetCard` 又原样按数组顺序渲染，所以哪个子代理刚有动静就跳到最上面，状态变化（运行→完成）也会整体换组；未被工作流步骤认领的子 run 同样按这个规则排。顶栏 headline 取「第一个运行中」也跟着来回切换。
   - 修复：`packages/agent` 新增 `stabilizeSubagentFleetOrder(next, previous)`，在 `consumeSubagentWidget` 收到快照后以上一份 fleet 为参照：已出现过的 run / 子节点（按 `kind:id` 匹配，逐层递归）保持原相对位置，新 run 追加在后并按 `startedAt` 从早到晚，新子节点保持插件顺序（工作流步骤本就按步骤序号）；数据本身照常更新、不修改输入；fleet 被清空或会话切换置 null 后重新开始排序。`FleetCard` 的 headline 改为「最早的运行中 run，全部结束时取最新一条」。
