@@ -161,3 +161,4 @@
 .pd-plugin-update-preview .pd-management-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
 .pd-plugin-update-preview code { display: block; padding: 8px 11px; border-radius: var(--pd-radius-sm); background: var(--pd-code-surface, color-mix(in srgb, var(--pd-text) 6%, transparent)); color: var(--pd-text-subtle); font: var(--pd-font-sm)/1.5 var(--pd-font-mono, ui-monospace, Consolas, monospace); }
 @media (max-width: 640px) { .pd-plugin-detail-heading { flex-wrap: wrap; } .pd-plugin-detail-actions { flex-basis: 100%; justify-content: flex-start; } }
+.pd-plugin-recommended-card .pd-plugin-card-meta > .pd-plugin-status { display: inline-flex; align-items: center; gap: 4px; }
