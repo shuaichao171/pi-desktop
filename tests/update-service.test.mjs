@@ -410,6 +410,30 @@ test('GitHub release downloads disable multipart ranges and retain the default s
   } finally { service.stop(); delete updater.verifyUpdateCodeSignature; }
 });
 
+test('on windows the updater always reinstalls into the running exe directory', { skip: process.platform !== 'win32' }, async () => {
+  // A custom install directory (e.g. D:\ai\pi_desktop_alt) whose registry
+  // InstallLocation is missing must not strand a second copy in the default
+  // %LOCALAPPDATA%\Programs dir: the installer is forced back to the current
+  // directory through /D.
+  const customDir = mkdtempSync(join(tmpdir(), 'pi-update-custom-'));
+  writeFileSync(join(customDir, 'Pi Desktop.exe'), '');
+  writeFileSync(join(customDir, 'Uninstall Pi Desktop.exe'), '');
+  const service = createService('https://updates.example.com/', join(customDir, 'Pi Desktop.exe'));
+  updater.checkForUpdates = async () => { updater.emit('update-not-available'); return {}; };
+  // createService restores PI_DESKTOP_EXEC_PATH before check() resolves, but
+  // getUpdater reads it lazily — hold it for the duration of the check.
+  const savedPath = process.env.PI_DESKTOP_EXEC_PATH;
+  process.env.PI_DESKTOP_EXEC_PATH = join(customDir, 'Pi Desktop.exe');
+  try {
+    assert.equal((await service.check()).phase, 'up-to-date');
+    assert.equal(updater.installDirectory, customDir, 'installDirectory must point at the running exe folder');
+  } finally {
+    if (savedPath === undefined) delete process.env.PI_DESKTOP_EXEC_PATH;
+    else process.env.PI_DESKTOP_EXEC_PATH = savedPath;
+    service.stop();
+  }
+});
+
 test('an unpublished GitHub release stays retryable and does not incorrectly claim the app is current', async () => {
   for (const locale of ['en-US', 'zh-CN']) {
     globalThis.__testUpdateLocale = locale;

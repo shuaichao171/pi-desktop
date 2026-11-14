@@ -5,7 +5,7 @@ import { IPC_CHANNELS, type UiUpdateState, type UiUpdateUnavailableReason } from
 import { getAppLocale } from './appLocale';
 import { isGitHubReleaseFeedUrl, parseUpdateFeedUrl } from './updateFeed';
 
-type Updater = typeof import('electron-updater').autoUpdater;
+type Updater = typeof import('electron-updater').autoUpdater & { installDirectory?: string };
 
 const FIRST_CHECK_DELAY_MS = 5_000;
 const CHECK_INTERVAL_MS = 4 * 60 * 60 * 1_000;
@@ -193,6 +193,15 @@ class UpdateService {
 			updater.setFeedURL({ provider: 'generic', url: this.feedUrl!,
 				...(isGitHubReleaseFeedUrl(this.feedUrl!) ? { useMultipleRangeRequest: false } : {}),
 			});
+			// Custom-dir installs (e.g. D:\ai\pi_desktop_alt) never get their location back from
+			// the registry: the uninstall key's InstallLocation is only written by newer
+			// installers, and electron-builder's NSIS template falls back to the default
+			// %LOCALAPPDATA%\Programs dir when it is missing — leaving two copies after a
+			// silent update. Pass the running exe's directory as /D so the updater always
+			// reinstalls over the current installation (NsisUpdater.doInstall).
+			if (process.platform === 'win32') {
+				updater.installDirectory = dirname(process.env.PI_DESKTOP_EXEC_PATH ?? process.execPath);
+			}
 			// Downloads never start from the updater itself: only an explicit install
 			// request (button click or the auto-install preference) chains into one.
 			// (plus release notes) and the download starts when the user consents.
