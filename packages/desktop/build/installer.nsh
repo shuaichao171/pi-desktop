@@ -22,8 +22,6 @@
 ; directory every install so upgrades always rediscover it.
 !macro customInstall
   WriteRegStr SHCTX "${UNINSTALL_REGISTRY_KEY}" "InstallLocation" "$INSTDIR"
-!macroend
-!macro customInstall
   !if "${PRODUCT_NAME}" == "Pi Desktop"
     Push $0
     Push $1
