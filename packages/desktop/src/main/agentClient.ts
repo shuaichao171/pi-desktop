@@ -159,6 +159,24 @@ export class AgentHostClient {
 
 	private handleMessage(host: UtilityProcess, message: AgentHostToMain): void {
 		if (this.host !== host) return;
+		// Electron fires 'message' with null when a parent-port payload fails to
+		// deserialize (electron/shell/common/v8_util.cc returns v8::Null on every
+		// failure path). Mirror the child-side guard in agentHostImpl, and keep
+		// one bad message from becoming a fatal main-process exception.
+		if (message === null || typeof message !== 'object' || typeof (message as { kind?: unknown }).kind !== 'string') {
+			recordDiagnostic({ stage: 'host', action: 'message.malformed', outcome: 'failure' });
+			console.error('Pi agent host sent a malformed message; ignored');
+			return;
+		}
+		try {
+			this.dispatchHostMessage(host, message);
+		} catch (error) {
+			recordDiagnostic({ stage: 'host', action: 'message.dispatch', outcome: 'failure' });
+			console.error('Pi agent host message dispatch failed:', error);
+		}
+	}
+
+	private dispatchHostMessage(host: UtilityProcess, message: AgentHostToMain): void {
 		switch (message.kind) {
 			case 'fatal':
 				// The bootstrap exits right after reporting; the exit handler surfaces this message.

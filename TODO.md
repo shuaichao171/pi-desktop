@@ -10,6 +10,12 @@
 
 ## 已完成
 
+- [x] 主进程不再因 Pi agent 宿主进程发来的畸形消息崩溃（2026-11-14 提出并完成）
+  - 现象：弹「A JavaScript error occurred in the main process：TypeError: Cannot read properties of null (reading 'kind') at AgentHostClient.handleMessage」。
+  - 根因：Electron 的 utilityProcess 在父端口消息反序列化失败时，所有失败路径都返回 v8::Null 并照常以 message 事件派发（electron/shell/common/v8_util.cc 的 `Deserialize()`；VS Code 曾遇到同类问题 microsoft/vscode#174052、#176202，官方结论就是应用侧要做防御）。`AgentHostClient.handleMessage` 直接 `switch (message.kind)`，null 一到就抛 TypeError 成为未捕获异常；而子进程侧 agentHostImpl 收消息一直有 `!message || typeof message !== 'object'` 防护，主进程侧漏掉了。
+  - 修复：`handleMessage` 增加与子进程侧一致的畸形消息防护（null / 非对象 / kind 非字符串直接忽略，记 stage=host、action=message.malformed 诊断），分发逻辑包进 try/catch（失败记 action=message.dispatch 诊断 + console.error），单条坏消息或事件监听器抛错不再能炸掉整个主进程。对应 RPC 仍会按原超时机制失败并在界面报错，不影响其他消息。
+  - 验证：四包 typecheck 通过；全量 1287 项（1285 通过、0 失败、2 跳过）；`pnpm build` 构建成功。
+
 - [x] 修复默认模型设置截图场景与设置页的漂移：`node tests/fixtures/model-settings/run.mjs --run` 重新稳定通过（2026-11-13 提出并完成）
   - 根因：设置面板在 11-02 改为懒加载后，点开设置的那一刻导航还没挂载；夹具的 `click` 会先等待选择器出现，`clickText` 却直接查找，于是第一步 `clickText('.pd-settings-nav button', '模型管理')` 报 `Click target missing or disabled`。另有一个启动竞态：无头浏览器写出 `DevToolsActivePort` 时 HTTP 调试端口偶尔还没监听，`/json/list` 首次请求会 `fetch failed`。此外夹具缺少 `getSessionBranchSelection` 桩，场景末尾会报意外调用（已在上一条补上）。
   - 修复：`tests/fixtures/model-settings/run.mjs` 中 `clickText` 与 `click` 一致，先等待匹配文字的目标出现再点击；`/json/list` 在原有 10 秒启动时限内重试。只改夹具，不动产品代码，场景断言本身没有改动。
