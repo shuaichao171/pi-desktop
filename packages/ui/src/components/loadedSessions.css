@@ -1,8 +1,8 @@
 /* "已加载会话": the top-left sidebar region of conversations kept ready in this window. */
 /* Reuse .pd-sidebar-region / .pd-sidebar-region-heading-row / .pd-sidebar-region-content
-   so "已加载会话" shares the exact 30px surface header, borders, row height, and
+   so "已加载会话" shares the exact 24px surface header, borders, row height, and
    scrollbar rhythm of the other sidebar regions. */
-.pd-loaded-sessions { flex: 0 0 auto; max-height: 34%; min-height: 30px; outline: 1px dashed transparent; outline-offset: -2px; transition: outline-color var(--pd-motion-fast), background var(--pd-motion-fast); }
+.pd-loaded-sessions { flex: 0 0 auto; max-height: 34%; min-height: 24px; outline: 1px dashed transparent; outline-offset: -2px; transition: outline-color var(--pd-motion-fast), background var(--pd-motion-fast); }
 .pd-loaded-sessions.is-drop-active { outline-color: var(--pd-border); }
 .pd-loaded-sessions.is-drop-hover { outline-color: var(--pd-brand); background: color-mix(in srgb, var(--pd-brand) 8%, transparent); }
 .pd-loaded-sessions .pd-sidebar-region-heading small { margin-left: 6px; color: var(--pd-text-weak); font-size: var(--pd-font-xs); font-weight: var(--pd-weight-regular); }

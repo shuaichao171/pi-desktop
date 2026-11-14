@@ -1274,7 +1274,7 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 		const isCollapsed = sectionLayout.collapsed.includes(id);
 		const height = sectionLayout.heights[id] ?? (id === 'unassigned-sessions' ? 170 : 240);
 		const heading = <button type="button" className="pd-sidebar-region-heading" aria-expanded={!isCollapsed} onClick={() => toggleRegion(id)}><Icon name="chevronRight" width="13" height="13" className={!isCollapsed ? 'is-expanded' : ''} /><span>{title}</span></button>;
-		return <section className={`pd-sidebar-region${isCollapsed ? ' is-collapsed' : ''}`} key={id} data-region-id={id} data-project-group-target={id === 'ungrouped-projects' ? '' : undefined} style={{ flex: isCollapsed ? '0 0 30px' : `1 1 ${height}px` }}>
+		return <section className={`pd-sidebar-region${isCollapsed ? ' is-collapsed' : ''}`} key={id} data-region-id={id} data-project-group-target={id === 'ungrouped-projects' ? '' : undefined} style={{ flex: isCollapsed ? '0 0 24px' : `1 1 ${height}px` }}>
 			<div className="pd-sidebar-region-heading-row">
 				{options?.hint ? <HoverTooltip title={options.hint} description={options.hintDetail} side="top" interactive={false}>{heading}</HoverTooltip> : heading}
 				{options?.actions && <div className="pd-sidebar-region-heading-actions">{options.actions}</div>}
