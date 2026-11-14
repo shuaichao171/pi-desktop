@@ -16,7 +16,7 @@ interface Row { key: string; kind: 'main' | 'pane'; cwd: string; path: string | 
  * window — loaded main-window conversations and all split panes (shown or hidden). It is
  * also a drop target: dragging a sidebar conversation here loads it.
  */
-export function LoadedSessionsRegion({ titleFor, onNavigate }: { titleFor(path: string | null): string; onNavigate(): void }) {
+export function LoadedSessionsRegion({ titleFor, projectNameFor, onNavigate }: { titleFor(path: string | null): string; projectNameFor?(cwd: string): string | null; onNavigate(): void }) {
 	const { t } = useT();
 	const { main, panes } = useLoadedSessions();
 	const drag = useSessionDrag();
@@ -59,9 +59,12 @@ export function LoadedSessionsRegion({ titleFor, onNavigate }: { titleFor(path: 
 			{rows.map((row) => {
 				const active = row.kind === 'main' && row.path === currentPath;
 				const title = titleFor(row.path);
+				const project = projectNameFor?.(row.cwd) ?? null;
 				return <div key={row.key} role="listitem" className={`pd-loaded-session${active ? ' is-active' : ''}${row.hidden ? ' is-hidden-pane' : ''}`} data-loaded-kind={row.kind} data-loaded-path={row.path ?? undefined}>
-					<button type="button" className="pd-loaded-session-main" onClick={() => void open(row)} aria-current={active ? 'page' : undefined}>
+					<button type="button" className="pd-loaded-session-main" title={project ? `${project} › ${title}` : title} onClick={() => void open(row)} aria-current={active ? 'page' : undefined}>
 						<span className="pd-session-leading" aria-hidden="true">{row.busy ? <Icon name="loader" className="pd-session-spinner" width="13" height="13" /> : <Icon name={row.kind === 'pane' ? 'panelRight' : 'message'} width="13" height="13" />}</span>
+						{project && <span className="pd-loaded-session-project">{project}</span>}
+						{project && <span className="pd-loaded-session-sep" aria-hidden="true">›</span>}
 						<span className="pd-loaded-session-title">{title}</span>
 						{row.kind === 'pane' && <span className="pd-loaded-session-badge">{t(row.hidden ? 'loaded.paneHidden' : 'loaded.pane')}</span>}
 					</button>
