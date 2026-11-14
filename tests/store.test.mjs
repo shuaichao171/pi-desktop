@@ -668,6 +668,30 @@ test('model and credential settings use the bridge without retaining the API key
   assert.equal(JSON.stringify(state).includes('sample-secret'), false);
 });
 
+test('switching sessions retains the workspace catalog and invalidates old refreshes', async () => {
+  const host = createBridge();
+  useChatStore.getState().setBridge(host.bridge);
+  await settle();
+  await Promise.all([useChatStore.getState().refreshModels(), useChatStore.getState().refreshProviderAuth()]);
+  const { models, providerAuth } = useChatStore.getState();
+  const stale = deferred();
+  host.bridge.listModels = () => stale.promise;
+  const read = useChatStore.getState().refreshModels();
+
+  host.emit(2, { type: 'reset', cwd: baseSnapshot.cwd });
+  assert.equal(useChatStore.getState().models, models, 'the previous catalog stays mounted between sessions');
+  assert.equal(useChatStore.getState().providerAuth, providerAuth, 'provider visibility does not flicker during the reset');
+  assert.equal(useChatStore.getState().model, '', 'the previous session model is not reported as the next selection');
+  stale.resolve([{ ...models[0], id: 'stale-model' }]);
+  await read;
+  assert.equal(useChatStore.getState().models, models, 'an old refresh cannot replace the retained catalog');
+  assert.equal(useChatStore.getState().settingsLoading, false);
+
+  host.emit(3, { type: 'reset', cwd: 'D:\\another-workspace' });
+  assert.deepEqual(useChatStore.getState().models, [], 'workspace changes still invalidate the workspace catalog');
+  assert.deepEqual(useChatStore.getState().providerAuth, []);
+});
+
 test('an empty model picker renders the last cached catalog until the host answers', async () => {
   const items = new Map();
   const previous = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');

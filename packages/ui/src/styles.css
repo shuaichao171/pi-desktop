@@ -1002,7 +1002,15 @@ div.pd-hover-tooltip:has(.pd-update-notes-body) { max-width: min(400px, calc(100
 /* While a popover is open the drag regions (title strip etc.) must not
    swallow the outside press that dismisses it. pd-popover-open lives on
    <html>, is-frameless on the shell div — so scope via html + :is(). */
-html.pd-popover-open :is(.pd-sidebar-toolbar, .pd-chat-header, .pd-chat-heading, .pd-workbench-header) { -webkit-app-region: no-drag; }
+html.pd-popover-open .pd-app-shell.is-frameless :is(.pd-top-bar, .pd-sidebar-toolbar, .pd-chat-header, .pd-chat-heading, .pd-workbench-header, .pd-compact-controls) { -webkit-app-region: no-drag; }
+/* Electron's native drag hit regions can outlive DOM stacking, including a
+   native dialog in the top layer. Retire background caption regions while a
+   dialog is open; closing it restores the normal chrome without a JS observer. */
+html:has(dialog[open]) .pd-app-shell.is-frameless :is(.pd-top-bar, .pd-sidebar-toolbar, .pd-chat-header, .pd-chat-heading, .pd-workbench-header, .pd-compact-controls) { -webkit-app-region: no-drag; }
+:root dialog, :root dialog::backdrop, :root dialog * { -webkit-app-region: no-drag; }
+/* A preview can also open above settings. Its transparent drag band must not
+   intercept the preview toolbar; the ordinary settings drag band stays usable. */
+html:has(dialog[open]) .pd-app-shell.is-frameless .pd-settings-overlay::before { -webkit-app-region: no-drag; pointer-events: none; }
 /* The scrim also dims the title strip; a drag band keeps the window movable
    and the dialog still sits below the strip, clear of the window controls. */
 .is-frameless .pd-settings-overlay { padding-top: 56px; }
@@ -1068,6 +1076,23 @@ html.pd-popover-open :is(.pd-sidebar-toolbar, .pd-chat-header, .pd-chat-heading,
 .pd-composer-config-popover.is-model > .pd-composer-picker-head,
 .pd-composer-config-popover.is-model > .pd-composer-picker-tools,
 .pd-composer-config-popover.is-model > .pd-composer-picker-error { flex-shrink: 0; }
+.pd-composer-model-body { display: flex; flex: 1 1 auto; height: 440px; min-height: 80px; min-width: 0; }
+.pd-composer-model-body > .pd-composer-provider-browser { height: auto; min-width: 0; }
+.pd-composer-model-body > .pd-composer-picker-empty { display: flex; flex: 1; align-items: center; justify-content: center; }
+.pd-composer-catalog-status { display: inline-flex; align-items: center; justify-content: flex-end; gap: 6px; flex: 1; min-width: 0; margin-inline: 12px; color: var(--pd-text-weak); font-size: var(--pd-font-xs); }
+.pd-composer-catalog-status > svg { flex: 0 0 auto; animation: pd-spin 1.1s linear infinite; }
+.pd-composer-catalog-retry { margin-inline-start: 8px; padding: 2px 5px; border: 0; border-radius: var(--pd-radius-xs); background: transparent; color: var(--pd-brand); font: inherit; cursor: pointer; }
+.pd-composer-catalog-retry:hover { background: var(--pd-surface-hover); }
+.pd-model-skeleton-line { display: block; width: 68%; height: 9px; border-radius: var(--pd-radius-xs); background: color-mix(in srgb, var(--pd-text) 10%, transparent); animation: pd-model-skeleton-pulse 1.6s ease-in-out infinite; }
+.pd-model-skeleton-provider { display: flex; align-items: center; gap: 8px; min-height: 36px; padding: 5px 7px; }
+.pd-model-skeleton-provider > i { flex: 0 0 22px; height: 22px; border-radius: var(--pd-radius-sm); background: color-mix(in srgb, var(--pd-text) 8%, transparent); }
+.pd-model-skeleton-row { display: flex; flex: 0 0 auto; flex-direction: column; justify-content: center; gap: 8px; min-height: 78px; padding: 8px 10px; }
+.pd-model-skeleton-row .is-short { width: 45%; height: 7px; }
+.pd-model-skeleton-row .is-caption { width: 56%; height: 6px; opacity: .6; }
+.is-skeleton .pd-composer-picker-list, .is-skeleton .pd-composer-provider-list { overflow: hidden; }
+.pd-composer-model-body.is-revealing > .pd-composer-provider-browser { animation: pd-model-catalog-reveal var(--pd-motion-fast) var(--pd-ease-enter) both; }
+@keyframes pd-model-skeleton-pulse { 0%, 100% { opacity: .55; } 50% { opacity: 1; } }
+@keyframes pd-model-catalog-reveal { from { opacity: .65; } to { opacity: 1; } }
 .pd-composer-provider-browser { display: grid; grid-template-columns: minmax(124px, 32%) minmax(0, 1fr); flex: 1 1 auto; height: 440px; min-height: 80px; border: 1px solid var(--pd-border-soft); border-radius: var(--pd-radius-md); overflow: hidden; background: transparent; }
 .pd-composer-provider-column, .pd-composer-provider-models { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
 .pd-composer-provider-column { border-right: 1px solid var(--pd-border-soft); background: color-mix(in srgb, var(--pd-text) 3%, transparent); }

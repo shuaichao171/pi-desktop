@@ -1,9 +1,16 @@
-/* Compact queue attached to the composer, following Codex's single-line rows. */
-.pd-composer-queue { min-width: 0; overflow: hidden; border: 1px solid var(--pd-border-soft); border-bottom: 0; border-radius: var(--pd-radius-xl) var(--pd-radius-xl) 0 0; background: color-mix(in srgb, var(--pd-surface-muted) 70%, var(--pd-bg)); padding: 5px; }
-.pd-composer-queue + .pd-composer-shell[data-composer-layout] { border-top-left-radius: 0; border-top-right-radius: 0; }
+/* Pending messages belong to a single, inset card above the full-width composer. */
+.pd-composer-queue { width: calc(100% - 24px); min-width: 0; margin: 0 auto 8px; overflow: hidden; border: 1px solid var(--pd-border-soft); border-radius: var(--pd-radius-xl); background: color-mix(in srgb, var(--pd-surface-muted) 72%, var(--pd-bg)); padding: 5px; }
+.pd-queue-summary { display: flex; align-items: center; gap: 7px; width: 100%; min-width: 0; min-height: 30px; padding: 4px 8px 6px; border: 0; border-radius: var(--pd-radius-md); background: transparent; color: var(--pd-text-weak); font: inherit; font-size: var(--pd-font-xs); text-align: start; cursor: pointer; }
+.pd-queue-summary:hover { background: var(--pd-surface-hover); }
+.pd-queue-summary > svg { flex: 0 0 auto; }
+.pd-queue-summary-title { flex: 0 0 auto; color: var(--pd-text-subtle); font-weight: var(--pd-weight-medium); }
+.pd-queue-summary-count { flex: 0 0 auto; min-width: 17px; padding: 0 4px; border-radius: var(--pd-radius-pill); background: color-mix(in srgb, var(--pd-text) 7%, transparent); color: var(--pd-text-subtle); font-size: var(--pd-font-xs); font-weight: var(--pd-weight-medium); line-height: 17px; text-align: center; font-variant-numeric: tabular-nums; }
+.pd-queue-summary-hint { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pd-composer-queue.is-collapsed .pd-queue-summary { padding-bottom: 4px; }
 .pd-queue-sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
-.pd-composer-queue-list { max-height: min(30dvh, 280px); overflow: auto; scrollbar-width: thin; scrollbar-color: var(--pd-border-strong) transparent; overscroll-behavior: contain; }
-.pd-composer-queue-item { display: flex; align-items: center; gap: 8px; min-width: 0; min-height: 34px; padding: 3px 7px; border-radius: var(--pd-radius-sm); position: relative; }
+.pd-composer-queue-list { max-height: min(24dvh, 216px); overflow: auto; scrollbar-width: thin; scrollbar-color: var(--pd-border-strong) transparent; overscroll-behavior: contain; }
+.pd-composer-queue-list[hidden] { display: none; }
+.pd-composer-queue-item { display: flex; align-items: center; gap: 8px; min-width: 0; min-height: 36px; padding: 4px 7px; border-radius: var(--pd-radius-md); position: relative; }
 .pd-composer-queue-item:hover, .pd-composer-queue-item:focus-within { background: var(--pd-surface-hover); }
 .pd-composer-queue-item.is-editing > .pd-composer-queue-text { opacity: .6; }
 .pd-composer-queue-item.is-dragging { opacity: .4; }
@@ -11,9 +18,14 @@
 .pd-composer-queue-item.drop-before::before { top: 0; }
 .pd-composer-queue-item.drop-after::after { bottom: 0; }
 .pd-composer-queue-text { flex: 1; min-width: 0; padding: 3px 0; border: 0; background: transparent; color: var(--pd-text-subtle); text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: inherit; font-size: var(--pd-font-caption); line-height: 1.6; }
-.pd-queue-drag { display: grid; place-items: center; flex: 0 0 16px; width: 16px; height: 24px; padding: 0; border: 0; border-radius: var(--pd-radius-xs); background: transparent; color: var(--pd-text-weak); cursor: grab; font-size: 19px; line-height: 1; touch-action: none; }
+.pd-queue-drag { display: grid; place-items: center; flex: 0 0 16px; width: 16px; height: 24px; padding: 0; border: 0; border-radius: var(--pd-radius-xs); background: transparent; color: var(--pd-text-weak); cursor: grab; touch-action: none; }
+.pd-queue-position { grid-area: 1 / 1; color: var(--pd-text-weak); font: var(--pd-font-xs)/24px var(--pd-font-mono); font-variant-numeric: tabular-nums; }
+.pd-queue-position.is-single { flex: 0 0 16px; width: 16px; text-align: center; }
+.pd-queue-grip { grid-area: 1 / 1; visibility: hidden; }
+.pd-composer-queue-item:is(:hover, :focus-within) .pd-queue-drag:not(:disabled) .pd-queue-position { visibility: hidden; }
+.pd-composer-queue-item:is(:hover, :focus-within) .pd-queue-drag:not(:disabled) .pd-queue-grip { visibility: visible; }
 .pd-queue-drag:active { cursor: grabbing; }
-.pd-queue-drag:disabled { opacity: .25; cursor: default; }
+.pd-queue-drag:disabled, .pd-queue-drag[aria-disabled='true'] { cursor: default; }
 .pd-composer-queue-actions { display: flex; flex: 0 0 auto; align-items: center; gap: 2px; transition: opacity var(--pd-motion-fast, 150ms); }
 /* Only the next message keeps its actions on screen; later rows reveal theirs on hover
    or keyboard focus, and rows that need attention (recovered, editing, busy, open menu) stay visible. */
@@ -21,6 +33,7 @@
 @media (hover: none) { .pd-composer-queue-list > .pd-composer-queue-item .pd-composer-queue-actions { opacity: 1 !important; } }
 .pd-composer-queue-action { display: inline-flex; align-items: center; justify-content: center; gap: 4px; min-width: 26px; height: 26px; padding: 3px 5px; border: 0; border-radius: var(--pd-radius-xs); background: transparent; color: var(--pd-text-weak); font-size: var(--pd-font-sm); white-space: nowrap; }
 .pd-composer-queue-action.is-steer { color: var(--pd-text-subtle); }
+.pd-composer-queue-action.is-steer:hover:not(:disabled) { color: var(--pd-brand); }
 .pd-composer-queue-action:hover:not(:disabled), .pd-composer-queue-action[aria-expanded='true'] { background: var(--pd-selected); color: var(--pd-text); }
 .pd-composer-queue-action:disabled { opacity: .4; cursor: default; }
 .pd-queue-state, .pd-queue-attachment-count { display: inline-flex; flex: 0 0 auto; align-items: center; gap: 4px; font-size: var(--pd-font-xs); color: var(--pd-text-weak); white-space: nowrap; }
@@ -57,6 +70,7 @@
 .pd-queue-edit-toolbar button:disabled { opacity: .45; }
 .pd-queue-composer-edit > p { margin: 4px 16px; color: var(--pd-warning); font-size: var(--pd-font-sm); }
 @media (max-width: 700px) {
+  .pd-composer-queue { width: calc(100% - 16px); }
   .pd-composer-queue-item { gap: 5px; padding-inline: 4px; }
   .pd-queue-edit-heading { flex-wrap: wrap; }
   .pd-queue-edit-heading small { width: 100%; margin-left: 21px; }

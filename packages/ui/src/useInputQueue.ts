@@ -8,9 +8,8 @@ type QueueBridge = Partial<InputFeatureBridge>;
 interface SharedController { controller: InputQueueController; holds: number; users: number }
 
 /**
- * The composer queue strip and the transcript's pending bubbles act on the same queue.
- * They share one controller per bridge + scope so their mutations serialize against a
- * single version and row-pending state shows in both places.
+ * Queue surfaces share one controller per bridge + scope, so split views serialize
+ * mutations against one version and expose the same row-pending state.
  */
 const sharedControllers = new WeakMap<object, Map<string, SharedController>>();
 const scopeKey = (scope: UiInputQueueScope) => `${scope.cwd}\0${scope.sessionPath ?? ''}\0${scope.sessionId}`;

@@ -576,9 +576,11 @@ void get().refreshModelProviders().catch(() => {});
 					thinkingLevel: '',
 					availableThinkingLevels: [],
 					contextUsage: null,
-					models: [],
+					// Session resets in the same workspace do not invalidate its catalog.
+					// Keep it visible while the next session's host refreshes metadata.
+					models: get().cwd === event.cwd ? get().models : [],
 modelProviders: [...get().modelProviders],
-					providerAuth: [],
+					providerAuth: get().cwd === event.cwd ? get().providerAuth : [],
 					settingsLoading: false,
 					settingsError: null,
 					cwd: event.cwd,

@@ -201,9 +201,15 @@
 .pd-transcript-find-scopes button.is-active { background: var(--pd-selected); color: var(--pd-text); }
 .pd-transcript-find-step:disabled { opacity: .35; cursor: default; }
 
-/* pi-subagents child-agent card (zcode-style delegation rendering) */
+/* Compact child-agent records with an optional side-panel shortcut. */
+.pd-subagent-head { display: flex; align-items: center; min-width: 0; }
+.pd-subagent-head > .pd-activity-head { flex: 1; min-width: 0; }
+.pd-subagent-open { display: inline-flex; flex: 0 0 auto; align-items: center; justify-content: center; width: 28px; height: 28px; border: 0; border-radius: var(--pd-radius-sm); background: transparent; color: var(--pd-text-weak); cursor: pointer; }
+.pd-subagent-open:hover { color: var(--pd-text); background: var(--pd-surface-hover); }
+.pd-subagent-open:focus-visible { outline: 2px solid var(--pd-focus-border); outline-offset: -2px; }
+.pd-subagent-task-preview { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--pd-text-weak); font-size: var(--pd-font-xs); }
 .pd-subagent-item .pd-activity-icon.is-running { color: var(--pd-brand); }
-.pd-subagent-item .pd-subagent-agent { color: var(--pd-text); font-weight: var(--pd-weight-semibold); font-size: var(--pd-font-sm); overflow-wrap: anywhere; }
+.pd-subagent-item .pd-subagent-agent { flex: 0 1 auto; max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--pd-text); font-weight: var(--pd-weight-semibold); font-size: var(--pd-font-sm); }
 .pd-subagent-item .pd-subagent-model { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 0 6px; border-radius: var(--pd-radius-xs); background: color-mix(in srgb, var(--pd-text) 7%, transparent); color: var(--pd-text-subtle); font: var(--pd-font-xs)/18px var(--pd-font-mono); }
 .pd-subagent-async-tag { flex: 0 0 auto; padding: 0 7px; border-radius: var(--pd-radius-pill); background: color-mix(in srgb, var(--pd-brand) 14%, transparent); color: var(--pd-brand); font-size: var(--pd-font-xs); line-height: 18px; }
 .pd-subagent-meta { flex: 0 0 auto; color: var(--pd-text-weak); font-size: var(--pd-font-xs); font-variant-numeric: tabular-nums; white-space: nowrap; }

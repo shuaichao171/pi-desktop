@@ -1,222 +1,213 @@
-import { useCallback, useEffect, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { UiSubagentFleetNode, UiSubagentInspectReply } from '@pidesktop/shared';
 import { useChatStore } from '../store';
 import { useT } from '../i18n';
 import { operationFeedback } from '../operationFeedback';
+import { ConversationMarkdown } from './ConversationMarkdown';
 import { Icon, type IconName } from './Icons';
 import './fleetCard.css';
 
-/**
- * Native desktop replacement for the pi-subagents TUI FleetView / async widget.
- * The plugin (rpc mode) streams a bounded JSON fleet snapshot through the
- * `subagent-async` widget key; the agent service projects it into
- * `subagentFleet` state. The card is completely invisible when the plugin is
- * absent or has no runs, and its action buttons only appear while the plugin's
- * slash commands (subagents-stop / subagents-steer / subagents-inspect-rpc)
- * are registered.
- */
-
-const SUBAGENT_COMMAND_NAMES = ['subagents-stop', 'subagents-steer', 'subagents-inspect-rpc'] as const;
-type SubagentCommandName = (typeof SUBAGENT_COMMAND_NAMES)[number];
-
-function formatElapsed(startedAt: number | undefined, endedAt: number | undefined, updatedAt: number | undefined): string {
-	if (startedAt === undefined) return '';
-	const end = endedAt ?? updatedAt ?? startedAt;
-	const seconds = Math.max(0, Math.floor((end - startedAt) / 1000));
-	if (seconds < 60) return `${seconds}s`;
-	const minutes = Math.floor(seconds / 60);
-	if (minutes < 60) return `${minutes}m ${seconds % 60}s`;
-	return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
-}
-
-function isLive(node: UiSubagentFleetNode): boolean {
-	return node.state === 'running' || node.state === 'queued';
-}
-
-function liveCount(nodes: UiSubagentFleetNode[]): number {
-	let count = 0;
-	for (const node of nodes) {
-		if (node.state === 'running') count++;
-		if (node.children) count += liveCount(node.children);
-	}
-	return count;
-}
-
-const STATE_ICONS: Record<UiSubagentFleetNode['state'], IconName | null> = {
-	queued: null, running: 'loader', complete: 'check', failed: 'close', partial: 'alert', paused: 'square', stopped: 'square', rejected: 'minusCircle',
+type Command = 'subagents-stop' | 'subagents-steer' | 'subagents-inspect-rpc';
+type Selection = { rootId: string; nodeId: string };
+const FleetContext = createContext<{ open: boolean; panelId: string; targets: Map<string, Selection>; toggle(): void; openRun(target: Selection): void } | null>(null);
+const isLive = (node: UiSubagentFleetNode) => node.state === 'running' || node.state === 'queued';
+const glyphs: Record<UiSubagentFleetNode['state'], IconName> = {
+	queued: 'clock', running: 'loader', complete: 'check', failed: 'close', partial: 'alert', paused: 'square', stopped: 'square', rejected: 'minusCircle',
 };
 
-/** Round status mark: a spinner while running, a dashed ring while queued, an icon once settled. */
 function StateGlyph({ state }: { state: UiSubagentFleetNode['state'] }) {
 	const { t } = useT();
-	const icon = STATE_ICONS[state];
-	const label = t(`fleet.state.${state}`);
-	return <span className="pd-fleet-glyph" data-fleet-state={state} role="img" aria-label={label} title={label}>{icon && <Icon name={icon} width="11" height="11" />}</span>;
+	return <span className="pd-fleet-glyph" data-fleet-state={state} role="img" aria-label={t(`fleet.state.${state}`)}><Icon name={glyphs[state]} width="12" height="12" /></span>;
 }
 
-function FleetNodeRow({ node, depth, actions }: { node: UiSubagentFleetNode; depth: number; actions: FleetActions }) {
+function elapsed(node: UiSubagentFleetNode, now: number): string {
+	if (node.startedAt == null) return '';
+	const seconds = Math.max(0, Math.floor(((isLive(node) ? now : node.endedAt ?? node.updatedAt ?? node.startedAt) - node.startedAt) / 1000));
+	return seconds < 60 ? `${seconds}s` : seconds < 3600 ? `${Math.floor(seconds / 60)}m ${seconds % 60}s` : `${Math.floor(seconds / 3600)}h ${Math.floor(seconds / 60) % 60}m`;
+}
+
+function findNode(nodes: UiSubagentFleetNode[], id: string): UiSubagentFleetNode | undefined {
+	for (const node of nodes) {
+		if (node.id === id) return node;
+		const child = node.children && findNode(node.children, id);
+		if (child) return child;
+	}
+}
+
+function containsLive(node: UiSubagentFleetNode): boolean {
+	return isLive(node) || Boolean(node.children?.some(containsLive));
+}
+
+/** Link a transcript record only when its exact run ID is in this session's fleet. */
+export function useSubagentLink(runId: string | null | undefined) {
+	const context = useContext(FleetContext);
+	const target = runId ? context?.targets.get(runId) : undefined;
+	return context && target ? { panelId: context.panelId, open: () => context.openRun(target) } : null;
+}
+
+/** The composer keeps a small entry point; the agents and transcripts live in a side panel. */
+export function FleetCard() {
 	const { t } = useT();
-	const elapsed = formatElapsed(node.startedAt, node.endedAt, node.updatedAt);
-	const tool = node.activity?.currentTool;
-	const counts: string[] = [];
-	if (node.activity?.turnCount !== undefined) counts.push(t('fleet.turns', { count: String(node.activity.turnCount) }));
-	if (node.activity?.toolCount !== undefined) counts.push(t('fleet.tools', { count: String(node.activity.toolCount) }));
-	// Running and complete read from the glyph alone; rarer states also say their name.
-	const namedState = node.state !== 'running' && node.state !== 'complete';
-	const busy = !actions.enabled || actions.pending !== null;
-	return (
-		<li className="pd-fleet-node" data-fleet-state={node.state} data-fleet-depth={depth}>
-			<div className="pd-fleet-node-row">
-				<StateGlyph state={node.state} />
-				<span className="pd-fleet-node-label" title={node.label}>{node.label}</span>
-				{namedState && <span className="pd-fleet-node-state">{t(`fleet.state.${node.state}`)}</span>}
-				{node.hostStep && <span className="pd-fleet-host-step" title={node.hostStep.detail ?? node.hostStep.reasonCode}>{t('fleet.hostStep')}{node.hostStep.verdict ? ` · ${node.hostStep.verdict}` : ''}</span>}
-				{tool && <code className="pd-fleet-node-tool" title={tool}>{tool}</code>}
-				{counts.length > 0 && <span className="pd-fleet-node-counts">{counts.join(' · ')}</span>}
-				{elapsed && <span className="pd-fleet-node-elapsed">{elapsed}</span>}
-				{depth === 0 && actions.available && (isLive(node) || node.kind === 'subagent' || node.kind === 'workflow') && (
-					<span className="pd-fleet-node-actions">
-						{node.state === 'running' && <button type="button" disabled={busy} onClick={() => actions.beginSteer(node.id)}><Icon name="steer" width="12" height="12" />{t('fleet.steer')}</button>}
-						<button type="button" disabled={busy} onClick={() => void actions.inspect(node)}><Icon name="eye" width="12" height="12" />{t('fleet.inspect')}</button>
-						{isLive(node) && <button type="button" className="is-danger" disabled={busy} onClick={() => void actions.run('subagents-stop', node.id)}><Icon name="square" width="11" height="11" />{t('fleet.stop')}</button>}
-					</span>
-				)}
-			</div>
-			{node.children && node.children.length > 0 && (
-				<ul className="pd-fleet-children">
-					{node.children.map((child) => <FleetNodeRow key={`${child.kind}:${child.id}`} node={child} depth={depth + 1} actions={actions} />)}
-				</ul>
-			)}
-		</li>
-	);
+	const fleet = useChatStore((s) => s.subagentFleet);
+	const context = useContext(FleetContext);
+	if (!context || !fleet?.runs.length) return null;
+	const running = fleet.runs.filter(containsLive).length;
+	return <div className="pd-fleet-card">
+		<button type="button" className="pd-fleet-strip" onClick={context.toggle} aria-expanded={context.open} aria-controls={context.panelId} aria-label={t(context.open ? 'fleet.collapse' : 'fleet.expand')}>
+			<Icon name="plugins" width="15" height="15" />
+			<span className="pd-fleet-strip-title">{t('fleet.title')}</span>
+			<span className="pd-fleet-summary">{t(running ? 'fleet.activeCount' : 'fleet.total', { count: running || fleet.runs.length })}</span>
+			<span className="pd-fleet-avatars" aria-hidden="true">{fleet.runs.slice(0, 3).map((node) => <span key={`${node.kind}:${node.id}`} data-fleet-state={node.state}>{node.label.slice(0, 1).toUpperCase()}</span>)}</span>
+			<Icon name={context.open ? 'chevronRight' : 'panel'} width="14" height="14" />
+		</button>
+	</div>;
 }
 
-interface FleetActions {
-	available: boolean;
-	enabled: boolean;
-	pending: string | null;
-	run(name: SubagentCommandName, args: string): Promise<void>;
-	beginSteer(runId: string): void;
-	inspect(node: UiSubagentFleetNode, childId?: string): Promise<void>;
-}
-
-function InspectDetail({ reply, onClose }: { reply: UiSubagentInspectReply; onClose: () => void }) {
+function InspectContent({ reply }: { reply: UiSubagentInspectReply }) {
 	const { t } = useT();
 	const messages = (reply.messages ?? []).slice(-20);
-	return (
-		<section className="pd-fleet-inspect">
-			<header>
-				<h4>{reply.label ?? reply.asyncId ?? t('fleet.title')}{reply.status ? ` · ${reply.status}` : ''}</h4>
-				<button type="button" onClick={onClose} aria-label={t('fleet.close')}><Icon name="close" width="12" height="12" /></button>
-			</header>
-			{reply.error && <p className="pd-fleet-inspect-error">{t('fleet.inspectFailed')}: {reply.error.message} <code>({reply.error.code})</code></p>}
-			{reply.task && <p className="pd-fleet-inspect-task"><strong>{t('fleet.inspectTask')}</strong>{reply.task}</p>}
-			{reply.finalOutput && (
-				<div className="pd-fleet-inspect-block">
-					<h5>{t('fleet.inspectOutput')}</h5>
-					<pre>{reply.finalOutput}</pre>
-				</div>
-			)}
-			{messages.length > 0 && (
-				<div className="pd-fleet-inspect-block">
-					<h5>{t('fleet.inspectTranscript')}</h5>
-					<ul>
-						{messages.map((message, index) => (
-							<li key={index} data-message-role={message.role ?? 'unknown'}><span>{message.role ?? ''}</span><p>{message.text}</p></li>
-						))}
-					</ul>
-				</div>
-			)}
-			{reply.truncated && <p className="pd-fleet-inspect-truncated">{t('fleet.truncated')}</p>}
-		</section>
-	);
+	return <>
+		{reply.error && <p className="pd-fleet-inspect-error" role="alert">{t('fleet.inspectFailed')}: {reply.error.message} <code>({reply.error.code})</code></p>}
+		{reply.task && <section className="pd-fleet-inspect-task"><h4>{t('fleet.inspectTask')}</h4><p>{reply.task}</p></section>}
+		{messages.length > 0 && <section className="pd-fleet-inspect-block"><h4>{t('fleet.inspectTranscript')}</h4><ol>{messages.map((message, index) => <li key={index} data-message-role={message.role}>
+			<span>{message.role === 'assistant' ? t('fleet.role.assistant') : message.role === 'user' ? t('fleet.role.user') : message.role ?? t('fleet.role.tool')}</span>
+			<div className="pd-markdown"><ConversationMarkdown>{message.text}</ConversationMarkdown></div>
+		</li>)}</ol></section>}
+		{reply.finalOutput && <section className="pd-fleet-inspect-block"><h4>{t('fleet.inspectOutput')}</h4><div className="pd-markdown pd-fleet-final-output"><ConversationMarkdown>{reply.finalOutput}</ConversationMarkdown></div></section>}
+		{!reply.error && !reply.task && !messages.length && !reply.finalOutput && <p className="pd-fleet-empty">{t('fleet.noTranscript')}</p>}
+		{reply.truncated && <p className="pd-fleet-empty">{t('fleet.truncated')}</p>}
+	</>;
 }
 
-export function FleetCard() {
+/** Owns presentation and on-demand commands; plugin snapshots stay authoritative. */
+export function SubagentWorkspace({ children }: { children: ReactNode }) {
 	const { t } = useT();
 	const bridge = useChatStore((s) => s.bridge);
 	const sessionId = useChatStore((s) => s.sessionId);
+	const cwd = useChatStore((s) => s.cwd);
 	const fleet = useChatStore((s) => s.subagentFleet);
 	const inspectReply = useChatStore((s) => s.subagentInspect);
-	const [expanded, setExpanded] = useState(false);
-	const [availableCommands, setAvailableCommands] = useState<Set<string>>(new Set());
-	const [actionPending, setActionPending] = useState<string | null>(null);
-	const [steerTarget, setSteerTarget] = useState<string | null>(null);
-	const [steerMessage, setSteerMessage] = useState('');
-	const [inspectRequest, setInspectRequest] = useState<string | null>(null);
-
+	const activities = useChatStore((s) => s.activities);
+	const panelId = useId();
+	const panelRef = useRef<HTMLElement>(null);
+	const triggerRef = useRef<HTMLElement | null>(null);
+	const actionRef = useRef<symbol | null>(null);
+	const [open, setOpen] = useState(false);
+	const [selection, setSelection] = useState<Selection | null>(null);
+	const [commands, setCommands] = useState<Set<string>>(new Set());
+	const [pending, setPending] = useState(false);
+	const [request, setRequest] = useState<{ id: string; error?: string } | null>(null);
+	const [acceptedReply, setAcceptedReply] = useState<UiSubagentInspectReply | null>(null);
+	const [steering, setSteering] = useState(false);
+	const [message, setMessage] = useState('');
+	const [now, setNow] = useState(Date.now);
 	useEffect(() => {
-		if (!bridge || typeof bridge.listSlashCommands !== 'function') { setAvailableCommands(new Set()); return; }
+		setOpen(false); setSelection(null); setRequest(null); setAcceptedReply(null); setSteering(false); setMessage(''); setPending(false); setCommands(new Set());
+		actionRef.current = null;
 		let active = true;
-		bridge.listSlashCommands()
-			.then((commands) => { if (active) setAvailableCommands(new Set(commands.map((command) => command.name))); })
-			.catch(() => { if (active) setAvailableCommands(new Set()); });
-		return () => { active = false; };
-	}, [bridge, sessionId]);
+		if (typeof bridge?.listSlashCommands === 'function') void bridge.listSlashCommands().then((items) => { if (active) setCommands(new Set(items.map((item) => item.name))); }).catch(() => {});
+		return () => { active = false; actionRef.current = null; };
+	}, [bridge, cwd, sessionId]);
+	const runs = fleet?.runs ?? [];
+	const hasRuns = runs.length > 0;
+	useEffect(() => {
+		if (!hasRuns) { setOpen(false); setSelection(null); setRequest(null); setAcceptedReply(null); setSteering(false); }
+	}, [hasRuns]);
+	const targets = useMemo(() => {
+		const result = new Map<string, Selection>();
+		const visit = (nodes: UiSubagentFleetNode[], rootId: string) => { for (const node of nodes) { if (node.kind !== 'host-step') result.set(node.id, { rootId, nodeId: node.id }); if (node.children) visit(node.children, rootId); } };
+		for (const root of fleet?.runs ?? []) visit([root], root.id);
+		return result;
+	}, [fleet]);
+	const activityByRun = useMemo(() => new Map(activities.flatMap((item) => item.subagent?.runId ? [[item.subagent.runId, item.subagent] as const] : [])), [activities]);
+	const ticking = open && runs.some(containsLive);
+	useEffect(() => {
+		if (!ticking) return;
+		setNow(Date.now());
+		const timer = window.setInterval(() => setNow(Date.now()), 1000);
+		return () => window.clearInterval(timer);
+	}, [ticking]);
+	const close = useCallback(() => { setOpen(false); triggerRef.current?.focus(); }, []);
+	useEffect(() => { if (open) panelRef.current?.focus(); }, [open]);
+	const root = selection ? runs.find((node) => node.id === selection.rootId) : undefined;
+	const selected = root && selection ? findNode([root], selection.nodeId) : undefined;
+	useEffect(() => { if (request && inspectReply?.requestId === request.id) setAcceptedReply(inspectReply); }, [request?.id, inspectReply]);
+	const reply = request ? inspectReply?.requestId === request.id ? inspectReply : acceptedReply?.requestId === request.id ? acceptedReply : null : null;
+	const timeoutMessage = t('fleet.inspectTimeout');
+	useEffect(() => {
+		if (!request || reply || request.error) return;
+		const id = request.id;
+		const timer = window.setTimeout(() => setRequest((current) => current?.id === id ? { id, error: timeoutMessage } : current), 15000);
+		return () => window.clearTimeout(timer);
+	}, [request, reply, timeoutMessage]);
 
-	const runCommand = useCallback(async (name: SubagentCommandName, args: string) => {
+	const runCommand = useCallback(async (name: Command, args: string): Promise<boolean> => {
 		const state = useChatStore.getState();
-		const currentBridge = state.bridge;
-		if (!currentBridge || !state.cwd || !state.sessionId || actionPending) return;
-		setActionPending(name);
+		if (!state.bridge || !state.cwd || !state.sessionId || state.sessionId !== sessionId || state.cwd !== cwd || !commands.has(name) || actionRef.current) return false;
+		const token = Symbol(name);
+		actionRef.current = token;
+		setPending(true);
 		try {
-			await currentBridge.executeSlashCommand({ cwd: state.cwd, sessionId: state.sessionId, name, args });
+			await state.bridge.executeSlashCommand({ cwd: state.cwd, sessionId: state.sessionId, name, args });
+			return actionRef.current === token;
 		} catch (error) {
-			operationFeedback.show({ id: `subagent-command:${name}`, kind: 'error', title: t('fleet.actionFailed'), detail: error instanceof Error ? error.message : String(error) });
+			if (actionRef.current === token) operationFeedback.show({ id: `subagent-command:${name}`, kind: 'error', title: t('fleet.actionFailed'), detail: error instanceof Error ? error.message : String(error) });
+			return false;
 		} finally {
-			setActionPending(null);
+			if (actionRef.current === token) { actionRef.current = null; setPending(false); }
 		}
-	}, [actionPending, t]);
-
-	const actions: FleetActions = {
-		available: SUBAGENT_COMMAND_NAMES.some((name) => availableCommands.has(name)),
-		enabled: Boolean(sessionId),
-		pending: actionPending,
-		run: runCommand,
-		beginSteer: (runId) => { setSteerTarget(runId); setSteerMessage(''); },
-		inspect: async (node, childId) => {
-			const requestId = Math.random().toString(36).slice(2, 10);
-			setInspectRequest(requestId);
-			await runCommand('subagents-inspect-rpc', `${requestId} ${node.id}${childId ? ` ${childId}` : ''} --lines 60`);
-		},
+	}, [commands, cwd, sessionId, t]);
+	const inspect = async (target: Selection) => {
+		if (!commands.has('subagents-inspect-rpc') || actionRef.current) return;
+		const id = Math.random().toString(36).slice(2, 12);
+		setRequest({ id });
+		const ok = await runCommand('subagents-inspect-rpc', `${id} ${target.rootId}${target.rootId !== target.nodeId ? ` ${target.nodeId}` : ''} --lines 60`);
+		if (!ok) setRequest((current) => current?.id === id ? { id, error: t('fleet.inspectFailed') } : current);
 	};
-
-	if (!fleet || fleet.runs.length === 0) return null;
-
-	const running = liveCount(fleet.runs);
-	// Runs arrive in stable first-seen order (oldest first): headline the earliest
-	// live run, or the newest one once everything has settled.
-	const headline = fleet.runs.find(isLive) ?? fleet.runs[fleet.runs.length - 1];
-	const matchedInspect = inspectRequest && inspectReply?.requestId === inspectRequest ? inspectReply : null;
-
-	return (
-		<div className={`pd-fleet-card${expanded ? ' is-expanded' : ''}`} data-fleet-count={fleet.runs.length}>
-			<button type="button" className="pd-fleet-strip" onClick={() => setExpanded(!expanded)} aria-expanded={expanded} aria-label={t(expanded ? 'fleet.collapse' : 'fleet.expand')}>
-				<StateGlyph state={headline.state} />
-				<span className="pd-fleet-strip-title">{t('fleet.title')}</span>
-				{running > 0 && <span className="pd-fleet-badge">{t('fleet.running', { count: String(running) })}</span>}
-				<span className="pd-fleet-strip-label" title={headline.label}>{headline.label}</span>
-				{headline.activity?.currentTool && <code className="pd-fleet-strip-tool">{headline.activity.currentTool}</code>}
-				<Icon name={expanded ? 'chevronDown' : 'chevronUp'} width="13" height="13" className="pd-fleet-chevron" />
-			</button>
-			{expanded && (
-				<div className="pd-fleet-panel">
-					<ul className="pd-fleet-runs">
-						{fleet.runs.map((run) => <FleetNodeRow key={`${run.kind}:${run.id}`} node={run} depth={0} actions={actions} />)}
-					</ul>
-					{(fleet.omittedRuns > 0 || fleet.omittedChildren > 0) && (
-						<p className="pd-fleet-omitted">{t('fleet.omitted', { count: String(fleet.omittedRuns + fleet.omittedChildren) })}</p>
-					)}
-					{steerTarget && (
-						<form className="pd-fleet-steer" onSubmit={(event) => { event.preventDefault(); if (steerMessage.trim()) { void runCommand('subagents-steer', `${steerTarget} ${steerMessage.trim()}`); setSteerTarget(null); setSteerMessage(''); } }}>
-							<input autoFocus value={steerMessage} onChange={(event) => setSteerMessage(event.target.value)} placeholder={t('fleet.steerPlaceholder')} aria-label={t('fleet.steer')} />
-							<button type="submit" disabled={!steerMessage.trim() || actionPending !== null}>{t('fleet.steerSend')}</button>
-							<button type="button" onClick={() => setSteerTarget(null)}>{t('fleet.cancel')}</button>
-						</form>
-					)}
-					{matchedInspect && <InspectDetail reply={matchedInspect} onClose={() => setInspectRequest(null)} />}
-				</div>
-			)}
+	const choose = (node: UiSubagentFleetNode, rootId: string) => {
+		const target = { rootId, nodeId: node.id };
+		setSelection(target); setRequest(null); setSteering(false); setMessage('');
+		if (node.kind !== 'host-step') void inspect(target);
+	};
+	const renderRow = (node: UiSubagentFleetNode, rootId: string): ReactNode => <li className="pd-fleet-node" key={`${node.kind}:${node.id}`} data-fleet-state={node.state}>
+		<button type="button" className="pd-fleet-node-row" onClick={() => choose(node, rootId)} disabled={pending}>
+			<span className="pd-fleet-avatar" aria-hidden="true">{node.label.slice(0, 1).toUpperCase()}<StateGlyph state={node.state} /></span>
+			<span className="pd-fleet-node-copy"><span className="pd-fleet-node-label">{node.label}</span><span className="pd-fleet-node-preview" title={activityByRun.get(node.id)?.task ?? undefined}>{activityByRun.get(node.id)?.task ?? node.hostStep?.detail ?? node.activity?.currentTool ?? t(`fleet.state.${node.state}`)}</span></span>
+			<span className="pd-fleet-node-meta"><span className="pd-fleet-node-state">{t(`fleet.state.${node.state}`)}</span><time>{elapsed(node, now)}</time></span>
+			<Icon name="chevronRight" width="12" height="12" />
+		</button>
+		{node.children?.length ? <ul className="pd-fleet-children">{node.children.map((child) => renderRow(child, rootId))}</ul> : null}
+	</li>;
+	const groups: { nodes: UiSubagentFleetNode[]; title: string }[] = [
+		{ nodes: runs.filter(containsLive), title: 'fleet.active' },
+		{ nodes: runs.filter((node) => !containsLive(node)), title: 'fleet.done' },
+	];
+	return <FleetContext.Provider value={{ open, panelId, targets, toggle: () => { if (!open) triggerRef.current = document.activeElement as HTMLElement; setOpen(!open); }, openRun: (target) => { triggerRef.current = document.activeElement as HTMLElement; setOpen(true); const rootNode = runs.find((run) => run.id === target.rootId); const node = rootNode && findNode([rootNode], target.nodeId); if (node) choose(node, target.rootId); } }}>
+		<div className={`pd-fleet-workspace${open && runs.length ? ' has-subagents-panel' : ''}`}>
+			{children}
+			{open && runs.length > 0 && <aside id={panelId} className="pd-fleet-sidepanel" ref={panelRef} tabIndex={-1} aria-label={t('fleet.title')} onKeyDown={(event) => { if (event.key === 'Escape') { event.stopPropagation(); close(); } }}>
+				<header className="pd-fleet-panel-header"><Icon name="plugins" width="15" height="15" /><h3>{t('fleet.title')}</h3><span>{runs.length}</span><button type="button" onClick={close} aria-label={t('fleet.close')}><Icon name="close" width="15" height="15" /></button></header>
+				{selection ? <>
+					<div className="pd-fleet-detail-nav"><button type="button" onClick={() => { setSelection(null); setRequest(null); }}><Icon name="arrowLeft" width="13" height="13" />{t('fleet.back')}</button>{selected && selected.kind !== 'host-step' && commands.has('subagents-inspect-rpc') && <button type="button" disabled={pending} onClick={() => void inspect(selection)} aria-label={t('fleet.refresh')}><Icon name="refresh" width="14" height="14" /></button>}</div>
+					{selected ? <>
+						<div className="pd-fleet-detail-heading" data-fleet-state={selected.state}><StateGlyph state={selected.state} /><h4>{selected.label}</h4><span>{t(`fleet.state.${selected.state}`)}</span></div>
+						<div className="pd-fleet-detail-meta">{activityByRun.get(selected.id)?.model && <code>{activityByRun.get(selected.id)?.model}</code>}{selected.activity?.currentTool && <code>{selected.activity.currentTool}</code>}{selected.activity?.turnCount != null && <span>{t('fleet.turns', { count: selected.activity.turnCount })}</span>}{selected.activity?.toolCount != null && <span>{t('fleet.tools', { count: selected.activity.toolCount })}</span>}<time>{elapsed(selected, now)}</time></div>
+						<div className="pd-fleet-detail-scroll" aria-busy={Boolean(request && !reply && !request.error)}>
+							{reply ? <InspectContent reply={reply} /> : request?.error ? <p className="pd-fleet-inspect-error" role="alert">{request.error}</p> : <p className="pd-fleet-empty" role="status">{t(request ? 'fleet.loading' : selected.kind === 'host-step' ? 'fleet.hostStep' : 'fleet.inspectUnavailable')}</p>}
+							{selected.hostStep && <p className="pd-fleet-host-detail">{selected.hostStep.detail ?? selected.hostStep.reasonCode ?? selected.hostStep.state}</p>}
+						</div>
+						{selection.rootId === selection.nodeId && isLive(selected) && (commands.has('subagents-steer') || commands.has('subagents-stop')) && <div className="pd-fleet-detail-actions">
+							{steering ? <form className="pd-fleet-steer" onSubmit={(event) => { event.preventDefault(); if (message.trim()) void runCommand('subagents-steer', `${selected.id} ${message.trim()}`).then((ok) => { if (ok) { setMessage(''); setSteering(false); } }); }}>
+								<label htmlFor={`${panelId}-steer`}>{t('fleet.steer')}</label><textarea id={`${panelId}-steer`} autoFocus value={message} onChange={(event) => setMessage(event.target.value)} placeholder={t('fleet.steerPlaceholder')} />
+								<div><button type="button" onClick={() => setSteering(false)}>{t('fleet.cancel')}</button><button type="submit" disabled={!message.trim() || pending}>{t('fleet.steerSend')}</button></div>
+							</form> : <>{commands.has('subagents-steer') && selected.state === 'running' && <button type="button" disabled={pending} onClick={() => setSteering(true)}><Icon name="steer" width="13" height="13" />{t('fleet.steer')}</button>}{commands.has('subagents-stop') && <button type="button" className="is-danger" disabled={pending} onClick={() => void runCommand('subagents-stop', selected.id)}><Icon name="square" width="11" height="11" />{t('fleet.stop')}</button>}</>}
+						</div>}
+					</> : <p className="pd-fleet-empty">{t('fleet.runRemoved')}</p>}
+				</> : <div className="pd-fleet-panel-scroll">
+					{groups.map(({ nodes, title }) => nodes.length > 0 && <section className="pd-fleet-group" key={title}><h4>{t(title)}<span>{nodes.length}</span></h4><ul className="pd-fleet-runs">{nodes.map((node) => renderRow(node, node.id))}</ul></section>)}
+					{fleet && fleet.omittedRuns + fleet.omittedChildren > 0 && <p className="pd-fleet-empty">{t('fleet.omitted', { count: fleet.omittedRuns + fleet.omittedChildren })}</p>}
+				</div>}
+			</aside>}
 		</div>
-	);
+	</FleetContext.Provider>;
 }

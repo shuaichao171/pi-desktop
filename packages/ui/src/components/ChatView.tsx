@@ -13,7 +13,7 @@ import { ConversationRail } from './ConversationRail';
 import { useExtensionRequestPending } from './ExtensionDialogHost';
 import { Composer } from './Composer';
 import { GoalBeacon } from './GoalBeacon';
-import { FleetCard } from './FleetCard';
+import { FleetCard, SubagentWorkspace } from './FleetCard';
 import { ChangesCard, LiveChangesSummary, SessionChangesSummary } from './ComposerChanges';
 import { ChangesDialog } from './ChangesDialog';
 import { useFileChangeDiffs } from '../fileChangeDiffs';
@@ -25,7 +25,6 @@ import { ComposerContextBar } from './ComposerContextBar';
 import { ProjectOfferBar } from './ProjectOfferBar';
 import { Icon } from './Icons';
 import { MessageItem } from './MessageItem';
-import { QueuedTranscriptMessages } from './QueuedTranscriptMessages';
 import { ConversationTurn } from './ConversationTurn';
 import { BranchSwitcher } from './BranchSwitcher';
 import { ActivityLabel } from './ActivityDisclosure';
@@ -96,7 +95,6 @@ export function ChatView({ onOpenModelManagement, searchTarget, historyControls,
 	const fileChanges = useChatStore((s) => s.fileChanges);
 	const [changesDock, setChangesDock] = useState<HTMLDivElement | null>(null);
 	const changesRegionRef = useRef<HTMLDivElement>(null);
-	const queuedRegionRef = useRef<HTMLDivElement>(null);
 	const fileChangeTurns = useChatStore((s) => s.fileChangeTurns);
 	const fileChangeActiveRunId = useChatStore((s) => s.fileChangeActiveRunId);
 	// Turn-level settlement: each completed run's changes render at that turn's tail.
@@ -575,7 +573,6 @@ export function ChatView({ onOpenModelManagement, searchTarget, historyControls,
 		});
 		observer.observe(list);
 		if (changesRegionRef.current) observer.observe(changesRegionRef.current);
-		if (queuedRegionRef.current) observer.observe(queuedRegionRef.current);
 		if (scrollRef.current) observer.observe(scrollRef.current);
 		return () => { observer.disconnect(); if (frame !== null) cancelAnimationFrame(frame); };
 	}, [isEmpty]);
@@ -789,6 +786,7 @@ export function ChatView({ onOpenModelManagement, searchTarget, historyControls,
 		<main className={`pd-main${settledEmpty ? ' is-empty' : ''}${compact ? ' is-compact' : ''}`}>
 			{historyControls && <div className="pd-compact-controls">{historyControls}</div>}
 
+			<SubagentWorkspace>
 			<div ref={bodyRef} className={`pd-conversation-body${settledEmpty ? ' is-empty' : ''}${extensionRequestPending ? ' has-extension-request' : ''}`}>
 				<div className="pd-chat-content">
 					{/* zcode-style slim switch indicator: overlays the kept conversation instead of blanking it. */}
@@ -839,7 +837,6 @@ export function ChatView({ onOpenModelManagement, searchTarget, historyControls,
 							</div>
 						)}
 							{/* Submitted-while-busy inputs show as pending bubbles until the SDK consumes them. */}
-							<div ref={queuedRegionRef} className="pd-transcript-queued">{!isEmpty && !sessionLoading && <QueuedTranscriptMessages />}</div>
 							<div ref={changesRegionRef} className="pd-transcript-end pd-transcript-changes">{!sessionLoading && <>
 								{agentStatus === 'busy' && liveChanges.length > 0 && <LiveChangesSummary items={liveChanges} scope={fileChangeActiveRunId ? { kind: 'turn', runId: fileChangeActiveRunId } : { kind: 'conversation' }} target={changesDock} review={openChangesReview} />}
 								{agentStatus !== 'busy' && hasTurnScopedChanges && sessionChanges.length > 0 && <SessionChangesSummary items={sessionChanges} target={changesDock} review={openChangesReview} />}
@@ -865,6 +862,7 @@ export function ChatView({ onOpenModelManagement, searchTarget, historyControls,
 				<ProjectOfferBar />
 				<Composer header={settledEmpty ? <ComposerContextBar /> : undefined} onOpenModelManagement={onOpenModelManagement} changesSlotRef={setChangesDock} />
 			</div>
+			</SubagentWorkspace>
 			{changesReview !== null && reviewItems.length > 0 && <ChangesDialog
 				key={`${changesReview.scope.kind}:${changesReview.scope.kind === 'turn' ? changesReview.scope.runId : ''}:${changesReview.path}`}
 				items={reviewItems} diffs={reviewDialogDiffs}

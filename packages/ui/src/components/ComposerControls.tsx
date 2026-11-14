@@ -1,7 +1,7 @@
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent } from 'react';
 import { ExitPresence } from './ExitPresence';
 import { createPortal } from 'react-dom';
-import type { UiThinkingLevel } from '@pidesktop/shared';
+import type { UiModelProvider, UiModelSummary, UiProviderAuthStatus, UiThinkingLevel } from '@pidesktop/shared';
 import { useChatStore } from '../store';
 import { useT } from '../i18n';
 import { groupModelsByProvider, selectModelProvider } from '../modelPicker';
@@ -13,6 +13,20 @@ import { imageCapability } from '../modelCapabilities';
 import './modelCapabilities.css';
 
 type Picker = 'model' | 'thinking' | 'context';
+type PickerCatalog = { models: UiModelSummary[]; modelProviders: UiModelProvider[]; providerAuth: UiProviderAuthStatus[] };
+
+function readPickerCatalog(): PickerCatalog {
+	const { models, modelProviders, providerAuth } = useChatStore.getState();
+	return { models, modelProviders, providerAuth };
+}
+
+/** Match the final two-column layout without adding fake focusable options. */
+function ModelCatalogSkeleton() {
+	return <div className="pd-composer-provider-browser is-skeleton" aria-hidden="true">
+		<div className="pd-composer-provider-column"><div className="pd-composer-provider-heading"><span className="pd-model-skeleton-line" /></div><div className="pd-composer-provider-list">{[0, 1, 2, 3].map((index) => <div className="pd-model-skeleton-provider" key={index}><i /><span className="pd-model-skeleton-line" /></div>)}</div></div>
+		<div className="pd-composer-provider-models"><div className="pd-composer-provider-heading"><span className="pd-model-skeleton-line" /></div><div className="pd-composer-picker-list">{[0, 1, 2, 3, 4].map((index) => <div className="pd-model-skeleton-row" key={index}><span className="pd-model-skeleton-line" /><span className="pd-model-skeleton-line is-short" /><span className="pd-model-skeleton-line is-caption" /></div>)}</div></div>
+	</div>;
+}
 
 function tokenLabel(value: number): string {
 	if (value >= 1_000_000) return `${Number((value / 1_000_000).toFixed(1))}M`;
@@ -34,7 +48,7 @@ export function ComposerControls({ onOpenModelManagement, hasImages = false }: {
 	const usage = useChatStore((s) => s.contextUsage);
 	const status = useChatStore((s) => s.status);
 	const preparingSession = useChatStore((s) => s.sessionPreparation !== null);
-	const loading = useChatStore((s) => s.settingsLoading);
+	const navigating = useChatStore((s) => s.sessionLoading || (s.navigationPending && s.sessionPreparation === null));
 	const sessionPath = useChatStore((s) => s.sessionPath);
 	const sessionId = useChatStore((s) => s.sessionId);
 	const cwd = useChatStore((s) => s.cwd);
@@ -51,6 +65,12 @@ export function ComposerControls({ onOpenModelManagement, hasImages = false }: {
 	const [pending, setPending] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const [position, setPosition] = useState<CSSProperties | null>(null);
+	const [catalog, setCatalog] = useState<PickerCatalog>(readPickerCatalog);
+	const [catalogLoading, setCatalogLoading] = useState(false);
+	const [showCatalogProgress, setShowCatalogProgress] = useState(false);
+	const [catalogReload, setCatalogReload] = useState(0);
+	const [catalogFailed, setCatalogFailed] = useState(false);
+	const [revealCatalog, setRevealCatalog] = useState(false);
 	const popoverRef = useRef<HTMLDivElement>(null);
 	const modelRef = useRef<HTMLButtonElement>(null);
 	const thinkingRef = useRef<HTMLButtonElement>(null);
@@ -67,8 +87,8 @@ export function ComposerControls({ onOpenModelManagement, hasImages = false }: {
 	// Model and thinking switches only affect the NEXT model request, so they stay
 	// available while a conversation turn is running and while a new conversation
 	// is still being prepared (the store defers the choice until it goes live);
-	// only picker-internal pending states block.
-	const canChange = !loading && !pending;
+	// Catalog refreshes are read-only; only navigation and an outstanding choice block.
+	const canChange = !navigating && !pending;
 	const canThink = levels.length > 1;
 	const currentModel = models.find((item) => item.id === model && item.provider === provider);
 	const modelLabel = model ? modelName?.trim() || model : t('composer.selectModel');
@@ -80,14 +100,18 @@ export function ComposerControls({ onOpenModelManagement, hasImages = false }: {
 	const amount = usage?.tokens ?? null;
 	const capacityLabel = capacity ? tokenLabel(capacity) : '—';
 	const thinkingLabel = thinking ? t(`composer.thinking.${thinking}`) : t('composer.pickerThinking');
+	// Keep the visible catalog coherent until all three refreshes have settled.
+	// Intermediate provider/auth responses must not tear down a usable model list.
+	const displayedCatalog = open === 'model' ? catalog : { models, modelProviders, providerAuth };
 	const configuredProviders = useMemo(() => {
-		if (!modelProviders.length && !providerAuth.length) return undefined;
-		const byProvider = new Map(providerAuth.map((item) => [item.provider, item.configured]));
+		if (!displayedCatalog.modelProviders.length && !displayedCatalog.providerAuth.length) return undefined;
+		const byProvider = new Map(displayedCatalog.providerAuth.map((item) => [item.provider, item.configured]));
 		const configured = new Set<string>();
-		for (const item of modelProviders) if (byProvider.get(item.provider) ?? item.configured) configured.add(item.provider);
+		for (const item of displayedCatalog.modelProviders) if (byProvider.get(item.provider) ?? item.configured) configured.add(item.provider);
 		return configured;
-	}, [modelProviders, providerAuth]);
-	const providerGroups = useMemo(() => groupModelsByProvider(imagesOnly ? models.filter(item => imageCapability(item) === 'supported') : models, search, locale, configuredProviders), [models, search, locale, configuredProviders, imagesOnly]);
+	}, [displayedCatalog.modelProviders, displayedCatalog.providerAuth]);
+	const catalogModels = displayedCatalog.models;
+	const providerGroups = useMemo(() => groupModelsByProvider(imagesOnly ? catalogModels.filter(item => imageCapability(item) === 'supported') : catalogModels, search, locale, configuredProviders), [catalogModels, search, locale, configuredProviders, imagesOnly]);
 	const activeProvider = selectModelProvider(providerGroups, requestedProvider, provider);
 	const visibleModels = providerGroups.find((group) => group.provider === activeProvider)?.models ?? [];
 	const providerTabId = (name: string) => `${pickerId}-provider-${encodeURIComponent(name)}`;
@@ -99,6 +123,8 @@ export function ComposerControls({ onOpenModelManagement, hasImages = false }: {
 		setOpen(null);
 		setError(null);
 		setPending(false);
+		setCatalogLoading(false);
+		setShowCatalogProgress(false);
 		focusModelsAfterProviderChange.current = false;
 	}, [sessionId, sessionPath, cwd]);
 
@@ -106,6 +132,8 @@ export function ComposerControls({ onOpenModelManagement, hasImages = false }: {
 		pickerRevision.current += 1;
 		focusModelsAfterProviderChange.current = false;
 		setOpen(null);
+		setCatalogLoading(false);
+		setShowCatalogProgress(false);
 		if (focus === 'trigger') (open === 'model' ? modelRef : open === 'context' ? contextRef : thinkingRef).current?.focus();
 		if (focus === 'input') document.querySelector<HTMLTextAreaElement>('.pd-composer-shell textarea')?.focus();
 	}
@@ -116,6 +144,11 @@ export function ComposerControls({ onOpenModelManagement, hasImages = false }: {
 		setError(null);
 		setPosition(null);
 		if (picker === 'model' && open !== 'model') {
+			setCatalog(readPickerCatalog());
+			setCatalogLoading(true);
+			setShowCatalogProgress(false);
+			setCatalogFailed(false);
+			setRevealCatalog(false);
 			setSearch('');
 			setImagesOnly(false);
 			setRequestedProvider(provider || null);
@@ -147,10 +180,31 @@ export function ComposerControls({ onOpenModelManagement, hasImages = false }: {
 	useEffect(() => {
 		if (!open) return;
 		let active = true;
+		let progressTimer: ReturnType<typeof setTimeout> | undefined;
 		if (open === 'model') {
-			void Promise.allSettled([refreshModels(), refreshModelProviders(), refreshProviderAuth()]).then((results) => {
+			setCatalogLoading(true);
+			setShowCatalogProgress(false);
+			setCatalogFailed(false);
+			setError(null);
+			const requests = [refreshModels(), refreshModelProviders(), refreshProviderAuth()];
+			// refreshModels can hydrate persisted metadata before its first await.
+			// A retry keeps the last complete view, even if a failed refresh left
+			// only partial metadata in the store. Reopening captures a fresh view.
+			const initial = catalog.models.length ? catalog : readPickerCatalog();
+			setCatalog(initial);
+			progressTimer = setTimeout(() => { if (active) setShowCatalogProgress(true); }, 180);
+			void Promise.allSettled(requests).then((results) => {
+				if (!active) return;
+				clearTimeout(progressTimer);
 				const failed = results.find((result) => result.status === 'rejected');
-				if (active && failed?.status === 'rejected') setError(failed.reason instanceof Error ? failed.reason.message : String(failed.reason));
+				if (!failed || !initial.models.length) setCatalog(readPickerCatalog());
+				setCatalogLoading(false);
+				setShowCatalogProgress(false);
+				setRevealCatalog(!initial.models.length && useChatStore.getState().models.length > 0);
+				if (failed?.status === 'rejected') {
+					setCatalogFailed(true);
+					setError(failed.reason instanceof Error ? failed.reason.message : String(failed.reason));
+				}
 			});
 		}
 		const outside = (event: Event) => {
@@ -164,10 +218,11 @@ export function ComposerControls({ onOpenModelManagement, hasImages = false }: {
 		document.addEventListener('focusin', outside);
 		return () => {
 			active = false;
+			clearTimeout(progressTimer);
 			document.removeEventListener('pointerdown', outside);
 			document.removeEventListener('focusin', outside);
 		};
-	}, [open, refreshModels, refreshModelProviders, refreshProviderAuth]);
+	}, [open, catalogReload, refreshModels, refreshModelProviders, refreshProviderAuth]);
 
 	useLayoutEffect(() => {
 		// The first portal render is hidden until measured; hidden controls cannot focus.
@@ -301,12 +356,13 @@ export function ComposerControls({ onOpenModelManagement, hasImages = false }: {
 			</button>
 		</HoverTooltip>
 			<ExitPresence show={open !== null} surface="pd-composer-config-popover">{open && createPortal(<div ref={popoverRef} id={`pd-composer-${open}-picker`} className={`pd-composer-config-popover is-${open}`} style={position ?? { visibility: 'hidden' }} role={open === 'thinking' ? 'menu' : 'dialog'} aria-label={t(open === 'model' ? 'composer.pickerLabel' : open === 'context' ? 'composer.contextTitle' : 'composer.pickerThinking')} onKeyDown={onPickerKeyDown}>
-			<div className="pd-composer-picker-head"><strong>{t(open === 'model' ? 'composer.pickerTitle' : open === 'context' ? 'composer.contextTitle' : 'composer.pickerThinking')}</strong><button type="button" onClick={() => close('trigger')} aria-label={t(open === 'model' ? 'composer.pickerClose' : open === 'context' ? 'composer.contextClose' : 'composer.thinkingClose')}><Icon name="close" width="14" height="14" /></button></div>
+			<div className="pd-composer-picker-head"><strong>{t(open === 'model' ? 'composer.pickerTitle' : open === 'context' ? 'composer.contextTitle' : 'composer.pickerThinking')}</strong>{open === 'model' && <span className="pd-composer-catalog-status" role="status">{showCatalogProgress && <><Icon name="loader" width="12" height="12" /><span>{t(catalog.models.length ? 'composer.pickerRefreshing' : 'composer.pickerLoading')}</span></>}</span>}<button type="button" onClick={() => close('trigger')} aria-label={t(open === 'model' ? 'composer.pickerClose' : open === 'context' ? 'composer.contextClose' : 'composer.thinkingClose')}><Icon name="close" width="14" height="14" /></button></div>
 			{open === 'model' ? <>
 				<div className="pd-composer-picker-tools">
 					<label className="pd-composer-picker-searchbox"><Icon name="search" width="14" height="14" /><input ref={searchRef} className="pd-composer-picker-search" type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder={t('composer.pickerSearchPlaceholder')} aria-label={t('composer.pickerSearchLabel')} /></label>
 					<label className={`pd-model-image-filter${imagesOnly ? ' is-on' : ''}`} title={t('model.imagesOnlyTitle')}><input type="checkbox" checked={imagesOnly} onChange={event => setImagesOnly(event.target.checked)} /><Icon name="image" width="13" height="13" />{t('model.imagesOnly')}</label>
 				</div>
+				<div className={`pd-composer-model-body${revealCatalog ? ' is-revealing' : ''}`} aria-busy={catalogLoading}>
 				{activeProvider !== null ? <div className="pd-composer-provider-browser">
 					<div className="pd-composer-provider-column">
 						<div className="pd-composer-provider-heading">{t('composer.pickerProviders')}</div>
@@ -320,7 +376,8 @@ export function ComposerControls({ onOpenModelManagement, hasImages = false }: {
 							{visibleModels.map((item) => <HoverTooltip key={`${item.provider}/${item.id}`} title={item.name.trim() || item.id} description={`${item.provider}/${item.id}`} align="start"><button data-picker-option data-model-id={item.id} data-model-provider={item.provider} type="button" className={`pd-composer-picker-model${item.provider === provider && item.id === model ? ' is-selected' : ''}`} aria-pressed={item.provider === provider && item.id === model} disabled={!canChange} onClick={() => void choose(() => setModel(item.provider, item.id))}><span><strong>{item.name.trim() || item.id}</strong><small>{item.id}</small><span className="pd-model-capabilities"><span>{t(imageCapability(item) === 'supported' ? 'model.capability.images' : imageCapability(item) === 'unsupported' ? 'model.capability.textOnly' : 'model.capability.inputUnknown')}</span><span>{t(typeof item.reasoning !== 'boolean' ? 'model.capability.reasoningUnknown' : item.reasoning ? 'model.capability.reasoning' : 'model.capability.standard')}</span></span></span><small className="pd-composer-picker-context">{tokenLabel(item.contextWindow)}</small>{item.provider === provider && item.id === model && <em aria-label={t('composer.pickerCurrent')}><Icon name="check" width="13" height="13" /></em>}</button></HoverTooltip>)}
 						</div>
 					</section>
-				</div> : <div className="pd-composer-picker-empty">{t(loading ? 'composer.pickerLoading' : search ? 'composer.pickerNoMatch' : 'composer.pickerEmpty')}</div>}
+				</div> : catalogLoading && !catalogModels.length ? <ModelCatalogSkeleton /> : <div className="pd-composer-picker-empty" role="status">{t(catalogFailed ? 'composer.pickerLoadFailed' : search || imagesOnly ? 'composer.pickerNoMatch' : 'composer.pickerEmpty')}</div>}
+				</div>
 				<div className="pd-composer-model-actions">
 					<button type="button" disabled={pending} onClick={() => openManagement({ kind: 'add-provider' })}><Icon name="plus" width="15" height="15" /><span>{t('settings.providerAdd')}</span></button>
 					<button type="button" disabled={pending} onClick={() => openManagement({ kind: 'manage' })}><Icon name="settings" width="15" height="15" /><span>{t('settings.modelManagement')}</span></button>
@@ -336,7 +393,7 @@ export function ComposerControls({ onOpenModelManagement, hasImages = false }: {
 				<button data-picker-option type="button" className="pd-context-compact" disabled={compacting || status !== 'idle' || preparingSession || !bridge || !cwd || !sessionId} onClick={() => void runCompact()}>{t(compacting ? 'composer.contextCompacting' : 'composer.contextCompact')}</button>
 				{compactError && <p className="pd-composer-picker-error" role="alert">{compactError}</p>}
 			</div>}
-			{error && <p className="pd-composer-picker-error" role="alert">{error}</p>}
+			{error && <p className="pd-composer-picker-error" role="alert">{error}{open === 'model' && catalogFailed && <button type="button" className="pd-composer-catalog-retry" onClick={() => { setError(null); setCatalogFailed(false); setCatalogLoading(true); setShowCatalogProgress(false); setRevealCatalog(false); setCatalogReload((value) => value + 1); }}>{t('composer.pickerRetry')}</button>}</p>}
 		</div>, document.body)}</ExitPresence>
 	</div>;
 }

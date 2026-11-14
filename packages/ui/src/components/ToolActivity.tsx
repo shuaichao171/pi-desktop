@@ -5,6 +5,7 @@ import { useChatStore } from '../store';
 import { activityCopy, activityPresentation } from '../activityCopy';
 import { useDisclosureChoice } from '../conversationDisclosure';
 import { ActivityDisclosure, ActivityLabel } from './ActivityDisclosure';
+import { useSubagentLink } from './FleetCard';
 import { Icon } from './Icons';
 import { ToolDiffView } from './toolRenderers/ToolDiffView';
 import { countToolGroup, isExplorationGroup, toolGroupSummaryParts } from '../toolGroupSummary';
@@ -169,14 +170,15 @@ export function ToolActivityItem({ activity, onInteract }: { activity: UiToolAct
 	);
 }
 
-/** pi-subagents child-agent card (zcode-style): agent, task, live progress, output reference. */
+/** Compact delegation record; the side panel owns the full agent preview. */
 const SubagentActivityItem = memo(function SubagentActivityItem({ activity }: { activity: UiToolActivity }) {
 	const { t } = useT();
 	const detailId = useId();
 	const [userExpanded, setUserExpanded] = useDisclosureChoice(`tool:${activity.id}`);
 	const running = activity.status === 'running';
-	const expanded = userExpanded ?? running;
+	const expanded = userExpanded ?? false;
 	const sub = activity.subagent!;
+	const agentLink = useSubagentLink(sub.runId);
 	const duration = useDurationLabel(activity);
 	const detail = activity.detail ?? '';
 	const tokens = sub.tokens != null ? `${sub.tokens >= 1000 ? `${(sub.tokens / 1000).toFixed(1)}K` : sub.tokens} tokens` : null;
@@ -185,22 +187,24 @@ const SubagentActivityItem = memo(function SubagentActivityItem({ activity }: { 
 	const recent = sub.recentTools ?? [];
 	return (
 		<div className={'pd-activity-item pd-subagent-item is-' + activity.status}>
+			<div className="pd-subagent-head">
 			<button type="button" className="pd-activity-head" onClick={() => { setUserExpanded(!expanded); }} aria-expanded={expanded} aria-controls={detailId}>
 				<span className={'pd-activity-icon is-' + activity.status} aria-hidden="true"><Icon name="plugins" width="14" height="14" /></span>
 				<span className="pd-activity-copy">
 					<span className="pd-activity-kind" title={activity.tool}><ActivityLabel active={running}>{t('chat.subagent.label')}</ActivityLabel></span>
 					<span className="pd-subagent-agent">{sub.agent}</span>
-					{sub.async === true && <span className="pd-subagent-async-tag">{t('chat.subagent.asyncTag')}</span>}
-					{sub.model && <span className="pd-subagent-model" title={sub.model}>{sub.model}</span>}
+					{sub.task && <span className="pd-subagent-task-preview" title={sub.task}>{sub.task}</span>}
 				</span>
-				{meta && <span className="pd-subagent-meta">{meta}</span>}
 				{duration && <span className="pd-activity-duration">{duration}</span>}
 				<span className={'pd-activity-status is-' + activity.status}>{t(running && sub.async === true ? 'chat.subagent.background' : 'chat.tool.' + activity.status)}</span>
 				<Icon name="chevronDown" className={'pd-chevron' + (expanded ? ' is-open' : '')} width="14" height="14" />
 			</button>
+			{agentLink && <button type="button" className="pd-subagent-open" onClick={agentLink.open} aria-controls={agentLink.panelId} aria-label={t('fleet.openAgent', { name: sub.agent })} title={t('fleet.openAgent', { name: sub.agent })}><Icon name="panel" width="14" height="14" /></button>}
+			</div>
 			<ActivityDisclosure id={detailId} expanded={expanded}>
 				<div className="pd-activity-detail pd-subagent-detail">
 					<div className="pd-subagent-card">
+						{(sub.model || meta) && <div className="pd-subagent-meta">{[sub.model, meta].filter(Boolean).join(' · ')}</div>}
 						{sub.task && <p className="pd-subagent-task" title={sub.task}>{sub.task}</p>}
 						{running && sub.currentTool && <p className="pd-subagent-current"><span className="pd-subagent-live" aria-hidden="true" />{t('chat.subagent.currentTool')}<code>{sub.currentTool}</code></p>}
 						{recent.length > 0 && <ol className="pd-subagent-recent">{recent.map((item, index) => (

@@ -1,10 +1,11 @@
-import { memo, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react';
+import { memo, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { createPortal } from 'react-dom';
 import type { UiQueuedMessage } from '@pidesktop/shared';
 import type { UiInputQueueItem } from '../../../shared/src/inputFeatures';
 import { useT } from '../i18n';
 import { useInputQueue } from '../useInputQueue';
 import { useChatStore } from '../store';
+import { buildQueueRows } from '../queuePresentation';
 import { Icon } from './Icons';
 import { QueueComposerEditor } from './QueueComposerEditor';
 import './composerQueue.css';
@@ -35,6 +36,9 @@ export const ComposerQueue = memo(function ComposerQueue({ items, scopeKey, edit
   const [menu, setMenu] = useState<{ id: string; left: number; bottom: number; trigger: HTMLElement } | null>(null);
   const [dragId, setDragId] = useState<string | null>(null);
   const [drop, setDrop] = useState<{ id: string; after: boolean } | null>(null);
+  const [collapsed, setCollapsed] = useState(false);
+  const listId = useId();
+  const rows = useMemo(() => buildQueueRows(items, queue), [items, queue]);
   const section = useRef<HTMLElement>(null), menuRef = useRef<HTMLDivElement>(null), mounted = useRef(true), ownedFocus = useRef(false);
   const disabled = !ready;
   const rowDisabled = (id: string) => disabled || pendingRows.has(id);
@@ -44,7 +48,8 @@ export const ComposerQueue = memo(function ComposerQueue({ items, scopeKey, edit
   const focusComposer = () => requestAnimationFrame(() => { if (mounted.current) document.querySelector<HTMLTextAreaElement>('.pd-composer-shell > textarea')?.focus({ preventScroll: true }); });
   const restoreQueueFocus = (id?: string) => requestAnimationFrame(() => {
     if (!mounted.current || document.activeElement !== document.body) return;
-    const target = (id ? section.current?.querySelector<HTMLButtonElement>(`[data-queue-id="${CSS.escape(id)}"] .pd-composer-queue-text`) : null)
+    const target = (collapsed ? section.current?.querySelector<HTMLButtonElement>('.pd-queue-summary') : null)
+      ?? (id ? section.current?.querySelector<HTMLButtonElement>(`[data-queue-id="${CSS.escape(id)}"] .pd-composer-queue-text`) : null)
       ?? editorTarget?.querySelector<HTMLTextAreaElement>('textarea:not(:disabled)')
       ?? section.current?.querySelector<HTMLButtonElement>('.pd-composer-queue-text')
       ?? document.querySelector<HTMLTextAreaElement>('.pd-composer-shell > textarea');
@@ -101,16 +106,24 @@ export const ComposerQueue = memo(function ComposerQueue({ items, scopeKey, edit
   }
   const menuItem = items.find(item => item.id === menu?.id);
   const selectedDetail = items.find(item => item.id === details);
+  const summaryKey = queue?.paused ? 'queue.summaryPaused' : rows.some(row => row.status === 'recovered') ? 'queue.summaryRecovered' : rows.some(row => row.status === 'queued') ? 'queue.summaryFollowUp' : 'queue.summarySteering';
   if (!items.length && !queue?.paused && !error && !editing) return null;
 
   return <>
-    <section ref={section} className="pd-composer-queue" aria-label={t('composer.queuedInstructions')} onFocusCapture={() => { ownedFocus.current = true; }} onBlurCapture={event => { ownedFocus.current = event.relatedTarget instanceof Node && event.currentTarget.contains(event.relatedTarget); }}>
+    <section ref={section} className={`pd-composer-queue${collapsed ? ' is-collapsed' : ''}`} aria-label={t('composer.queuedInstructions')} onFocusCapture={() => { ownedFocus.current = true; }} onBlurCapture={event => { ownedFocus.current = event.relatedTarget instanceof Node && event.currentTarget.contains(event.relatedTarget); }}>
       <span className="pd-queue-sr-only" role="status">{t('composer.queueCount', { count: items.length })}</span>
+      <button type="button" className="pd-queue-summary" aria-expanded={!collapsed} aria-controls={listId} aria-label={t(collapsed ? 'queue.expand' : 'queue.collapse', { count: items.length })} onClick={() => { closeMenu(false); setCollapsed(!collapsed); }}>
+        <Icon name="queue" width="14" height="14" />
+        <span className="pd-queue-summary-title">{t('queue.pendingTitle')}</span><b className="pd-queue-summary-count">{items.length}</b>
+        <span className="pd-queue-summary-hint" title={t(summaryKey)}>{collapsed && rows[0]?.preview ? rows[0].preview : t(summaryKey)}</span>
+        <Icon name={collapsed ? 'chevronDown' : 'chevronUp'} width="13" height="13" />
+      </button>
       {queue?.paused && <div className="pd-queue-paused" role="status"><Icon name="clock" width="14" height="14" /><span>{t('queue.paused')}</span><button type="button" disabled={disabled || pendingGlobal} onClick={() => void mutate('resume')}>{pendingGlobal ? t('queue.updating') : t('queue.resumeSend')}</button></div>}
       {error && <div className="pd-queue-error" role="alert"><span>{error}</span><button type="button" disabled={pending} onClick={() => void refresh()}>{t('queue.refresh')}</button></div>}
-      <div className="pd-composer-queue-list">
-        {items.map(item => {
-          const state = itemState(item.id), recovered = state === 'recovered', held = state === 'editing', peers = siblings(item), sortable = state === 'accepted' && peers.length > 1;
+      <div id={listId} className="pd-composer-queue-list" hidden={collapsed}>
+        {items.map((item, index) => {
+          const presentation = rows[index]!;
+          const state = itemState(item.id), recovered = presentation.status === 'recovered', held = presentation.status === 'editing', peers = siblings(item), sortable = state === 'accepted' && peers.length > 1;
           const rowPending = pendingRows.has(item.id), itemDisabled = rowDisabled(item.id);
           return <div key={item.id} className={`pd-composer-queue-item${held ? ' is-editing' : ''}${rowPending ? ' is-pending' : ''}${dragId === item.id ? ' is-dragging' : ''}${drop?.id === item.id ? drop.after ? ' drop-after' : ' drop-before' : ''}`} data-queue-id={item.id} data-behavior={item.behavior} data-state={state} aria-busy={rowPending} onDragOver={event => {
             const source = items.find(row => row.id === dragId);
@@ -125,8 +138,8 @@ export const ComposerQueue = memo(function ComposerQueue({ items, scopeKey, edit
             }
             setDragId(null); setDrop(null);
           }}>
-            {items.length > 1 && <button type="button" className="pd-queue-drag" draggable={sortable && !itemDisabled} disabled={!sortable} aria-disabled={itemDisabled || !sortable} aria-label={t('queue.dragHint')} title={t('queue.dragHintShort')} onDragStart={event => { if (itemDisabled) { event.preventDefault(); return; } setDragId(item.id); event.dataTransfer.effectAllowed = 'move'; event.dataTransfer.setData('text/plain', item.id); }} onDragEnd={() => { setDragId(null); setDrop(null); }} onKeyDown={event => { if (event.key === 'ArrowUp' || event.key === 'ArrowDown') { event.preventDefault(); event.stopPropagation(); move(item, event.key === 'ArrowUp' ? -1 : 1); } }}><span aria-hidden="true">⠿</span></button>}
-            <button type="button" className="pd-composer-queue-text" onClick={() => setDetails(item.id)} title={item.text} aria-label={t('queue.readItem', { text: item.text || t('queue.readItemAttachments', { count: item.attachments?.length ?? 0 }) })}>{item.text || t('composer.queueAttachments', { count: item.attachments?.length ?? 0 })}</button>
+            {items.length > 1 ? <button type="button" className="pd-queue-drag" draggable={sortable && !itemDisabled} disabled={!sortable} aria-disabled={itemDisabled || !sortable} aria-label={t('queue.dragPosition', { position: index + 1 })} title={t('queue.dragHintShort')} onDragStart={event => { if (itemDisabled) { event.preventDefault(); return; } setDragId(item.id); event.dataTransfer.effectAllowed = 'move'; event.dataTransfer.setData('text/plain', item.id); }} onDragEnd={() => { setDragId(null); setDrop(null); }} onKeyDown={event => { if (event.key === 'ArrowUp' || event.key === 'ArrowDown') { event.preventDefault(); event.stopPropagation(); move(item, event.key === 'ArrowUp' ? -1 : 1); } }}><span className="pd-queue-position" aria-hidden="true">{index + 1}</span><svg className="pd-queue-grip" width="12" height="16" viewBox="0 0 12 16" fill="currentColor" aria-hidden="true">{[4, 8, 12].flatMap(y => [4, 8].map(x => <circle key={`${x}:${y}`} cx={x} cy={y} r="1" />))}</svg></button> : <span className="pd-queue-position is-single" aria-hidden="true">1</span>}
+            <button type="button" className="pd-composer-queue-text" onClick={() => setDetails(item.id)} title={item.text} aria-label={t('queue.readPosition', { position: index + 1, text: presentation.preview.length > 80 ? `${presentation.preview.slice(0, 79)}…` : presentation.preview || t('queue.readItemAttachments', { count: item.attachments?.length ?? 0 }) })}>{presentation.preview || t('composer.queueAttachments', { count: item.attachments?.length ?? 0 })}</button>
             {Boolean(item.attachments?.length) && <span className="pd-queue-attachment-count" title={item.attachments!.map(file => file.name).join('\n')}><Icon name={item.attachments!.every(file => file.kind === 'image') ? 'image' : 'file'} width="14" height="14" />{item.attachments!.length}</span>}
             {held && <span className="pd-queue-state">{t('queue.editing')}</span>}
             {recovered && <span className="pd-queue-state is-recovered">{t('queue.pendingConfirm')}</span>}
@@ -134,8 +147,8 @@ export const ComposerQueue = memo(function ComposerQueue({ items, scopeKey, edit
             {item.behavior === 'steer' && !held && !recovered && <span className="pd-queue-state" title={t('composer.queuedSteerDescription')}>{t('composer.queuedSteer')}</span>}
             <div className="pd-composer-queue-actions">
               {recovered ? <button type="button" className="pd-composer-queue-action is-steer" disabled={itemDisabled} onClick={() => void mutate('confirm', item.id)}>{t('queue.confirmRestore')}</button>
-                : item.behavior === 'followUp' && !held && <button type="button" className="pd-composer-queue-action is-steer" disabled={itemDisabled} title={t('composer.queueSteerHint')} aria-label={t('composer.queueSteer')} onClick={() => void mutate('steer', item.id)}><Icon name="steer" width="14" height="14" /><span>{t('queue.steer')}</span></button>}
-              <button type="button" className="pd-composer-queue-action" disabled={itemDisabled || editing?.id === item.id} title={t('composer.queueDelete')} aria-label={t('composer.queueDelete')} onClick={() => void mutate('remove', item.id)}><Icon name="close" width="14" height="14" /></button>
+                : presentation.canSendNow && <button type="button" className="pd-composer-queue-action is-steer" disabled={itemDisabled} title={t('composer.queueSteerHint')} aria-label={t('composer.queueSteer')} onClick={() => void mutate('steer', item.id)}><Icon name="steer" width="14" height="14" /><span>{t('queue.sendNow')}</span></button>}
+              <button type="button" className="pd-composer-queue-action" disabled={itemDisabled || !presentation.canCancel || editing?.id === item.id} title={t('composer.queueDelete')} aria-label={t('composer.queueDelete')} onClick={() => void mutate('remove', item.id)}><Icon name="close" width="14" height="14" /></button>
               <button type="button" className="pd-composer-queue-action" aria-label={t('queue.moreActions')} aria-haspopup="menu" aria-expanded={menu?.id === item.id} onClick={event => {
                 if (menu?.id === item.id) { closeMenu(); return; }
                 const box = event.currentTarget.getBoundingClientRect();
