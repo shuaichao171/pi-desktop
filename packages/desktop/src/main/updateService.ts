@@ -5,7 +5,7 @@ import { IPC_CHANNELS, type UiUpdateState, type UiUpdateUnavailableReason } from
 import { getAppLocale } from './appLocale';
 import { isGitHubReleaseFeedUrl, parseUpdateFeedUrl } from './updateFeed';
 
-type Updater = typeof import('electron-updater').autoUpdater & { installDirectory?: string };
+type Updater = typeof import('electron-updater').autoUpdater;
 
 const FIRST_CHECK_DELAY_MS = 5_000;
 const CHECK_INTERVAL_MS = 4 * 60 * 60 * 1_000;
@@ -200,7 +200,7 @@ class UpdateService {
 			// silent update. Pass the running exe's directory as /D so the updater always
 			// reinstalls over the current installation (NsisUpdater.doInstall).
 			if (process.platform === 'win32') {
-				updater.installDirectory = dirname(process.env.PI_DESKTOP_EXEC_PATH ?? process.execPath);
+				(updater as import('electron-updater').NsisUpdater).installDirectory = dirname(process.env.PI_DESKTOP_EXEC_PATH ?? process.execPath);
 			}
 			// Downloads never start from the updater itself: only an explicit install
 			// request (button click or the auto-install preference) chains into one.
