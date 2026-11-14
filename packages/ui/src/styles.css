@@ -929,17 +929,16 @@ div.pd-hover-tooltip:has(.pd-update-notes-body) { max-width: min(400px, calc(100
 .pd-chat-title-measure { visibility: hidden; white-space: pre; padding: 0 6px; border: 1px solid transparent; font: inherit; pointer-events: none; }
 .pd-chat-header-more { flex: 0 0 auto; width: 24px; height: 24px; border-radius: var(--pd-radius-sm); color: var(--pd-text); }
 
-/* Segmented open-workspace control wrapped in one capsule: main launches the
-   selected app, the attached chevron opens the app picker. */
-.pd-workspace-open-wrap { position: relative; flex: 0 0 auto; }
+/* Project path and folder action share one capsule in the conversation header;
+   the attached chevron opens the editor/terminal picker. */
+.pd-workspace-open-wrap { position: relative; flex: 0 1 auto; min-width: 0; max-width: 40%; -webkit-app-region: no-drag; }
 .pd-workspace-open { display: flex; align-items: stretch; height: 28px; border-radius: var(--pd-radius-md); background: var(--pd-sidebar-hover); overflow: hidden; }
-.pd-workspace-open-main { display: inline-flex; align-items: center; justify-content: center; width: 30px; padding: 0; border: 0; border-radius: var(--pd-radius-md) 0 0 var(--pd-radius-md); background: transparent; color: var(--pd-text-subtle); cursor: pointer; }
-.pd-workspace-open-menu { display: inline-flex; align-items: center; justify-content: center; width: 18px; padding: 0; border: 0; border-left: 1px solid color-mix(in srgb, var(--pd-sidebar) 55%, var(--pd-sidebar-hover)); border-radius: 0 var(--pd-radius-md) var(--pd-radius-md) 0; background: transparent; color: var(--pd-text-subtle); cursor: pointer; }
-/* The capsule replaces the top-bar hover namespace for these two buttons. */
-.pd-top-bar .pd-workspace-open :is(.pd-workspace-open-main, .pd-workspace-open-menu):hover:not(:disabled) { background: color-mix(in srgb, var(--pd-text) 13%, transparent); color: var(--pd-text); }
-/* The capsule slot reserves the split control's footprint on every main view,
-   so the session title keeps its position when the capsule hides off-chat. */
-.pd-top-bar-session .pd-workspace-open-slot { flex: 0 0 auto; width: 48px; height: 28px; margin-right: 8px; }
+.pd-workspace-open-main { display: inline-flex; flex: 0 1 auto; align-items: center; gap: 6px; min-width: 0; padding: 0 8px; border: 0; border-radius: var(--pd-radius-md) 0 0 var(--pd-radius-md); background: transparent; color: var(--pd-text-subtle); font: inherit; font-size: var(--pd-font-sm); cursor: pointer; }
+.pd-workspace-open-main > svg { flex: 0 0 auto; }
+.pd-workspace-open-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pd-workspace-open-menu { display: inline-flex; flex: 0 0 22px; align-items: center; justify-content: center; width: 22px; padding: 0; border: 0; border-left: 1px solid color-mix(in srgb, var(--pd-sidebar) 55%, var(--pd-sidebar-hover)); border-radius: 0 var(--pd-radius-md) var(--pd-radius-md) 0; background: transparent; color: var(--pd-text-subtle); cursor: pointer; }
+.pd-workspace-open :is(.pd-workspace-open-main, .pd-workspace-open-menu):hover:not(:disabled) { background: color-mix(in srgb, var(--pd-text) 13%, transparent); color: var(--pd-text); }
+.pd-workspace-open :is(.pd-workspace-open-main, .pd-workspace-open-menu):focus-visible { outline-offset: -2px; }
 .pd-workspace-open-error { top: calc(100% + 4px); }
 
 /* Commit dialog (zcode-style) */
@@ -976,7 +975,6 @@ div.pd-hover-tooltip:has(.pd-update-notes-body) { max-width: min(400px, calc(100
  * The top bar no longer carries the session title (2026-11-02 用户拍板，
  * 改名统一走左侧栏会话菜单). */
 .pd-conversation-header { display: flex; flex: 0 0 auto; align-items: center; gap: 8px; height: 44px; padding: 0 14px; border-bottom: 1px solid var(--pd-border-soft); background: var(--pd-header); }
-.pd-conversation-header-project { flex: 0 1 auto; min-width: 0; max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--pd-text-weak); font-size: var(--pd-font-sm); }
 .pd-conversation-header-sep { flex: 0 0 auto; color: var(--pd-text-weak); }
 .pd-conversation-header-title { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--pd-text); font-size: var(--pd-font-base); font-weight: var(--pd-weight-semibold); }
 .pd-conversation-header-branches { display: inline-flex; flex: 0 0 auto; align-items: center; gap: 3px; padding: 1px 7px; border: 1px solid var(--pd-border); border-radius: 999px; color: var(--pd-text-subtle); font-size: var(--pd-font-xs); font-variant-numeric: tabular-nums; }

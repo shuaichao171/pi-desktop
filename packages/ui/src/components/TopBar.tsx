@@ -4,7 +4,6 @@ import { HoverTooltip } from './HoverTooltip';
 import { HistoryNavigation, type HistoryNavigationProps } from './HistoryNavigation';
 import { SearchButton } from './SearchButton';
 import { ChatHeaderMenu } from './ChatHeaderMenu';
-import { WorkspaceOpenButton } from './WorkspaceOpenButton';
 import { WindowControls } from './WindowControls';
 import type { RefObject } from 'react';
 
@@ -47,11 +46,7 @@ export function TopBar({ history, searchOpen, onOpenSearch, mainView, title, ses
 				<HistoryNavigation {...history} />
 				<SearchButton open={searchOpen} onClick={onOpenSearch} />
 			</div>
-			{/* The session row stays mounted on every main view: the capsule slot
-				reserves its footprint so the title never shifts when the capsule
-				hides on the automations/plugins pages. */}
 			<div className="pd-top-bar-session">
-				<div className="pd-workspace-open-slot">{mainView === 'chat' && <WorkspaceOpenButton cwd={cwd} />}</div>
 				{mainView === 'chat' && <>
 					<div className="pd-top-bar-workspace-actions">
 						<HoverTooltip title={t(workbenchOpen ? 'app.closeWorkbench' : 'app.openWorkbench')}>
