@@ -20,18 +20,50 @@ const fenceLanguage = (info: string) => { const word = info.trim().split(/\s+/)[
  * highlight.js colors a markdown fence as one flat code span. Fenced bodies are
  * highlighted with their own info-string language instead (when known), and
  * every source line still maps to exactly one HTML fragment.
+ *
+ * VSCode alignment fixes applied on top of hljs's markdown grammar:
+ * - intra-word underscores never open emphasis (CommonMark, e.g. mbeditor_app);
+ *   hljs wrongly paints the rest of the line as italic orange otherwise
+ * - link text renders green with the URL blue (hljs marks the text as a string)
+ * - ~~strikethrough~~, ==highlight== and thematic breaks (---) get their own hues
  */
+const INTRA_WORD_UNDERSCORE = /(?<=[A-Za-z0-9])_(?=[A-Za-z0-9])/g;
+const UNDERSCORE_PLACEHOLDER = '\u0000';
+const RESTORE_UNDERSCORE = (html: string) => html.split(UNDERSCORE_PLACEHOLDER).join('_');
+const LINK_TEXT = /\[<span class="hljs-string">([^\]\n]*)<\/span>\]\(<span class="hljs-link">([^)\n]*)<\/span>\)/g;
+const STRIKE = /~~(?=\S)(.+?)(?<=\S)~~/g;
+const MARK = /==(?=\S)(.+?)(?<=\S)==/g;
+const THEMATIC_BREAK = /^ {0,3}((-{3,})|(\*{3,})|(_{3,}))[ \t]*$/;
+/**
+ * Applies VSCode-alignment passes to one already-highlighted markdown fragment.
+ * The underscore placeholder survives the escape+highlight round trip, so
+ * restoration is exact and no escaped entity ever gets rewritten.
+ *
+ * LINK_TEXT only matches hljs's own string/link wrapping — plain-text brackets
+ * stay untouched, and the captured groups are already escaped inner text.
+ */
+function refineMarkdownHtml(html: string): string {
+  return RESTORE_UNDERSCORE(html)
+    .replace(LINK_TEXT, '<span class="hljs-symbol">[$1]</span>(<span class="hljs-link">$2</span>)')
+    .replace(STRIKE, '<span class="pd-md-strike">~~$1~~</span>')
+    .replace(MARK, '<span class="pd-md-mark">==$1==</span>');
+}
 export function highlightMarkdownLines(text: string): string[] {
   const source = text.split('\n').map(line => line.replace(/\r$/, ''));
   const lines: string[] = [];
   let prose: string[] = [];
   const flushProse = () => {
     if (!prose.length) return;
-    lines.push(...splitHighlightedLines(hljs.highlight(prose.join('\n'), { language: 'markdown', ignoreIllegals: true }).value));
+    lines.push(...splitHighlightedLines(refineMarkdownHtml(hljs.highlight(prose.join('\n').replace(INTRA_WORD_UNDERSCORE, UNDERSCORE_PLACEHOLDER), { language: 'markdown', ignoreIllegals: true }).value)));
     prose = [];
   };
   for (let index = 0; index < source.length; index++) {
     const line = source[index]!;
+    if (THEMATIC_BREAK.test(line)) {
+      flushProse();
+      lines.push(`<span class="pd-md-break">${escapeHtml(line)}</span>`);
+      continue;
+    }
     const open = FENCE_OPEN.exec(line);
     // A backtick fence's info string may not contain backticks (CommonMark).
     if (!open || (open[1]!.startsWith('`') && open[2]!.includes('`'))) { prose.push(line); continue; }
