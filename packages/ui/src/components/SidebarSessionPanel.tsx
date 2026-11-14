@@ -1494,11 +1494,11 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 				{menuItem({ icon: 'panelRight', label: t('sidebar.openIn'), shortcut: 'O', submenu: 'open' })}
 				<hr />
 				{menuItem({ icon: 'pin', label: t(popup.session.pinned ? 'sidebar.unpin' : 'sidebar.pin'), shortcut: 'P', onSelect: () => { const s = popup.session; sessionAction(s, popup.anchor, () => updateSessionMeta(s.path, { pinned: !s.pinned })); } })}
-				{menuItem({ icon: 'message', label: t(popup.session.unread ? 'sidebar.markRead' : 'sidebar.markUnread'), shortcut: 'U', onSelect: () => { const s = popup.session; sessionAction(s, popup.anchor, () => updateSessionMeta(s.path, s.unread ? { unread: false, expectedUnreadAt: s.unreadAt } : { unread: true })); } })}
+				{menuItem({ icon: 'messageDot', label: t(popup.session.unread ? 'sidebar.markRead' : 'sidebar.markUnread'), shortcut: 'U', onSelect: () => { const s = popup.session; sessionAction(s, popup.anchor, () => updateSessionMeta(s.path, s.unread ? { unread: false, expectedUnreadAt: s.unreadAt } : { unread: true })); } })}
 				{bridge?.loadSession && (() => {
 					const s = popup.session;
 					const loaded = loadedMain.some((entry) => entry.path === s.path);
-					return menuItem({ icon: 'layers', label: t(loaded ? 'sidebar.unloadSession' : 'sidebar.loadSession'), shortcut: 'L', onSelect: () => { setPopup(null); void (loaded ? unloadSessionFromMain(s.path) : loadSessionIntoMain(s.workspace, s.path)); } });
+					return menuItem({ icon: 'dockTop', label: t(loaded ? 'sidebar.unloadSession' : 'sidebar.loadSession'), shortcut: 'L', onSelect: () => { setPopup(null); void (loaded ? unloadSessionFromMain(s.path) : loadSessionIntoMain(s.workspace, s.path)); } });
 				})()}
 				{menuItem({ icon: 'pencil', label: t('sidebar.rename'), shortcut: 'R', onSelect: () => { renameCancelled.current = false; setRenaming(popup.session.path); setRenameDraft(titleOf(popup.session)); setPopup(null); } })}
 				{menuItem({ icon: 'gitBranch', label: t('sidebar.fork'), shortcut: 'F', disabled: !bridge?.forkSession || navigating || sessionBusy(popup.session), onSelect: () => forkFromMenu(popup.session) })}

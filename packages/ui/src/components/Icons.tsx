@@ -23,6 +23,8 @@ export type IconName =
 	| 'arrowRight'
 	| 'square'
 	| 'spark'
+	| 'messageDot'
+	| 'dockTop'
 	| 'brain'
 	| 'lightbulb'
 	| 'clock'
@@ -96,6 +98,8 @@ const paths: Record<IconName, ReactNode> = {
 	queue: <path d="M4 6h16M4 12h10M4 18h5m7-4 4 4-4 4m-4-4h8" />,
 	steer: <path d="M4 20v-8a4 4 0 0 1 4-4h12m-5-5 5 5-5 5" />,
 	message: <path d="M20 11.5a7.5 7.5 0 0 1-7.5 7.5H6l-3 2v-9.5A7.5 7.5 0 0 1 10.5 4h2A7.5 7.5 0 0 1 20 11.5Z" />,
+	messageDot: <><path d="M19.5 11.5a7.5 7.5 0 0 1-7.5 7.5H6l-3 2v-9.5A7.5 7.5 0 0 1 10.5 4H13" /><circle cx="18.5" cy="5.5" r="2.6" fill="currentColor" stroke="none" /></>,
+	dockTop: <><rect x="3.5" y="3.5" width="17" height="17" rx="2.5" /><path d="M3.5 9h17" /><path d="M12 17.5v-5.5M9.5 14.5 12 12l2.5 2.5" /></>,
 	arrowUp: <><path d="M12 19V5" /><path d="m6 11 6-6 6 6" /></>,
 	arrowDown: <><path d="M12 5v14" /><path d="m6 13 6 6 6-6" /></>,
 	arrowLeft: <><path d="M19 12H5" /><path d="m11 6-6 6 6 6" /></>,
