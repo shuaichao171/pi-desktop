@@ -13,7 +13,7 @@
 .pd-loaded-session.is-active { background: var(--pd-sidebar-selected); }
 .pd-loaded-session-main { flex: 1; min-width: 0; display: flex; align-items: center; gap: 5px; min-height: 22px; padding: 0 8px; border: 0; background: transparent; color: var(--pd-text); text-align: left; font: inherit; font-size: var(--pd-font-caption); cursor: pointer; }
 .pd-loaded-session.is-hidden-pane .pd-loaded-session-main { color: var(--pd-text-subtle); }
-.pd-loaded-session-project { flex: 0 1 auto; min-width: 0; max-width: 38%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--pd-text-weak); }
+.pd-loaded-session-project { flex: 0 1 auto; min-width: 0; max-width: 55%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--pd-text-weak); }
 .pd-loaded-session-sep { flex: 0 0 auto; color: var(--pd-text-weak); }
 .pd-loaded-session-title { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pd-loaded-session-badge { flex: none; padding: 0 5px; border: 1px solid var(--pd-border-soft); border-radius: 999px; color: var(--pd-text-weak); font-size: 10.5px; line-height: 16px; }
