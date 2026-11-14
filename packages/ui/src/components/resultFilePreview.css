@@ -83,9 +83,9 @@
 .pd-result-file-preview-body.is-markdown .hljs-emphasis { color: var(--pd-monokai-orange); font-style: italic; }
 .pd-result-file-preview-body.is-markdown .hljs-bullet { color: var(--pd-monokai-pink); }
 .pd-result-file-preview-body.is-markdown .hljs-quote { color: var(--pd-monokai-comment); font-style: italic; }
-.pd-result-file-preview-body.is-markdown .hljs-code { color: var(--pd-monokai-yellow); }
+.pd-result-file-preview-body.is-markdown .hljs-code { color: var(--pd-monokai-blue); }
 .pd-result-file-preview-body.is-markdown .pd-md-fence-marker { color: var(--pd-monokai-comment); }
-.pd-result-file-preview-body.is-markdown .hljs-string { color: var(--pd-monokai-blue); }
+.pd-result-file-preview-body.is-markdown .hljs-string { color: var(--pd-monokai-yellow); }
 .pd-result-file-preview-body.is-markdown .hljs-link { color: var(--pd-monokai-blue); text-decoration: underline; }
 .pd-result-file-preview-body.is-markdown .hljs-symbol { color: var(--pd-monokai-green); }
 .pd-result-file-preview-body.is-markdown .pd-md-strike { color: var(--pd-monokai-comment); text-decoration: line-through; }
@@ -98,7 +98,8 @@
 .pd-result-file-preview-body.is-markdown :is(.hljs-number, .hljs-literal) { color: var(--pd-monokai-purple); }
 .pd-result-file-preview-body.is-markdown :is(.hljs-title, .hljs-attr, .hljs-attribute, .hljs-selector-class, .hljs-selector-id) { color: var(--pd-monokai-green); }
 .pd-result-file-preview-body.is-markdown :is(.hljs-type, .hljs-built_in) { color: var(--pd-monokai-blue); font-style: italic; }
-.pd-result-file-preview-body.is-markdown :is(.hljs-params, .hljs-variable.language_) { color: var(--pd-monokai-orange); }
+.pd-result-file-preview-body.is-markdown .hljs-params { color: var(--pd-monokai-orange); }
+.pd-result-file-preview-body.is-markdown .hljs-variable.language_ { color: var(--pd-monokai-blue); font-style: italic; }
 .pd-result-file-preview-body.is-markdown .hljs-variable { color: var(--pd-monokai-fg); }
 @media (max-width: 560px) {
   .pd-result-file-preview { width: calc(100vw - 24px); height: calc(100dvh - 24px); border-radius: var(--pd-radius-lg); }
