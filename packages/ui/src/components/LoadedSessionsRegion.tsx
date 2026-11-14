@@ -46,15 +46,16 @@ export function LoadedSessionsRegion({ titleFor, onNavigate }: { titleFor(path: 
 		if (await state.selectSession(row.cwd, row.path).catch(() => false)) onNavigate();
 	}
 
-	return <section className={`pd-loaded-sessions${collapsed ? ' is-collapsed' : ''}${dropActive ? ' is-drop-active' : ''}${dropHover ? ' is-drop-hover' : ''}`} data-session-drop="loaded" aria-label={t('loaded.title')}>
-		<div className="pd-loaded-sessions-heading">
-			<button type="button" className="pd-sidebar-region-heading" aria-expanded={!collapsed} onClick={() => setCollapsed((value) => !value)}>
-				<Icon name="chevronRight" width="13" height="13" className={!collapsed ? 'is-expanded' : ''} /><span>{t('loaded.title')}</span>
-				{rows.length > 0 && <small>{rows.length}</small>}
-			</button>
-			<HoverTooltip title={t('loaded.hint')} description={t('loaded.hintDetail')} side="right" interactive={false}><span className="pd-loaded-sessions-help" tabIndex={0}><Icon name="lightbulb" width="13" height="13" /></span></HoverTooltip>
+	const heading = <button type="button" className="pd-sidebar-region-heading" aria-expanded={!collapsed} onClick={() => setCollapsed((value) => !value)}>
+		<Icon name="chevronRight" width="13" height="13" className={!collapsed ? 'is-expanded' : ''} /><span>{t('loaded.title')}</span>
+		{rows.length > 0 && <small>{rows.length}</small>}
+	</button>;
+
+	return <section className={`pd-sidebar-region pd-loaded-sessions${collapsed ? ' is-collapsed' : ''}${dropActive ? ' is-drop-active' : ''}${dropHover ? ' is-drop-hover' : ''}`} data-session-drop="loaded" aria-label={t('loaded.title')}>
+		<div className="pd-sidebar-region-heading-row">
+			<HoverTooltip title={t('loaded.hint')} description={t('loaded.hintDetail')} side="top" interactive={false}>{heading}</HoverTooltip>
 		</div>
-		{!collapsed && <div className="pd-loaded-sessions-list" role="list">
+		{!collapsed && <div className="pd-sidebar-region-content pd-loaded-sessions-list" role="list">
 			{rows.map((row) => {
 				const active = row.kind === 'main' && row.path === currentPath;
 				const title = titleFor(row.path);
@@ -72,8 +73,8 @@ export function LoadedSessionsRegion({ titleFor, onNavigate }: { titleFor(path: 
 					</HoverTooltip>
 				</div>;
 			})}
-			{rows.length === 0 && <div className="pd-loaded-sessions-empty">{t(dropActive ? 'loaded.dropHere' : 'loaded.empty')}</div>}
-			{rows.length > 0 && dropActive && <div className="pd-loaded-sessions-empty">{t('loaded.dropHere')}</div>}
+			{rows.length === 0 && <div className="pd-session-empty pd-loaded-sessions-empty">{t(dropActive ? 'loaded.dropHere' : 'loaded.empty')}</div>}
+			{rows.length > 0 && dropActive && <div className="pd-session-empty pd-loaded-sessions-empty">{t('loaded.dropHere')}</div>}
 		</div>}
 	</section>;
 }

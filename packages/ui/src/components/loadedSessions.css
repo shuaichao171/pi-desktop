@@ -1,23 +1,21 @@
 /* "已加载会话": the top-left sidebar region of conversations kept ready in this window. */
-.pd-loaded-sessions { flex: 0 0 auto; display: flex; flex-direction: column; max-height: 34%; min-height: 30px; margin: 0 0 4px; border-radius: var(--pd-radius-sm); outline: 1px dashed transparent; outline-offset: -2px; transition: outline-color var(--pd-motion-fast), background var(--pd-motion-fast); }
+/* Reuse .pd-sidebar-region / .pd-sidebar-region-heading-row / .pd-sidebar-region-content
+   so "已加载会话" shares the exact 30px surface header, borders, row height, and
+   scrollbar rhythm of the other sidebar regions. */
+.pd-loaded-sessions { flex: 0 0 auto; max-height: 34%; min-height: 30px; outline: 1px dashed transparent; outline-offset: -2px; transition: outline-color var(--pd-motion-fast), background var(--pd-motion-fast); }
 .pd-loaded-sessions.is-drop-active { outline-color: var(--pd-border); }
 .pd-loaded-sessions.is-drop-hover { outline-color: var(--pd-brand); background: color-mix(in srgb, var(--pd-brand) 8%, transparent); }
-.pd-loaded-sessions-heading { display: flex; align-items: center; gap: 2px; }
-.pd-loaded-sessions-heading .pd-sidebar-region-heading { flex: 1; min-width: 0; }
-.pd-loaded-sessions-heading .pd-sidebar-region-heading small { margin-left: 6px; color: var(--pd-text-weak); font-size: 11px; }
-.pd-loaded-sessions-help { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; color: var(--pd-text-weak); border-radius: var(--pd-radius-sm); }
-.pd-loaded-sessions-help:hover, .pd-loaded-sessions-help:focus-visible { color: var(--pd-text); }
-.pd-loaded-sessions-list { overflow-y: auto; min-height: 0; padding: 0 4px 2px; }
+.pd-loaded-sessions .pd-sidebar-region-heading small { margin-left: 6px; color: var(--pd-text-weak); font-size: var(--pd-font-xs); font-weight: var(--pd-weight-regular); }
+.pd-loaded-sessions-list { min-height: 0; padding-top: 2px; }
 .pd-loaded-session { display: flex; align-items: center; gap: 2px; border-radius: var(--pd-radius-sm); }
 .pd-loaded-session:hover { background: var(--pd-sidebar-hover); }
-.pd-loaded-session.is-active { background: var(--pd-sidebar-hover); }
-.pd-loaded-session-main { flex: 1; min-width: 0; display: flex; align-items: center; gap: 6px; height: 26px; padding: 0 6px; border: 0; background: transparent; color: var(--pd-text); text-align: left; font: inherit; font-size: var(--pd-font-sm); cursor: pointer; }
+.pd-loaded-session.is-active { background: var(--pd-sidebar-selected); }
+.pd-loaded-session-main { flex: 1; min-width: 0; display: flex; align-items: center; gap: 6px; min-height: 22px; padding: 0 8px; border: 0; background: transparent; color: var(--pd-text); text-align: left; font: inherit; font-size: var(--pd-font-caption); cursor: pointer; }
 .pd-loaded-session.is-hidden-pane .pd-loaded-session-main { color: var(--pd-text-subtle); }
 .pd-loaded-session-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pd-loaded-session-badge { flex: none; padding: 0 5px; border: 1px solid var(--pd-border-soft); border-radius: 999px; color: var(--pd-text-weak); font-size: 10.5px; line-height: 16px; }
-.pd-loaded-session-close { flex: none; width: 22px; height: 22px; opacity: 0; }
+.pd-loaded-session-close { flex: none; width: 20px; height: 20px; opacity: 0; }
 .pd-loaded-session:hover .pd-loaded-session-close, .pd-loaded-session-close:focus-visible { opacity: 1; }
-.pd-loaded-sessions-empty { padding: 4px 10px 6px; color: var(--pd-text-weak); font-size: 12px; }
 
 /* Dragging a sidebar conversation: a ghost follows the pointer; the chat's right part opens a split pane. */
 .pd-session-drag-ghost { position: fixed; z-index: 1000; max-width: 260px; padding: 4px 10px; border: 1px solid var(--pd-border); border-radius: var(--pd-radius-sm); background: var(--pd-surface); box-shadow: var(--pd-shadow-low); color: var(--pd-text); font-size: var(--pd-font-sm); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; pointer-events: none; transform: translate(12px, 10px); }
