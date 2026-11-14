@@ -198,11 +198,11 @@ body.pd-sidebar-dragging * { cursor: grabbing !important; }
 .pd-sidebar-region { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
 .pd-sidebar-region + .pd-sidebar-region { border-top: 1px solid var(--pd-sidebar-surface); }
 .pd-sidebar-region-heading { display: flex; flex: 1 1 auto; min-width: 0; align-items: center; gap: 6px; padding: 0 6px; border: 0; background: transparent; color: var(--pd-text-weak); font-size: var(--pd-font-caption); font-weight: var(--pd-weight-semibold); text-align: left; }
-.pd-sidebar-region-heading-row { display: flex; flex: 0 0 30px; align-items: center; padding: 0 8px; background: var(--pd-sidebar-surface); }
+.pd-sidebar-region-heading-row { display: flex; flex: 0 0 24px; align-items: center; padding: 0 8px; background: var(--pd-sidebar-surface); }
 .pd-sidebar-region-heading-row:hover, .pd-sidebar-region-heading-row:focus-within { background: var(--pd-sidebar-hover); }
 .pd-sidebar-region-heading-row:hover .pd-sidebar-region-heading, .pd-sidebar-region-heading-row:focus-within .pd-sidebar-region-heading { color: var(--pd-text); }
 .pd-sidebar-region-heading-actions { display: flex; flex: 0 0 auto; align-items: center; }
-.pd-sidebar-region-heading-actions .pd-icon-button { opacity: 0.7; }
+.pd-sidebar-region-heading-actions .pd-icon-button { width: 20px; height: 20px; opacity: 0.7; }
 .pd-sidebar-region-heading-row:hover .pd-sidebar-region-heading-actions .pd-icon-button, .pd-sidebar-region-heading-actions .pd-icon-button:focus-visible { opacity: 1; }
 /* The heading row and icon buttons share --pd-sidebar-hover as their resting
    hover tint, so the buttons need a distinct pressed look or they vanish
@@ -223,7 +223,7 @@ body.pd-sidebar-dragging * { cursor: grabbing !important; }
 /* Rows now end at the scrollbar gutter; keep the hover actions clear of it. */
 .pd-sidebar-region-content .pd-session-actions { top: 50%; right: 8px; transform: translateY(-50%); }
 .pd-sidebar-region-content .pd-session-action { width: 20px; height: 20px; }
-.pd-sidebar-region.is-collapsed { flex-basis: 30px !important; }
+.pd-sidebar-region.is-collapsed { flex-basis: 24px !important; }
 .pd-sidebar-region-resizer { position: relative; z-index: 1; flex: 0 0 7px; margin: -1px 12px; cursor: ns-resize; touch-action: none; }
 .pd-sidebar-region-resizer::after { position: absolute; top: 3px; right: 0; left: 0; height: 1px; background: transparent; content: ''; }
 .pd-sidebar-region-resizer:hover::after, .pd-sidebar-region-resizer:active::after { background: var(--pd-brand); }

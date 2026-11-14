@@ -9,6 +9,8 @@ import { HoverTooltip } from './HoverTooltip';
 import { Icon } from './Icons';
 import './loadedSessions.css';
 
+export type LoadedSessionIndicator = { kind: 'failed' | 'unread' | 'subagents' | 'running' | 'waiting'; label: string } | null;
+
 interface Row { key: string; kind: 'main' | 'pane'; cwd: string; path: string | null; paneId?: number; hidden?: boolean; busy: boolean }
 
 /**
@@ -16,7 +18,7 @@ interface Row { key: string; kind: 'main' | 'pane'; cwd: string; path: string | 
  * window — loaded main-window conversations and all split panes (shown or hidden). It is
  * also a drop target: dragging a sidebar conversation here loads it.
  */
-export function LoadedSessionsRegion({ titleFor, onNavigate }: { titleFor(path: string | null): string; onNavigate(): void }) {
+export function LoadedSessionsRegion({ titleFor, projectNameFor, indicatorFor, onNavigate }: { titleFor(path: string | null): string; projectNameFor?(cwd: string): string | null; indicatorFor?(path: string | null): LoadedSessionIndicator; onNavigate(): void }) {
 	const { t } = useT();
 	const { main, panes } = useLoadedSessions();
 	const drag = useSessionDrag();
@@ -46,21 +48,31 @@ export function LoadedSessionsRegion({ titleFor, onNavigate }: { titleFor(path: 
 		if (await state.selectSession(row.cwd, row.path).catch(() => false)) onNavigate();
 	}
 
-	return <section className={`pd-loaded-sessions${collapsed ? ' is-collapsed' : ''}${dropActive ? ' is-drop-active' : ''}${dropHover ? ' is-drop-hover' : ''}`} data-session-drop="loaded" aria-label={t('loaded.title')}>
-		<div className="pd-loaded-sessions-heading">
-			<button type="button" className="pd-sidebar-region-heading" aria-expanded={!collapsed} onClick={() => setCollapsed((value) => !value)}>
-				<Icon name="chevronRight" width="13" height="13" className={!collapsed ? 'is-expanded' : ''} /><span>{t('loaded.title')}</span>
-				{rows.length > 0 && <small>{rows.length}</small>}
-			</button>
-			<HoverTooltip title={t('loaded.hint')} description={t('loaded.hintDetail')} side="right" interactive={false}><span className="pd-loaded-sessions-help" tabIndex={0}><Icon name="lightbulb" width="13" height="13" /></span></HoverTooltip>
+	const heading = <button type="button" className="pd-sidebar-region-heading" aria-expanded={!collapsed} onClick={() => setCollapsed((value) => !value)}>
+		<Icon name="chevronRight" width="13" height="13" className={!collapsed ? 'is-expanded' : ''} /><span>{t('loaded.title')}</span>
+		{rows.length > 0 && <small>{rows.length}</small>}
+	</button>;
+
+	return <section className={`pd-sidebar-region pd-loaded-sessions${collapsed ? ' is-collapsed' : ''}${dropActive ? ' is-drop-active' : ''}${dropHover ? ' is-drop-hover' : ''}`} data-session-drop="loaded" aria-label={t('loaded.title')}>
+		<div className="pd-sidebar-region-heading-row">
+			<HoverTooltip title={t('loaded.hint')} description={t('loaded.hintDetail')} side="top" interactive={false}>{heading}</HoverTooltip>
 		</div>
-		{!collapsed && <div className="pd-loaded-sessions-list" role="list">
+		{!collapsed && <div className="pd-sidebar-region-content pd-loaded-sessions-list" role="list">
 			{rows.map((row) => {
 				const active = row.kind === 'main' && row.path === currentPath;
 				const title = titleFor(row.path);
+				const project = projectNameFor?.(row.cwd) ?? null;
+				const indicator = indicatorFor?.(row.path) ?? null;
+				const leading = (indicator?.kind === 'running' || (!indicator && row.busy))
+					? <Icon name="loader" className="pd-session-spinner" width="13" height="13" />
+					: indicator
+						? <span className={`pd-session-indicator is-${indicator.kind}`} />
+						: <Icon name={row.kind === 'pane' ? 'panelRight' : 'message'} width="13" height="13" />;
 				return <div key={row.key} role="listitem" className={`pd-loaded-session${active ? ' is-active' : ''}${row.hidden ? ' is-hidden-pane' : ''}`} data-loaded-kind={row.kind} data-loaded-path={row.path ?? undefined}>
-					<button type="button" className="pd-loaded-session-main" onClick={() => void open(row)} aria-current={active ? 'page' : undefined}>
-						<span className="pd-session-leading" aria-hidden="true">{row.busy ? <Icon name="loader" className="pd-session-spinner" width="13" height="13" /> : <Icon name={row.kind === 'pane' ? 'panelRight' : 'message'} width="13" height="13" />}</span>
+					<button type="button" className="pd-loaded-session-main" title={project ? `${project} › ${title}` : title} onClick={() => void open(row)} aria-current={active ? 'page' : undefined}>
+						<span className="pd-session-leading" role={indicator ? 'img' : undefined} aria-label={indicator?.label} aria-hidden={indicator ? undefined : true}>{leading}</span>
+						{project && <span className="pd-loaded-session-project">{project}</span>}
+						{project && <span className="pd-loaded-session-sep" aria-hidden="true">›</span>}
 						<span className="pd-loaded-session-title">{title}</span>
 						{row.kind === 'pane' && <span className="pd-loaded-session-badge">{t(row.hidden ? 'loaded.paneHidden' : 'loaded.pane')}</span>}
 					</button>
@@ -72,8 +84,8 @@ export function LoadedSessionsRegion({ titleFor, onNavigate }: { titleFor(path: 
 					</HoverTooltip>
 				</div>;
 			})}
-			{rows.length === 0 && <div className="pd-loaded-sessions-empty">{t(dropActive ? 'loaded.dropHere' : 'loaded.empty')}</div>}
-			{rows.length > 0 && dropActive && <div className="pd-loaded-sessions-empty">{t('loaded.dropHere')}</div>}
+			{rows.length === 0 && <div className="pd-session-empty pd-loaded-sessions-empty">{t(dropActive ? 'loaded.dropHere' : 'loaded.empty')}</div>}
+			{rows.length > 0 && dropActive && <div className="pd-session-empty pd-loaded-sessions-empty">{t('loaded.dropHere')}</div>}
 		</div>}
 	</section>;
 }

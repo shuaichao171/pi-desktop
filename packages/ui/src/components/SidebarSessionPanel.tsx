@@ -1274,7 +1274,7 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 		const isCollapsed = sectionLayout.collapsed.includes(id);
 		const height = sectionLayout.heights[id] ?? (id === 'unassigned-sessions' ? 170 : 240);
 		const heading = <button type="button" className="pd-sidebar-region-heading" aria-expanded={!isCollapsed} onClick={() => toggleRegion(id)}><Icon name="chevronRight" width="13" height="13" className={!isCollapsed ? 'is-expanded' : ''} /><span>{title}</span></button>;
-		return <section className={`pd-sidebar-region${isCollapsed ? ' is-collapsed' : ''}`} key={id} data-region-id={id} data-project-group-target={id === 'ungrouped-projects' ? '' : undefined} style={{ flex: isCollapsed ? '0 0 30px' : `1 1 ${height}px` }}>
+		return <section className={`pd-sidebar-region${isCollapsed ? ' is-collapsed' : ''}`} key={id} data-region-id={id} data-project-group-target={id === 'ungrouped-projects' ? '' : undefined} style={{ flex: isCollapsed ? '0 0 24px' : `1 1 ${height}px` }}>
 			<div className="pd-sidebar-region-heading-row">
 				{options?.hint ? <HoverTooltip title={options.hint} description={options.hintDetail} side="top" interactive={false}>{heading}</HoverTooltip> : heading}
 				{options?.actions && <div className="pd-sidebar-region-heading-actions">{options.actions}</div>}
@@ -1289,6 +1289,20 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 		const session = path ? sessionByPath.get(path) : undefined;
 		if (session) return titleOf(session);
 		return path ? path.split(/[\\/]/).pop()!.replace(/\.jsonl$/i, '') : t('loaded.newChat');
+	};
+	const loadedProjectName = (workspace: string) => (!workspace || isConversationWorkspace(workspace, conversationWorkspaces)) ? null : projectDisplayName(workspace);
+	const loadedIndicator = (path: string | null) => {
+		const session = path ? sessionByPath.get(path) : undefined;
+		if (!session) return null;
+		const phase = session.runtime?.phase ?? 'idle';
+		return phase === 'failed'
+			? { kind: 'failed' as const, label: session.runtime?.message ? `${copy.failed} · ${session.runtime.message}` : copy.failed }
+			: session.unread ? { kind: 'unread' as const, label: copy.unread }
+			: session.runtime?.subagentRunning ? { kind: 'subagents' as const, label: copy.subagents }
+			: phase === 'running' ? { kind: 'running' as const, label: copy.running }
+			: phase === 'waiting-input' || phase === 'waiting-approval'
+				? { kind: 'waiting' as const, label: session.runtime?.message ? `${copy[phase]} · ${session.runtime.message}` : copy[phase] }
+			: null;
 	};
 	const dragItem = drag?.item;
 	const ghostSession = dragItem?.kind === 'session' ? sessionByPath.get(dragItem.path) : null;
@@ -1315,7 +1329,7 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 			{dates.map(date => section(`archive:${date.id}`, t(`sidebar.${date.id}`), date.sessions.slice(0, limitOf(`archive:${date.id}`)).map(session => renderSession(session, null)), { icon: 'clock' }))}
 			{!dates.length && <div className="pd-session-empty">{t(loadingSessions ? 'sidebar.loading' : 'sidebar.noArchived')}</div>}
 		</div> : <div className="pd-sidebar-regions" ref={scrollRef}>
-			{bridge?.loadSession && <LoadedSessionsRegion titleFor={loadedTitle} onNavigate={onNavigate} />}
+			{bridge?.loadSession && <LoadedSessionsRegion titleFor={loadedTitle} projectNameFor={loadedProjectName} indicatorFor={loadedIndicator} onNavigate={onNavigate} />}
 			{(loadingSessions) && sessions.length > 0 && <div className="pd-session-loading-hint" role="status"><Icon name="loader" className="pd-session-spinner" width="14" height="14" />{t('sidebar.refreshing')}</div>}
 			{regionVisible('project-groups') && region('project-groups', t('sidebar.groups'), <>
 				{projectOrganization.groups.map(group => {
@@ -1494,11 +1508,11 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 				{menuItem({ icon: 'panelRight', label: t('sidebar.openIn'), shortcut: 'O', submenu: 'open' })}
 				<hr />
 				{menuItem({ icon: 'pin', label: t(popup.session.pinned ? 'sidebar.unpin' : 'sidebar.pin'), shortcut: 'P', onSelect: () => { const s = popup.session; sessionAction(s, popup.anchor, () => updateSessionMeta(s.path, { pinned: !s.pinned })); } })}
-				{menuItem({ icon: 'message', label: t(popup.session.unread ? 'sidebar.markRead' : 'sidebar.markUnread'), shortcut: 'U', onSelect: () => { const s = popup.session; sessionAction(s, popup.anchor, () => updateSessionMeta(s.path, s.unread ? { unread: false, expectedUnreadAt: s.unreadAt } : { unread: true })); } })}
+				{menuItem({ icon: 'messageDot', label: t(popup.session.unread ? 'sidebar.markRead' : 'sidebar.markUnread'), shortcut: 'U', onSelect: () => { const s = popup.session; sessionAction(s, popup.anchor, () => updateSessionMeta(s.path, s.unread ? { unread: false, expectedUnreadAt: s.unreadAt } : { unread: true })); } })}
 				{bridge?.loadSession && (() => {
 					const s = popup.session;
 					const loaded = loadedMain.some((entry) => entry.path === s.path);
-					return menuItem({ icon: 'layers', label: t(loaded ? 'sidebar.unloadSession' : 'sidebar.loadSession'), shortcut: 'L', onSelect: () => { setPopup(null); void (loaded ? unloadSessionFromMain(s.path) : loadSessionIntoMain(s.workspace, s.path)); } });
+					return menuItem({ icon: 'dockTop', label: t(loaded ? 'sidebar.unloadSession' : 'sidebar.loadSession'), shortcut: 'L', onSelect: () => { setPopup(null); void (loaded ? unloadSessionFromMain(s.path) : loadSessionIntoMain(s.workspace, s.path)); } });
 				})()}
 				{menuItem({ icon: 'pencil', label: t('sidebar.rename'), shortcut: 'R', onSelect: () => { renameCancelled.current = false; setRenaming(popup.session.path); setRenameDraft(titleOf(popup.session)); setPopup(null); } })}
 				{menuItem({ icon: 'gitBranch', label: t('sidebar.fork'), shortcut: 'F', disabled: !bridge?.forkSession || navigating || sessionBusy(popup.session), onSelect: () => forkFromMenu(popup.session) })}

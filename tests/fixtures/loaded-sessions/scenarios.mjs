@@ -70,7 +70,7 @@ export default async function loadedSessionsScenarios(review) {
   // Right-click → 加载到已加载会话.
   const first = await center(rowOf('调研登录流程'));
   await review.rightClick(first.x, first.y);
-  await review.clickText('[role="menuitem"]', '加载到已加载会话');
+  await review.clickText('[role="menuitem"]', '加载到「已加载的会话」');
   await review.waitFor(`${loadedTitles}.includes('调研登录流程')`);
   await review.assert(`window.__loadedReview.loads.length === 1 && window.__loadedReview.loads[0].endsWith('login-flow.jsonl')`, 'Loading from the menu asks the main agent to keep the conversation warm');
 
