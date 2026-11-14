@@ -86,8 +86,11 @@
 .pd-result-file-preview-body.is-markdown .hljs-code { color: var(--pd-monokai-yellow); }
 .pd-result-file-preview-body.is-markdown .pd-md-fence-marker { color: var(--pd-monokai-comment); }
 .pd-result-file-preview-body.is-markdown .hljs-string { color: var(--pd-monokai-blue); }
-.pd-result-file-preview-body.is-markdown .hljs-link { color: var(--pd-monokai-purple); text-decoration: underline; }
-.pd-result-file-preview-body.is-markdown .hljs-symbol { color: var(--pd-monokai-blue); }
+.pd-result-file-preview-body.is-markdown .hljs-link { color: var(--pd-monokai-blue); text-decoration: underline; }
+.pd-result-file-preview-body.is-markdown .hljs-symbol { color: var(--pd-monokai-green); }
+.pd-result-file-preview-body.is-markdown .pd-md-strike { color: var(--pd-monokai-comment); text-decoration: line-through; }
+.pd-result-file-preview-body.is-markdown .pd-md-mark { color: var(--pd-monokai-orange); background: color-mix(in srgb, var(--pd-monokai-orange) 22%, transparent); }
+.pd-result-file-preview-body.is-markdown .pd-md-break { color: var(--pd-monokai-comment); }
 /* Code inside fenced blocks and inline HTML */
 .pd-result-file-preview-body.is-markdown :is(.hljs-keyword, .hljs-selector-tag, .hljs-tag, .hljs-name, .hljs-operator) { color: var(--pd-monokai-pink); }
 .pd-result-file-preview-body.is-markdown .pd-md-fence :is(.hljs-string, .hljs-regexp, .hljs-template-tag) { color: var(--pd-monokai-yellow); }
