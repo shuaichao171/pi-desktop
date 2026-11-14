@@ -9,6 +9,8 @@ import { HoverTooltip } from './HoverTooltip';
 import { Icon } from './Icons';
 import './loadedSessions.css';
 
+export type LoadedSessionIndicator = { kind: 'failed' | 'unread' | 'subagents' | 'running' | 'waiting'; label: string } | null;
+
 interface Row { key: string; kind: 'main' | 'pane'; cwd: string; path: string | null; paneId?: number; hidden?: boolean; busy: boolean }
 
 /**
@@ -16,7 +18,7 @@ interface Row { key: string; kind: 'main' | 'pane'; cwd: string; path: string | 
  * window — loaded main-window conversations and all split panes (shown or hidden). It is
  * also a drop target: dragging a sidebar conversation here loads it.
  */
-export function LoadedSessionsRegion({ titleFor, projectNameFor, unreadFor, onNavigate }: { titleFor(path: string | null): string; projectNameFor?(cwd: string): string | null; unreadFor?(path: string | null): boolean; onNavigate(): void }) {
+export function LoadedSessionsRegion({ titleFor, projectNameFor, indicatorFor, onNavigate }: { titleFor(path: string | null): string; projectNameFor?(cwd: string): string | null; indicatorFor?(path: string | null): LoadedSessionIndicator; onNavigate(): void }) {
 	const { t } = useT();
 	const { main, panes } = useLoadedSessions();
 	const drag = useSessionDrag();
@@ -60,10 +62,15 @@ export function LoadedSessionsRegion({ titleFor, projectNameFor, unreadFor, onNa
 				const active = row.kind === 'main' && row.path === currentPath;
 				const title = titleFor(row.path);
 				const project = projectNameFor?.(row.cwd) ?? null;
-				const unread = Boolean(unreadFor?.(row.path));
+				const indicator = indicatorFor?.(row.path) ?? null;
+				const leading = (indicator?.kind === 'running' || (!indicator && row.busy))
+					? <Icon name="loader" className="pd-session-spinner" width="13" height="13" />
+					: indicator
+						? <span className={`pd-session-indicator is-${indicator.kind}`} />
+						: <Icon name={row.kind === 'pane' ? 'panelRight' : 'message'} width="13" height="13" />;
 				return <div key={row.key} role="listitem" className={`pd-loaded-session${active ? ' is-active' : ''}${row.hidden ? ' is-hidden-pane' : ''}`} data-loaded-kind={row.kind} data-loaded-path={row.path ?? undefined}>
 					<button type="button" className="pd-loaded-session-main" title={project ? `${project} › ${title}` : title} onClick={() => void open(row)} aria-current={active ? 'page' : undefined}>
-						<span className="pd-session-leading" aria-hidden="true">{unread ? <span className="pd-session-indicator is-unread" /> : row.busy ? <Icon name="loader" className="pd-session-spinner" width="13" height="13" /> : <Icon name={row.kind === 'pane' ? 'panelRight' : 'message'} width="13" height="13" />}</span>
+						<span className="pd-session-leading" role={indicator ? 'img' : undefined} aria-label={indicator?.label} aria-hidden={indicator ? undefined : true}>{leading}</span>
 						{project && <span className="pd-loaded-session-project">{project}</span>}
 						{project && <span className="pd-loaded-session-sep" aria-hidden="true">›</span>}
 						<span className="pd-loaded-session-title">{title}</span>

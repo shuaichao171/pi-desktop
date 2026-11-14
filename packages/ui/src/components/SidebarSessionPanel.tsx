@@ -1291,7 +1291,19 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 		return path ? path.split(/[\\/]/).pop()!.replace(/\.jsonl$/i, '') : t('loaded.newChat');
 	};
 	const loadedProjectName = (workspace: string) => (!workspace || isConversationWorkspace(workspace, conversationWorkspaces)) ? null : projectDisplayName(workspace);
-	const loadedUnread = (path: string | null) => Boolean(path && sessionByPath.get(path)?.unread);
+	const loadedIndicator = (path: string | null) => {
+		const session = path ? sessionByPath.get(path) : undefined;
+		if (!session) return null;
+		const phase = session.runtime?.phase ?? 'idle';
+		return phase === 'failed'
+			? { kind: 'failed' as const, label: session.runtime?.message ? `${copy.failed} · ${session.runtime.message}` : copy.failed }
+			: session.unread ? { kind: 'unread' as const, label: copy.unread }
+			: session.runtime?.subagentRunning ? { kind: 'subagents' as const, label: copy.subagents }
+			: phase === 'running' ? { kind: 'running' as const, label: copy.running }
+			: phase === 'waiting-input' || phase === 'waiting-approval'
+				? { kind: 'waiting' as const, label: session.runtime?.message ? `${copy[phase]} · ${session.runtime.message}` : copy[phase] }
+			: null;
+	};
 	const dragItem = drag?.item;
 	const ghostSession = dragItem?.kind === 'session' ? sessionByPath.get(dragItem.path) : null;
 	const ghostGroup = dragItem?.kind === 'group' ? groups.find((group) => group.id === dragItem.id) : null;
@@ -1317,7 +1329,7 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 			{dates.map(date => section(`archive:${date.id}`, t(`sidebar.${date.id}`), date.sessions.slice(0, limitOf(`archive:${date.id}`)).map(session => renderSession(session, null)), { icon: 'clock' }))}
 			{!dates.length && <div className="pd-session-empty">{t(loadingSessions ? 'sidebar.loading' : 'sidebar.noArchived')}</div>}
 		</div> : <div className="pd-sidebar-regions" ref={scrollRef}>
-			{bridge?.loadSession && <LoadedSessionsRegion titleFor={loadedTitle} projectNameFor={loadedProjectName} unreadFor={loadedUnread} onNavigate={onNavigate} />}
+			{bridge?.loadSession && <LoadedSessionsRegion titleFor={loadedTitle} projectNameFor={loadedProjectName} indicatorFor={loadedIndicator} onNavigate={onNavigate} />}
 			{(loadingSessions) && sessions.length > 0 && <div className="pd-session-loading-hint" role="status"><Icon name="loader" className="pd-session-spinner" width="14" height="14" />{t('sidebar.refreshing')}</div>}
 			{regionVisible('project-groups') && region('project-groups', t('sidebar.groups'), <>
 				{projectOrganization.groups.map(group => {
