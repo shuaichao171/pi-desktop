@@ -16,6 +16,13 @@
 !define PAI_MANAGED_VALUE "app.pidesktop.desktop"
 !define PAI_MANAGED_VALUE_LEGACY "dev.pidesktop.app"
 
+; A missing InstallLocation in the uninstall key makes later silent updates
+; (--updated /S, no /D) fall back to the default %LOCALAPPDATA%\Programs dir and
+; strand a second copy beside the original custom directory. Write the real
+; directory every install so upgrades always rediscover it.
+!macro customInstall
+  WriteRegStr SHCTX "${UNINSTALL_REGISTRY_KEY}" "InstallLocation" "$INSTDIR"
+!macroend
 !macro customInstall
   !if "${PRODUCT_NAME}" == "Pi Desktop"
     Push $0
