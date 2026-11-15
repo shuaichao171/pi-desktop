@@ -10,6 +10,7 @@ import {
   createSidebarSectionRegistry,
   groupSidebarProjects,
   groupSessionsByDate,
+  isSessionOngoingOrUnread,
   mergeSidebarProjectOrder,
   moveProjectToGroupPosition,
   normalizeSidebarProjectGroups,
@@ -24,6 +25,7 @@ import {
   saveSidebarSectionLayout,
   savePinnedProjects,
   selectSidebarSessions,
+  selectProjectSessionRows,
   sidebarProjectPaths,
   sidebarWorkspaceKey,
   splitSidebarProjects,
@@ -36,6 +38,41 @@ const session = (path, overrides = {}) => ({
 const paths = (sessions) => sessions.map((entry) => entry.path);
 const selectActive = (sessions, overrides = {}) => selectSidebarSessions(sessions, {
   archived: false, filter: 'all', sort: 'newest', ...overrides,
+});
+
+test('folded projects retain ongoing work and unread results until they are settled and read', () => {
+  const rows = [
+    session('ordinary'),
+    session('running', { runtime: { phase: 'running' } }),
+    session('waiting', { runtime: { phase: 'waiting-input' } }),
+    session('approval', { runtime: { phase: 'waiting-approval' } }),
+    session('children', { runtime: { phase: 'idle', subagentRunning: true } }),
+    session('unread', { unread: true }),
+    session('pinned-unread', { pinned: true, unread: true }),
+    session('failed', { runtime: { phase: 'failed' } }),
+    session('pinned', { pinned: true }),
+  ];
+  const visible = entries => selectProjectSessionRows(entries, { collapsed: true, limit: 5 });
+  assert.deepEqual(paths(visible(rows)), ['running', 'waiting', 'approval', 'children', 'unread', 'pinned-unread']);
+  const finished = rows.map(row => row.path === 'running' ? { ...row, runtime: { phase: 'idle' }, unread: true } : row);
+  assert.ok(paths(visible(finished)).includes('running'), 'an unread result remains visible when its run ends');
+  const read = finished.map(row => row.path === 'running' ? { ...row, unread: false } : row);
+  assert.ok(!paths(visible(read)).includes('running'), 'viewing the finished result restores the project fold');
+  assert.equal(isSessionOngoingOrUnread(session('idle')), false);
+  assert.deepEqual(visible([session('idle')]), []);
+});
+
+test('project pages never hide attention rows or count them against ordinary pagination', () => {
+  const ordinary = Array.from({ length: 7 }, (_, index) => session(`ordinary-${index}`));
+  const rows = [ordinary[0], session('running', { runtime: { phase: 'running' } }), ...ordinary.slice(1), session('old-unread', { unread: true })];
+  const before = structuredClone(rows);
+  const firstPage = selectProjectSessionRows(rows, { collapsed: false, limit: 5 });
+  assert.deepEqual(paths(firstPage), ['ordinary-0', 'running', 'ordinary-1', 'ordinary-2', 'ordinary-3', 'ordinary-4', 'old-unread']);
+  assert.equal(rows.length - firstPage.length, 2, 'the show-more count includes only actually hidden rows');
+  assert.deepEqual(paths(selectProjectSessionRows(rows, { collapsed: false, limit: 10 })), paths(rows));
+  assert.deepEqual(rows, before, 'rendering neither reorders rows nor changes their unread/runtime metadata');
+  const filtered = selectActive([session('archived-unread', { archived: true, unread: true }), ...rows], { filter: 'unread' });
+  assert.deepEqual(paths(selectProjectSessionRows(filtered, { collapsed: true, limit: 5 })), ['old-unread'], 'fold exceptions respect archive and explicit list filters');
 });
 
 test('project groups persist independently, preserve empty groups, and normalize path aliases', () => {

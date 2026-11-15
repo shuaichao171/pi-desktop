@@ -327,6 +327,19 @@ export function selectSidebarSessions(
     .map(({ session }) => session);
 }
 
+/** Running work and unseen results stay reachable when their project is folded. */
+export function isSessionOngoingOrUnread(session: UiSessionSummary): boolean {
+  const phase = session.runtime?.phase;
+  return Boolean(session.unread || session.runtime?.subagentRunning
+    || phase === 'running' || phase === 'waiting-input' || phase === 'waiting-approval');
+}
+
+/** Keep the existing order; pagination applies only to ordinary conversations. */
+export function selectProjectSessionRows(sessions: SidebarSession[], options: { collapsed: boolean; limit: number }): SidebarSession[] {
+  let ordinary = 0;
+  return sessions.filter(session => isSessionOngoingOrUnread(session) || (!options.collapsed && ordinary++ < options.limit));
+}
+
 export function buildSidebarGroups(sessions: SidebarSession[], groups: UiSessionGroup[]): {
   pinned: SidebarSession[];
   groups: { id: string; name: string; sessions: SidebarSession[] }[];

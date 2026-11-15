@@ -24,8 +24,13 @@ function installSidebarRuntimeFixture() {
   bridge.getDefaultWorkspace = async () => home;
   bridge.listWorkspaces = async () => clone(state.workspaces);
   bridge.listSessions = async cwd => clone(rows[cwd] ?? []);
+  bridge.listSessionsPage = async (cwd, offset, limit) => {
+    const entries = rows[cwd] ?? [];
+    return { sessions: clone(entries.slice(offset, offset + limit)), total: entries.length, hasMore: offset + limit < entries.length, revision: 1 };
+  };
   bridge.listSessionGroups = async () => [];
   bridge.listPinnedWorkspaces = async () => [];
+  bridge.sessionPreview = async () => null;
   const runningRun = { id: 'run-1', startedAt: Date.now() - 45000, finishedAt: null, status: 'running' };
   Object.assign(fixture.snapshot, {
     cwd: home, sessionId: 'running', sessionPath: rows[home][1].path, status: 'busy',
@@ -71,12 +76,12 @@ export default async function sidebarRuntimeScenarios(review) {
   await check(await rowProp('已完成的对话', `getComputedStyle(item.querySelector('.pd-session-pin')).opacity === '1'`), 'Hovering a row reveals the left pin action');
   await review.screenshot('sidebar-runtime-hover-pin');
   await review.mouseMove(900, 500);
-  // Hovering a conversation row must not open the right-side hover tooltip anymore.
+  // Row previews are lazy and still show the title when no summary is available.
   const rowCenter = await review.evaluate(`(() => { const item = ${rowOf('已完成的对话')}; const box = item.getBoundingClientRect(); return { x: Math.round(box.x + box.width / 2), y: Math.round(box.y + box.height / 2) }; })()`);
   await review.mouseMove(rowCenter.x, rowCenter.y);
-  await review.waitFor(`Date.now() > ${Date.now() + 450}`);
-  await check(await review.evaluate(`document.querySelector('.pd-hover-tooltip') === null`), 'Hovering a conversation row no longer opens the right-side tooltip');
-  await review.screenshot('sidebar-runtime-row-hover-no-tooltip');
+  await review.waitFor(`document.querySelector('.pd-hover-tooltip')?.textContent.includes('已完成的对话')`);
+  await check(await review.evaluate(`!document.querySelector('.pd-hover-tooltip .pd-session-preview')`), 'A conversation without a loaded summary keeps a title-only hover preview');
+  await review.screenshot('sidebar-runtime-row-hover-preview');
   await review.mouseMove(900, 500);
   // Project view keeps the same row vocabulary.
   await review.waitFor(`document.querySelectorAll('.pd-sidebar-group[data-project-path]').length > 0`);

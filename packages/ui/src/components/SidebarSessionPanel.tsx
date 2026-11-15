@@ -20,7 +20,7 @@ import { SessionDeleteDialog } from './SessionDeleteDialog';
 import { SessionBulkDeleteDialog, type SessionDeleteTarget } from './SessionBulkDeleteDialog';
 import { ProjectCreationDialog } from './ProjectCreationDialog';
 import { ProjectRemovalDialog, type ProjectRemovalSummary } from './ProjectRemovalDialog';
-import { assignProjectToGroup, buildSidebarGroups, buildSidebarProjectGroups, clearPinnedProjects, collectSidebarSessions, groupSidebarProjects, groupSessionsByDate, mergeSidebarProjectOrder, moveProjectToGroupPosition, orderSidebarProjects, readPinnedProjects, readSidebarPreferences, readSidebarProjectGroups, readSidebarSectionLayout, reorderSidebarProjectPositions, saveSidebarPreferences, saveSidebarProjectGroups, saveSidebarSectionLayout, selectSidebarSessions, sidebarProjectPaths, sidebarWorkspaceKey, splitSidebarProjects, type SidebarPreferences, type SidebarSession } from '../sidebarOrganization';
+import { assignProjectToGroup, buildSidebarGroups, buildSidebarProjectGroups, clearPinnedProjects, collectSidebarSessions, groupSidebarProjects, groupSessionsByDate, mergeSidebarProjectOrder, moveProjectToGroupPosition, orderSidebarProjects, readPinnedProjects, readSidebarPreferences, readSidebarProjectGroups, readSidebarSectionLayout, reorderSidebarProjectPositions, saveSidebarPreferences, saveSidebarProjectGroups, saveSidebarSectionLayout, selectProjectSessionRows, selectSidebarSessions, sidebarProjectPaths, sidebarWorkspaceKey, splitSidebarProjects, type SidebarPreferences, type SidebarSession } from '../sidebarOrganization';
 import { HoverTooltip } from './HoverTooltip';
 import { SESSION_PREVIEW_OPEN_DELAY_MS, SessionHoverPreview } from './SessionHoverPreview';
 import { Icon, type IconName } from './Icons';
@@ -899,10 +899,9 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 	function showMoreSessions(key: string) {
 		setSectionLimits((current) => ({ ...current, [key]: (current[key] ?? SECTION_PAGE_SIZE) + SECTION_PAGE_SIZE }));
 	}
-	function moreButton(key: string, total: number) {
-		const limit = limitOf(key);
-		if (total <= limit) return null;
-		return <button type="button" className="pd-session-more" onClick={() => showMoreSessions(key)}>{t('sidebar.showMore', { count: String(total - limit) })}</button>;
+	function moreButton(key: string, total: number, shown = limitOf(key)) {
+		if (total <= shown) return null;
+		return <button type="button" className="pd-session-more" onClick={() => showMoreSessions(key)}>{t('sidebar.showMore', { count: String(total - shown) })}</button>;
 	}
 	function toggleAll() {
 		setSectionLayout(current => ({ ...current, collapsed: allExpanded ? [...new Set([...current.collapsed, ...sectionKeys])] : current.collapsed.filter(key => !sectionKeys.includes(key)) }));
@@ -1082,15 +1081,19 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 		return <div className={`pd-session-item${alternateViewOpen ? '' : ' is-active'} is-unsaved`}><button type="button" className="pd-session-row" onClick={onNavigate} aria-current={alternateViewOpen ? undefined : 'page'}><span className="pd-session-leading" aria-hidden="true" /><span className="pd-session-copy">{unsavedTitle ? <SidebarSessionTitle title={unsavedTitle} /> : <strong className="pd-session-unsaved-title">{t('sidebar.unnamed')}</strong>}</span></button></div>;
 	}
 	function renderProject(workspace: string) {
+		const key = projectKey(workspace);
 		const items = projectByWorkspace.get(workspace)?.sessions ?? [];
-		return section(projectKey(workspace), projectDisplayName(workspace), <>
-			{showUnsaved && workspace === unsavedProject && unsaved()}
-			{items.slice(0, limitOf(projectKey(workspace))).map(session => renderSession(session, null))}
-			{moreButton(projectKey(workspace), items.length)}
-			{!items.length && !(showUnsaved && workspace === unsavedProject) && workspaceRequests[workspace]?.phase !== 'error' && <div className="pd-session-empty">{t(!workspaceRequests[workspace] || workspaceRequests[workspace]?.phase === 'loading' ? 'sidebar.loading' : filtered ? 'sidebar.noMatches' : 'sidebar.noSessions')}</div>}
-		</>, { icon: 'box', workspace });
+		const expanded = !collapsed.has(key);
+		const rows = selectProjectSessionRows(items, { collapsed: !expanded, limit: limitOf(key) });
+		const showDraft = showUnsaved && workspace === unsavedProject && (expanded || status === 'busy' || status === 'starting');
+		return section(key, projectDisplayName(workspace), <>
+			{showDraft && unsaved()}
+			{rows.map(session => renderSession(session, null))}
+			{expanded && moreButton(key, items.length, rows.length)}
+			{expanded && !items.length && !showDraft && workspaceRequests[workspace]?.phase !== 'error' && <div className="pd-session-empty">{t(!workspaceRequests[workspace] || workspaceRequests[workspace]?.phase === 'loading' ? 'sidebar.loading' : filtered ? 'sidebar.noMatches' : 'sidebar.noSessions')}</div>}
+		</>, { icon: 'box', workspace, keepContentVisible: rows.length > 0 || showDraft });
 	}
-	function section(key: string, name: string, content: ReactNode, options: { icon?: 'hash' | 'folder' | 'pin' | 'clock' | 'box' | 'layers'; group?: UiSessionGroup; workspace?: string } = {}) {
+	function section(key: string, name: string, content: ReactNode, options: { icon?: 'hash' | 'folder' | 'pin' | 'clock' | 'box' | 'layers'; group?: UiSessionGroup; workspace?: string; keepContentVisible?: boolean } = {}) {
 		const aggregate = summarizeSessionStates(options.workspace ? allSessions.filter((session) => session.workspace === options.workspace && !session.archived) : options.group ? allSessions.filter((session) => options.group!.sessionPaths.includes(session.path) && !session.archived) : []);
 		const aggregateLabel = (Object.entries(aggregate) as [keyof typeof aggregate, number][]).filter(([, value]) => value > 0).map(([kind, value]) => `${copy[kind]} ${value}`).join(' · ');
 		const dragItem = drag?.item;
@@ -1130,7 +1133,7 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 				}}><Icon name="plus" width="14" height="14" /></button></HoverTooltip>}
 				{options.workspace && <HoverTooltip title={t('sidebar.projectActions')} side="right"><button type="button" className="pd-icon-button pd-group-more" aria-label={t('sidebar.projectMenuLabel', { name })} aria-haspopup="menu" aria-expanded={popup?.kind === 'project' && popup.workspace === options.workspace} onClick={(event) => { const current = popupRef.current; setPopup(current?.kind === 'project' && current.workspace === options.workspace ? null : { kind: 'project', anchor: event.currentTarget, trigger: event.currentTarget, workspace: options.workspace! }); }}><Icon name="more" width="15" height="15" /></button></HoverTooltip>}
 			</div>
-			{expanded && <div className="pd-sidebar-group-content" data-drag-container={droppable ? key : undefined}>{content}{droppable && drag && <div className="pd-session-drop-zone" data-drag-footer />}</div>}
+			{(expanded || options.keepContentVisible) && <div className="pd-sidebar-group-content" data-drag-container={droppable ? key : undefined}>{content}{droppable && drag && <div className="pd-session-drop-zone" data-drag-footer />}</div>}
 		</section>;
 	}
 	const iconButton = (label: string, icon: Parameters<typeof Icon>[0]['name'], onClick: (element: HTMLButtonElement) => void, extra: { disabled?: boolean; active?: boolean; expanded?: boolean; dot?: boolean } = {}) => <HoverTooltip title={label}><button type="button" className={`pd-icon-button${extra.active ? ' is-active' : ''}${extra.dot ? ' has-dot' : ''}`} aria-label={label} disabled={extra.disabled} aria-pressed={extra.active === undefined ? undefined : extra.active} aria-expanded={extra.expanded} onClick={(event) => onClick(event.currentTarget)}><Icon name={icon} width="15" height="15" /></button></HoverTooltip>;

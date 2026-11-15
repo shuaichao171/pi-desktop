@@ -18,6 +18,10 @@ function installSidebarProjectsFixture(saved) {
   bridge.listConversationWorkspaces = async () => [defaultWorkspace, ...state.conversationWorkspaces];
   bridge.listWorkspaces = async () => clone(state.workspaces);
   bridge.listSessions = async cwd => clone(state.rows[cwd] ?? []);
+  bridge.listSessionsPage = async (cwd, offset, limit) => {
+    const entries = state.rows[cwd] ?? [];
+    return { sessions: clone(entries.slice(offset, offset + limit)), total: entries.length, hasMore: offset + limit < entries.length, revision: 1 };
+  };
   bridge.listSessionGroups = async () => clone(state.groups);
   bridge.listPinnedWorkspaces = async () => clone(state.pinned);
   bridge.setPinnedWorkspaces = async paths => { state.writes.push({ kind: 'pins', paths: clone(paths) }); state.pinned = clone(paths); return clone(paths); };
