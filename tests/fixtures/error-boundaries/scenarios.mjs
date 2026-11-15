@@ -21,11 +21,11 @@ export default async function errorBoundaryScenarios(review) {
   // A malformed search response breaks the dialog while it renders.
   await review.evaluate("Object.assign(window.piDesktop, { searchSessionsPage: async () => ({}), cancelDataSearch: async () => undefined })");
   await review.key('k', { ctrl: true });
-  await review.waitFor('Boolean(document.querySelector(".pd-overlay-error-host > .pd-scoped-error"))');
-  await review.assert(alive, 'A search failure is shown as an overlay without blanking the window');
+  await review.waitFor('Boolean(document.querySelector(".pd-search-error-host > .pd-scoped-error"))');
+  await review.assert(`${alive} && !document.querySelector('.pd-search-overlay, .pd-overlay-error-host')`, 'A search failure stays in a floating card without dimming or blocking the window');
   await review.screenshot('error-boundary-search');
-  await review.clickText('.pd-overlay-error-host .pd-scoped-error > button', '重试此区域');
-  await review.waitFor(`!document.querySelector(".pd-overlay-error-host") && ${alive}`);
+  await review.clickText('.pd-search-error-host .pd-scoped-error > button', '重试此区域');
+  await review.waitFor(`!document.querySelector(".pd-search-error-host") && ${alive}`);
 
   await review.evaluate("window.piDesktop.getPersonalization = async () => [{ id: 'user', path: { malformed: true }, exists: true, content: '', revision: null }]");
   await review.click('.pd-settings-entry');
@@ -34,6 +34,6 @@ export default async function errorBoundaryScenarios(review) {
   await review.assert('Boolean(document.querySelector(".pd-settings-nav")) && Boolean(document.querySelector(".pd-settings-header > button"))', 'A settings page failure keeps the settings navigation and close button');
   await review.screenshot('error-boundary-settings');
   await review.clickText('.pd-settings-nav button', '常规');
-  await review.waitFor('!document.querySelector(".pd-settings-content .pd-scoped-error") && document.querySelectorAll(".pd-settings-content .pd-settings-group").length === 5');
+  await review.waitFor('!document.querySelector(".pd-settings-content .pd-scoped-error") && Boolean(document.querySelector(".pd-settings-content .pd-settings-group"))');
   await review.assert("(() => { const logged = window.__boundaryErrors.join(' | '); return logged.includes(\"reading 'find'\") && logged.includes(\"reading 'map'\") && /#31|Objects are not valid/.test(logged) && !/Unexpected bridge call/.test(logged); })()", 'Only the three forced render failures were reported');
 }

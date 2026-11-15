@@ -31,6 +31,7 @@ export const AGENT_HOST_METHODS = [
 	'activateResidentSession',
 	'getHistoryPage',
 	'getMessageAttachment',
+	'getToolResultImage',
 	'getSessionStats',
 	'exportSession',
 	'getSessionTree',

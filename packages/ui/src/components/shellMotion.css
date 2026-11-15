@@ -4,7 +4,7 @@
 }
 .pd-app-shell.is-sidebar-resizing > .pd-sidebar { transition: none; }
 .pd-app-shell.is-sidebar-resizing { cursor: col-resize; user-select: none; }
-.pd-sidebar .pd-sidebar-session-content { display: flex; flex: 1; flex-direction: column; min-height: 0; margin-top: 10px; }
+.pd-sidebar .pd-sidebar-session-content { display: flex; flex: 1; flex-direction: column; min-height: 0; }
 .pd-sidebar.is-collapsed .pd-sidebar-session-content { margin-top: 0; visibility: hidden; pointer-events: none; }
 
 .pd-app-shell > .pd-workbench {
@@ -73,7 +73,7 @@
   .pd-app-shell > .pd-workbench {
     --pd-workbench-size: min(var(--pd-workbench-width, 420px), calc(100vw - 24px));
     position: absolute;
-    top: 56px;
+    top: var(--pd-top-bar-height, 56px);
     bottom: 0;
     right: 0;
     z-index: var(--pd-z-panel);

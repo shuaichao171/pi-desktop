@@ -16,9 +16,9 @@ export default async function activityBarScenarios(review) {
 
   // The window-wide top bar spans everything, including the rail.
   await review.waitFor(`Boolean(${topBar})`);
-  const barGeometry = await review.evaluate(`(() => { const t = ${topBar}.getBoundingClientRect(); const r = ${rail}.getBoundingClientRect(); return { topWidth: t.width, topLeft: t.left, railTop: r.top, brandFirst: ${topBar}.querySelector(".pd-brand-mark")?.getBoundingClientRect().left ?? -1 }; })()`);
+  const barGeometry = await review.evaluate(`(() => { const t = ${topBar}.getBoundingClientRect(); const r = ${rail}.getBoundingClientRect(); return { topWidth: t.width, topLeft: t.left, topBottom: t.bottom, railTop: r.top, brandFirst: ${topBar}.querySelector(".pd-brand-mark")?.getBoundingClientRect().left ?? -1 }; })()`);
   await check(barGeometry.topWidth >= 1400 && barGeometry.topLeft <= 4, 'Top bar spans the window above all panels');
-  await check(barGeometry.railTop >= barGeometry.topWidth * 0 + 44 && barGeometry.railTop <= 56, 'Activity bar starts below the top bar');
+  await check(Math.abs(barGeometry.railTop - barGeometry.topBottom) < 1, 'Activity bar starts directly below the top bar');
   await check(barGeometry.brandFirst >= 0 && barGeometry.brandFirst <= 24, 'Brand mark sits at the far left of the top bar');
   await check(await review.evaluate('document.querySelectorAll(".pd-brand-mark").length === 1'), 'Only the top bar owns the brand mark');
   await check(await review.evaluate('document.querySelectorAll(".pd-window-controls").length <= 1'), 'Window controls are mounted once');
@@ -77,4 +77,9 @@ export default async function activityBarScenarios(review) {
   await review.click('.pd-activity-sessions');
   await review.waitFor(`!${sidebar}.classList.contains("is-collapsed")`);
   await check(await review.evaluate(`document.querySelector(".pd-sidebar").getBoundingClientRect().width > 100`), 'Sessions toggle restores the sidebar pane');
+
+  await review.viewport(540, 820);
+  if (!await review.evaluate(`${sidebar}.classList.contains("is-open")`)) await review.click('.pd-activity-sessions');
+  await review.assert(`(() => { const bar=${topBar}.getBoundingClientRect(); const pane=${sidebar}.getBoundingClientRect(); const heading=document.querySelector('.pd-sidebar-organize-toolbar').getBoundingClientRect(); return Math.abs(pane.top-bar.bottom)<1 && Math.abs(heading.top-pane.top)<1 && Math.abs(heading.height-24)<1; })()`, 'The narrow sidebar and its compact project heading begin directly below the top bar');
+  await review.screenshot('activity-bar-compact-narrow');
 }

@@ -258,6 +258,7 @@ const bridge: AgentBridge = {
 	recordUiDiagnostic: (event) => invoke(IPC_CHANNELS.uiDiagnostic, event),
 	getHistoryPage: (offset, limit) => invoke(IPC_CHANNELS.agentHistoryPage, offset, limit),
 	getMessageAttachment: (sessionPath, messageId, index) => invoke(IPC_CHANNELS.agentMessageAttachment, sessionPath, messageId, index),
+	getToolResultImage: (sessionPath, toolCallId, index) => invoke(IPC_CHANNELS.agentToolResultImage, sessionPath, toolCallId, index),
 	getSessionStats: () => invoke(IPC_CHANNELS.agentSessionStats),
 	exportSession: (format) => invoke(IPC_CHANNELS.agentExportSession, format),
 	getSessionTree: () => invoke(IPC_CHANNELS.agentSessionTree),

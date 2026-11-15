@@ -36,7 +36,7 @@ select option { background: var(--pd-surface); color: var(--pd-text); }
 
 /* ---- Light mode surfaces --------------------------------------------------- */
 /* Backdrops dim with a cool, light veil plus a soft blur instead of a muddy grey. */
-:root[data-theme='light'] :is(.pd-settings-overlay, .pd-search-overlay, .pd-commit-backdrop, .pd-overlay-error-host:has(> .pd-scoped-error)) { backdrop-filter: blur(2px); }
+:root[data-theme='light'] :is(.pd-settings-overlay, .pd-commit-backdrop, .pd-overlay-error-host:has(> .pd-scoped-error)) { backdrop-filter: blur(2px); }
 :root[data-theme='light'] dialog::backdrop { backdrop-filter: blur(2px); }
 /* A dialog opened over settings (portaled to body) must not double the dimming. */
 :root[data-theme]:has(.pd-settings-overlay) dialog::backdrop { background: color-mix(in srgb, var(--pd-overlay) 45%, transparent); backdrop-filter: none; }

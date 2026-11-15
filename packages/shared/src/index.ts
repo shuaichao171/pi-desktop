@@ -95,6 +95,7 @@ export const IPC_CHANNELS = {
   uiDiagnostic: 'app:ui-diagnostic',
   agentHistoryPage: 'agent:history-page',
   agentMessageAttachment: 'agent:message-attachment',
+  agentToolResultImage: 'agent:tool-result-image',
   agentSessionStats: 'agent:session-stats',
   agentExportSession: 'agent:export-session',
   agentSessionTree: 'agent:session-tree',
@@ -651,6 +652,18 @@ export interface UiToolActivity {
   diff?: string | null;
   /** Structured snapshot when the call runs a pi-subagents child agent. */
   subagent?: UiSubagentActivity;
+  /** Images the tool produced (read on an image file, MCP image content): metadata only.
+   * The payload is fetched lazily via getToolResultImage so tool events stay IPC-small;
+   * index addresses the persisted toolResult image blocks in order (claude.ai keeps the
+   * same split: tool_result images travel as file_uuid references, bytes load on demand). */
+  images?: UiToolResultImage[] | null;
+}
+
+/** Metadata for one image inside a tool result; no base64 payload crosses IPC with it. */
+export interface UiToolResultImage {
+  mimeType: string;
+  /** Approximate decoded byte size, for caps and lazy-load decisions. */
+  approxBytes: number;
 }
 
 /** One child-agent step shown in the subagent card's live progress. */
@@ -1299,6 +1312,9 @@ export interface AgentBridge extends InputFeatureBridge, DataFeaturesBridge, Wor
   getHistoryPage(offset: number, limit: number): Promise<UiHistoryPage>;
   /** Reads one attachment on the active branch; capped at 20 MiB encoded payload. */
   getMessageAttachment(sessionPath: string, messageId: string, index: number): Promise<UiAttachment>;
+  /** Reads one image a tool produced (read on an image, MCP image content) from the
+   *  persisted toolResult on the active branch; capped at 20 MiB encoded payload. */
+  getToolResultImage(sessionPath: string, toolCallId: string, index: number): Promise<UiAttachment>;
   /** Aggregate stats for the active session (message counts, tokens, cost). */
   getSessionStats(): Promise<UiSessionStats>;
   /** Writes the active session to a chosen file; the main process shows the save dialog. */

@@ -84,6 +84,7 @@ import type {
 	UiThinkingStatus,
 	UiSaveInstructionRequest,
 	UiToolActivity,
+	UiToolResultImage,
 	UiSubagentActivity,
 	UiSubagentFleetSnapshot,
 	UiSubagentFleetNode,
@@ -117,6 +118,7 @@ import { ModelTestService } from './modelTest.ts';
 import { ProjectDefaultsService } from './projectDefaults.ts';
 import { McpManager } from './mcpManager.ts';
 import { CuaSessionState, cuaExtension } from './cua/index.ts';
+import { CuaPermissionStore } from './cua/permissions.ts';
 import { createInterruptibleShellTools, shellRunRegistry } from './shellInterrupt.ts';
 import type { UiMcpSaveRequest, UiMcpTarget } from '../../shared/src/mcpFeatures.ts';
 import type { PluginUpdateCheck } from '../../shared/src/pluginUpdates.ts';
@@ -144,6 +146,8 @@ type EventEmitter = (event: AgentEventEnvelope) => void;
 
 type PiRuntime = Awaited<ReturnType<typeof createAgentSessionRuntime>>;
 const MAX_TOOL_DETAIL_CHARS = 48000;
+/** Image blocks per tool result kept as metadata; more images stay loadable but unlisted. */
+const MAX_TOOL_RESULT_IMAGES = 8;
 const MAX_THINKING_CHARS = 48000;
 const THINKING_UPDATE_INTERVAL_MS = 80;
 /** Timeline entries sent in the ready payload; older history loads page-by-page. */
@@ -419,6 +423,9 @@ function createRuntimeFactory(
 		const settingsManager = SettingsManager.create(cwd, agentDir, { projectTrusted });
 		const fileChanges = new SessionFileChanges(cwd, sessionManager, (changes) => publishFileChanges(sessionManager.getSessionId(), changes));
 		const cuaState = new CuaSessionState();
+		const cuaPermissions = new CuaPermissionStore(join(agentDir, 'desktop-cua-permissions'), {
+			cwd, sessionId: sessionManager.getSessionId(), sessionFile: sessionManager.getSessionFile(),
+		});
 		const services = await createAgentSessionServices({
 			cwd,
 			agentDir,
@@ -426,7 +433,7 @@ function createRuntimeFactory(
 			resourceLoaderOptions: { extensionFactories: [
 				{ name: 'desktop-file-changes', hidden: true, factory: fileChanges.extension },
 				{ name: 'desktop-mcp', hidden: true, factory: mcp.extension(cwd, sessionManager.getSessionId()) },
-				{ name: 'desktop-cua', hidden: true, factory: cuaExtension({ state: cuaState }) },
+				{ name: 'desktop-cua', hidden: true, factory: cuaExtension({ state: cuaState, permissions: cuaPermissions }) },
 			] },
 			resourceLoaderReloadOptions: shouldPrompt && nativeNeedsTrust ? {
 				resolveProjectTrust: async () => {
@@ -682,6 +689,21 @@ class SingleAgentService {
 		if (size > 20 * 1024 * 1024) throw new Error('图片超过单次预览的 20 MiB 限制');
 		if (attachment.kind === 'image' && !/^image\/(?:png|jpeg|webp|gif|avif|bmp)$/i.test(attachment.mimeType)) throw new Error('不支持的图片类型');
 		return { ...attachment };
+	}
+
+	/** Lazily reads one image a tool produced (read on an image file, MCP image content).
+	 * Same pure-read rules as getMessageAttachment; index addresses image blocks in order. */
+	getToolResultImage(sessionPath: string, toolCallId: string, index: number): UiAttachment {
+		if (this.lifecycleOperation || this.state.sessionPath !== sessionPath) throw new Error('会话已切换，请重新打开图片');
+		if (!Number.isInteger(index) || index < 0 || index > 99) throw new Error('图片索引无效');
+		const entry = this.runtime?.session.sessionManager.getBranch().find((item) => item.type === 'message' && item.message.role === 'toolResult' && item.message.toolCallId === toolCallId);
+		if (!entry || entry.type !== 'message' || entry.message.role !== 'toolResult') throw new Error('当前分支未找到该工具结果');
+		const content = Array.isArray(entry.message.content) ? entry.message.content : [];
+		const image = content.filter((part) => part?.type === 'image')[index];
+		if (!image || image.type !== 'image' || typeof image.data !== 'string' || !image.data) throw new Error('图片不存在');
+		if (image.data.length > 20 * 1024 * 1024) throw new Error('图片超过单次预览的 20 MiB 限制');
+		if (!/^image\/(?:png|jpeg|webp|gif|avif|bmp)$/i.test(image.mimeType)) throw new Error('不支持的图片类型');
+		return { kind: 'image', name: `${entry.message.toolName}-${index}.${image.mimeType.split('/')[1] ?? 'png'}`, mimeType: image.mimeType, data: image.data };
 	}
 
 	getSessionStats(): UiSessionStats {
@@ -2394,6 +2416,7 @@ class SingleAgentService {
 					files: previous?.files ?? null,
 					command: previous?.command ?? null,
 				...toolResultText(event.partialResult),
+				...toolResultImages(event.partialResult),
 				...toolSubagentMeta(event.toolName, undefined, event.partialResult, previous?.subagent),
 				} });
 				return;
@@ -2419,6 +2442,7 @@ class SingleAgentService {
 						files: previous?.files ?? null,
 						command: previous?.command ?? null,
 						...toolResultText(event.result),
+						...toolResultImages(event.result),
 						...toolResultMeta(event.toolName, event.isError, rawText),
 						...toolSubagentMeta(event.toolName, undefined, event.result, previous?.subagent),
 					},
@@ -2569,6 +2593,14 @@ export class AgentService {
 		if (this.transition) throw new Error('会话正在切换，请稍后再试');
 		if (!this.active) throw new Error('Agent is not initialized');
 		return this.active.getMessageAttachment(sessionPath, messageId, index);
+	}
+
+	getToolResultImage(sessionPath: string, toolCallId: string, index: number): UiAttachment {
+		// Same pure-read rule as getMessageAttachment (see above).
+		if (this.closing) throw new Error('应用正在退出');
+		if (this.transition) throw new Error('会话正在切换，请稍后再试');
+		if (!this.active) throw new Error('Agent is not initialized');
+		return this.active.getToolResultImage(sessionPath, toolCallId, index);
 	}
 
 	/** Forwards to the active context (3.1). */
@@ -4066,6 +4098,7 @@ function historyTimeline(entries: SessionEntry[], liveRun?: UiConversationRun | 
 				files: previous?.files ?? null,
 				command: previous?.command ?? null,
 				...toolResultText(message),
+				...toolResultImages(message),
 				...toolResultMeta(message.toolName, message.isError, rawText),
 				...toolSubagentMeta(message.toolName, undefined, message, previous?.subagent),
 			});
@@ -4164,6 +4197,25 @@ function toolResultText(value: unknown): Pick<UiToolActivity, 'detail' | 'detail
 		detail: text.slice(0, MAX_TOOL_DETAIL_CHARS),
 		detailTruncated: text.length > MAX_TOOL_DETAIL_CHARS,
 	} : {};
+}
+
+/** Metadata for image blocks in a tool result (read on an image file, MCP image content).
+ * Payloads never cross IPC with the activity: the renderer lazily calls getToolResultImage,
+ * mirroring claude.ai where tool_result images travel as file_uuid references only. */
+export function toolResultImages(value: unknown): Pick<UiToolActivity, 'images'> {
+	if (!value || typeof value !== 'object') return { images: null };
+	const content = (value as { content?: unknown }).content;
+	if (!Array.isArray(content)) return { images: null };
+	const images: UiToolResultImage[] = [];
+	for (const part of content) {
+		if (!part || typeof part !== 'object' || (part as { type?: unknown }).type !== 'image') continue;
+		const data = (part as { data?: unknown }).data;
+		const mimeType = (part as { mimeType?: unknown }).mimeType;
+		if (typeof data !== 'string' || !data || typeof mimeType !== 'string' || !mimeType) continue;
+		images.push({ mimeType: mimeType.slice(0, 100), approxBytes: Math.ceil(data.length * 3 / 4) });
+		if (images.length >= MAX_TOOL_RESULT_IMAGES) break;
+	}
+	return { images: images.length > 0 ? images : null };
 }
 
 /** Parse persisted entry timestamps; null keeps legacy history renderable. */

@@ -23,6 +23,7 @@ export interface SearchCommand {
 }
 
 interface SearchDialogProps {
+	anchor?: HTMLElement | null;
 	commands: SearchCommand[];
 	onClose(): void;
 	onSelectSession(result: UiSessionSearchResult): Promise<void>;
@@ -91,7 +92,7 @@ function Highlight({ text, query }: { text: string; query: string }) {
 	return <>{parts}</>;
 }
 
-export function SearchDialog({ commands, onClose, onSelectSession, onSelectFile }: SearchDialogProps) {
+export function SearchDialog({ anchor, commands, onClose, onSelectSession, onSelectFile }: SearchDialogProps) {
 	const { t, locale } = useT();
 	const bridge = useChatStore((state) => state.bridge);
 	const cwd = useChatStore((state) => state.cwd);
@@ -132,6 +133,8 @@ export function SearchDialog({ commands, onClose, onSelectSession, onSelectFile 
 	const inputRef = useRef<HTMLInputElement>(null);
 	const listRef = useRef<HTMLDivElement>(null);
 	const composingRef = useRef(false);
+	const closeRef = useRef(onClose); closeRef.current = onClose;
+	const [position, setPosition] = useState<{ left: number; top: number; width: number; height: number; panelLeft: number; panelWidth: number; panelMaxHeight: number } | null>(null);
 	const id = useId();
 	const wantSessions = scope === 'all' || scope === 'sessions';
 	const wantFiles = Boolean(cwd && query && (scope === 'all' || scope === 'files'));
@@ -149,24 +152,46 @@ export function SearchDialog({ commands, onClose, onSelectSession, onSelectFile 
 	const ignoredDirectories = files.key === requestKey && wantFiles ? files.ignoredDirectories : undefined;
 
 	useLayoutEffect(() => {
+		if (!anchor) return;
+		const place = () => {
+			const rect = anchor.getBoundingClientRect();
+			const panelWidth = Math.min(Math.max(rect.width, 560), window.innerWidth - 16);
+			const panelLeft = Math.max(8, Math.min(rect.left, window.innerWidth - panelWidth - 8));
+			setPosition({ left: rect.left, top: rect.top, width: rect.width, height: rect.height,
+				panelLeft: panelLeft - rect.left, panelWidth, panelMaxHeight: Math.max(80, window.innerHeight - rect.bottom - 14) });
+		};
+		place();
+		const observer = new ResizeObserver(place);
+		observer.observe(anchor);
+		if (anchor.parentElement) observer.observe(anchor.parentElement);
+		window.addEventListener('resize', place);
+		return () => { observer.disconnect(); window.removeEventListener('resize', place); };
+	}, [anchor]);
+
+	useLayoutEffect(() => {
 		mountedRef.current = true;
 		const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+		const returnFocus = previousFocus && previousFocus !== document.body ? previousFocus : anchor;
 		window.dispatchEvent(new CustomEvent('pd:hover-tooltip-open', { detail: id }));
+		document.documentElement.classList.add('pd-search-widget-open');
 		inputRef.current?.focus();
-		const containFocus = (event: FocusEvent) => {
-			if (event.target instanceof Node && !dialogRef.current?.contains(event.target)) inputRef.current?.focus();
+		const dismissOutside = (event: Event) => {
+			if (event.target instanceof Node && !dialogRef.current?.contains(event.target) && !anchor?.contains(event.target)) closeRef.current();
 		};
-		document.addEventListener('focusin', containFocus);
+		document.addEventListener('pointerdown', dismissOutside, true);
+		document.addEventListener('focusin', dismissOutside);
 		return () => {
 			mountedRef.current = false;
-			document.removeEventListener('focusin', containFocus);
+			document.documentElement.classList.remove('pd-search-widget-open');
+			document.removeEventListener('pointerdown', dismissOutside, true);
+			document.removeEventListener('focusin', dismissOutside);
 			const active = document.activeElement;
 			const focusStillInside = active === document.body || (active instanceof Node && dialogRef.current?.contains(active));
 			const nextDialog = Array.from(document.querySelectorAll('[role="dialog"]')).some((element) => element !== dialogRef.current);
 			// A command may open Settings. Let its focus effect take ownership.
-			if (focusStillInside && !nextDialog && previousFocus?.isConnected) previousFocus.focus({ preventScroll: true });
+			if (focusStillInside && !nextDialog && returnFocus?.isConnected) returnFocus.focus({ preventScroll: true });
 		};
-	}, []);
+	}, [anchor]);
 
 	useEffect(() => {
 		let cancelled = false;
@@ -292,18 +317,11 @@ export function SearchDialog({ commands, onClose, onSelectSession, onSelectFile 
 		}
 	};
 	const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
-		// Stop application shortcuts behind the modal, including the global Escape handler.
+		// Local navigation owns these keys; focus and outside clicks remain free to leave the widget.
 		event.stopPropagation();
 		if (event.nativeEvent.isComposing || composingRef.current || event.keyCode === 229) return;
 		if (event.key === 'Escape') { event.preventDefault(); onClose(); return; }
-		if (event.key === 'Tab') {
-			const focusable = Array.from(dialogRef.current?.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), select:not(:disabled), [tabindex="0"]') ?? []);
-			const first = focusable[0];
-			const last = focusable.at(-1);
-			if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
-			else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
-			return;
-		}
+		if (event.key === 'Tab') return;
 		if (pending) return;
 		const target = event.target as HTMLElement | null;
 		if (target !== inputRef.current && ['INPUT', 'SELECT'].includes(target?.tagName ?? '')) return;
@@ -337,14 +355,14 @@ export function SearchDialog({ commands, onClose, onSelectSession, onSelectFile 
 	};
 
 	return createPortal(
-		<div className="pd-search-overlay" onPointerDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
-			<div ref={dialogRef} className="pd-search-dialog" role="dialog" aria-modal="true" aria-labelledby={`${id}-title`} onKeyDown={handleKeyDown}>
+			<div ref={dialogRef} className="pd-search-dialog pd-search-widget" role="dialog" aria-modal="false" aria-labelledby={`${id}-title`} onKeyDown={handleKeyDown} style={{ left: position?.left, top: position?.top, width: position?.width, height: position?.height }}>
 				<h2 id={`${id}-title`} className="pd-search-sr-only">{t('search.title')}</h2>
 				<div className="pd-search-input-row">
 					<Icon name="search" />
 					<input ref={inputRef} className="pd-search-input" role="combobox" aria-label={t('search.title')} aria-autocomplete="list" aria-expanded="true" aria-controls={`${id}-list`} aria-activedescendant={activeId ? rowDomId(activeId) : undefined} placeholder={t(`search.placeholder.${scope}`)} value={rawQuery} readOnly={pending} maxLength={500} autoComplete="off" spellCheck={false} onChange={(event) => setRawQuery(event.target.value)} onCompositionStart={() => { composingRef.current = true; }} onCompositionEnd={() => { composingRef.current = false; }} />
 					<button type="button" className="pd-search-close" aria-label={t('search.close')} onClick={onClose}><Icon name="close" /></button>
 				</div>
+				<div className="pd-search-panel" style={{ left: position?.panelLeft, width: position?.panelWidth, maxHeight: position?.panelMaxHeight }}>
 				<SegmentedIndicator activeKey={scope} className="pd-search-scopes" label={t('search.scopeLabel')}>
 					{SCOPES.map((value) => <button key={value} data-segment-key={value} type="button" className={`pd-search-scope${scope === value ? ' is-active' : ''}`} aria-pressed={scope === value} disabled={pending} onClick={() => chooseScope(value)}>{t(`search.scope.${value}`)}{value !== 'all' && <kbd aria-hidden="true">{PREFIXES[value]}</kbd>}</button>)}
 				</SegmentedIndicator>
@@ -371,7 +389,7 @@ export function SearchDialog({ commands, onClose, onSelectSession, onSelectFile 
 					{scope === 'files' && files.key === requestKey && files.cursor && <button type="button" className="pd-search-load-more" disabled={fileLoading} onClick={() => void loadMore('files')}>{t('search.loadMoreFiles')} ({currentFiles.length}/{files.total})</button>}
 				</div>
 				<div className="pd-search-footer"><span>{pending ? t('search.opening') : <><kbd>↑</kbd><kbd>↓</kbd> {t('search.navigate')} <kbd>↵</kbd> {t('search.open')}</>}</span><span><kbd>Esc</kbd> {t('search.dismiss')}</span></div>
-			</div>
-		</div>, document.body,
+				</div>
+			</div>, document.body,
 	);
 }

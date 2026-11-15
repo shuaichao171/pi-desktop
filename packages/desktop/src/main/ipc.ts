@@ -1875,6 +1875,10 @@ export function registerIpc(options: {
 		if (typeof sessionPath !== 'string' || !sessionPath || sessionPath.length > 32768 || typeof messageId !== 'string' || !messageId || messageId.length > 256 || typeof index !== 'number' || !Number.isInteger(index) || index < 0 || index > 999) throw new Error('附件参数无效');
 		return agentFor(event).getMessageAttachment(sessionPath, messageId, index);
 	});
+	handleRendererInvoke(IPC_CHANNELS.agentToolResultImage, (event, sessionPath: unknown, toolCallId: unknown, index: unknown) => {
+		if (typeof sessionPath !== 'string' || !sessionPath || sessionPath.length > 32768 || typeof toolCallId !== 'string' || !toolCallId || toolCallId.length > 256 || typeof index !== 'number' || !Number.isInteger(index) || index < 0 || index > 99) throw new Error('工具图片参数无效');
+		return agentFor(event).getToolResultImage(sessionPath, toolCallId, index);
+	});
 	handleRendererInvoke(IPC_CHANNELS.agentExportSession, async (event, format: unknown) => {
 		const kind = format === 'html' ? 'html' : format === 'jsonl' ? 'jsonl' : null;
 		if (!kind) throw new Error('导出格式无效');

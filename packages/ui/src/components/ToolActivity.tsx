@@ -1,10 +1,11 @@
 import { memo, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
-import type { UiToolActivity } from '@pidesktop/shared';
+import type { UiAttachment, UiToolActivity } from '@pidesktop/shared';
 import { useT } from '../i18n';
 import { useChatStore } from '../store';
 import { activityCopy, activityPresentation } from '../activityCopy';
 import { useDisclosureChoice } from '../conversationDisclosure';
 import { ActivityDisclosure, ActivityLabel } from './ActivityDisclosure';
+import { ImagePreviewDialog, type PreviewImage } from './ImagePreviewDialog';
 import { useSubagentLink } from './FleetCard';
 import { Icon } from './Icons';
 import { ToolDiffView } from './toolRenderers/ToolDiffView';
@@ -57,6 +58,60 @@ function ActivityFiles({ files }: { files: string[] }) {
 			{copied === file && <span className="pd-activity-file-copied" role="status">{t('chat.tool.pathCopied')}</span>}
 		</button>
 	))}</div>;
+}
+
+/** Thumbnails for images the tool produced (read on an image, MCP image content).
+ * Metadata ships with the activity; payloads load lazily from the persisted tool
+ * result once the card is expanded — the same split claude.ai uses (tool_result
+ * images referenced as file_uuid, bytes fetched on demand). */
+function ToolResultImages({ activity, expanded }: { activity: UiToolActivity; expanded: boolean }) {
+	const { t } = useT();
+	const bridge = useChatStore((s) => s.bridge), sessionPath = useChatStore((s) => s.sessionPath);
+	const images = activity.images ?? [];
+	const [loaded, setLoaded] = useState<Record<number, Extract<UiAttachment, { kind: 'image' }>>>({});
+	const [failed, setFailed] = useState<Record<number, boolean>>({});
+	const [preview, setPreview] = useState<{ index: number; trigger: HTMLElement } | null>(null);
+	// One request per context+index, cached for the component's lifetime: state
+	// updates and disclosure toggles never re-fetch, and a settled failure stays
+	// recorded instead of being swallowed by an effect cleanup.
+	const requests = useRef(new Map<string, Promise<void>>());
+	useEffect(() => {
+		if (!expanded || !bridge || !sessionPath) return;
+		for (let index = 0; index < images.length; index++) {
+			const key = `${sessionPath}:${activity.id}:${index}`;
+			if (requests.current.has(key)) continue;
+			const request = bridge.getToolResultImage(sessionPath, activity.id, index)
+				.then((attachment) => {
+					if (attachment.kind === 'image') setLoaded((current) => ({ ...current, [index]: attachment }));
+				})
+				.catch(() => {
+					setFailed((current) => ({ ...current, [index]: true }));
+				});
+			requests.current.set(key, request);
+		}
+	}, [expanded, bridge, sessionPath, activity.id, images.length]);
+	useEffect(() => setPreview(null), [sessionPath, activity.id]);
+	if (images.length === 0) return null;
+	const previews: PreviewImage[] = images.map((_image, index) => {
+		const attachment = loaded[index];
+		const name = t('chat.tool.imageName', { tool: activity.tool, index: index + 1 });
+		return attachment ? { id: `${activity.id}:${index}`, name, attachment } : { id: `${activity.id}:${index}`, name, load: () => bridge && sessionPath ? bridge.getToolResultImage(sessionPath, activity.id, index) : Promise.reject(new Error(t('chat.tool.imageLoadFailed'))) };
+	});
+	return <div className="pd-activity-images">
+		{images.map((image, index) => {
+			const attachment = loaded[index];
+			return <figure className="pd-activity-image" key={index}>
+				<button type="button" aria-label={t('chat.tool.previewImage', { name: previews[index]!.name })} onClick={(event) => setPreview({ index, trigger: event.currentTarget })}>
+					{attachment
+						? <img src={`data:${attachment.mimeType};base64,${attachment.data}`} alt={previews[index]!.name} loading="lazy" />
+						: failed[index]
+							? <span className="pd-activity-image-note is-error">{t('chat.tool.imageLoadFailed')}</span>
+							: <span className="pd-activity-image-note">{image.mimeType}</span>}
+				</button>
+			</figure>;
+		})}
+		{preview && <ImagePreviewDialog images={previews} initialIndex={preview.index} returnFocus={preview.trigger} onClose={() => setPreview(null)} />}
+	</div>;
 }
 
 export function ToolActivityItem({ activity, onInteract }: { activity: UiToolActivity; onInteract?(): void }) {
@@ -117,6 +172,7 @@ export function ToolActivityItem({ activity, onInteract }: { activity: UiToolAct
 		<button type="button" className="pd-activity-head" onClick={() => { setUserExpanded(!expanded); onInteract?.(); }} aria-expanded={expanded} aria-controls={detailId}>
 			<span className={'pd-activity-icon is-' + activity.status} aria-hidden="true"><Icon name={activity.status === 'done' ? 'check' : activity.status === 'error' ? 'close' : activity.status === 'interrupted' ? 'square' : activity.tool === 'bash' ? 'terminal' : 'file'} width="14" height="14" /></span>
 			<span className="pd-activity-copy"><span className="pd-activity-kind" title={activity.tool}><ActivityLabel active={activity.status === 'running'}>{presentation.label}</ActivityLabel></span>{presentation.summary && <span className="pd-activity-title" title={presentation.summary}>{presentation.summary}</span>}</span>
+			{activity.images && activity.images.length > 0 && <span className="pd-activity-image-badge" title={t('chat.tool.imageCount', { count: activity.images.length })}><Icon name="image" width="12" height="12" />{activity.images.length > 1 ? activity.images.length : ''}</span>}
 			{activity.exitCode != null && activity.exitCode !== 0 && <span className="pd-activity-exit is-error">{t('chat.tool.exitCode', { code: activity.exitCode })}</span>}
 			{duration && <span className="pd-activity-duration">{duration}</span>}
 			<span className={'pd-activity-status is-' + activity.status}>{t('chat.tool.' + activity.status)}</span>
@@ -138,6 +194,7 @@ export function ToolActivityItem({ activity, onInteract }: { activity: UiToolAct
 						{commandCopyStatus && <span className="pd-activity-copy-status" role="status">{commandCopyStatus}</span>}
 					</div>}
 					{files.length > 0 && <ActivityFiles files={files} />}
+					<ToolResultImages activity={activity} expanded={expanded} />
 					{activity.diff ? <>
 						<div className="pd-activity-output-heading">
 							<span>{t('chat.tool.diffOutput')}</span>

@@ -21,10 +21,31 @@
 
 /* Window-wide top bar: brand mark leftmost, history navigation, search, and
  * the sidebar toggle. Replaces the old sidebar brand row; always visible. */
-.pd-app-shell.flex { flex-direction: column; }
-.pd-top-bar { display: flex; flex: 0 0 48px; align-items: center; gap: 8px; min-width: 0; padding: 0 10px 0 14px; border-bottom: 1px solid var(--pd-sidebar-surface); background: var(--pd-sidebar); }
+.pd-app-shell.flex { flex-direction: column; --pd-top-bar-height: 36px; }
+.pd-top-bar { display: flex; flex: 0 0 var(--pd-top-bar-height, 36px); align-items: center; gap: 8px; min-width: 0; padding: 0 10px 0 14px; border-bottom: 1px solid var(--pd-sidebar-surface); background: var(--pd-sidebar); }
 .pd-top-bar .pd-brand-mark { margin-right: 2px; }
 .pd-top-bar-navigation { display: flex; flex: 0 0 auto; align-items: center; gap: 4px; -webkit-app-region: no-drag; }
+.pd-top-bar-search-slot { display: flex; flex: 1 1 auto; justify-content: center; min-width: 0; padding: 0 12px; }
+.pd-top-bar .pd-top-bar-search { display: inline-flex; flex: 0 1 560px; align-items: center; gap: 8px; width: 100%; min-width: 0; height: 26px; padding: 0 8px; border: 1px solid var(--pd-border-strong); border-radius: var(--pd-radius-sm); background: color-mix(in srgb, var(--pd-bg) 35%, var(--pd-sidebar)); color: var(--pd-text-subtle); text-align: left; font: inherit; font-size: var(--pd-font-sm); cursor: pointer; -webkit-app-region: no-drag; }
+.pd-top-bar-search > svg { flex: 0 0 auto; color: var(--pd-text-weak); }
+.pd-top-bar-search-copy { display: flex; flex: 1 1 auto; align-items: center; gap: 10px; min-width: 0; overflow: hidden; }
+.pd-top-bar-search-project { flex: 0 1 auto; max-width: 52%; min-width: 0; overflow: hidden; color: var(--pd-text); text-overflow: ellipsis; white-space: nowrap; }
+.pd-top-bar-search-hint { flex: 1 1 auto; min-width: 0; overflow: hidden; color: var(--pd-text-weak); text-overflow: ellipsis; white-space: nowrap; }
+.pd-top-bar-search-shortcut { display: inline-flex; flex: 0 0 auto; align-items: center; height: 18px; padding: 0 4px; border: 1px solid var(--pd-border); border-radius: var(--pd-radius-xs); color: var(--pd-text-weak); font: inherit; font-size: var(--pd-font-xs); line-height: 1; }
+.pd-top-bar .pd-top-bar-search:hover { border-color: var(--pd-text-weak); background: var(--pd-sidebar-hover); color: var(--pd-text); }
+.pd-top-bar .pd-top-bar-search:is(.is-active, :focus-visible) { border-color: var(--pd-focus-border); background: var(--pd-sidebar-hover); }
+.pd-top-bar-search[aria-expanded='true'] { visibility: hidden; }
+html.pd-search-widget-open .is-frameless .pd-top-bar { -webkit-app-region: no-drag; }
+@media (max-width: 900px) {
+  .pd-top-bar-search-slot { padding: 0 4px; }
+  .pd-top-bar-search-copy:has(.pd-top-bar-search-project) .pd-top-bar-search-hint { display: none; }
+  .pd-top-bar-search-project { max-width: 100%; }
+}
+@media (max-width: 640px) {
+  .pd-top-bar { gap: 4px; padding-left: 8px; }
+  .pd-top-bar-search-slot { padding: 0; }
+  .pd-top-bar-search-shortcut { display: none; }
+}
 .pd-top-bar-actions { display: flex; flex: 0 0 auto; align-items: center; gap: 4px; margin-left: auto; -webkit-app-region: no-drag; }
 .pd-top-bar-workspace-actions { display: flex; flex: 0 0 auto; align-items: center; gap: 2px; margin-left: auto; -webkit-app-region: no-drag; }
 /* The rail/sidebar hover tint is several steps apart from --pd-sidebar, so
@@ -40,7 +61,7 @@
 .pd-top-bar-divider { flex: 0 0 auto; align-self: center; width: 1px; height: 20px; margin: 0 6px; background: var(--pd-sidebar-surface); }
 .pd-top-bar-workspace-button { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 28px; padding: 0; border: 0; border-radius: var(--pd-radius-sm); background: transparent; color: var(--pd-text-subtle); cursor: pointer; }
 .pd-top-bar-menu { flex: 0 0 30px; width: 30px; height: 28px; color: var(--pd-text); }
-.pd-top-bar-session { display: flex; flex: 1 1 auto; align-items: center; gap: 4px; min-width: 0; margin-left: 14px; }
+.pd-top-bar-session { display: flex; flex: 0 0 auto; align-items: center; gap: 4px; min-width: 64px; }
 .pd-app-body { display: flex; flex: 1; min-height: 0; min-width: 0; }
 
 :root {
@@ -570,7 +591,7 @@ button:focus-visible, textarea:focus-visible, input:focus-visible { outline: 2px
 }
 
 @media (max-width: 880px) {
-  .pd-sidebar { position: absolute; top: 48px; bottom: 0; left: 0; z-index: var(--pd-z-drawer); width: 264px; transform: translateX(-100%); transition: transform .18s ease; box-shadow: var(--pd-shadow-dialog); }
+  .pd-sidebar { position: absolute; top: var(--pd-top-bar-height, 48px); bottom: 0; left: 0; z-index: var(--pd-z-drawer); width: 264px; transform: translateX(-100%); transition: transform .18s ease; box-shadow: var(--pd-shadow-dialog); }
   .pd-sidebar.is-open { transform: translateX(0); }
   .pd-sidebar-scrim.is-open { position: absolute; inset: 0; z-index: var(--pd-z-drawer-scrim); display: block; width: 100%; height: 100%; padding: 0; border: 0; background: var(--pd-overlay); }
   .pd-header-sidebar-toggle { display: grid; }
@@ -772,7 +793,7 @@ div.pd-hover-tooltip:has(.pd-update-notes-body) { max-width: min(400px, calc(100
   .pd-chevron { transition: none; }
 }
 
-/* Windows: title and window controls share a single 48px draggable header. */
+/* Windows: title and window controls share a compact draggable header. */
 .pd-app-shell.is-frameless { position: relative; border: 4px solid #0c0d11; border-radius: var(--pd-radius-md); }
 .is-frameless .pd-top-bar,
 .is-frameless .pd-chat-header { -webkit-app-region: drag; user-select: none; }
@@ -1321,8 +1342,8 @@ html:has(dialog[open]) .pd-app-shell.is-frameless .pd-settings-overlay::before {
 .pd-workbench-command-result pre .is-stderr { color: var(--pd-danger); }
 
 @media (max-width: 1100px) {
-  .pd-workbench.is-open { position: absolute; top: 56px; bottom: 0; right: 0; z-index: var(--pd-z-panel); width: min(420px, calc(100vw - 56px)); height: auto; box-shadow: var(--pd-shadow-dialog); }
-  .pd-workbench-scrim.is-open { position: absolute; inset: 56px 0 0; z-index: var(--pd-z-panel-scrim); display: block; border: 0; background: var(--pd-overlay); }
+  .pd-workbench.is-open { position: absolute; top: var(--pd-top-bar-height, 56px); bottom: 0; right: 0; z-index: var(--pd-z-panel); width: min(420px, calc(100vw - 56px)); height: auto; box-shadow: var(--pd-shadow-dialog); }
+  .pd-workbench-scrim.is-open { position: absolute; inset: var(--pd-top-bar-height, 56px) 0 0; z-index: var(--pd-z-panel-scrim); display: block; border: 0; background: var(--pd-overlay); }
 }
 @media (max-width: 650px) {
   .pd-workbench.is-open { width: min(100vw, 420px); }
@@ -1362,7 +1383,7 @@ html:has(dialog[open]) .pd-app-shell.is-frameless .pd-settings-overlay::before {
 .pd-composer-config-popover, .pd-context-picker, .pd-slash-picker, .pd-sidebar-popover, .pd-hover-tooltip {
   animation: pd-popover-enter var(--pd-motion-fast) var(--pd-ease-enter) both;
 }
-.pd-settings-dialog, .pd-search-dialog {
+.pd-settings-dialog {
   animation: pd-dialog-enter var(--pd-motion-normal) var(--pd-ease-enter) both;
 }
 @keyframes pd-popover-enter { from { opacity: 0; translate: 0 4px; scale: 0.97; } to { opacity: 1; translate: 0 0; scale: 1; } }
@@ -1374,8 +1395,6 @@ html:has(dialog[open]) .pd-app-shell.is-frameless .pd-settings-overlay::before {
 .is-closing { pointer-events: none; }
 .pd-settings-overlay.is-closing { animation: pd-overlay-exit var(--pd-motion-fast) var(--pd-ease-exit) both; }
 .pd-settings-overlay.is-closing .pd-settings-dialog { animation: pd-dialog-exit var(--pd-motion-fast) var(--pd-ease-exit) both; }
-.pd-search-overlay.is-closing { animation: pd-overlay-exit var(--pd-motion-fast) var(--pd-ease-exit) both; }
-.pd-search-overlay.is-closing .pd-search-dialog { animation: pd-dialog-exit var(--pd-motion-fast) var(--pd-ease-exit) both; }
 .pd-composer-config-popover.is-closing, .pd-context-picker.is-closing, .pd-slash-picker.is-closing, .pd-sidebar-popover.is-closing { animation: pd-popover-exit var(--pd-motion-fast) var(--pd-ease-exit) both; }
 @keyframes pd-popover-exit { to { opacity: 0; translate: 0 4px; scale: .97; } }
 @keyframes pd-dialog-exit { to { opacity: 0; translate: 0 8px; scale: .98; } }

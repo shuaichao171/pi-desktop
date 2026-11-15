@@ -18,6 +18,7 @@
 /* Full-page views (automation, plugins) keep the failure centered in the page. */
 .pd-main-view > .pd-scoped-error { width: min(560px, calc(100% - 48px)); margin: auto; }
 .pd-overlay-error-host > .pd-scoped-error { margin: 0; }
+.pd-search-error-host > .pd-scoped-error { position: fixed; top: 40px; left: 50%; z-index: var(--pd-z-search); width: min(560px, calc(100vw - 16px)); max-height: calc(100vh - 48px); margin: 0; transform: translateX(-50%); border: 1px solid var(--pd-border); border-radius: var(--pd-radius-lg); background: var(--pd-surface); box-shadow: var(--pd-shadow-popover); }
 /* Overlay surfaces (search) show their failure as a dialog; Retry closes the overlay. */
 .pd-overlay-error-host:has(> .pd-scoped-error) { position: fixed; inset: 0; z-index: var(--pd-z-modal, 60); display: grid; place-items: center; padding: 24px; background: var(--pd-overlay); }
 .pd-overlay-error-host > .pd-scoped-error { width: min(560px, 100%); max-height: calc(100vh - 48px); border: 1px solid var(--pd-border); border-radius: var(--pd-radius-lg); background: var(--pd-surface); box-shadow: var(--pd-shadow-dialog); }

@@ -7,11 +7,14 @@
  * but only loads koffi and the DLLs on first use.
  */
 
-import type { RawCapture, VirtualScreen, WindowInfo } from './types.ts';
+import type { ElementObservation, FrameRecord, RawCapture, Rect, UiaTreeCapture, VirtualScreen, WindowInfo } from './types.ts';
+import { CuaError } from './types.ts';
 import * as win32 from './win32Native.ts';
 
 export { encodeImage } from './imageEncode.ts';
 export type { EncodedImage } from './imageEncode.ts';
+export { CuaError } from './types.ts';
+export type { CuaErrorCode, ElementObservation, FrameRecord, ObservedElement, Rect, UiaElementNode, UiaTreeCapture } from './types.ts';
 
 export type MouseButton = 'left' | 'right' | 'middle';
 
@@ -30,6 +33,17 @@ export interface CuaBackend {
 	readClipboard(): Promise<string | null>;
 	writeClipboard(text: string): Promise<void>;
 	cursorPosition(): { x: number; y: number };
+	/** Best-effort release of every held modifier key (session end / revoke). */
+	releaseModifiers?(): void;
+	/** false when the interactive input desktop is inaccessible (locked screen / secure desktop). */
+	/** false when the interactive input desktop is inaccessible (locked screen / secure desktop). */
+	inputDesktopAccessible?(): boolean;
+	/** Window-scoped capture: only the target window's pixels (v2). */
+	captureWindow?(hwnd: number): RawCapture;
+	/** Current on-screen rectangle of a window (DWM bounds; v2). */
+	windowRect?(hwnd: number): Rect;
+	/** Control-view UIA accessibility tree of a window (v2, read-only). */
+	uiaTree?(hwnd: number, options?: { maxNodes?: number; maxDepth?: number }): UiaTreeCapture;
 }
 
 export const UNSUPPORTED_PLATFORM_MESSAGE = 'computer-use 尚未支持此平台（当前仅支持 Windows；macOS 需要 Accessibility 与屏幕录制权限，Linux 需要 X11/Wayland 适配）';
@@ -53,6 +67,11 @@ const win32Backend: CuaBackend = {
 	readClipboard: () => win32.readClipboardText(),
 	writeClipboard: (text) => win32.writeClipboardText(text),
 	cursorPosition: () => win32.getCursorPosition(),
+	releaseModifiers: () => win32.releaseAllModifiers(),
+	inputDesktopAccessible: () => win32.isInputDesktopAccessible(),
+	captureWindow: (hwnd) => win32.captureWindow(hwnd),
+	windowRect: (hwnd) => win32.windowRect(hwnd),
+	uiaTree: (hwnd, options) => win32.captureUiaTree(hwnd, options),
 };
 
 const unsupported = (): never => {
@@ -84,15 +103,48 @@ export function getBackend(): CuaBackend {
 // Session state
 // ---------------------------------------------------------------------------
 
+/** How many recent screenshot frames stay addressable by coordinate actions. */
+const MAX_FRAME_RECORDS = 8;
+
 /** Per-session CUA state. The desktop host owns one instance per Pi runtime. */
 export class CuaSessionState {
 	enabled = false;
 	/** Original-resolution bounds of the most recent screenshot (physical px). */
 	lastScreenshot: { width: number; height: number; scale: number } | null = null;
+	/** Most recent cua_get_state observation, for element-index addressing (v2). */
+	observation: ElementObservation | null = null;
+	/** Monotonic frame sequence handed out with each screenshot. */
+	private frameSeq = 0;
+	/** Last few screenshot frames, for coordinate-action staleness checks. */
+	readonly frames = new Map<number, FrameRecord>();
+
+	/**
+	 * Record a screenshot frame and return its sequence number. Coordinate
+	 * actions may pass that number back to verify the screen layout (the only
+	 * cheap staleness signal: content changes are not detected, layout changes are).
+	 */
+	recordFrame(screen: VirtualScreen, region: FrameRecord['region'], window?: { hwnd: number; rect: Rect }): number {
+		const seq = ++this.frameSeq;
+		this.frames.set(seq, { seq, screen, region, time: Date.now(), ...(window ? { windowHwnd: window.hwnd, windowRect: window.rect } : {}) });
+		while (this.frames.size > MAX_FRAME_RECORDS) {
+			const oldest = this.frames.keys().next().value;
+			if (oldest === undefined) break;
+			this.frames.delete(oldest);
+		}
+		return seq;
+	}
+
+	resetFrames(): void {
+		this.frames.clear();
+	}
+
+	resetObservation(): void {
+		this.observation = null;
+	}
 }
 
 export function cuaNotEnabledMessage(): string {
-	return 'computer-use 未启用：请先运行 /cua on 开启本会话的电脑控制（开启后点击/输入等操作将直接作用于你的桌面，请确认环境安全）';
+	return 'computer-use 未启用：首次调用会请求本对话的电脑控制授权，请等待用户确认；也可由用户运行 /cua on 手动开启。当前没有可用的授权确认界面，未执行操作。';
 }
 
 // ---------------------------------------------------------------------------
@@ -132,19 +184,19 @@ export interface ParsedKeys {
  */
 export function parseKeys(spec: string): ParsedKeys {
 	const parts = spec.split('+').map((part) => part.trim().toLowerCase()).filter(Boolean);
-	if (!parts.length) throw new Error('按键序列为空');
+	if (!parts.length) throw new CuaError('INVALID_ARGUMENTS', '按键序列为空');
 	const modifiers: number[] = [];
 	const keys: number[] = [];
 	for (const part of parts) {
 		const vk = VK[part];
-		if (vk === undefined) throw new Error(`无法识别的按键名：“${part}”（可用示例：enter、tab、esc、f5、ctrl、win、a-z、0-9、plus）`);
+		if (vk === undefined) throw new CuaError('INVALID_ARGUMENTS', `无法识别的按键名：“${part}”（可用示例：enter、tab、esc、f5、ctrl、win、a-z、0-9、plus）`);
 		if (MODIFIER_NAMES.has(part)) {
 			if (!modifiers.includes(vk)) modifiers.push(vk);
 		} else if (!keys.includes(vk)) {
 			keys.push(vk);
 		}
 	}
-	if (keys.length > 1) throw new Error(`组合键只能包含一个主键（收到 ${keys.length} 个）：“${spec}”；多个按键请分多次调用`);
+	if (keys.length > 1) throw new CuaError('INVALID_ARGUMENTS', `组合键只能包含一个主键（收到 ${keys.length} 个）：“${spec}”；多个按键请分多次调用`);
 	if (keys.length === 1) return { modifiers, key: keys[0] };
 	const key = modifiers.pop()!;
 	return { modifiers, key };

@@ -100,6 +100,7 @@ export function AppShell() {
 	const [colorSaveFailed, setColorSaveFailed] = useState(false);
 	const [settingsOpen, setSettingsOpen] = useState(false);
 	const [searchOpen, setSearchOpen] = useState(false);
+	const searchButtonRef = useRef<HTMLButtonElement>(null);
 	const [mainView, setMainView] = useState<'chat' | 'automations' | 'plugins'>('chat');
 	// Activity bar: clicking a builtin view icon switches the sidebar/main area; clicking
 	// the already-active icon returns to the session list ('chat'). The rail itself never
@@ -461,7 +462,7 @@ export function AppShell() {
 	// Split panes are native views stacked above this page: they show only while
 	// the chat is the visible page and nothing of the main window overlays them.
 	const { paneIds, hostRef: splitPaneHostRef } = useSplitPaneRegions(!paneMode && !paiMode,
-		mainView === 'chat' && !settingsOpen && !searchOpen && !commitOpen && !(narrow && sidebarOpen) && !(workbenchOverlay && workbenchOpen));
+		mainView === 'chat' && !settingsOpen && !commitOpen && !(narrow && sidebarOpen) && !(workbenchOverlay && workbenchOpen));
 	const sessions = useChatStore((state) => state.sessions ?? []);
 	const messages = useChatStore((state) => state.messages ?? []);
 	const activeSession = sessions.find((session) => session.path === conversationPath);
@@ -504,8 +505,8 @@ export function AppShell() {
 
 	return (
 		<ExtensionDialogHost chatVisible={mainView === 'chat'} notificationTarget={notificationTarget} globalNotices={MAIN_GLOBAL_NOTICES}>
-		<div className={`pd-app-shell flex${isWindows ? ' is-frameless' : ''}${settingsOpen || searchOpen ? ' is-settings-open' : ''}${sidebarResizing ? ' is-sidebar-resizing' : ''}${workbenchResizing ? ' is-workbench-resizing' : ''}`} style={{ '--pd-sidebar-width': `${sidebarWidth}px`, '--pd-workbench-width': `${clampWorkbenchWidth(workbenchWidth, viewportWidth)}px` } as CSSProperties}>
-			<TopBar history={history} searchOpen={searchOpen} onOpenSearch={() => setSearchOpen(true)} mainView={mainView} title={currentTitle} sessionPath={conversationPath} cwd={conversationCwd} onOpenCommit={() => setCommitOpen(true)} isWindows={isWindows} workbenchOpen={workbenchOpen} onToggleWorkbench={() => setWorkbenchOpen((value) => !value)} workbenchToggleRef={workbenchToggleRef} />
+		<div className={`pd-app-shell flex${isWindows ? ' is-frameless' : ''}${settingsOpen ? ' is-settings-open' : ''}${sidebarResizing ? ' is-sidebar-resizing' : ''}${workbenchResizing ? ' is-workbench-resizing' : ''}`} style={{ '--pd-sidebar-width': `${sidebarWidth}px`, '--pd-workbench-width': `${clampWorkbenchWidth(workbenchWidth, viewportWidth)}px` } as CSSProperties}>
+			<TopBar history={history} searchOpen={searchOpen} searchButtonRef={searchButtonRef} onOpenSearch={() => setSearchOpen(true)} mainView={mainView} title={currentTitle} sessionPath={conversationPath} cwd={conversationCwd} onOpenCommit={() => setCommitOpen(true)} isWindows={isWindows} workbenchOpen={workbenchOpen} onToggleWorkbench={() => setWorkbenchOpen((value) => !value)} workbenchToggleRef={workbenchToggleRef} />
 			<div className="pd-app-body">
 			<button type="button" className={`pd-sidebar-scrim${narrow && sidebarOpen ? ' is-open' : ''}`} aria-label={t('app.closeSidebar')} aria-hidden={!narrow || !sidebarOpen} inert={!narrow || !sidebarOpen} tabIndex={-1} onClick={() => setSidebarOpen(false)} />
 			<ActivityBar
@@ -548,11 +549,11 @@ export function AppShell() {
 			<div className="pd-notification-center">{mainView !== 'chat' && <><OperationFeedback /><UpdateNotice /></>}<div ref={setNotificationTarget} className="pd-extension-notification-slot" /></div>
 			</div>
 			<button type="button" className={`pd-workbench-scrim${workbenchOpen && mainView === 'chat' ? ' is-open' : ''}`} aria-label={t('app.closeWorkbench')} aria-hidden={!workbenchOpen || mainView !== 'chat'} inert={!workbenchOpen || mainView !== 'chat'} tabIndex={-1} onClick={closeWorkbench} />
-			<ScopedErrorBoundary scope="workbench" resetKeys={[workbenchRequest?.cwd, workbenchRequest?.requestId]}>{workbenchMounted && <Suspense fallback={null}><WorkbenchSidePane open={workbenchOpen && mainView === 'chat'} modal={workbenchOverlay && !settingsOpen && !searchOpen} suspended={settingsOpen || searchOpen} width={clampWorkbenchWidth(workbenchWidth, viewportWidth)} onWidthChange={value => setWorkbenchWidth(clampWorkbenchWidth(value, viewportWidth))} onResizing={setWorkbenchResizing} onClose={closeWorkbench} openRequest={workbenchRequest} terminalRequest={terminalRequest} onTabChange={setWorkbenchTab} /></Suspense>}</ScopedErrorBoundary>
+			<ScopedErrorBoundary scope="workbench" resetKeys={[workbenchRequest?.cwd, workbenchRequest?.requestId]}>{workbenchMounted && <Suspense fallback={null}><WorkbenchSidePane open={workbenchOpen && mainView === 'chat'} modal={workbenchOverlay && !settingsOpen && !searchOpen} suspended={settingsOpen} width={clampWorkbenchWidth(workbenchWidth, viewportWidth)} onWidthChange={value => setWorkbenchWidth(clampWorkbenchWidth(value, viewportWidth))} onResizing={setWorkbenchResizing} onClose={closeWorkbench} openRequest={workbenchRequest} terminalRequest={terminalRequest} onTabChange={setWorkbenchTab} /></Suspense>}</ScopedErrorBoundary>
 			</div>
 			{commitOpen && mainView === 'chat' && <Suspense fallback={null}><ChatCommitDialog onClose={() => setCommitOpen(false)} /></Suspense>}
 			<ExitPresence show={settingsOpen} surface="pd-settings-overlay">{settingsOpen && <Suspense fallback={null}><SettingsPanel initialPage={settingsInitialPage} modelManagementTarget={settingsInitialPage === 'model' ? modelManagementTarget : undefined} onClose={() => setSettingsOpen(false)} themePreference={themePreference} onThemePreferenceChange={setThemePreference} colorPreferences={colorPreferences} onColorPreferencesChange={setColorPreferences} colorSaveFailed={colorSaveFailed} /></Suspense>}</ExitPresence>
-			<ExitPresence show={searchOpen} surface="pd-search-overlay">{searchOpen && <div className="pd-overlay-error-host"><ScopedErrorBoundary scope="search" onReset={() => setSearchOpen(false)}><Suspense fallback={null}><SearchDialog commands={searchCommands} onClose={() => setSearchOpen(false)} onSelectSession={selectSearchSession} onSelectFile={selectSearchFile} /></Suspense></ScopedErrorBoundary></div>}</ExitPresence>
+			<ExitPresence show={searchOpen} surface="pd-search-widget">{searchOpen && <div className="pd-search-error-host"><ScopedErrorBoundary scope="search" onReset={() => setSearchOpen(false)}><Suspense fallback={null}><SearchDialog anchor={searchButtonRef.current} commands={searchCommands} onClose={() => setSearchOpen(false)} onSelectSession={selectSearchSession} onSelectFile={selectSearchFile} /></Suspense></ScopedErrorBoundary></div>}</ExitPresence>
 			<FolderProjectDropZone onAdded={revealAddedProjects} />
 			<ResultFilePreviewDialogRoot />
 		</div>

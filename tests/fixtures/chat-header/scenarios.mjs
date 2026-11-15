@@ -25,6 +25,7 @@ function installChatHeaderFixture() {
   });
   mock('recordUiDiagnostic', event => state.diagnostics.push(event));
   mock('listWorkspaceEntries', () => []);
+  mock('listWorkspaceEntriesPage', () => ({ entries: [], nextOffset: null, total: 0 }));
   mock('getWorkspaceTerminal', cwd => ({ id: 'fixture-terminal', cwd, shell: 'Renderer fixture', running: true, output: 'Renderer fixture terminal', sequence: 1, truncated: false }));
   mock('writeWorkspaceTerminal', request => state.terminalWrites.push(request));
   mock('resizeWorkspaceTerminal', () => undefined);
@@ -37,10 +38,11 @@ export default async function chatHeaderScenarios(review) {
   await review.reloadWithFixture(`(${installChatHeaderFixture.toString()})()`);
   await review.viewport(1440,1000);
   await review.waitFor('document.querySelector(".pd-turn-answer")?.textContent.includes("今天的开发计划") && Boolean(document.querySelector(".pd-window-controls"))');
-  const headerAligned = `(() => { const h=document.querySelector('.pd-top-bar').getBoundingClientRect(); const w=document.querySelector('.pd-window-controls').getBoundingClientRect(); const t=document.querySelector('.pd-top-bar-workspace-button').getBoundingClientRect(); const border=parseFloat(getComputedStyle(document.querySelector('.pd-app-shell')).borderTopWidth); return Math.abs(h.y-border)<0.5 && Math.abs(h.height-48)<1 && Math.abs(w.y+w.height/2-(h.y+h.height/2))<2 && Math.abs(t.y+t.height/2-(h.y+h.height/2))<2; })()`;
+  const headerAligned = `(() => { const h=document.querySelector('.pd-top-bar').getBoundingClientRect(); const w=document.querySelector('.pd-window-controls').getBoundingClientRect(); const t=document.querySelector('.pd-top-bar-workspace-button').getBoundingClientRect(); const border=parseFloat(getComputedStyle(document.querySelector('.pd-app-shell')).borderTopWidth); return Math.abs(h.y-border)<0.5 && Math.abs(h.height-36)<1 && Math.abs(w.y+w.height/2-(h.y+h.height/2))<2 && Math.abs(t.y+t.height/2-(h.y+h.height/2))<2; })()`;
   await review.assert(`!document.querySelector('.pd-pane-toolbar,.pd-conversation-panes,.pd-conversation-pane,.pd-pane-divider') && document.querySelectorAll('.pd-top-bar').length===1`, 'Saved split layouts are ignored and only the window top bar is rendered');
   await review.record('header-geometry', `['.pd-top-bar','.pd-window-controls','.pd-top-bar-workspace-button'].map(selector => { const e=document.querySelector(selector); const r=e.getBoundingClientRect(); const s=getComputedStyle(e); return {selector,y:r.y,height:r.height,display:s.display,flexBasis:s.flexBasis}; })`);
-  await review.assert(headerAligned, 'The 48px top bar starts at the top and aligns with the window controls and workbench button');
+  await review.assert(headerAligned, 'The compact 36px top bar aligns with the window controls and workbench button');
+  await review.assert(`(() => { const sidebar=document.querySelector('.pd-sidebar').getBoundingClientRect(); const toolbar=document.querySelector('.pd-sidebar-organize-toolbar').getBoundingClientRect(); const regions=document.querySelector('.pd-sidebar-regions').getBoundingClientRect(); return Math.abs(toolbar.top-sidebar.top)<1 && Math.abs(toolbar.height-24)<1 && Math.abs(regions.top-toolbar.bottom)<1; })()`, 'The project heading takes one 24px row with no extra space above or below');
   await review.assert(`Math.abs(document.querySelector('.pd-main').getBoundingClientRect().width-document.querySelector('.pd-chat-view-host').getBoundingClientRect().width)<1`, 'The conversation fills the available main area');
   await review.record('font-rendering', `(() => { const s=getComputedStyle(document.querySelector('.pd-turn-answer .pd-markdown'));return {family:s.fontFamily,weight:s.fontWeight,size:s.fontSize,color:s.color}; })()`);
   await review.screenshot('chat-header-conversation');
@@ -78,6 +80,7 @@ export default async function chatHeaderScenarios(review) {
   await review.viewport(900,900);
   await review.key('`',{ctrl:true});
   await review.waitFor('document.querySelector(".pd-workbench.is-open")?.getAttribute("aria-modal")==="true"');
+  await review.assert(`Math.abs(document.querySelector('.pd-workbench.is-open').getBoundingClientRect().top-document.querySelector('.pd-top-bar').getBoundingClientRect().bottom)<1`, 'The narrow workbench starts directly below the compact top bar');
   await review.evaluate('document.querySelector(".pd-workbench .xterm-helper-textarea").focus()');
   await review.key('`',{ctrl:true});
   await review.waitFor('!document.querySelector(".pd-workbench.is-open")');

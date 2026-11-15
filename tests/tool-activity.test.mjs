@@ -131,6 +131,15 @@ test('compact activity components preserve accessible details and support a pare
       assert.match(diff, /pd-activity-output-actions/);
     });
 
+    await context.test('tool result images render a badge and lazy thumbnails that wait for the bridge', () => {
+      const html = render(ToolActivityItem, { activity: { ...read, images: [{ mimeType: 'image/png', approxBytes: 9 }] } });
+      assert.match(html, /pd-activity-image-badge/, 'head shows the image count badge');
+      assert.match(html, /title="1 张图片"|title="1 images"/, 'badge tooltip is localized');
+      assert.match(html, /pd-activity-images/, 'detail reserves the thumbnail strip');
+      assert.match(html, /pd-activity-image-note[^>]*>image\/png</, 'placeholder names the mime type until the payload loads');
+      assert.doesNotMatch(html, /<img /, 'no base64 payload ships with the activity');
+    });
+
     await context.test('thinking stays collapsed by default with a live preview while retaining the real model content', () => {
       const message = { id: 'thinking-1', order: 2, role: 'assistant', text: '', thinking: 'Actual model note with **a concrete check**.', thinkingStatus: 'done', status: 'done' };
       const settled = render(ThinkingActivity, { message });

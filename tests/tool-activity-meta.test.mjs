@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 test('tool activity metadata extraction powers structured tool cards', async (t) => {
-  const { toolCallMeta, toolExitCode, isEditDiffText, toolResultMeta } = await import('../packages/agent/src/index.ts');
+  const { toolCallMeta, toolExitCode, isEditDiffText, toolResultMeta, toolResultImages } = await import('../packages/agent/src/index.ts');
 
   await t.test('toolCallMeta collects touched paths and the command line', () => {
     assert.deepEqual(toolCallMeta({ file: 'src/a.ts', path: ' src/a.ts ', command: ' npm test ' }), { files: ['src/a.ts'], command: 'npm test' });
@@ -36,5 +36,26 @@ test('tool activity metadata extraction powers structured tool cards', async (t)
     assert.deepEqual(toolResultMeta('edit', false, '+1 new'), { exitCode: null, diff: '+1 new' });
     const capped = toolResultMeta('edit', false, `+1 ${'x'.repeat(60000)}`);
     assert.equal(capped.diff.length, 48000);
+  });
+
+  await t.test('toolResultImages keeps image metadata IPC-small and caps the list', () => {
+    // Pi read on an image file: text note plus one image block (base64 without prefix).
+    const readImage = { content: [
+      { type: 'text', text: 'Read image file [image/png]' },
+      { type: 'image', data: 'aGlzdG9ncmFt', mimeType: 'image/png' },
+    ] };
+    assert.deepEqual(toolResultImages(readImage), { images: [{ mimeType: 'image/png', approxBytes: 9 }] });
+    // MCP image content follows the same block shape; text-only results stay null.
+    assert.equal(toolResultImages({ content: [{ type: 'text', text: 'ok' }] }).images, null);
+    assert.equal(toolResultImages(null).images, null);
+    assert.equal(toolResultImages({ content: 'plain' }).images, null);
+    // Malformed blocks are skipped; more than eight images are listed up to the cap.
+    const mixed = { content: [
+      { type: 'image', data: '', mimeType: 'image/png' },
+      { type: 'image', mimeType: 'image/png' },
+      ...Array.from({ length: 10 }, () => ({ type: 'image', data: 'QUJD', mimeType: 'image/jpeg' })),
+    ] };
+    assert.equal(toolResultImages(mixed).images.length, 8);
+    assert.deepEqual(toolResultImages(mixed).images[0], { mimeType: 'image/jpeg', approxBytes: 3 });
   });
 });

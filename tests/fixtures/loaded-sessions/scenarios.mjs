@@ -57,6 +57,7 @@ export default async function loadedSessionsScenarios(review) {
   const rowOf = title => `[...document.querySelectorAll('.pd-session-item')].find(item => item.querySelector('.pd-session-title-text')?.textContent === ${q(title)})`;
   const center = selectorExpression => review.evaluate(`(() => { const e = ${selectorExpression}; if (!e) throw new Error('missing'); e.scrollIntoView({ block: 'nearest' }); const b = e.getBoundingClientRect(); return { x: Math.round(b.x + b.width / 2), y: Math.round(b.y + b.height / 2) }; })()`);
   const loadedTitles = `[...document.querySelectorAll('.pd-loaded-session-title')].map(e => e.textContent)`;
+  const compactLoadedRegion = `(() => { const region=document.querySelector('.pd-loaded-sessions'); const list=region.querySelector('.pd-loaded-sessions-list'); const rows=[...list.children].reduce((height, row) => height+row.getBoundingClientRect().height, 0); const style=getComputedStyle(list); const expected=region.querySelector('.pd-sidebar-region-heading-row').getBoundingClientRect().height+rows+parseFloat(style.paddingTop)+parseFloat(style.paddingBottom); return Math.abs(region.getBoundingClientRect().height-expected)<1; })()`;
 
   await review.waitFor('window.__modelReview?.ready === true && Boolean(document.querySelector(".pd-activity-bar"))');
   await review.viewport(1440, 900);
@@ -65,7 +66,12 @@ export default async function loadedSessionsScenarios(review) {
   await review.waitFor(`document.querySelectorAll('.pd-session-item[data-session-path]').length >= 3 && Boolean(document.querySelector('.pd-loaded-sessions'))`);
   await review.assert(`document.querySelector('.pd-sidebar-regions').firstElementChild.classList.contains('pd-loaded-sessions')`, 'The loaded-sessions region sits at the top of the sidebar regions');
   await review.assert(`document.querySelector('.pd-loaded-sessions-empty')?.textContent.includes('拖动')`, 'An empty loaded list explains right-click and drag');
+  await review.assert(compactLoadedRegion, 'An empty loaded region fits its heading and one hint row without reserving blank space');
+  await review.assert(`document.querySelector('.pd-loaded-sessions').getBoundingClientRect().height <= 56`, 'The empty region leaves the sidebar space available to projects');
   await review.screenshot('loaded-01-empty');
+  await review.click('.pd-loaded-sessions .pd-sidebar-region-heading');
+  await review.assert(`Math.abs(document.querySelector('.pd-loaded-sessions').getBoundingClientRect().height-24)<1 && !document.querySelector('.pd-loaded-sessions-list')`, 'Collapsing the loaded region leaves only its 24px heading');
+  await review.click('.pd-loaded-sessions .pd-sidebar-region-heading');
 
   // Right-click → 加载到已加载会话.
   const first = await center(rowOf('调研登录流程'));
@@ -73,6 +79,7 @@ export default async function loadedSessionsScenarios(review) {
   await review.clickText('[role="menuitem"]', '加载到「已加载的会话」');
   await review.waitFor(`${loadedTitles}.includes('调研登录流程')`);
   await review.assert(`window.__loadedReview.loads.length === 1 && window.__loadedReview.loads[0].endsWith('login-flow.jsonl')`, 'Loading from the menu asks the main agent to keep the conversation warm');
+  await review.assert(compactLoadedRegion, 'One loaded conversation uses only one row below the heading');
 
   // Drag a row onto the loaded region.
   const second = await center(rowOf('整理发布说明'));
@@ -88,6 +95,7 @@ export default async function loadedSessionsScenarios(review) {
   await review.assert(`!document.querySelector('.pd-session-drag-ghost') && !document.querySelector('.pd-session-split-drop')`, 'Dropping clears the ghost and the split drop zone');
   await review.assert(`window.__loadedReview.switches.length === 0`, 'A drag never doubles as a click that opens the conversation');
   await review.assert(`JSON.parse(localStorage.getItem('pi-desktop:loaded-sessions')).length === 2`, 'The loaded list persists for the next launch');
+  await review.assert(compactLoadedRegion, 'The loaded region grows only by the added conversation row');
   await review.screenshot('loaded-03-two-loaded');
 
   // Ctrl+Tab cycles the loaded conversations.
@@ -141,5 +149,15 @@ export default async function loadedSessionsScenarios(review) {
   await review.click('.pd-loaded-session[data-loaded-kind="main"] .pd-loaded-session-close');
   await review.waitFor(`window.__loadedReview.unloads.length >= 1 && document.querySelectorAll('.pd-loaded-session[data-loaded-kind="main"]').length === 1`);
   await review.assert('true', 'Unloading drops the row and releases the warm copy');
+  await review.assert(compactLoadedRegion, 'Unloading a conversation immediately releases its vertical space');
   await review.screenshot('loaded-07-after-close');
+
+  await review.viewport(1440, 480);
+  await review.reloadWithFixture(`(${installLoadedSessionsFixture.toString()})(); localStorage.setItem('pi-desktop:loaded-sessions', JSON.stringify(Array.from({length:10}, (_, index) => ({cwd: window.__modelReview.snapshot.cwd, path: window.__modelReview.snapshot.cwd+'/many-'+index+'.jsonl'}))));`);
+  await review.waitFor(`document.querySelectorAll('.pd-loaded-session').length === 10`);
+  await review.assert(`(() => { const region=document.querySelector('.pd-loaded-sessions'); const list=region.querySelector('.pd-loaded-sessions-list'); return region.getBoundingClientRect().height<=document.querySelector('.pd-sidebar-regions').getBoundingClientRect().height*0.34+1 && list.scrollHeight>list.clientHeight && list.clientHeight>=22; })()`, 'Many loaded conversations stay within the height cap and scroll in a short window');
+  const listCenter = await center(`document.querySelector('.pd-loaded-sessions-list')`);
+  await review.wheel(listCenter.x, listCenter.y, 400);
+  await review.waitFor(`document.querySelector('.pd-loaded-sessions-list').scrollTop > 0`);
+  await review.screenshot('loaded-08-many-scroll');
 }

@@ -22,7 +22,7 @@
 .pd-session-delete-dialog button { display: inline-flex; align-items: center; justify-content: center; min-height: 34px; padding: 6px 12px; border: 1px solid var(--pd-border); border-radius: var(--pd-radius-sm); background: var(--pd-surface); color: var(--pd-text); }
 .pd-session-delete-dialog button.is-danger { color: var(--pd-danger); border-color: var(--pd-danger-border); background: var(--pd-danger-surface); }
 /* One row: an equal-width view switch, then "new" and the view-options menu. */
-.pd-sidebar-organize-toolbar { display: flex; flex: 0 0 auto; align-items: center; gap: 6px; min-height: 24px; padding: 0 9px 0 12px; margin-bottom: 3px; }
+.pd-sidebar-organize-toolbar { display: flex; flex: 0 0 auto; align-items: center; gap: 6px; min-height: 24px; padding: 0 9px 0 12px; }
 .pd-sidebar-mode { display: flex; flex: 1 1 auto; gap: 2px; max-width: 168px; min-width: 0; padding: 2px; border-radius: var(--pd-radius-md); background: var(--pd-sidebar-surface); }
 .pd-sidebar-mode button { display: flex; flex: 1 1 0; align-items: center; justify-content: center; min-width: 0; height: 26px; padding: 0 10px; border: 0; border-radius: var(--pd-radius-sm); background: transparent; color: var(--pd-text-subtle); font-size: var(--pd-font-caption); white-space: nowrap; transition: background var(--pd-motion-fast), color var(--pd-motion-fast); }
 .pd-sidebar-mode button[aria-selected='true'] { background: var(--pd-sidebar-tab); color: var(--pd-text); font-weight: var(--pd-weight-medium); box-shadow: var(--pd-shadow-low); }

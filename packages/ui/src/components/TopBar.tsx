@@ -10,6 +10,7 @@ import type { RefObject } from 'react';
 interface TopBarProps {
 	history: HistoryNavigationProps;
 	searchOpen: boolean;
+	searchButtonRef: RefObject<HTMLButtonElement | null>;
 	onOpenSearch(): void;
 	mainView: 'chat' | 'automations' | 'plugins';
 	title: string;
@@ -23,7 +24,7 @@ interface TopBarProps {
 }
 
 /** Window-wide VS Code-style title bar. It owns app navigation and the current session title. */
-export function TopBar({ history, searchOpen, onOpenSearch, mainView, title, sessionPath, cwd, onOpenCommit, isWindows, workbenchOpen, onToggleWorkbench, workbenchToggleRef }: TopBarProps) {
+export function TopBar({ history, searchOpen, searchButtonRef, onOpenSearch, mainView, title, sessionPath, cwd, onOpenCommit, isWindows, workbenchOpen, onToggleWorkbench, workbenchToggleRef }: TopBarProps) {
 	const { t } = useT();
 	return (
 		<header className="pd-top-bar" aria-label={t('sidebar.main')}>
@@ -44,8 +45,8 @@ export function TopBar({ history, searchOpen, onOpenSearch, mainView, title, ses
 			</svg>
 			<div className="pd-top-bar-navigation">
 				<HistoryNavigation {...history} />
-				<SearchButton open={searchOpen} onClick={onOpenSearch} />
 			</div>
+			<div className="pd-top-bar-search-slot"><SearchButton cwd={cwd} open={searchOpen} buttonRef={searchButtonRef} onClick={onOpenSearch} /></div>
 			<div className="pd-top-bar-session">
 				{mainView === 'chat' && <>
 					<div className="pd-top-bar-workspace-actions">
