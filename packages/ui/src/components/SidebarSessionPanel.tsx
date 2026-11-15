@@ -22,7 +22,7 @@ import { ProjectCreationDialog } from './ProjectCreationDialog';
 import { ProjectRemovalDialog, type ProjectRemovalSummary } from './ProjectRemovalDialog';
 import { assignProjectToGroup, buildSidebarGroups, buildSidebarProjectGroups, clearPinnedProjects, collectSidebarSessions, groupSidebarProjects, groupSessionsByDate, mergeSidebarProjectOrder, moveProjectToGroupPosition, orderSidebarProjects, readPinnedProjects, readSidebarPreferences, readSidebarProjectGroups, readSidebarSectionLayout, reorderSidebarProjectPositions, saveSidebarPreferences, saveSidebarProjectGroups, saveSidebarSectionLayout, selectSidebarSessions, sidebarProjectPaths, sidebarWorkspaceKey, splitSidebarProjects, type SidebarPreferences, type SidebarSession } from '../sidebarOrganization';
 import { HoverTooltip } from './HoverTooltip';
-import { SessionHoverPreview } from './SessionHoverPreview';
+import { SESSION_PREVIEW_OPEN_DELAY_MS, SessionHoverPreview } from './SessionHoverPreview';
 import { Icon, type IconName } from './Icons';
 import { SidebarPopover } from './SidebarPopover';
 import { SidebarSubmenu } from './SidebarSubmenu';
@@ -1118,7 +1118,8 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 				event.preventDefault(); event.stopPropagation();
 				openSectionMenu(event.currentTarget);
 			} : undefined}>
-				<HoverTooltip title={name} description={options.workspace} side="top" align="start">
+				{/* 栏目标题（项目/日期分组等）悬停提示与会话行一致：延迟约 0.3 秒、从侧栏右缘弹出，不遮挡标题行本身；右侧空间不足时隐藏。 */}
+				<HoverTooltip title={name} description={options.workspace} side="right" openDelayMs={SESSION_PREVIEW_OPEN_DELAY_MS}>
 				<button type="button" className={`pd-sidebar-group-toggle${options.workspace && projectDragMode ? ' is-project-draggable' : ''}`} aria-expanded={expanded} onPointerDown={options.workspace && projectDragMode ? (event) => beginDrag({ kind: 'project', workspace: options.workspace! }, event) : options.group && dragMode && !draggingGroup ? (event) => beginDrag({ kind: 'group', id: options.group!.id }, event) : undefined} onClick={() => toggleSection(key)}>
 					<Icon name={options.icon ?? 'hash'} width="14" height="14" /><span>{name}</span><Icon name="chevronRight" width="12" height="12" className={expanded ? 'is-expanded' : ''} />{aggregateLabel && <span className="pd-session-state-counts" title={aggregateLabel} aria-label={aggregateLabel}>{aggregate.waiting > 0 && <b className="is-waiting" />}{aggregate.subagents > 0 && <b className="is-subagents" />}{aggregate.running > 0 && <b className="is-running" />}{aggregate.failed > 0 && <b className="is-failed" />}{aggregate.unread > 0 && <b className="is-unread" />}</span>}
 				</button>
@@ -1276,7 +1277,8 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 		const heading = <button type="button" className="pd-sidebar-region-heading" aria-expanded={!isCollapsed} onClick={() => toggleRegion(id)}><Icon name="chevronRight" width="13" height="13" className={!isCollapsed ? 'is-expanded' : ''} /><span>{title}</span></button>;
 		return <section className={`pd-sidebar-region${isCollapsed ? ' is-collapsed' : ''}`} key={id} data-region-id={id} data-project-group-target={id === 'ungrouped-projects' ? '' : undefined} style={{ flex: isCollapsed ? '0 0 24px' : `1 1 ${height}px` }}>
 			<div className="pd-sidebar-region-heading-row">
-				{options?.hint ? <HoverTooltip title={options.hint} description={options.hintDetail} side="top" interactive={false}>{heading}</HoverTooltip> : heading}
+				{/* 大区标题（分组/未分组项目/未归属会话）同样延迟后从右侧弹出，不遮挡标题行。 */}
+				{options?.hint ? <HoverTooltip title={options.hint} description={options.hintDetail} side="right" interactive={false} openDelayMs={SESSION_PREVIEW_OPEN_DELAY_MS}>{heading}</HoverTooltip> : heading}
 				{options?.actions && <div className="pd-sidebar-region-heading-actions">{options.actions}</div>}
 			</div>
 			{!isCollapsed && <div className="pd-sidebar-region-content">{content}</div>}

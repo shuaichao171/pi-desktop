@@ -6,6 +6,7 @@ import { closeLoadedPane, unloadSessionFromMain } from '../loadedSessionActions'
 import { useLoadedSessions, useSessionDrag } from '../loadedSessions';
 import { useChatStore } from '../store';
 import { HoverTooltip } from './HoverTooltip';
+import { SESSION_PREVIEW_OPEN_DELAY_MS } from './SessionHoverPreview';
 import { Icon } from './Icons';
 import './loadedSessions.css';
 
@@ -55,7 +56,8 @@ export function LoadedSessionsRegion({ titleFor, projectNameFor, indicatorFor, o
 
 	return <section className={`pd-sidebar-region pd-loaded-sessions${collapsed ? ' is-collapsed' : ''}${dropActive ? ' is-drop-active' : ''}${dropHover ? ' is-drop-hover' : ''}`} data-session-drop="loaded" aria-label={t('loaded.title')}>
 		<div className="pd-sidebar-region-heading-row">
-			<HoverTooltip title={t('loaded.hint')} description={t('loaded.hintDetail')} side="top" interactive={false}>{heading}</HoverTooltip>
+			{/* 大区标题与其他栏目标题一致：延迟约 0.3 秒、从侧栏右缘弹出，不遮挡标题行。 */}
+			<HoverTooltip title={t('loaded.hint')} description={t('loaded.hintDetail')} side="right" interactive={false} openDelayMs={SESSION_PREVIEW_OPEN_DELAY_MS}>{heading}</HoverTooltip>
 		</div>
 		{!collapsed && <div className="pd-sidebar-region-content pd-loaded-sessions-list" role="list">
 			{rows.map((row) => {
