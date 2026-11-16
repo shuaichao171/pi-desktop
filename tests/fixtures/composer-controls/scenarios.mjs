@@ -76,9 +76,9 @@ export default async function composerControlsScenarios(review) {
       && ![...shell.querySelectorAll('.pd-composer-action')].some(button => ${c}.visible(button) && /停止|引导|排队/.test(button.textContent + (button.getAttribute('aria-label') ?? '')))
       && !shell.querySelector('.pd-steer-action');
   })()`, `The composer exposes one primary ${action} control without separate stop or steer buttons`);
-  const openGeneral = async () => {
+  const openChatSettings = async () => {
     await review.click('.pd-settings-entry');
-    await review.clickText('.pd-settings-nav button', '常规');
+    await review.clickText('.pd-settings-nav button', '对话');
     await review.waitFor(`Boolean(document.querySelector('${behaviorSetting}'))`);
   };
   const closeSettings = async () => { await review.key('Escape'); await review.waitFor('!document.querySelector(".pd-settings-dialog")'); };
@@ -205,8 +205,8 @@ export default async function composerControlsScenarios(review) {
 
   // With no queued rows, settings remain available and control the mounted composer immediately.
   await review.evaluate(`${c}.ready()`);
-  await openGeneral();
-  await review.assert(`document.querySelector('${behaviorSetting} button[aria-pressed="true"]').textContent.trim() === '排队'`, 'Default busy Enter behavior is queueing and is exposed in General settings');
+  await openChatSettings();
+  await review.assert(`document.querySelector('${behaviorSetting} button[aria-pressed="true"]').textContent.trim() === '排队'`, 'Default busy Enter behavior is queueing and is exposed in Chat settings');
   await review.screenshot('composer-behavior-settings-dark-1440');
   await closeSettings();
   await clickSendAndAssert('默认按钮点击加入队列', 'followUp');
@@ -229,7 +229,7 @@ export default async function composerControlsScenarios(review) {
   await review.evaluate(`document.querySelector('${textarea}').dispatchEvent(new CompositionEvent('compositionend', { bubbles: true, data: '文字' }))`);
   await review.fill(textarea, '');
 
-  await openGeneral();
+  await openChatSettings();
   await review.clickText(`${behaviorSetting} button`, '引导');
   await review.assert(`localStorage.getItem('pi-desktop:busy-input-behavior') === 'steer'`, 'Changing busy Enter behavior persists the selection');
   await review.clickText('.pd-settings-nav button', '快捷键');
@@ -245,7 +245,7 @@ export default async function composerControlsScenarios(review) {
   await review.assert(`(() => { const box = document.querySelector('${send}').getBoundingClientRect(); return document.documentElement.scrollWidth <= innerWidth && box.left >= 0 && box.right <= innerWidth && box.bottom <= innerHeight; })()`, 'The narrow busy composer and send button stay within the viewport');
   await review.screenshot('composer-busy-draft-dark-680');
   await review.viewport(1440, 1000);
-  await openGeneral();
+  await openChatSettings();
   await review.viewport(680, 900);
   await review.screenshot('composer-behavior-settings-dark-680');
   await review.clickText('.pd-settings-nav button', '外观');
@@ -264,8 +264,8 @@ export default async function composerControlsScenarios(review) {
   await review.waitFor('window.__modelReview?.ready === true && !window.__composerControls');
   await review.evaluate(`(${installComposerControlsHarness.toString()})()`);
   await review.viewport(1440, 1000);
-  await openGeneral();
-  await review.assert(`document.querySelector('${behaviorSetting} button[aria-pressed="true"]').textContent.trim() === '引导'`, 'General settings restore the saved follow-up preference after a full reload');
+  await openChatSettings();
+  await review.assert(`document.querySelector('${behaviorSetting} button[aria-pressed="true"]').textContent.trim() === '引导'`, 'Chat settings restore the saved follow-up preference after a full reload');
   await closeSettings();
   await submitAndAssert('重载后 Enter 仍然引导', {}, 'steer');
   await review.assert(`${c}.calls.filter(call => call.name === 'abort').length === 0`, 'Keyboard follow-up delivery never invokes stop');

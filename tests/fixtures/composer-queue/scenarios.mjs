@@ -406,8 +406,8 @@ export default async function composerQueueScenarios(review) {
   await clickVisibleButton(review, '关闭默认排队', '.pd-queue-menu');
   await review.assert(`localStorage.getItem('pi-desktop:busy-input-behavior') === 'steer' && ${q}.currentQueue().paused === false`, 'Turning off default queueing changes the next-send preference without pausing existing input');
   await review.click('.pd-settings-entry');
-  await review.clickText('.pd-settings-nav button', '常规');
-  await review.assert(`document.querySelector('[data-setting="busy-input-behavior"] button[aria-pressed="true"]').textContent.trim() === '引导'`, 'General settings immediately reflect a follow-up preference changed through the queue menu');
+  await review.clickText('.pd-settings-nav button', '对话');
+  await review.assert(`document.querySelector('[data-setting="busy-input-behavior"] button[aria-pressed="true"]').textContent.trim() === '引导'`, 'Chat settings immediately reflect a follow-up preference changed through the queue menu');
   await review.key('Escape');
   await review.waitFor('!document.querySelector(".pd-settings-dialog")');
   for (const [text, modifiers, behavior] of [
@@ -420,12 +420,12 @@ export default async function composerQueueScenarios(review) {
     await review.assert(`${q}.calls.filter(call=>call.name==='submit').at(-1).request.behavior === ${JSON.stringify(behavior)}`, 'Busy submit follows the selected default or its alternate shortcut: ' + text);
   }
   await review.click('.pd-settings-entry');
-  await review.clickText('.pd-settings-nav button', '常规');
+  await review.clickText('.pd-settings-nav button', '对话');
   await review.clickText('[data-setting="busy-input-behavior"] button', '排队');
   await review.key('Escape');
   await review.waitFor('!document.querySelector(".pd-settings-dialog")');
   await openMenu('queue-keyboard-001');
-  await review.assert(`document.querySelector('.pd-queue-menu [role="menuitemcheckbox"]').getAttribute('aria-checked') === 'true' && document.querySelector('.pd-queue-menu').textContent.includes('关闭默认排队') && ${q}.currentQueue().paused === false`, 'The queue menu immediately reflects General settings without changing queue pause state');
+  await review.assert(`document.querySelector('.pd-queue-menu [role="menuitemcheckbox"]').getAttribute('aria-checked') === 'true' && document.querySelector('.pd-queue-menu').textContent.includes('关闭默认排队') && ${q}.currentQueue().paused === false`, 'The queue menu immediately reflects Chat settings without changing queue pause state');
   await review.key('Escape');
   for (const [text, modifiers, behavior] of [
     ['快捷键：Enter 默认排队', {}, 'followUp'],

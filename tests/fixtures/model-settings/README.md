@@ -21,4 +21,4 @@ node tests/fixtures/model-settings/run.mjs --run
 
 更新设置的独立检查/安装按钮也复用此驱动：`node tests/fixtures/model-settings/update-scenarios.mjs --check` 仅做静态准备；`node tests/fixtures/model-settings/run.mjs --run --scenario=update-scenarios.mjs` 验证实际按钮状态及 bridge 调用。所有更新状态均为模拟，不下载或安装真实更新。
 
-操作结果提示的自动消失时限同样复用此驱动：`node tests/fixtures/model-settings/run.mjs --run --scenario=notice-timeout-scenarios.mjs` 验证 常规 → 通知 中的时长下拉、写入本地存储、失败提示 6 秒（3 秒 × 2）后自动关闭、悬停期间倒计时暂停、以及选「不限」时仅手动关闭。场景用一次失败的导出操作产生提示，不调用真实导出。
+操作结果提示的自动消失时限同样复用此驱动：`node tests/fixtures/model-settings/run.mjs --run --scenario=notice-timeout-scenarios.mjs` 验证 通知与声音 中的时长下拉、写入本地存储、失败提示 6 秒（3 秒 × 2）后自动关闭、悬停期间倒计时暂停、以及选「不限」时仅手动关闭。场景用一次失败的导出操作产生提示，不调用真实导出。

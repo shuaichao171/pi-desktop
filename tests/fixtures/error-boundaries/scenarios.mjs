@@ -29,7 +29,7 @@ export default async function errorBoundaryScenarios(review) {
 
   await review.evaluate("window.piDesktop.getPersonalization = async () => [{ id: 'user', path: { malformed: true }, exists: true, content: '', revision: null }]");
   await review.click('.pd-settings-entry');
-  await review.clickText('.pd-settings-nav button', '个性化');
+  await review.clickText('.pd-settings-nav button', '自定义指令');
   await review.waitFor('Boolean(document.querySelector(".pd-settings-content .pd-scoped-error"))');
   await review.assert('Boolean(document.querySelector(".pd-settings-nav")) && Boolean(document.querySelector(".pd-settings-header > button"))', 'A settings page failure keeps the settings navigation and close button');
   await review.screenshot('error-boundary-settings');

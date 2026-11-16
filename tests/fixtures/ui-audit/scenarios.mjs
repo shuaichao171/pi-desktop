@@ -68,7 +68,7 @@ export default async function uiAudit(review) {
   await step('search', async () => { await review.key('k', { ctrl: true }); await review.settle(); await shot('07-search'); await review.key('Escape'); });
   await step('automation', async () => { await review.click('.pd-activity-automations'); await shot('08-automations'); });
   await step('plugins', async () => { await review.click('.pd-activity-plugins'); await review.waitFor('!document.querySelector(".pd-scoped-error, [role=alert] .pd-error-boundary")', 3000).catch(() => {}); await shot('09-plugins'); });
-  const pages = ['常规', '外观', '个性化', '快捷键', '模型管理', '引擎', 'MCP', 'AI 调试接口', '云备份', '会话管理', '更新'];
+  const pages = ['常规', '对话', '外观', '通知与声音', '快捷键', '模型管理', '自定义指令', 'MCP', '云备份', '会话管理', '更新', '引擎', 'AI 调试接口'];
   await step('settings', async () => { await review.click('.pd-settings-entry'); await review.waitFor('Boolean(document.querySelector(".pd-settings-dialog"))'); });
   for (const [index, page] of pages.entries()) await step('settings-' + page, async () => { await review.clickText('.pd-settings-nav button', page); await new Promise(r => setTimeout(r, 300)); await shot(`s${String(index).padStart(2, '0')}-settings`); });
   await step('close', () => review.key('Escape'));

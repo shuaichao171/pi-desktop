@@ -1,4 +1,4 @@
-// Operation-notice auto-dismiss in the real built renderer: the 常规 → 通知
+// Operation-notice auto-dismiss in the real built renderer: the 通知与声音
 // duration control, its persistence, and the timer itself (including the
 // hover hold). Static preparation: node tests/fixtures/model-settings/notice-timeout-scenarios.mjs --check
 // Run after build: node tests/fixtures/model-settings/run.mjs --run --scenario=notice-timeout-scenarios.mjs
@@ -23,7 +23,7 @@ export default async function noticeTimeoutScenarios(review) {
 
   await review.waitFor('window.__modelReview?.ready === true');
   await review.click('.pd-settings-entry');
-  await review.clickText('.pd-settings-nav button', '常规');
+  await review.clickText('.pd-settings-nav button', '通知与声音');
   await review.waitFor(`Boolean(document.querySelector(${JSON.stringify(select)}))`);
   await review.assert(`document.querySelector(${JSON.stringify(select)}).value === '5'`, 'Notices default to a 5-second lifetime');
   await review.assert(`(() => { const s = document.querySelector(${JSON.stringify(select)}); return s.options.length === 5 && [...s.options].map(o => o.textContent.trim()).join('|') === '不限|3 秒|5 秒|10 秒|30 秒'; })()`, 'The duration control offers 不限 plus four presets');
@@ -56,7 +56,7 @@ export default async function noticeTimeoutScenarios(review) {
 
   // 不限 (0) leaves the notice alone until it is closed by hand.
   await review.click('.pd-settings-entry');
-  await review.clickText('.pd-settings-nav button', '常规');
+  await review.clickText('.pd-settings-nav button', '通知与声音');
   await review.evaluate(`(() => { const s = document.querySelector(${JSON.stringify(select)}); s.value = '0'; s.dispatchEvent(new Event('change', { bubbles: true })); return s.value; })()`);
   await review.settle();
   await review.assert(`window.localStorage.getItem(${JSON.stringify(storageKey)}) === '0'`, '不限 is stored as 0');

@@ -31,8 +31,8 @@ export default async function nextInputSuggestionScenarios(review) {
 
   // Settings: switch on, model picker appears.
   await review.click('.pd-settings-entry');
-  await review.waitFor(`[...document.querySelectorAll('.pd-settings-nav button')].some(e => e.textContent.trim() === '常规')`);
-  await review.clickText('.pd-settings-nav button', '常规');
+  await review.waitFor(`[...document.querySelectorAll('.pd-settings-nav button')].some(e => e.textContent.trim() === '对话')`);
+  await review.clickText('.pd-settings-nav button', '对话');
   await review.waitFor(`Boolean(document.querySelector('[data-setting="next-suggestion"]'))`);
   await review.assert(`document.querySelector('[data-setting="next-suggestion"]').getAttribute('aria-checked') === 'false'`, 'The settings switch starts off');
   await review.click('[data-setting="next-suggestion"]');

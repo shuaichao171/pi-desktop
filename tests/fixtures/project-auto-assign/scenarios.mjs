@@ -1,4 +1,4 @@
-// 识别项目目录：设置「常规」页的开关默认开启；临时对话的第一条消息写了目录时，输入框上方出现横幅，
+// 识别项目目录：设置「对话」页的开关默认开启；临时对话的第一条消息写了目录时，输入框上方出现横幅，
 // 可选择「转移」（回复进行中则等本轮结束）或点 X 关闭。全部为模拟 bridge。
 // node tests/fixtures/model-settings/run.mjs --run --scenario=../project-auto-assign/scenarios.mjs
 function installFixture() {
@@ -29,8 +29,8 @@ export default async function projectAutoAssignScenarios(review) {
 
   // Settings: on by default.
   await review.click('.pd-settings-entry');
-  await review.waitFor(`[...document.querySelectorAll('.pd-settings-nav button')].some(e => e.textContent.trim() === '常规')`);
-  await review.clickText('.pd-settings-nav button', '常规');
+  await review.waitFor(`[...document.querySelectorAll('.pd-settings-nav button')].some(e => e.textContent.trim() === '对话')`);
+  await review.clickText('.pd-settings-nav button', '对话');
   await review.waitFor(`Boolean(document.querySelector('${toggle}'))`);
   await review.assert(`document.querySelector('${toggle}').getAttribute('aria-checked') === 'true'`, 'The switch is on by default');
   await review.evaluate(`document.querySelector('${toggle}').scrollIntoView({ block: 'center' })`);

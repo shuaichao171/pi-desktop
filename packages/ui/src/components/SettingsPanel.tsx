@@ -29,25 +29,28 @@ import { QUESTION_AUTO_RESOLUTION_MINUTE_OPTIONS, useQuestionAutoResolutionMinut
 import { ConversationStorageSettings } from './ConversationStorageSettings';
 import { EngineSettingsPanel } from './EngineSettingsPanel';
 import { SettingsGroup, SettingsRow, SettingsSwitch } from './SettingsRows';
+import { searchSettings, SETTINGS_PAGE_LABELS, type SettingsPage, type SettingsSearchResult } from '../settingsSearch';
 
 // Public source repository. window.open is intercepted by the main process,
 // which opens http(s) links in the system browser.
 const PROJECT_REPOSITORY_URL = 'https://github.com/shuaichao171/pi-desktop';
 
 export type ThemePreference = 'system' | 'dark' | 'light';
-type SettingsPage = 'general' | 'appearance' | 'personalization' | 'model' | 'backup' | 'debug' | 'engine' | 'shortcuts' | 'updates' | 'sessions' | 'mcp';
 
-// Eleven pages read as one long list; three labelled groups with icons make the
-// navigation scannable. Desktop-only pages are hidden in the standalone pai window.
-const SETTINGS_NAV: Array<{ id: 'app' | 'models' | 'data'; pages: Array<{ page: SettingsPage; icon: IconName; desktopOnly?: boolean }> }> = [
+// Keep everyday preferences above AI configuration, data, and advanced tools.
+// Desktop-only pages are hidden in the standalone pai window.
+const SETTINGS_NAV: Array<{ id: 'app' | 'models' | 'data' | 'advanced'; pages: Array<{ page: SettingsPage; icon: IconName; desktopOnly?: boolean }> }> = [
 	{ id: 'app', pages: [
-		{ page: 'general', icon: 'settings' }, { page: 'appearance', icon: 'palette' }, { page: 'personalization', icon: 'user' }, { page: 'shortcuts', icon: 'keyboard' },
+		{ page: 'general', icon: 'settings' }, { page: 'conversation', icon: 'message' }, { page: 'appearance', icon: 'palette' }, { page: 'notifications', icon: 'alert' }, { page: 'shortcuts', icon: 'keyboard' },
 	] },
 	{ id: 'models', pages: [
-		{ page: 'model', icon: 'spark' }, { page: 'engine', icon: 'cpu' }, { page: 'mcp', icon: 'plugins' }, { page: 'debug', icon: 'code' },
+		{ page: 'model', icon: 'spark' }, { page: 'personalization', icon: 'user' }, { page: 'mcp', icon: 'plugins' },
 	] },
 	{ id: 'data', pages: [
 		{ page: 'backup', icon: 'cloud' }, { page: 'sessions', icon: 'message', desktopOnly: true }, { page: 'updates', icon: 'update', desktopOnly: true },
+	] },
+	{ id: 'advanced', pages: [
+		{ page: 'engine', icon: 'cpu' }, { page: 'debug', icon: 'code' },
 	] },
 ];
 type DraftFocus = { element: HTMLElement; selection?: { start: number; end: number; direction: 'forward' | 'backward' | 'none' } };
@@ -152,6 +155,9 @@ export function SettingsPanel({ initialPage = 'general', modelManagementTarget, 
 	const [paiLaunch] = useState(() => new URLSearchParams(window.location.search).get('mode') === 'pai');
 	const paiMode = appInfo?.windowMode === 'pai' || paiLaunch;
 	const [page, setPage] = useState<SettingsPage>(paiMode && initialPage === 'updates' ? 'general' : initialPage);
+	const [searchQuery, setSearchQuery] = useState('');
+	const [searchTarget, setSearchTarget] = useState<SettingsSearchResult | null>(null);
+	const searchRef = useRef<HTMLInputElement>(null);
 	const [modelTarget, setModelTarget] = useState(modelManagementTarget);
 	const [draftState, setDraftState] = useState<DraftState>({ dirty: false, saving: false });
 	const [leaveGuard] = useState(() => createSettingsLeaveGuard<SettingsPage, DraftFocus | null>());
@@ -207,11 +213,23 @@ export function SettingsPanel({ initialPage = 'general', modelManagementTarget, 
 	function selectPage(next: SettingsPage) {
 		if (next === page) return;
 		requestLeave(() => {
+			setSearchTarget(null);
 			if (next === 'model') setModelTarget(undefined);
 			draftFocusRef.current = null;
 			focusCategoryRef.current = true;
 			setPage(next);
 		});
+	}
+	function selectSearchResult(result: SettingsSearchResult) {
+		const navigate = () => {
+			if (result.page === 'model' && result.page !== page) setModelTarget(undefined);
+			draftFocusRef.current = null;
+			setSearchQuery('');
+			setPage(result.page);
+			setSearchTarget(result);
+		};
+		if (result.page === page) navigate();
+		else requestLeave(navigate);
 	}
 	function keepEditing() {
 		const request = leaveGuard.keepEditing();
@@ -246,6 +264,27 @@ export function SettingsPanel({ initialPage = 'general', modelManagementTarget, 
 		}
 		focusCategoryRef.current = false;
 	}, [pendingLeave, page]);
+
+	useEffect(() => {
+		if (!searchTarget) return;
+		const content = dialogRef.current?.querySelector<HTMLElement>('.pd-settings-content');
+		const match = searchTarget.selector ? content?.querySelector<HTMLElement>(searchTarget.selector) : null;
+		const target = match?.closest<HTMLElement>('.pd-settings-row') ?? match ?? content?.querySelector<HTMLElement>('h2');
+		if (!target) return;
+		const previousTabIndex = target.getAttribute('tabindex');
+		target.classList.add('pd-settings-search-target');
+		target.scrollIntoView({ block: 'center', inline: 'nearest' });
+		const focus = target.matches('button, input, select, textarea') ? target : target.querySelector<HTMLElement>('button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled)');
+		if (focus) focus.focus({ preventScroll: true });
+		else { target.tabIndex = -1; target.focus({ preventScroll: true }); }
+		const timer = window.setTimeout(() => target.classList.remove('pd-settings-search-target'), 2000);
+		return () => {
+			window.clearTimeout(timer);
+			target.classList.remove('pd-settings-search-target');
+			if (previousTabIndex === null) target.removeAttribute('tabindex');
+			else target.setAttribute('tabindex', previousTabIndex);
+		};
+	}, [searchTarget]);
 
 	const [desktopSettings, setDesktopSettings] = useState<UiDesktopSettings | null>(null);
 	const [desktopSettingsError, setDesktopSettingsError] = useState<string | null>(null);
@@ -349,6 +388,8 @@ export function SettingsPanel({ initialPage = 'general', modelManagementTarget, 
 		// Portaled native model editors own their modal focus boundary and Escape.
 		if (event.target instanceof Element && event.target.closest('dialog[open]')) return;
 		if (event.defaultPrevented || event.nativeEvent.isComposing) return;
+		if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === 'f' && !pendingLeave) { event.preventDefault(); event.stopPropagation(); searchRef.current?.focus(); searchRef.current?.select(); return; }
+		if (event.key === 'Escape' && searchQuery && !pendingLeave) { event.preventDefault(); event.stopPropagation(); setSearchQuery(''); searchRef.current?.focus(); return; }
 		if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); if (leaveGuard.pending) keepEditing(); else requestLeave(); return; }
 		if (event.key !== 'Tab') return;
 		const elements = Array.from(dialogRef.current?.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), summary, [tabindex]:not([tabindex="-1"])') ?? []).filter((element) => element.getClientRects().length > 0 && getComputedStyle(element).visibility !== 'hidden' && !element.matches(':disabled') && !element.closest('[inert]'));
@@ -392,21 +433,9 @@ export function SettingsPanel({ initialPage = 'general', modelManagementTarget, 
 		: updateState?.phase === 'error' ? t('settings.updateFailed')
 		: t('settings.updateIdle');
 
-	const navLabel = (target: SettingsPage): string => {
-		switch (target) {
-			case 'general': return t('settings.general');
-			case 'appearance': return t('settings.appearance');
-			case 'personalization': return t('settings.personalization');
-			case 'model': return t('settings.modelManagement');
-			case 'backup': return t('settings.cloudBackup');
-			case 'debug': return t('settings.debugApi');
-			case 'engine': return t('settings.engine');
-			case 'shortcuts': return t('settings.shortcuts');
-			case 'updates': return t('settings.updates');
-			case 'mcp': return 'MCP';
-			case 'sessions': return t('settings.sessions');
-		}
-	};
+	const navLabel = (target: SettingsPage): string => t(SETTINGS_PAGE_LABELS[target]);
+	const searching = Boolean(searchQuery.trim());
+	const searchResults = searchSettings(searchQuery, t, SETTINGS_NAV.flatMap(group => group.pages.filter(item => !paiMode || !item.desktopOnly).map(item => item.page)), { paiMode, windows: appInfo?.platform === 'win32', desktopSettings: Boolean(desktopSettings) });
 
 	return (
 		<div className="pd-settings-overlay" onMouseDown={(event) => { if (event.target === event.currentTarget && !pendingLeave) requestLeave(); }}>
@@ -414,14 +443,30 @@ export function SettingsPanel({ initialPage = 'general', modelManagementTarget, 
 				<header className="pd-settings-header" inert={Boolean(pendingLeave)}><div><h1 id="pd-settings-title">{t('settings.title')}</h1></div><button ref={closeRef} type="button" className="pd-icon-button" disabled={draftState.saving} onClick={() => requestLeave()} aria-label={t('settings.close')}><Icon name="close" /></button></header>
 				{pendingLeave && <div className="pd-settings-discard" role="alertdialog" aria-modal="true" aria-labelledby="pd-discard-title" aria-describedby="pd-discard-description"><h2 id="pd-discard-title">{t('settings.discardTitle')}</h2><p id="pd-discard-description">{t('settings.discardDescription')}</p><div className="pd-instruction-actions"><button ref={keepEditingRef} className="pd-instruction-button" type="button" disabled={savingLeave} onClick={keepEditing}>{t('personalization.keepEditing')}</button><button className="pd-instruction-button" type="button" disabled={savingLeave} onClick={discardChanges}>{t('personalization.discard')}</button>{draftState.save && <button className="pd-btn is-primary pd-settings-primary" data-action="save-settings-and-leave" type="button" disabled={savingLeave} onClick={() => void saveAndLeave()}>{savingLeave ? t('personalization.saving') : t('settings.saveAndContinue')}</button>}</div>{leaveError && <p role="alert">{t('settings.leaveSaveFailed')}</p>}</div>}
 				<div className="pd-settings-layout" inert={Boolean(pendingLeave)}>
-					<nav className="pd-settings-nav" aria-label={t('settings.category')}>
-						{SETTINGS_NAV.map((group) => <div key={group.id} className="pd-settings-nav-group" role="group" aria-label={t(`settings.navGroup.${group.id}`)}>
-							<span className="pd-settings-nav-heading" aria-hidden="true">{t(`settings.navGroup.${group.id}`)}</span>
-							{group.pages.filter((item) => !paiMode || !item.desktopOnly).map((item) => <button key={item.page} type="button" className={page === item.page ? 'is-active' : ''} aria-current={page === item.page ? 'page' : undefined} onClick={() => selectPage(item.page)}><Icon name={item.icon} width="16" height="16" /><span>{navLabel(item.page)}</span></button>)}
-						</div>)}
-					</nav>
+					<aside className="pd-settings-sidebar">
+						<div className="pd-settings-search">
+							<Icon name="search" width="16" height="16" />
+							<input ref={searchRef} type="search" value={searchQuery} placeholder={t('settings.search')} aria-label={t('settings.search')} aria-controls="pd-settings-navigation" autoComplete="off" spellCheck={false} onChange={event => setSearchQuery(event.target.value)} onKeyDown={event => {
+								if (event.nativeEvent.isComposing) return;
+								if (event.key === 'Escape' && searchQuery) { event.preventDefault(); event.stopPropagation(); setSearchQuery(''); }
+								else if (event.key === 'Enter' && searchResults[0]) { event.preventDefault(); selectSearchResult(searchResults[0]); }
+								else if (event.key === 'ArrowDown' && searching) { event.preventDefault(); dialogRef.current?.querySelector<HTMLButtonElement>('.pd-settings-search-result')?.focus(); }
+							}} />
+							{searchQuery && <button type="button" className="pd-settings-search-clear" aria-label={t('settings.searchClear')} onClick={() => { setSearchQuery(''); searchRef.current?.focus(); }}><Icon name="close" width="14" height="14" /></button>}
+						</div>
+						{searching ? <nav id="pd-settings-navigation" className="pd-settings-search-results" aria-label={t('settings.searchResults')}>
+							<p className="pd-settings-search-status" role="status">{t(searchResults.length ? 'settings.searchCount' : 'settings.searchEmpty', { count: searchResults.length })}</p>
+							{searchResults.map(result => <button key={`${result.page}:${result.title}`} type="button" className="pd-settings-search-result" onClick={() => selectSearchResult(result)}><span>{result.title}</span>{result.title !== result.category && <small>{result.category}</small>}</button>)}
+						</nav> : <nav id="pd-settings-navigation" className="pd-settings-nav" aria-label={t('settings.category')}>
+							{SETTINGS_NAV.map((group) => <div key={group.id} className="pd-settings-nav-group" role="group" aria-label={t(`settings.navGroup.${group.id}`)}>
+								<span className="pd-settings-nav-heading" aria-hidden="true">{t(`settings.navGroup.${group.id}`)}</span>
+								{group.pages.filter((item) => !paiMode || !item.desktopOnly).map((item) => <button key={item.page} type="button" className={page === item.page ? 'is-active' : ''} aria-current={page === item.page ? 'page' : undefined} onClick={() => selectPage(item.page)}><Icon name={item.icon} width="16" height="16" /><span>{navLabel(item.page)}</span></button>)}
+							</div>)}
+						</nav>}
+					</aside>
 					<div className="pd-settings-content" onFocusCapture={(event) => { if (event.target instanceof HTMLElement) draftFocusRef.current = event.target; }}>
 						{settingsError && <div className="pd-settings-error" role="alert">{settingsError}</div>}
+						{desktopSettingsError && <div className="pd-settings-error" role="alert">{desktopSettingsError}</div>}
 						<ScopedErrorBoundary scope="settings" resetKeys={[page]}>
 						{!paiMode && page === 'sessions' && <SessionManagementPanel />}
 						{page === 'mcp' && <McpSettingsPanel />}
@@ -437,6 +482,22 @@ export function SettingsPanel({ initialPage = 'general', modelManagementTarget, 
 								</SettingsRow>
 								<ConversationStorageSettings onDraftStateChange={reportDraftState} />
 							</SettingsGroup>
+							{desktopSettings && <SettingsGroup title={t('settings.groupSystem')}>
+								{!paiMode && appInfo?.platform === 'win32' && <SettingsRow title={t('settings.closeBehavior')} description={t('settings.closeBehaviorDescription')}>
+									<div className="pd-language-options pd-seg" data-setting="tray" role="group" aria-label={t('settings.closeBehavior')}>
+										<button type="button" className={desktopSettings.closeBehavior === 'tray' ? 'is-selected' : ''} aria-pressed={desktopSettings.closeBehavior === 'tray'}
+											disabled={savingDesktopSettings} onClick={() => { void saveDesktopSettings({ closeBehavior: 'tray' }); }}>{t('settings.closeBehaviorTray')}</button>
+										<button type="button" className={desktopSettings.closeBehavior === 'quit' ? 'is-selected' : ''} aria-pressed={desktopSettings.closeBehavior === 'quit'}
+											disabled={savingDesktopSettings} onClick={() => { void saveDesktopSettings({ closeBehavior: 'quit' }); }}>{t('settings.closeBehaviorQuit')}</button>
+									</div>
+								</SettingsRow>}
+								<SettingsRow title={t('settings.keepAwake')} description={t('settings.keepAwakeDescription')}>
+									<SettingsSwitch setting="keep-awake" label={t('settings.keepAwake')} checked={desktopSettings.keepAwakeWhileRunning} disabled={savingDesktopSettings} onChange={next => { void saveDesktopSettings({ keepAwakeWhileRunning: next }); }} />
+								</SettingsRow>
+							</SettingsGroup>}
+						</>}
+						{page === 'conversation' && <>
+							<div className="pd-settings-section-head"><h2>{t('settings.conversation')}</h2><p>{t('settings.conversationDescription')}</p></div>
 							<SettingsGroup title={t('settings.groupConversation')}>
 								<SettingsRow title={t('settings.busyInputBehavior')} description={t('settings.busyInputBehaviorDescription', { modifier: appInfo?.platform === 'darwin' ? 'Cmd' : 'Ctrl' })}
 									footer={busyInputSaveFailed && <p className="pd-settings-feedback" role="status">{t('settings.busyInputSaveFailed')}</p>}>
@@ -472,20 +533,22 @@ export function SettingsPanel({ initialPage = 'general', modelManagementTarget, 
 										{QUESTION_AUTO_RESOLUTION_MINUTE_OPTIONS.map(minutes => <option key={minutes} value={minutes}>{minutes === 0 ? t('settings.questionAutoResolutionUnlimited') : t('settings.questionAutoResolutionMinutes', { count: minutes })}</option>)}
 									</select>
 								</SettingsRow>
-								<SettingsRow title={t('settings.extensionNotices')} description={t('settings.extensionNoticesDescription')}
-									footer={extensionNoticesSaveFailed && <p className="pd-settings-feedback" role="status">{t('settings.extensionNoticesSaveFailed')}</p>}>
-									<SettingsSwitch setting="extension-notices" label={t('settings.extensionNotices')} checked={extensionNotices} onChange={next => setExtensionNoticesSaveFailed(!setExtensionNotices(next))} />
-								</SettingsRow>
 								<ConversationMetricsSettings />
 							</SettingsGroup>
+						</>}
+						{page === 'notifications' && <>
+							<div className="pd-settings-section-head"><h2>{t('settings.notificationsPage')}</h2><p>{t('settings.notificationsPageDescription')}</p></div>
 							<SettingsGroup title={t('settings.groupNotifications')}>
-								{desktopSettingsError && <p role="alert">{desktopSettingsError}</p>}
 								<SettingsRow title={t('settings.notifications')} description={t('settings.notificationsDescription')}>
 									<SettingsSwitch setting="notifications" label={t('settings.notifications')} checked={desktopSettings?.notificationsEnabled ?? false} disabled={!desktopSettings || savingDesktopSettings} onChange={next => { void saveDesktopSettings({ notificationsEnabled: next }); }} />
 								</SettingsRow>
 								<SettingsRow title={t('settings.notificationSound')} description={t('settings.notificationSoundDescription')}
 									footer={notificationSoundSaveFailed && <p className="pd-settings-feedback" role="status">{t('settings.notificationSoundSaveFailed')}</p>}>
 									<SettingsSwitch setting="notification-sound" label={t('settings.notificationSound')} checked={notificationSound} onChange={next => setNotificationSoundSaveFailed(!setNotificationSound(next))} />
+								</SettingsRow>
+								<SettingsRow title={t('settings.extensionNotices')} description={t('settings.extensionNoticesDescription')}
+									footer={extensionNoticesSaveFailed && <p className="pd-settings-feedback" role="status">{t('settings.extensionNoticesSaveFailed')}</p>}>
+									<SettingsSwitch setting="extension-notices" label={t('settings.extensionNotices')} checked={extensionNotices} onChange={next => setExtensionNoticesSaveFailed(!setExtensionNotices(next))} />
 								</SettingsRow>
 								<SettingsRow title={t('settings.operationNoticeTimeout')} description={t('settings.operationNoticeTimeoutDescription')}
 									footer={operationNoticeTimeoutSaveFailed && <p className="pd-settings-feedback" role="status">{t('settings.operationNoticeTimeoutSaveFailed')}</p>}>
@@ -494,19 +557,6 @@ export function SettingsPanel({ initialPage = 'general', modelManagementTarget, 
 									</select>
 								</SettingsRow>
 							</SettingsGroup>
-							{desktopSettings && <SettingsGroup title={t('settings.groupSystem')}>
-								{!paiMode && appInfo?.platform === 'win32' && <SettingsRow title={t('settings.closeBehavior')} description={t('settings.closeBehaviorDescription')}>
-									<div className="pd-language-options pd-seg" data-setting="tray" role="group" aria-label={t('settings.closeBehavior')}>
-										<button type="button" className={desktopSettings.closeBehavior === 'tray' ? 'is-selected' : ''} aria-pressed={desktopSettings.closeBehavior === 'tray'}
-											disabled={savingDesktopSettings} onClick={() => { void saveDesktopSettings({ closeBehavior: 'tray' }); }}>{t('settings.closeBehaviorTray')}</button>
-										<button type="button" className={desktopSettings.closeBehavior === 'quit' ? 'is-selected' : ''} aria-pressed={desktopSettings.closeBehavior === 'quit'}
-											disabled={savingDesktopSettings} onClick={() => { void saveDesktopSettings({ closeBehavior: 'quit' }); }}>{t('settings.closeBehaviorQuit')}</button>
-									</div>
-								</SettingsRow>}
-								<SettingsRow title={t('settings.keepAwake')} description={t('settings.keepAwakeDescription')}>
-									<SettingsSwitch setting="keep-awake" label={t('settings.keepAwake')} checked={desktopSettings.keepAwakeWhileRunning} disabled={savingDesktopSettings} onChange={next => { void saveDesktopSettings({ keepAwakeWhileRunning: next }); }} />
-								</SettingsRow>
-							</SettingsGroup>}
 						</>}
 						{page === 'appearance' && <>
 							<div className="pd-settings-section-head"><h2>{t('settings.appearance')}</h2><p>{t('settings.appearanceDescription')}</p></div>
