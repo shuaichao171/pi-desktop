@@ -23,28 +23,15 @@
  * the sidebar toggle. Replaces the old sidebar brand row; always visible. */
 .pd-app-shell.flex { flex-direction: column; --pd-top-bar-height: 36px; }
 .pd-top-bar { display: flex; flex: 0 0 var(--pd-top-bar-height, 36px); align-items: center; gap: 8px; min-width: 0; padding: 0 10px 0 14px; border-bottom: 1px solid var(--pd-sidebar-surface); background: var(--pd-sidebar); }
-.pd-top-bar .pd-brand-mark { margin-right: 2px; }
+/* The icon PNG carries ~5% transparent margins, so no extra margin is needed:
+   the plain 8px bar gap keeps the rhythm consistent with the other children. */
+.pd-top-bar .pd-brand-mark { -webkit-user-drag: none; user-select: none; }
 .pd-top-bar-navigation { display: flex; flex: 0 0 auto; align-items: center; gap: 4px; -webkit-app-region: no-drag; }
-.pd-top-bar-search-slot { display: flex; flex: 1 1 auto; justify-content: center; min-width: 0; padding: 0 12px; }
-.pd-top-bar .pd-top-bar-search { display: inline-flex; flex: 0 1 560px; align-items: center; gap: 8px; width: 100%; min-width: 0; height: 26px; padding: 0 8px; border: 1px solid var(--pd-border-strong); border-radius: var(--pd-radius-sm); background: color-mix(in srgb, var(--pd-bg) 35%, var(--pd-sidebar)); color: var(--pd-text-subtle); text-align: left; font: inherit; font-size: var(--pd-font-sm); cursor: pointer; -webkit-app-region: no-drag; }
-.pd-top-bar-search > svg { flex: 0 0 auto; color: var(--pd-text-weak); }
-.pd-top-bar-search-copy { display: flex; flex: 1 1 auto; align-items: center; gap: 10px; min-width: 0; overflow: hidden; }
-.pd-top-bar-search-project { flex: 0 1 auto; max-width: 52%; min-width: 0; overflow: hidden; color: var(--pd-text); text-overflow: ellipsis; white-space: nowrap; }
-.pd-top-bar-search-hint { flex: 1 1 auto; min-width: 0; overflow: hidden; color: var(--pd-text-weak); text-overflow: ellipsis; white-space: nowrap; }
-.pd-top-bar-search-shortcut { display: inline-flex; flex: 0 0 auto; align-items: center; height: 18px; padding: 0 4px; border: 1px solid var(--pd-border); border-radius: var(--pd-radius-xs); color: var(--pd-text-weak); font: inherit; font-size: var(--pd-font-xs); line-height: 1; }
-.pd-top-bar .pd-top-bar-search:hover { border-color: var(--pd-text-weak); background: var(--pd-sidebar-hover); color: var(--pd-text); }
-.pd-top-bar .pd-top-bar-search:is(.is-active, :focus-visible) { border-color: var(--pd-focus-border); background: var(--pd-sidebar-hover); }
-.pd-top-bar-search[aria-expanded='true'] { visibility: hidden; }
+/* The compact search trigger hides while its widget expands from the same spot. */
+.pd-top-bar .pd-sidebar-search-trigger[aria-expanded='true'] { visibility: hidden; }
 html.pd-search-widget-open .is-frameless .pd-top-bar { -webkit-app-region: no-drag; }
-@media (max-width: 900px) {
-  .pd-top-bar-search-slot { padding: 0 4px; }
-  .pd-top-bar-search-copy:has(.pd-top-bar-search-project) .pd-top-bar-search-hint { display: none; }
-  .pd-top-bar-search-project { max-width: 100%; }
-}
 @media (max-width: 640px) {
   .pd-top-bar { gap: 4px; padding-left: 8px; }
-  .pd-top-bar-search-slot { padding: 0; }
-  .pd-top-bar-search-shortcut { display: none; }
 }
 .pd-top-bar-actions { display: flex; flex: 0 0 auto; align-items: center; gap: 4px; margin-left: auto; -webkit-app-region: no-drag; }
 .pd-top-bar-workspace-actions { display: flex; flex: 0 0 auto; align-items: center; gap: 2px; margin-left: auto; -webkit-app-region: no-drag; }
@@ -61,7 +48,7 @@ html.pd-search-widget-open .is-frameless .pd-top-bar { -webkit-app-region: no-dr
 .pd-top-bar-divider { flex: 0 0 auto; align-self: center; width: 1px; height: 20px; margin: 0 6px; background: var(--pd-sidebar-surface); }
 .pd-top-bar-workspace-button { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 28px; padding: 0; border: 0; border-radius: var(--pd-radius-sm); background: transparent; color: var(--pd-text-subtle); cursor: pointer; }
 .pd-top-bar-menu { flex: 0 0 30px; width: 30px; height: 28px; color: var(--pd-text); }
-.pd-top-bar-session { display: flex; flex: 0 0 auto; align-items: center; gap: 4px; min-width: 64px; }
+.pd-top-bar-session { display: flex; flex: 1 1 auto; align-items: center; gap: 4px; min-width: 0; margin-left: 14px; }
 .pd-app-body { display: flex; flex: 1; min-height: 0; min-width: 0; }
 
 :root {
@@ -1019,10 +1006,10 @@ div.pd-hover-tooltip:has(.pd-update-notes-body) { max-width: min(400px, calc(100
 .pd-conversation-header-sep { flex: 0 0 auto; color: var(--pd-text-weak); }
 .pd-conversation-header-title { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--pd-text); font-size: var(--pd-font-base); font-weight: var(--pd-weight-semibold); }
 .pd-conversation-header-branches { display: inline-flex; flex: 0 0 auto; align-items: center; gap: 3px; padding: 1px 7px; border: 1px solid var(--pd-border); border-radius: 999px; color: var(--pd-text-subtle); font-size: var(--pd-font-xs); font-variant-numeric: tabular-nums; }
-.pd-conversation-header-status { flex: 0 0 auto; width: 8px; height: 8px; margin-left: auto; border-radius: 999px; background: var(--pd-text-weak); }
-.pd-conversation-header-status.is-busy { background: var(--pd-brand); animation: pd-conversation-busy 1.2s ease-in-out infinite; }
-@keyframes pd-conversation-busy { 50% { opacity: .35; } }
-@media (prefers-reduced-motion: reduce) { .pd-conversation-header-status.is-busy { animation: none; } }
+/* The status dot is gone entirely (2026-11-16 用户要求，先去闪烁后连静态灰点也移除)；
+   运行状态由工具行 shimmer、RunStatusBar 和输入框禁用态表达。
+   分屏关闭按钮接管右缘对齐。 */
+.pd-conversation-header > .pd-icon-button { margin-left: auto; }
 .pd-chat-title-button, .pd-chat-title-input { display: block; width: 100%; min-width: 0; height: 30px; padding: 0 6px; border: 1px solid transparent; border-radius: var(--pd-radius-sm); background: transparent; color: var(--pd-text); font: inherit; text-align: left; -webkit-app-region: no-drag; user-select: text; }
 .pd-chat-title-button { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: text; }
 .pd-chat-title-button[aria-disabled='true'] { cursor: default; }

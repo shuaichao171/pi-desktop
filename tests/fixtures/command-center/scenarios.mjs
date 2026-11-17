@@ -12,7 +12,7 @@ function installCommandCenterFixture({ project = 'pi_desttop', conversation = fa
 	};
 	window.piDesktop.searchProjectFiles = async request => {
 		review.fileQueries.push(request);
-		return { files: [{ path: 'src/components/ConversationHeader.tsx', name: 'ConversationHeader.tsx', kind: 'file' }], total: 1, truncated: false };
+		return { files: [{ path: 'src/components/ConversationHeader.tsx', name: 'ConversationHeader.tsx', kind: 'file' }], total: 1 };
 	};
 	localStorage.setItem('pi-desktop.shortcuts.v1', JSON.stringify({ search: shortcut }));
 }
@@ -21,28 +21,28 @@ export default async function commandCenterScenarios(review) {
 	await review.reducedMotion(true);
 	await review.reloadWithFixture(`(${installCommandCenterFixture.toString()})()`);
 	await review.viewport(1440, 1000);
-	const button = '.pd-top-bar-search';
+	const button = '.pd-top-bar .pd-sidebar-search-trigger';
 	const dialog = '.pd-search-dialog';
 	const input = '.pd-search-input';
-	const replacesTrigger = `(() => { const button=document.querySelector('${button}').getBoundingClientRect(); const field=document.querySelector('.pd-search-input-row').getBoundingClientRect(); return ['left','top','width','height'].every(key => Math.abs(button[key]-field[key])<1); })()`;
-	const fitsHeader = `(() => { const button=document.querySelector('${button}').getBoundingClientRect(); const header=document.querySelector('.pd-top-bar').getBoundingClientRect(); const history=document.querySelector('.pd-top-bar-navigation').getBoundingClientRect(); const controls=document.querySelector('.pd-top-bar-session').getBoundingClientRect(); return Math.abs(header.height-36)<1 && button.height===26 && button.left>=history.right && button.right<=controls.left && document.documentElement.scrollWidth<=innerWidth; })()`;
-	await review.assert(`document.querySelector('${button}').textContent.includes('pi_desttop') && document.querySelector('${button} kbd').textContent==='Ctrl+K' && document.querySelector('${button}').getBoundingClientRect().width>=500`, 'The title bar shows a wide project-aware search box and its actual shortcut');
-	await review.assert(fitsHeader, 'The command center fits the compact title bar without overlapping history or window actions');
+	const expandsFromTrigger = `(() => { const button=document.querySelector('${button}').getBoundingClientRect(); const field=document.querySelector('.pd-search-input-row').getBoundingClientRect(); const expectedLeft=Math.max(8, Math.min(button.left, innerWidth-field.width-8)); return ['top','height'].every(key => Math.abs(button[key]-field[key])<1) && Math.abs(field.left-expectedLeft)<1 && field.width>=Math.min(500, innerWidth-16); })()`;
+	const fitsHeader = `(() => { const button=document.querySelector('${button}').getBoundingClientRect(); const header=document.querySelector('.pd-top-bar').getBoundingClientRect(); const nav=document.querySelector('.pd-top-bar-navigation').getBoundingClientRect(); return Math.abs(header.height-36)<1 && button.height===28 && button.left>=nav.left && button.right<=nav.right && button.right<=header.right && document.documentElement.scrollWidth<=innerWidth; })()`;
+	await review.assert(`document.querySelector('${button}').classList.contains('pd-icon-button') && !document.querySelector('${button}').textContent.trim() && Boolean(document.querySelector('${button} svg')) && Boolean(document.querySelector('.pd-top-bar-navigation .pd-sidebar-search-trigger'))`, 'The title bar shows a compact icon-only search button in the navigation cluster');
+	await review.assert(fitsHeader, 'The search button fits the compact title bar without overlapping window actions');
 	await review.screenshot('command-center-dark');
 	const originalLeft = await review.evaluate(`document.querySelector('${button}').getBoundingClientRect().left`);
 	for (const view of ['automations', 'plugins']) {
 		await review.click(`.pd-activity-${view}`);
-		await review.assert(`Math.abs(document.querySelector('${button}').getBoundingClientRect().left-${originalLeft})<1`, `The command center stays in place on the ${view} page`);
+		await review.assert(`Math.abs(document.querySelector('${button}').getBoundingClientRect().left-${originalLeft})<1`, `The search button stays in place on the ${view} page`);
 		await review.click(`.pd-activity-${view}`);
 	}
 	await review.click(button);
 	await review.waitFor(`document.activeElement===document.querySelector('${input}')`);
-	await review.assert(replacesTrigger, 'The editable search field exactly replaces the original title-bar box');
+	await review.assert(expandsFromTrigger, 'The widget expands in place of the small button into a wide search field');
 	await review.assert(`document.querySelector('${dialog}').getAttribute('aria-modal')==='false' && !document.querySelector('.pd-search-overlay') && !document.querySelector('.pd-app-shell.is-settings-open') && getComputedStyle(document.querySelector('${button}')).visibility==='hidden'`, 'Search is a floating widget without a backdrop, duplicate field or modal lock');
 	await review.waitFor(`document.querySelectorAll('.pd-search-result').length>0`);
 	await review.screenshot('command-center-picker');
 	await review.viewport(900, 900);
-	await review.assert(replacesTrigger, 'The replacement field stays attached to the title-bar box when resized');
+	await review.assert(expandsFromTrigger, 'The expanded field stays anchored to the button when resized');
 	await review.viewport(1440, 1000);
 	await review.fill(input, '@ Header');
 	await review.waitFor(`window.__commandCenterReview.fileQueries.some(request => request.query==='Header') && document.querySelector('.pd-search-results')?.textContent.includes('ConversationHeader.tsx')`);
@@ -60,7 +60,7 @@ export default async function commandCenterScenarios(review) {
 	await review.waitFor(`Boolean(document.querySelector('${dialog}'))`);
 	await review.key('Escape');
 	await review.waitFor(`!document.querySelector('${dialog}')`);
-	await review.assert(`document.activeElement===document.querySelector('${button}')`, 'Escape restores focus to the title-bar search box');
+	await review.assert(`document.activeElement===document.querySelector('${button}')`, 'Escape restores focus to the title-bar search button');
 	await review.click(button);
 	await review.waitFor(`Boolean(document.querySelector('${dialog}'))`);
 	await review.click('.pd-composer-shell textarea');
@@ -84,24 +84,27 @@ export default async function commandCenterScenarios(review) {
 	await review.reloadWithFixture(`(${installCommandCenterFixture.toString()})({project:'a-project-with-a-very-long-name-that-must-not-overlap-window-controls'})`);
 	for (const width of [900, 540, 400]) {
 		await review.viewport(width, 820);
-		await review.assert(fitsHeader, `The search box and window controls fit a ${width}px window`);
+		await review.assert(fitsHeader, `The search button and window controls fit a ${width}px window`);
 	}
 	await review.screenshot('command-center-narrow');
 	await review.click(button);
 	await review.waitFor(`Boolean(document.querySelector('${dialog}'))`);
 	await review.fill(input, '# 登录');
 	await review.waitFor(`document.querySelector('.pd-search-results')?.textContent.includes('梳理登录流程')`);
-	await review.assert(replacesTrigger, 'The narrow widget still replaces the original search field in place');
+	await review.assert(expandsFromTrigger, 'The narrow widget still expands from the trigger within the viewport');
 	await review.assert(`(() => { const panel=document.querySelector('.pd-search-panel'); const rect=panel.getBoundingClientRect(); return rect.left>=0 && rect.right<=innerWidth && rect.bottom<=innerHeight && panel.scrollWidth<=panel.clientWidth+1; })()`, 'The narrow results panel expands within the viewport while the input stays in place');
 	await review.screenshot('command-center-narrow-picker');
 	await review.key('Escape');
 
 	await review.viewport(1440, 1000);
 	await review.reloadWithFixture(`(${installCommandCenterFixture.toString()})({conversation:true, project:'2026-11-15-generated-conversation', shortcut:'Ctrl+Shift+F'})`);
-	await review.assert(`!document.querySelector('.pd-top-bar-search-project') && document.querySelector('${button} kbd').textContent==='Ctrl+Shift+F'`, 'A conversation outside a project shows the search hint and respects the user shortcut');
+	await review.assert(`!document.querySelector('${button}').textContent.trim()`, 'A conversation outside a project keeps the search button icon-only');
 	await review.key('f', { ctrl: true, shift: true });
 	await review.waitFor(`document.activeElement===document.querySelector('${input}')`);
 	await review.key('Escape');
+	await review.waitFor(`!document.querySelector('${dialog}')`);
 	await review.reloadWithFixture(`(${installCommandCenterFixture.toString()})({platform:'darwin'})`);
-	await review.assert(`document.querySelector('${button} kbd').textContent==='⌘K'`, 'The command center displays Mac shortcuts with the command symbol');
+	await review.evaluate(`document.querySelector('${button}').focus()`);
+	await review.waitFor(`document.querySelector('.pd-hover-tooltip')?.textContent.includes('⌘K')`);
+	await review.assert(`document.querySelector('.pd-hover-tooltip kbd').textContent==='⌘K'`, 'The trigger tooltip displays Mac shortcuts with the command symbol');
 }

@@ -1,4 +1,4 @@
-.pd-search-dialog.pd-search-widget { position: fixed; top: 5px; left: max(8px, calc(50% - 280px)); z-index: var(--pd-z-search); width: min(560px, calc(100vw - 16px)); height: 26px; color: var(--pd-text); -webkit-app-region: no-drag; animation: pd-search-widget-enter var(--pd-motion-fast) ease both; }
+.pd-search-dialog.pd-search-widget { position: fixed; top: 4px; left: 8px; z-index: var(--pd-z-search); width: min(560px, calc(100vw - 16px)); height: 28px; color: var(--pd-text); -webkit-app-region: no-drag; animation: pd-search-widget-enter var(--pd-motion-fast) ease both; }
 .pd-search-widget * { -webkit-app-region: no-drag; }
 .pd-search-panel { position: absolute; top: calc(100% + 6px); left: 0; display: flex; flex-direction: column; width: 100%; max-height: calc(100dvh - 50px); min-height: 0; overflow: hidden; border: 1px solid var(--pd-dialog-border); border-radius: var(--pd-radius-lg); background: var(--pd-dialog); box-shadow: var(--pd-shadow-popover); }
 .pd-search-widget.is-closing { animation: pd-search-widget-exit var(--pd-motion-fast) ease both; }

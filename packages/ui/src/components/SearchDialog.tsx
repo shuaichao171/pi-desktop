@@ -155,10 +155,12 @@ export function SearchDialog({ anchor, commands, onClose, onSelectSession, onSel
 		if (!anchor) return;
 		const place = () => {
 			const rect = anchor.getBoundingClientRect();
-			const panelWidth = Math.min(Math.max(rect.width, 560), window.innerWidth - 16);
-			const panelLeft = Math.max(8, Math.min(rect.left, window.innerWidth - panelWidth - 8));
-			setPosition({ left: rect.left, top: rect.top, width: rect.width, height: rect.height,
-				panelLeft: panelLeft - rect.left, panelWidth, panelMaxHeight: Math.max(80, window.innerHeight - rect.bottom - 14) });
+			// The compact trigger expands into a full-width field: same top band as the
+			// button, growing right from its left edge and clamped into the viewport.
+			const width = Math.min(560, window.innerWidth - 16);
+			const left = Math.max(8, Math.min(rect.left, window.innerWidth - width - 8));
+			setPosition({ left, top: rect.top, width, height: rect.height,
+				panelLeft: 0, panelWidth: width, panelMaxHeight: Math.max(80, window.innerHeight - rect.bottom - 14) });
 		};
 		place();
 		const observer = new ResizeObserver(place);

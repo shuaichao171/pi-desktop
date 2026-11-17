@@ -7,7 +7,9 @@
 }
 .pd-activity-summary, .pd-thinking-summary { max-width: 100%; padding: 4px 2px; }
 .pd-activity-summary > svg, .pd-thinking-summary > svg, .pd-activity-head > svg { flex: 0 0 auto; }
-.pd-activity-summary:hover, button.pd-thinking-summary:hover, .pd-activity-head:hover { color: var(--pd-text); background: var(--pd-surface-hover); }
+/* Hover keeps rows quiet: text brightens only, no surface tint — the light
+   theme's white-ish surface-hover reads as a flash across tool results. */
+.pd-activity-summary:hover, button.pd-thinking-summary:hover, .pd-activity-head:hover { color: var(--pd-text); }
 .pd-activity-summary-count { min-width: 0; color: var(--pd-text-weak); font-size: var(--pd-font-sm); overflow-wrap: anywhere; }
 .pd-activity-summary-count.is-error { color: var(--pd-danger); }
 .pd-activity-summary-count.is-interrupted { color: var(--pd-warning); }

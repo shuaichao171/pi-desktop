@@ -451,7 +451,6 @@ export function AppShell() {
 	}
 	const navigationPending = useChatStore((state) => state.navigationPending || state.sessionLoading);
 	const conversationCwd = useChatStore((state) => state.cwd);
-	const status = useChatStore((state) => state.status);
 	const conversationId = useChatStore((state) => state.sessionId);
 	const conversationPath = useChatStore((state) => state.sessionPath);
 	// Conversation-tree badge: distinct branch paths of the loaded session.
@@ -472,7 +471,7 @@ export function AppShell() {
 	if (paneMode) return (
 		<ExtensionDialogHost chatVisible notificationTarget={notificationTarget} globalNotices={PAI_GLOBAL_NOTICES}>
 			<div className="pd-app-shell is-pane">
-				<ConversationHeader cwd={conversationCwd} title={currentTitle} busy={status === 'busy'} branches={branchCount} closeLabel={t('pane.hide')} onClose={() => {
+				<ConversationHeader cwd={conversationCwd} title={currentTitle} branches={branchCount} closeLabel={t('pane.hide')} onClose={() => {
 					// Closing a pane only hides it; it is closed for real from "Loaded sessions".
 					const bridge = useChatStore.getState().bridge;
 					if (bridge?.setSplitPaneHidden) void bridge.setSplitPaneHidden(true).catch(() => {});
@@ -533,7 +532,7 @@ export function AppShell() {
 				setSidebarWidth((value) => Math.max(MIN_SIDEBAR_WIDTH, Math.min(MAX_SIDEBAR_WIDTH, value + (event.key === 'ArrowRight' ? 16 : -16))));
 			}} />}
 			<div className="pd-main-view">
-			<div className="pd-chat-view-host" hidden={mainView !== 'chat'} inert={mainView !== 'chat'}><ConversationHeader cwd={conversationCwd} title={currentTitle} busy={status === 'busy'} branches={branchCount} /><ScopedErrorBoundary scope="conversation" resetKeys={[conversationCwd, conversationId, conversationPath]}><ChatView onOpenModelManagement={openModelManagement} searchTarget={searchMessageTarget} navigationError={navigation.error} /></ScopedErrorBoundary><SplitDropZone /></div>
+			<div className="pd-chat-view-host" hidden={mainView !== 'chat'} inert={mainView !== 'chat'}><ConversationHeader cwd={conversationCwd} title={currentTitle} branches={branchCount} /><ScopedErrorBoundary scope="conversation" resetKeys={[conversationCwd, conversationId, conversationPath]}><ChatView onOpenModelManagement={openModelManagement} searchTarget={searchMessageTarget} navigationError={navigation.error} /></ScopedErrorBoundary><SplitDropZone /></div>
 			<SessionDragGhost />
 			{/* Split pane placeholders: the chat and every pane share the row evenly;
 			   each native pane view is glued to its region by useSplitPaneRegions. */}
