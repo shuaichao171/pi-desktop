@@ -610,6 +610,7 @@ export const translations: Record<string, { 'zh-CN': string; 'en-US': string }> 
   'message.system.extension-notice': { 'zh-CN': '插件通知', 'en-US': 'Plugin notice' },
   'message.system.subagent-notify': { 'zh-CN': '子代理完成通知', 'en-US': 'Subagent notice' },
   'message.system.goal-audit': { 'zh-CN': '目标审计', 'en-US': 'Goal audit' },
+  'message.system.background-task': { 'zh-CN': '后台任务通知', 'en-US': 'Background task notice' },
   'goal.title': { 'zh-CN': '目标', 'en-US': 'Goals' },
   'goal.status.active': { 'zh-CN': '进行中', 'en-US': 'Active' },
   'goal.status.paused': { 'zh-CN': '已暂停', 'en-US': 'Paused' },

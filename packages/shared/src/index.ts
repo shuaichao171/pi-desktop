@@ -496,7 +496,7 @@ export interface UiMessage {
   order: number;
   role: 'user' | 'assistant' | 'system';
   /** System-row flavor: compaction/branch summaries and extension notices (role 'system' only). */
-  systemKind?: 'compaction' | 'branch-summary' | 'custom' | 'extension-notice' | 'subagent-notify' | 'goal-audit';
+  systemKind?: 'compaction' | 'branch-summary' | 'custom' | 'extension-notice' | 'subagent-notify' | 'goal-audit' | 'background-task';
   /** Extension-notice flavor: info/warning/error styling (systemKind 'extension-notice' only). */
   notificationType?: 'info' | 'warning' | 'error';
   /** Accumulated text (grows while streaming). */
@@ -697,7 +697,7 @@ export type AgentUiEvent =
   | { type: 'context-usage'; contextUsage: UiContextUsage | null }
   | { type: 'thinking-level'; level: UiThinkingLevel }
   | { type: 'user-message'; id: string; order: number; text: string; attachments?: UiAttachment[]; attachmentsOmitted?: number; attachmentReferences?: UiAttachmentReference[]; runId?: string }
-  | { type: 'system-message'; id: string; order: number; text: string; systemKind?: 'compaction' | 'branch-summary' | 'custom' | 'extension-notice' | 'subagent-notify' | 'goal-audit'; runId?: string }
+  | { type: 'system-message'; id: string; order: number; text: string; systemKind?: 'compaction' | 'branch-summary' | 'custom' | 'extension-notice' | 'subagent-notify' | 'goal-audit' | 'background-task'; runId?: string }
   | { type: 'assistant-start'; id: string; order: number; runId?: string }
   | { type: 'run'; run: UiConversationRun }
   | { type: 'assistant-delta'; id: string; delta: string }

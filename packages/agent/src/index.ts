@@ -120,6 +120,7 @@ import { McpManager } from './mcpManager.ts';
 import { CuaSessionState, cuaExtension } from './cua/index.ts';
 import { CuaPermissionStore } from './cua/permissions.ts';
 import { createInterruptibleShellTools, shellRunRegistry } from './shellInterrupt.ts';
+import { backgroundTaskManager, createBackgroundTaskTool } from './backgroundTasks.ts';
 import type { UiMcpSaveRequest, UiMcpTarget } from '../../shared/src/mcpFeatures.ts';
 import type { PluginUpdateCheck } from '../../shared/src/pluginUpdates.ts';
 import { checkPluginUpdate } from './pluginUpdates.ts';
@@ -451,11 +452,20 @@ function createRuntimeFactory(
 		// processes so the UI can kill a running command without aborting the
 		// turn (plus the Windows GBK line re-encoding on top).
 		const shellToolOverrides = await createInterruptibleShellTools(cwd, settingsManager);
+		// Background tasks (run_in_background): shell resolution mirrors the interruptible bash tool,
+		// read at execution time so settings changes survive session reloads.
+		const sdkExports = await import('@earendil-works/pi-coding-agent');
+		const backgroundTool = typeof sdkExports.getShellConfig === 'function'
+			? createBackgroundTaskTool(backgroundTaskManager, () => {
+					try { return sdkExports.getShellConfig(settingsManager.getShellPath() ?? undefined); } catch { return null; }
+				}, () => settingsManager.getShellCommandPrefix())
+			: null;
+		const customTools = [...shellToolOverrides, ...(backgroundTool ? [backgroundTool] : [])];
 		const created = await createAgentSessionFromServices({
 			services,
 			sessionManager,
 			sessionStartEvent,
-			customTools: shellToolOverrides.length ? shellToolOverrides : undefined,
+			customTools: customTools.length ? customTools : undefined,
 		});
 		trackFileChanges(created.session, fileChanges);
 		return {
@@ -512,6 +522,8 @@ class SingleAgentService {
 	private subagentFleet: UiSubagentFleetSnapshot | null = null;
 	/** Last known subagent liveness per session file; survives session switches so background runs keep their sidebar indicator. */
 	private readonly subagentLiveSessions = new Map<string, boolean>();
+	/** Session id currently registered with backgroundTaskManager; null when detached. */
+	private attachedBackgroundSessionId: string | null = null;
 	private state: Omit<AgentSnapshot, 'sequence'> = {
 		status: 'uninitialized',
 		model: '',
@@ -1364,6 +1376,12 @@ class SingleAgentService {
 
 	/** Acknowledge after pi accepts the prompt, while the run continues through events. */
 	async prompt(text: string, behavior?: 'steer' | 'followUp', attachments: UiAttachment[] = [], expandPromptTemplates = true): Promise<void> {
+		// Real user input resets the background-task auto-wake chain guard; synthetic wakes call sendPrompt directly.
+		backgroundTaskManager.noteUserActivity(this.runtime?.session?.sessionId ?? '');
+		return this.sendPrompt(text, behavior, attachments, expandPromptTemplates);
+	}
+
+	private async sendPrompt(text: string, behavior: 'steer' | 'followUp' | undefined, attachments: UiAttachment[], expandPromptTemplates: boolean): Promise<void> {
 		if (this.lifecycleOperation) throw new Error('会话正在切换，请稍后发送消息');
 		if (this.pluginReloadError || this.pluginModelError) throw new Error(this.pluginReloadError ?? this.pluginModelError!);
 		const session = this.runtime?.session;
@@ -1780,6 +1798,43 @@ class SingleAgentService {
 			});
 		}
 		this.unsubscribe = runtime.session.subscribe((event) => this.onSessionEvent(event));
+		this.attachBackgroundTasks();
+	}
+
+	/** Register this session with the background-task manager and adopt persisted tasks (init/session switch). */
+	private attachBackgroundTasks(): void {
+		const session = this.runtime?.session;
+		const sessionId = session?.sessionId;
+		if (!session || !sessionId) return;
+		if (this.attachedBackgroundSessionId === sessionId) return;
+		if (this.attachedBackgroundSessionId) backgroundTaskManager.detach(this.attachedBackgroundSessionId);
+		this.attachedBackgroundSessionId = sessionId;
+		const sessionDir = session.sessionManager.getSessionDir();
+		backgroundTaskManager.attach(sessionId, {
+			prompt: (text) => this.deliverSyntheticPrompt(text),
+			isIdle: () => this.backgroundWakeReady(),
+			notify: (_kind, text) => this.fire({ type: 'system-message', id: this.nextId('system'), order: this.timelineOrder++, text, systemKind: 'background-task' }),
+		});
+		backgroundTaskManager.adopt(sessionId, sessionDir);
+		backgroundTaskManager.prune(sessionId, sessionDir);
+	}
+
+	private detachBackgroundTasks(): void {
+		if (this.attachedBackgroundSessionId) backgroundTaskManager.detach(this.attachedBackgroundSessionId);
+		this.attachedBackgroundSessionId = null;
+	}
+
+	/** A synthetic wake may only start when the session can take a fresh run. */
+	private backgroundWakeReady(): boolean {
+		const session = this.runtime?.session;
+		return !!session && session.isIdle && this.activePromptCalls === 0 && this.activeConfigurationCalls === 0
+			&& !this.lifecycleOperation && !this.closing && this.state.status === 'idle'
+			&& !this.pluginReloadError && !this.pluginModelError;
+	}
+
+	/** Inject the background-task notification as a user turn (self-invoked; bypasses prompt() so the wake chain guard stays armed). */
+	private async deliverSyntheticPrompt(text: string): Promise<void> {
+		return this.sendPrompt(text, undefined, [], false);
 	}
 
 	private scheduleQueueResume(): void {
@@ -1894,6 +1949,7 @@ class SingleAgentService {
 	}
 
 	private async teardown(): Promise<void> {
+		this.detachBackgroundTasks();
 		this.conversationRuns?.finish('interrupted'); this.conversationRuns = null;
 		this.modelTests.dispose();
 		if (this.mcpOwnerId) await this.mcp.disposeOwner(this.mcpOwnerId);
