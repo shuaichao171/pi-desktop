@@ -3,6 +3,7 @@ import { readFileSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { IPC_CHANNELS, type UiUpdateState, type UiUpdateUnavailableReason } from '@pidesktop/shared';
 import { getAppLocale } from './appLocale';
+import { removeInstalledPendingUpdate, windowsUpdaterCacheDir } from './updateCacheCleanup';
 import { isGitHubReleaseFeedUrl, parseUpdateFeedUrl } from './updateFeed';
 
 type Updater = typeof import('electron-updater').autoUpdater;
@@ -81,6 +82,7 @@ class UpdateService {
 	private autoInstallSource: (() => boolean) | null = null;
 	private installing = false;
 	private servicesClosedForInstall = false;
+	private cacheCleanup: Promise<void> | null = null;
 
 	constructor() {
 		const initial = initialState();
@@ -95,9 +97,21 @@ class UpdateService {
 	setAutoInstallSource(source: () => boolean): void { this.autoInstallSource = source; }
 	start(): void {
 		if (!this.feedUrl || this.servicesClosedForInstall || this.firstCheck || this.interval) return;
+		this.cacheCleanup ??= this.cleanInstalledUpdateCache();
 		// A slow updater import or network request must never delay splash or first paint.
 		this.firstCheck = setTimeout(() => { this.firstCheck = null; void this.check(this.autoInstallSource?.() ?? false); }, FIRST_CHECK_DELAY_MS);
 		this.interval = setInterval(() => { void this.check(this.autoInstallSource?.() ?? false); }, CHECK_INTERVAL_MS);
+	}
+
+	/** Drops the already-installed installer electron-updater leaves in its "pending" cache. */
+	private async cleanInstalledUpdateCache(): Promise<void> {
+		if (process.platform !== 'win32') return;
+		try {
+			const cacheDir = await windowsUpdaterCacheDir(process.resourcesPath);
+			if (cacheDir) await removeInstalledPendingUpdate(cacheDir, app.getVersion());
+		} catch {
+			// Best effort: a locked or missing cache only costs disk space, never the update flow.
+		}
 	}
 
 	stop(): void {
@@ -177,6 +191,8 @@ class UpdateService {
 		const attempt = this.checkAttempt;
 		this.publish({ phase: 'downloading', progressPercent: 0, error: undefined });
 		try {
+			// Never let the startup cleanup race a download writing into the same "pending" folder.
+			await this.cacheCleanup;
 			const updater = await this.getUpdater();
 			await updater.downloadUpdate();
 		} catch (error) {
