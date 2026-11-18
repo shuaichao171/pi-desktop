@@ -187,7 +187,7 @@ export function Composer({ header, onOpenModelManagement, changesSlotRef }: { he
 			void durable.current?.drafts.save(scope, draft).catch(() => { /* Best effort: the text itself lives in localStorage. */ });
 		}
 	}
-	function applyDraftTransfer(transfer: typeof draftTransfer, background = false) {
+	function applyDraftTransfer(transfer: (NonNullable<typeof draftTransfer> & { draft?: { text: string; attachments: UiAttachment[] } }) | null, background = false) {
 		if (useChatStore.getState().bridge !== bridge) return;
 		if (!transfer || handledDraftTransfers.current.has(transfer.requestId)) return;
 		const from = draftStorageKey(transfer.from.cwd, transfer.from.sessionPath);
@@ -195,6 +195,12 @@ export function Composer({ header, onOpenModelManagement, changesSlotRef }: { he
 		if (!background && currentKeyRef.current !== from && draftKey !== to && sendRequest.current?.preparationRequestId !== transfer.requestId) return;
 		if (currentKeyRef.current === from) draftsRef.current.set(from, { text: textRef.current, attachments: attachmentsRef.current });
 		let draft = draftsRef.current.get(from) ?? { text: readDraft(from), attachments: [] };
+		// A first input that could not be delivered after the user left comes back
+		// as draft text, merged with anything typed into that draft since.
+		if (transfer.draft) {
+			draftsRef.current.set(from, draft);
+			draft = restoreSubmittedDraft(draftsRef.current, from, transfer.draft);
+		}
 		if (background) draft = restoreSubmittedDraft(draftsRef.current, to, draft);
 		draftsRef.current.set(to, draft);
 		transferredScopes.current.set(to, transfer.to);

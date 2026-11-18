@@ -1368,10 +1368,30 @@ class SingleAgentService {
 		const previous = queue.begin(request, raw);
 		const existing = this.inputPending.get(request.id); if (existing) return existing;
 		if (previous) { if (previous.state === 'failed') throw new Error(previous.message ?? '此输入之前未能接收'); return previous; }
-		const operation = this.inputRequest.run(request, () => this.prompt(request.text, request.behavior, request.attachments).then(() => {
+		const operation = this.inputRequest.run(request, () => this.applyInputSettings(request).then(() => this.prompt(request.text, request.behavior, request.attachments)).then(() => {
 			queue.acknowledge(request.id); return queue.receipt(request.id)!;
 		}, (error: unknown) => { queue.fail(request.id, error); throw error; }).finally(() => { this.inputPending.delete(request.id); }));
 		this.inputPending.set(request.id, operation); return operation;
+	}
+
+	/**
+	 * Picker choices made while a new conversation was still preparing travel with
+	 * its first input when the renderer has already moved to another conversation.
+	 * Same contract as the foreground path: a rejected choice never blocks the send.
+	 */
+	private async applyInputSettings(request: UiSubmitInput): Promise<void> {
+		const model = request.model;
+		if (model && typeof model.provider === 'string' && typeof model.id === 'string') {
+			try { await this.setModel(model.provider, model.id); } catch (error) { console.warn('[pi-desktop] first-input model choice was not applied:', errorMessage(error)); }
+		}
+		if (typeof request.thinkingLevel === 'string') {
+			try { await this.setThinkingLevel(request.thinkingLevel); } catch (error) { console.warn('[pi-desktop] first-input thinking level was not applied:', errorMessage(error)); }
+		}
+	}
+
+	/** True when this context currently holds the given runtime session. */
+	ownsSession(sessionId: string): boolean {
+		return this.runtime !== null && this.state.sessionId === sessionId;
 	}
 
 	/** Acknowledge after pi accepts the prompt, while the run continues through events. */
@@ -3299,7 +3319,13 @@ export class AgentService {
 			.finally(() => { void this.trimContexts(); });
 	}
 	submitInput(request: UiSubmitInput): Promise<UiInputReceipt> {
-		const service = this.requireActive();
+		const active = this.requireActive();
+		// Input belongs to the conversation it was written for. A first message handed
+		// off while the user already switched away still reaches its own (now background)
+		// context; anything unknown keeps the active context's ownership rejection.
+		const sessionId = typeof request?.sessionId === 'string' ? request.sessionId : '';
+		const service = !sessionId || active.ownsSession(sessionId) ? active
+			: [...this.contexts.values()].find((context) => context.ownsSession(sessionId)) ?? active;
 		const provider = service.getSnapshot().modelProvider;
 		if (!this.providerResync.has(provider)) return service.submitInput(request).finally(() => { void this.trimContexts(); });
 		return this.waitForProviderResync(provider).then(() => service.submitInput(request)).finally(() => { void this.trimContexts(); });

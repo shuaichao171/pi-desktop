@@ -1,4 +1,4 @@
-import type { UiAttachment, UiQueuedMessage } from './index';
+import type { UiAttachment, UiQueuedMessage, UiThinkingLevel } from './index';
 
 export const INPUT_FEATURE_CHANNELS = {
 	submitInput: 'agent:submit-input', getInputQueue: 'agent:input-queue', mutateInputQueue: 'agent:mutate-input-queue',
@@ -7,6 +7,8 @@ export const INPUT_FEATURE_CHANNELS = {
 } as const;
 
 export interface UiInputScope { cwd: string; sessionPath: string | null }
+/** A created conversation's scope plus its runtime identity, so input can still reach it after the view moved on. */
+export interface UiNewSessionReceipt extends UiInputScope { sessionId?: string | null }
 /** Every renderer queue read/write is bound to the exact active conversation. */
 export interface UiInputQueueScope extends UiInputScope { sessionId: string }
 export function requireInputQueueScope(value: unknown): UiInputQueueScope {
@@ -21,7 +23,11 @@ export interface UiStoredAttachment {
 }
 export interface UiInputDraft { version: number; text: string; attachments: UiStoredAttachment[]; missing: string[] }
 export interface UiSaveInputDraft extends UiInputScope { expectedVersion: number; text: string; attachmentIds: string[] }
-export interface UiSubmitInput { id: string; sessionId: string; text: string; behavior?: 'steer' | 'followUp'; attachments?: UiAttachment[] }
+export interface UiSubmitInput {
+	id: string; sessionId: string; text: string; behavior?: 'steer' | 'followUp'; attachments?: UiAttachment[];
+	/** Picker choices made while a new conversation was still preparing; applied to the target session before its first prompt. */
+	model?: { provider: string; id: string }; thinkingLevel?: UiThinkingLevel;
+}
 export interface UiInputReceipt { id: string; state: 'accepted' | 'reserved' | 'consumed' | 'recovered' | 'failed'; message?: string }
 /** Editing keeps the original text/attachment metadata visible while withholding delivery. */
 export interface UiInputQueueItem extends UiQueuedMessage { version: number; state: UiInputReceipt['state'] | 'editing'; message?: string }

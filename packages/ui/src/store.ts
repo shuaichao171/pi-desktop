@@ -30,6 +30,7 @@ import type {
 	AppInfo,
 	UiAttachment,
 	UiInputScope,
+	UiNewSessionReceipt,
 	UiFileChange,
 	UiFileChangeTurn,
 	UiContextUsage,
@@ -130,8 +131,9 @@ interface ChatState {
 	/** A new standalone conversation is prepared without blocking its local draft. */
 	sessionPreparation: { requestId: number; draftScope: UiInputScope } | null;
 	draftTransfer: { requestId: number; from: UiInputScope; to: UiInputScope } | null;
-	/** Completed creations whose local draft was left before the backend receipt arrived. */
-	backgroundDraftTransfers: Array<{ requestId: number; from: UiInputScope; to: UiInputScope }>;
+	/** Completed creations whose local draft was left before the backend receipt arrived.
+	 *  `draft` carries a handed-off first input that could not be delivered, so it is restored there. */
+	backgroundDraftTransfers: Array<{ requestId: number; from: UiInputScope; to: UiInputScope; draft?: { text: string; attachments: UiAttachment[] } }>;
 	/** A project directory found in the first message of an unassigned conversation, shown above the composer. */
 	projectOffer: ProjectOffer | null;
 	/** Aside Q&A records of the loaded conversation, keyed to turn anchors (never in the Pi transcript). */
@@ -265,6 +267,11 @@ interface SessionPreparation {
 	promise: Promise<void>;
 	/** Model / thinking picked while the runtime is still being prepared; applied before the draft goes live. */
 	deferred: DeferredSessionSettings;
+	settingsApplied: boolean;
+	/** The backend's creation receipt, once it arrived. */
+	receipt: UiNewSessionReceipt | null;
+	/** Its waiting first input was handed off to the created session when the user navigated away. */
+	handedOff: boolean;
 }
 interface DeferredSessionSettings { model?: { provider: string; id: string }; thinkingLevel?: UiThinkingLevel }
 interface PreparedInput {
@@ -276,7 +283,12 @@ interface PreparedInput {
 	echoed: boolean;
 	dispatched: boolean;
 	runtimeStatus: AgentStatus | null;
+	behavior?: 'steer' | 'followUp';
+	attachments?: UiAttachment[];
+	/** Navigation moved the view away; the input is delivered to its own session in the background. */
+	handedOff: boolean;
 	cancel(): void;
+	handOff(): void;
 }
 let sessionPreparation: SessionPreparation | null = null;
 let preparedInput: PreparedInput | null = null;
@@ -1721,9 +1733,10 @@ function prepareConversation(kind: SessionPreparation['kind'], options?: { cwd?:
 	// A retry of the same draft keeps the model / thinking already picked for it.
 	const inherited = sessionPreparation && sameInputScope(sessionPreparation.draftScope, draftScope) ? { ...sessionPreparation.deferred } : {};
 	const preparing: SessionPreparation = { bridge, requestId: request, kind, options, draftScope, failed: false,
-		ready: null, reset: false, promise: Promise.resolve(), deferred: inherited };
+		ready: null, reset: false, promise: Promise.resolve(), deferred: inherited, settingsApplied: false, receipt: null, handedOff: false };
 	const preserveBackgroundDraft = (receipt: UiInputScope | void): void => {
-		if (kind !== 'new' || !receipt || generation !== bridgeGeneration || store.getState().bridge !== bridge) return;
+		// A handed-off first input owns this draft's fate (see deliverHandedOffInput).
+		if (kind !== 'new' || !receipt || preparing.handedOff || generation !== bridgeGeneration || store.getState().bridge !== bridge) return;
 		store.setState(state => ({ backgroundDraftTransfers: [...state.backgroundDraftTransfers,
 			{ requestId: request, from: draftScope, to: { cwd: receipt.cwd, sessionPath: receipt.sessionPath } }] }));
 	};
@@ -1733,6 +1746,7 @@ function prepareConversation(kind: SessionPreparation['kind'], options?: { cwd?:
 		try {
 			if (!currentSessionNavigation(bridge, request)) return;
 			const receipt = await bridge.newSession(options);
+			if (receipt) preparing.receipt = receipt;
 			sessionOpenMetrics.rpc(request);
 			if (!currentSessionNavigation(bridge, request)) { preserveBackgroundDraft(receipt); return; }
 			if (!preparing.ready) {
@@ -1744,6 +1758,7 @@ function prepareConversation(kind: SessionPreparation['kind'], options?: { cwd?:
 			// Choices made in the picker while preparing reach the runtime before the
 			// first input does; a rejected choice never fails the conversation itself.
 			const settingsFailure = await applyDeferredSettings(preparing);
+			preparing.settingsApplied = true;
 			if (!currentSessionNavigation(bridge, request)) { preserveBackgroundDraft(receipt); return; }
 			sessionPreparation = null;
 			// Transfer input only after the backend has activated its real scope.
@@ -1966,21 +1981,75 @@ function cancelPreparedInput(): void {
 	removePreparedMessage(input);
 }
 
+/** Navigation away from a preparing new conversation: keep its waiting first input bound to that conversation. */
+function handOffPreparedInput(): void {
+	const input = preparedInput, preparing = sessionPreparation;
+	if (!input || input.dispatched || !preparing || preparing.kind !== 'new' || preparing.failed
+		|| preparing.requestId !== input.requestId || preparing.bridge !== input.bridge) {
+		cancelPreparedInput();
+		return;
+	}
+	preparedInput = null;
+	preparing.handedOff = true;
+	input.handedOff = true;
+	input.handOff();
+	removePreparedMessage(input);
+}
+
+/**
+ * Delivers a handed-off first input to the conversation it was written for once
+ * the backend has created it, whatever the renderer shows by then. When it
+ * cannot be delivered, the text returns to that conversation's draft (or to the
+ * recoverable new-conversation draft) and the user is told it was not sent.
+ */
+async function deliverHandedOffInput(preparing: SessionPreparation, input: PreparedInput): Promise<void> {
+	const { bridge } = preparing, generation = bridgeGeneration;
+	try { await preparing.promise; } catch { /* A failed creation is reported below as an undelivered input. */ }
+	if (generation !== bridgeGeneration || store.getState().bridge !== bridge) return;
+	const receipt = preparing.receipt;
+	const deferred = preparing.settingsApplied ? {} : preparing.deferred;
+	try {
+		if (!receipt?.sessionId || !receipt.sessionPath || !('submitInput' in bridge) || typeof bridge.submitInput !== 'function') {
+			throw new Error(translate('store.agentNotReady'));
+		}
+		const result = await bridge.submitInput({ id: input.id, sessionId: receipt.sessionId, text: input.text, behavior: input.behavior,
+			attachments: input.attachments, ...(deferred.model ? { model: deferred.model } : {}), ...(deferred.thinkingLevel ? { thinkingLevel: deferred.thinkingLevel } : {}) });
+		if (result.state === 'recovered' || result.state === 'failed' || result.state === 'reserved') throw new Error(result.message ?? translate('store.inputNeedsConfirmation'));
+		if (generation !== bridgeGeneration || store.getState().bridge !== bridge) return;
+		// The creation skipped its sidebar refresh when the view moved on; the new
+		// conversation folder and its now-running row must still reach the sidebar.
+		void store.getState().refreshWorkspaces();
+		void store.getState().refreshWorkspaceSessions(receipt.cwd);
+	} catch (error) {
+		if (generation !== bridgeGeneration || store.getState().bridge !== bridge) return;
+		const target = receipt?.sessionPath ? { cwd: receipt.cwd, sessionPath: receipt.sessionPath } : preparing.draftScope;
+		store.setState(state => ({ backgroundDraftTransfers: [...state.backgroundDraftTransfers,
+			{ requestId: preparing.requestId, from: preparing.draftScope, to: target, draft: { text: input.text, attachments: input.attachments ?? [] } }] }));
+		operationFeedback.show({ id: `handed-off-input:${input.id}`, kind: 'error', title: translate('store.handedOffInputFailed'), detail: errorMessage(error) });
+	}
+}
+
 async function sendAfterPreparation(preparing: SessionPreparation, text: string, behavior?: 'steer' | 'followUp', attachments?: UiAttachment[], inputId?: string): Promise<void> {
 	const trimmed = text.trim();
 	if (!trimmed && !attachments?.length) return;
 	if (currentPreparedInput()) throw new Error(translate('store.sessionBusy'));
 	const id = inputId ?? crypto.randomUUID();
-	let cancel!: () => void;
+	let cancel!: () => void, handOff!: () => void;
 	const cancelled = new Promise<never>((_resolve, reject) => { cancel = () => reject(cancelledSubmission()); });
+	const handedOff = new Promise<void>((resolve) => { handOff = resolve; });
 	const input: PreparedInput = { bridge: preparing.bridge, requestId: preparing.requestId, id, text: trimmed,
 		message: { id: `pending:${id}`, order: 0, role: 'user', text: trimmed, attachments, status: 'done' },
-		echoed: false, dispatched: false, runtimeStatus: null, cancel };
+		echoed: false, dispatched: false, runtimeStatus: null, behavior, attachments, handedOff: false, cancel, handOff };
 	preparedInput = input;
 	store.setState(state => ({ messages: [...state.messages, input.message], status: 'busy', error: null,
 		historyTotal: state.historyTotal + 1, timelineRevision: state.timelineRevision + 1 }));
 	try {
-		await Promise.race([preparing.promise, cancelled]);
+		await Promise.race([preparing.promise, cancelled, handedOff]);
+		if (input.handedOff) {
+			// The composer is released right away; delivery continues in the background.
+			void deliverHandedOffInput(preparing, input);
+			return;
+		}
 		if (preparedInput !== input || !currentSessionNavigation(input.bridge, input.requestId)) throw cancelledSubmission();
 		input.dispatched = true;
 		await store.getState().send(trimmed, behavior, attachments, id);
@@ -2478,7 +2547,10 @@ function beginSessionNavigation(target: { cwd?: string; path?: string | null; se
 		&& currentSessionNavigation(abandoned.bridge, abandoned.requestId) && !sameInputScope(abandoned.draftScope, retainedDraftScope)) {
 		rememberRecoverableNewDraft(abandoned);
 	}
-	cancelPreparedInput();
+	// A first input already waiting for its new conversation is not abandoned by
+	// leaving the draft: it is still delivered there, so that conversation stays
+	// in the sidebar instead of vanishing with an unsent message.
+	handOffPreparedInput();
 	// Keep-warm: capture the conversation being left before any state changes,
 	// so navigating back to it within the TTL paints instantly from the cache.
 	const request = store.getState().navigationRequestId + 1;

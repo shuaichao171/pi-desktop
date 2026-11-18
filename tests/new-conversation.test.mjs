@@ -159,41 +159,97 @@ test('failed creation rejects the waiting send and retry preserves its draft sco
   assert.deepEqual(useChatStore.getState().draftTransfer.from,scope);
 });
 
-test('navigating away cancels a waiting input and late creation completion does not replace the new view', async () => {
-  const host = fixture();
+/** Background delivery must not echo into the view the user moved to; the real host only forwards the active context's events. */
+function quietSubmissions(host) {
+  host.bridge.submitInput = async request => { host.submissions.push(request); return {id:request.id,state:'accepted'}; };
+}
+
+test('navigating away hands a waiting input to its own new conversation and late creation completion does not replace the new view', async () => {
+  const host = fixture(), listed = [];
+  quietSubmissions(host);
+  host.bridge.listSessions = async cwd => { listed.push(cwd); return []; };
   const opening = useChatStore.getState().newSession();
-  const cancelled = assert.rejects(useChatStore.getState().send('Never send elsewhere',undefined,[],'cancelled-input'),{name:'AbortError'});
+  const sending = useChatStore.getState().send('Deliver after leaving',undefined,[],'handed-off-input');
   await tick();
   host.bridge.switchWorkspace = async cwd => {
     await host.activations[0].promise;
     host.publish(cwd,'elsewhere');
   };
   const navigating = useChatStore.getState().switchWorkspace('C:/elsewhere');
-  await cancelled;
-  host.activations[0].resolve();
+  await sending;
+  assert.equal(host.submissions.length,0,'nothing is sent before the conversation exists');
+  host.activations[0].resolve({cwd:standalone,sessionPath:`${standalone}/created.jsonl`,sessionId:'created'});
   await Promise.all([opening,navigating]);
-  assert.equal(host.submissions.length,0);
+  await tick();
+  assert.deepEqual(host.submissions,[{id:'handed-off-input',sessionId:'created',text:'Deliver after leaving',behavior:undefined,attachments:[]}]);
   assert.equal(useChatStore.getState().sessionId,'elsewhere');
   assert.equal(useChatStore.getState().cwd,'C:/elsewhere');
   assert.deepEqual(useChatStore.getState().messages,[]);
   assert.equal(useChatStore.getState().sessionPreparation,null);
+  assert.deepEqual(useChatStore.getState().backgroundDraftTransfers,[],'a delivered input leaves no draft behind');
+  assert.ok(listed.includes(standalone),'the new conversation is listed for the sidebar after delivery');
+});
+
+test('picker choices made while preparing travel with a handed-off input instead of changing the conversation the user moved to', async () => {
+  const host = fixture();
+  quietSubmissions(host);
+  host.bridge.setModel = async () => { throw new Error('the active conversation must keep its own model'); };
+  host.bridge.setThinkingLevel = async () => { throw new Error('the active conversation must keep its own thinking level'); };
+  useChatStore.setState({models:[{provider:'other',id:'picked',name:'Picked model',reasoning:true,input:['text'],contextWindow:1,maxTokens:1,thinkingLevels:['off','high']}]});
+  const opening = useChatStore.getState().newSession();
+  await useChatStore.getState().setModel('other','picked');
+  await useChatStore.getState().setThinkingLevel('high');
+  const sending = useChatStore.getState().send('With picked model',undefined,[],'picked-input');
+  await tick();
+  host.bridge.switchWorkspace = async cwd => { host.publish(cwd,'elsewhere'); };
+  await useChatStore.getState().switchWorkspace('C:/elsewhere');
+  await sending;
+  host.activations[0].resolve({cwd:standalone,sessionPath:`${standalone}/created.jsonl`,sessionId:'created'});
+  await opening;
+  await tick();
+  assert.equal(host.submissions.length,1);
+  assert.equal(host.submissions[0].sessionId,'created');
+  assert.deepEqual(host.submissions[0].model,{provider:'other',id:'picked'});
+  assert.equal(host.submissions[0].thinkingLevel,'high');
+});
+
+test('a handed-off input that cannot be delivered returns to its conversation draft', async () => {
+  const host = fixture();
+  host.bridge.submitInput = async () => { throw new Error('Session was unloaded'); };
+  const opening = useChatStore.getState().newSession();
+  const preparation = useChatStore.getState().sessionPreparation;
+  const sending = useChatStore.getState().send('Keep my words',undefined,[],'undelivered-input');
+  await tick();
+  host.bridge.switchWorkspace = async cwd => { host.publish(cwd,'elsewhere'); };
+  await useChatStore.getState().switchWorkspace('C:/elsewhere');
+  await sending;
+  const sessionPath = `${standalone}/created.jsonl`;
+  host.activations[0].resolve({cwd:standalone,sessionPath,sessionId:'created'});
+  await opening;
+  await tick();
+  assert.deepEqual(useChatStore.getState().backgroundDraftTransfers,[{requestId:preparation.requestId,from:preparation.draftScope,
+    to:{cwd:standalone,sessionPath},draft:{text:'Keep my words',attachments:[]}}]);
+  assert.equal(useChatStore.getState().sessionId,'elsewhere','a failed background delivery never moves the view');
 });
 
 test('a newer project creation supersedes the previous draft rather than coalescing across targets', async () => {
   const host = fixture();
   const first = useChatStore.getState().newSession({cwd:project});
   const firstScope = {...useChatStore.getState().sessionPreparation.draftScope};
-  const cancelled = assert.rejects(useChatStore.getState().send('Old pending input',undefined,[],'superseded-input'),{name:'AbortError'});
+  const handedOff = useChatStore.getState().send('Old pending input',undefined,[],'superseded-input');
   await tick();
   const second = useChatStore.getState().newSession({cwd:'C:/projects/other'});
   await tick();
   assert.equal(host.activations.length,2);
   assert.notDeepEqual(useChatStore.getState().sessionPreparation.draftScope,firstScope);
-  await cancelled;
+  await handedOff;
   host.publish(project,'obsolete');
   host.activations[0].resolve();
   await first;
+  await tick();
   assert.notEqual(useChatStore.getState().sessionId,'obsolete');
+  assert.deepEqual(useChatStore.getState().backgroundDraftTransfers.map(transfer => [transfer.from,transfer.draft?.text]),[[firstScope,'Old pending input']],
+    'the old input stays with its own draft when its creation gives no session to deliver to');
   host.publish('C:/projects/other','chosen');
   host.activations[1].resolve();
   await second;
@@ -280,21 +336,22 @@ test('a creation superseded before dispatch never calls the backend for the aban
   assert.equal(useChatStore.getState().sessionId,'last-choice');
 });
 
-test('a successful abandoned creation hands its draft to the receipt scope without changing the new view or sending', async () => {
+test('a receipt without a session identity cannot take the handed-off input, which returns as its draft without changing the new view', async () => {
   const host = fixture();
   const opening = useChatStore.getState().newSession();
   const preparation = useChatStore.getState().sessionPreparation;
-  const cancelled = assert.rejects(useChatStore.getState().send('Recover after leaving',undefined,[],'background-input'),{name:'AbortError'});
+  const sending = useChatStore.getState().send('Recover after leaving',undefined,[],'background-input');
   await tick();
   host.bridge.switchWorkspace = async cwd => { host.publish(cwd,'chosen'); useChatStore.getState().handleEvent({type:'status',status:'idle'}); };
   await useChatStore.getState().switchWorkspace('C:/chosen');
-  await cancelled;
+  await sending;
   const current = useChatStore.getState();
   const receipt = {cwd:standalone,sessionPath:`${standalone}/created.jsonl`};
   host.activations[0].resolve(receipt);
   await opening;
+  await tick();
   const after = useChatStore.getState();
-  assert.deepEqual(after.backgroundDraftTransfers,[{requestId:preparation.requestId,from:preparation.draftScope,to:receipt}]);
+  assert.deepEqual(after.backgroundDraftTransfers,[{requestId:preparation.requestId,from:preparation.draftScope,to:receipt,draft:{text:'Recover after leaving',attachments:[]}}]);
   for (const key of ['cwd','sessionId','sessionPath','status','messages','navigationRequestId','navigationPending','sessionPreparation','draftTransfer']) assert.equal(after[key],current[key],key);
   assert.equal(host.submissions.length,0);
 });

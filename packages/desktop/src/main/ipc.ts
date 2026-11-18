@@ -12,7 +12,7 @@ import { app, BrowserWindow, dialog, nativeImage, nativeTheme, shell, type IpcMa
 import { statSync } from 'node:fs';
 import { mkdir, rm, stat } from 'node:fs/promises';
 import { basename, dirname, join, resolve } from 'node:path';
-import { IPC_CHANNELS, PROJECT_BAR_ANIM_IDS, isValidProjectBarValue, normalizeProjectBarValue, type AgentEventEnvelope, type AppLocale, type UiAppCommand, type UiAttachment, type UiExtensionDialogRequest, type UiInputScope, type UiSessionMetaPatch, type UiSessionSummary, type UiSidebarGroupChange, type UiSlashCommandRequest, type UiThinkingLevel } from '@pidesktop/shared';
+import { IPC_CHANNELS, PROJECT_BAR_ANIM_IDS, isValidProjectBarValue, normalizeProjectBarValue, type AgentEventEnvelope, type AppLocale, type UiAppCommand, type UiAttachment, type UiExtensionDialogRequest, type UiNewSessionReceipt, type UiSessionMetaPatch, type UiSessionSummary, type UiSidebarGroupChange, type UiSlashCommandRequest, type UiThinkingLevel } from '@pidesktop/shared';
 import { createIsolatedAgentService } from './agentClient';
 import { guardExternalNavigation } from './externalLinks';
 import { InterruptedRunTracker, isRunningPhase } from './interruptedRuns';
@@ -849,7 +849,7 @@ function registerConversationWorkspace(previous: WorkspaceSettings, cwd: string,
 	};
 }
 
-function newConversation(options?: unknown): Promise<UiInputScope> {
+function newConversation(options?: unknown): Promise<UiNewSessionReceipt> {
 	if (options !== undefined && (!isRecord(options) || (options.cwd !== undefined && typeof options.cwd !== 'string'))) {
 		throw new Error('新对话选项无效');
 	}
@@ -875,7 +875,8 @@ function newConversation(options?: unknown): Promise<UiInputScope> {
 		const snapshot = await agentService.getSnapshot();
 		const scope = { cwd: snapshot.cwd, sessionPath: snapshot.sessionPath };
 		inputFeatures?.rememberScope(scope);
-		return scope;
+		// The session id lets a first input sent before the switch still reach this draft.
+		return snapshot.sessionId ? { ...scope, sessionId: snapshot.sessionId } : scope;
 	});
 }
 
@@ -885,7 +886,7 @@ function newConversation(options?: unknown): Promise<UiInputScope> {
  * workspace activation or its active conversation (see newConversation).
  */
 /** New conversation inside a hosted surface (pai window or split pane): it stays in the folder it was opened for. */
-async function newPaiConversation(entry: { cwd: string; sessionPath?: string; agent: Pick<PaiAgentService, 'newSession' | 'getSnapshot'> }, options?: unknown): Promise<UiInputScope> {
+async function newPaiConversation(entry: { cwd: string; sessionPath?: string; agent: Pick<PaiAgentService, 'newSession' | 'getSnapshot'> }, options?: unknown): Promise<UiNewSessionReceipt> {
 	if (options !== undefined && (!isRecord(options) || (options.cwd !== undefined && typeof options.cwd !== 'string'))) {
 		throw new Error('新对话选项无效');
 	}
@@ -898,7 +899,7 @@ async function newPaiConversation(entry: { cwd: string; sessionPath?: string; ag
 	const snapshot = await entry.agent.getSnapshot();
 	const scope = { cwd: snapshot.cwd, sessionPath: snapshot.sessionPath };
 	inputFeatures?.rememberScope(scope);
-	return scope;
+	return snapshot.sessionId ? { ...scope, sessionId: snapshot.sessionId } : scope;
 }
 
 function getProjectsDirectory(): string {
@@ -1026,6 +1027,21 @@ const sessionListInFlight = new Map<string, Promise<SessionListSnapshot>>();
  *  so a load that finishes while an invalidation lands does not swallow it. */
 const dirtySessionLists = new Map<string, number>();
 let sessionListRevision = 0;
+
+/** Last runtime phase seen per loaded conversation (main agent only). */
+const listedRuntimePhases = new Map<string, string>();
+
+/**
+ * A conversation Pi has not written yet is listed only while its runtime is not
+ * idle, so a phase change can add or drop its row: the cached listing must
+ * re-read, or a first prompt started in the background stays out of the sidebar.
+ */
+function invalidateSessionListingOnPhase(cwd: string, path: string, phase: string): void {
+	const key = `${workspaceKey(cwd)}\n${path}`;
+	if (listedRuntimePhases.get(key) === phase) return;
+	listedRuntimePhases.set(key, phase);
+	invalidateSessionListing(cwd);
+}
 
 function invalidateSessionListing(cwd: string): void {
 	const key = workspaceKey(cwd);
@@ -1710,7 +1726,10 @@ export function registerIpc(options: {
 			mainAgentBusy = event.event.status === 'busy';
 			updateKeepAwakeBusy();
 		}
-		if (event.event.type === 'session-runtime') trackRuntime('main', event.event);
+		if (event.event.type === 'session-runtime') {
+			trackRuntime('main', event.event);
+			invalidateSessionListingOnPhase(event.event.cwd, event.event.path, event.event.runtime.phase);
+		}
 		notifier.handleAgentEvent(event, activeSessionPath, agentService.cwd || activeWorkspace);
 		broadcastToRenderers(IPC_CHANNELS.agentEvent, event, (win) => !isPaiWindow(win));
 	});

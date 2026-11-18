@@ -1625,6 +1625,7 @@ export const translations: Record<string, { 'zh-CN': string; 'en-US': string }> 
   'window.controls': { 'zh-CN': '窗口控制', 'en-US': 'Window controls' },
   'store.agentNotReady': { 'zh-CN': 'Agent 尚未就绪', 'en-US': 'Agent is not ready yet' },
   'store.inputNeedsConfirmation': { 'zh-CN': '输入接收状态不确定，请先核对会话或确认恢复队列。', 'en-US': 'Input acceptance is uncertain. Check the conversation or confirm the recovered queue item.' },
+  'store.handedOffInputFailed': { 'zh-CN': '新对话的首条消息未能发送，内容已放回该对话的输入框', 'en-US': "The new conversation's first message was not sent; its text is back in that conversation's draft" },
   'store.hostedSessionInPane': { 'zh-CN': '该会话已在分屏窗格中打开', 'en-US': 'This session is already open in the split pane' },
   'store.sessionBusy': { 'zh-CN': '当前会话仍在运行，请等待完成后再编辑', 'en-US': 'The session is still running. Wait for it to finish before editing.' },
   'store.nothingToRegenerate': { 'zh-CN': '没有可重新生成的用户消息', 'en-US': 'There is no user message to regenerate' },

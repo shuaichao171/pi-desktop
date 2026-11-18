@@ -18,7 +18,7 @@ export * from './subagentFeatures.ts';
 import type { UiSubagentFleetSnapshot, UiSubagentInspectReply } from './subagentFeatures';
 export * from './managementFeatures.ts';
 export * from './usageTemplates.ts';
-import type { InputFeatureBridge, UiInputScope } from './inputFeatures';
+import type { InputFeatureBridge, UiNewSessionReceipt } from './inputFeatures';
 import type { SideQuestionFeatureBridge } from './sideQuestions';
 export * from './sideQuestions.ts';
 import type { DataFeaturesBridge } from './dataFeatures';
@@ -1410,7 +1410,7 @@ export interface AgentBridge extends InputFeatureBridge, DataFeaturesBridge, Wor
   interruptShellTools(toolCallId?: string): Promise<number>;
   abort(): Promise<void>;
   /** Omitted cwd creates an independent folder. The returned scope remains valid for draft persistence after navigation. */
-  newSession(options?: { cwd?: string }): Promise<UiInputScope | void>;
+  newSession(options?: { cwd?: string }): Promise<UiNewSessionReceipt | void>;
   onExtensionDialog(listener: (request: UiExtensionDialogRequest) => void): () => void;
   onExtensionDialogClosed(listener: (id: string) => void): () => void;
   getPendingExtensionDialogs(): Promise<UiExtensionDialogRequest[]>;
