@@ -54,6 +54,7 @@ const PW_RENDERFULLCONTENT = 2;
 
 const KEYEVENTF_EXTENDEDKEY = 0x0001;
 const KEYEVENTF_KEYUP = 0x0002;
+const KEYEVENTF_UNICODE = 0x0004;
 const MAPVK_VK_TO_VSC = 0;
 /** Keys that live on the extended (E0-prefixed) part of the keyboard. */
 const EXTENDED_VKS = new Set([0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x2c, 0x2d, 0x2e, 0x5b, 0x5c, 0x5d, 0x6f, 0x90, 0xa3, 0xa5]);
@@ -69,17 +70,25 @@ const BI_RGB = 0;
 const DIB_RGB_COLORS = 0;
 
 const CF_UNICODETEXT = 13;
+const TEXT_CLIPBOARD_FORMATS = new Set([1, 7, CF_UNICODETEXT, 16]);
 const GMEM_MOVEABLE = 0x0002;
 
 const GWL_EXSTYLE = -20;
 const WS_EX_TOOLWINDOW = 0x00000080;
 const WS_EX_NOACTIVATE = 0x08000000;
 const SW_RESTORE = 9;
+const GA_PARENT = 1;
+const GA_ROOT = 2;
+const GW_OWNER = 4;
+/** Ownerless popups that belong to the UI thread that opened them. */
+const THREAD_POPUP_CLASSES = new Set(['#32768' /* menu */, 'ComboLBox' /* combo drop-down list */]);
 const DWMWA_CLOAKED = 14;
 const DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 = -4;
 
 const VK_CONTROL = 0x11;
 const VK_V = 0x56;
+const VK_RETURN = 0x0d;
+const VK_TAB = 0x09;
 
 const DESKTOP_READOBJECTS = 0x0001;
 const PROCESS_QUERY_LIMITED_INFORMATION = 0x1000;
@@ -135,6 +144,10 @@ function loadBindings() {
 	if (inputSize !== (process.arch === 'ia32' ? 28 : 40)) throw new Error(`INPUT 结构体大小异常：${inputSize}`);
 
 	koffi.struct('CUA_RECT', { left: 'int32_t', top: 'int32_t', right: 'int32_t', bottom: 'int32_t' });
+	const guiThreadInfo = koffi.struct('CUA_GUITHREADINFO', {
+		cbSize: 'uint32_t', flags: 'uint32_t', active: 'intptr_t', focus: 'intptr_t',
+		capture: 'intptr_t', menuOwner: 'intptr_t', moveSize: 'intptr_t', caret: 'intptr_t', caretRect: 'CUA_RECT',
+	});
 	koffi.struct('CUA_GUID', { Data1: 'uint32_t', Data2: 'uint16_t', Data3: 'uint16_t', Data4: koffi.array('uint8_t', 8) });
 	koffi.struct('CUA_POINT', { x: 'int32_t', y: 'int32_t' });
 	const BITMAPINFOHEADER = koffi.struct('CUA_BITMAPINFOHEADER', {
@@ -175,16 +188,24 @@ function loadBindings() {
 		GetDIBits: gdi32.func('int __stdcall GetDIBits(intptr_t hdc, intptr_t hbm, uint32_t start, uint32_t cLines, _Out_ uint8_t *lpvBits, _Inout_ CUA_BITMAPINFO *lpbi, uint32_t usage)'),
 
 		EnumWindows: user32.func('bool __stdcall EnumWindows(CUA_EnumWindowsProc *lpEnumFunc, intptr_t lParam)'),
+		EnumChildWindows: user32.func('bool __stdcall EnumChildWindows(intptr_t parent, CUA_EnumWindowsProc *lpEnumFunc, intptr_t lParam)'),
 		IsWindow: user32.func('bool __stdcall IsWindow(intptr_t hWnd)'),
+		IsWindowEnabled: user32.func('bool __stdcall IsWindowEnabled(intptr_t hWnd)'),
 		IsWindowVisible: user32.func('bool __stdcall IsWindowVisible(intptr_t hWnd)'),
 		GetWindowLongW: user32.func('int32_t __stdcall GetWindowLongW(intptr_t hWnd, int nIndex)'),
 		GetWindowTextW: user32.func('int __stdcall GetWindowTextW(intptr_t hWnd, _Out_ uint16_t *lpString, int nMaxCount)'),
+		GetClassNameW: user32.func('int __stdcall GetClassNameW(intptr_t hWnd, _Out_ uint16_t *lpClassName, int nMaxCount)'),
+		GetWindow: user32.func('intptr_t __stdcall GetWindow(intptr_t hWnd, uint32_t uCmd)'),
 		GetWindowRect: user32.func('bool __stdcall GetWindowRect(intptr_t hWnd, _Out_ CUA_RECT *lpRect)'),
 		GetWindowThreadProcessId: user32.func('uint32_t __stdcall GetWindowThreadProcessId(intptr_t hWnd, _Out_ uint32_t *lpdwProcessId)'),
 		IsIconic: user32.func('bool __stdcall IsIconic(intptr_t hWnd)'),
 		ShowWindow: user32.func('bool __stdcall ShowWindow(intptr_t hWnd, int nCmdShow)'),
 		SetForegroundWindow: user32.func('bool __stdcall SetForegroundWindow(intptr_t hWnd)'),
 		GetForegroundWindow: user32.func('intptr_t __stdcall GetForegroundWindow()'),
+		GetGUIThreadInfo: user32.func('bool __stdcall GetGUIThreadInfo(uint32_t thread, _Inout_ CUA_GUITHREADINFO *info)'),
+		guiThreadInfoSize: koffi.sizeof(guiThreadInfo),
+		WindowFromPoint: user32.func('intptr_t __stdcall WindowFromPoint(CUA_POINT point)'),
+		GetAncestor: user32.func('intptr_t __stdcall GetAncestor(intptr_t hWnd, uint32_t gaFlags)'),
 		DwmGetWindowAttribute: dwmapi.func('int32_t __stdcall DwmGetWindowAttribute(intptr_t hwnd, uint32_t dwAttribute, _Out_ uint32_t *pvAttribute, uint32_t cbAttribute)'),
 		PrintWindow: user32.func('bool __stdcall PrintWindow(intptr_t hwnd, intptr_t hdc, uint32_t flags)'),
 		DwmGetWindowAttributeRect: dwmapi.func('int32_t __stdcall DwmGetWindowAttribute(intptr_t hwnd, uint32_t dwAttribute, _Out_ CUA_RECT *pvAttribute, uint32_t cbAttribute)'),
@@ -194,6 +215,8 @@ function loadBindings() {
 		EmptyClipboard: user32.func('bool __stdcall EmptyClipboard()'),
 		IsClipboardFormatAvailable: user32.func('bool __stdcall IsClipboardFormatAvailable(uint32_t format)'),
 		GetClipboardData: user32.func('intptr_t __stdcall GetClipboardData(uint32_t format)'),
+		GetClipboardSequenceNumber: user32.func('uint32_t __stdcall GetClipboardSequenceNumber()'),
+		EnumClipboardFormats: user32.func('uint32_t __stdcall EnumClipboardFormats(uint32_t format)'),
 		SetClipboardData: user32.func('intptr_t __stdcall SetClipboardData(uint32_t format, intptr_t hMem)'),
 
 		GlobalAlloc: kernel32.func('intptr_t __stdcall GlobalAlloc(uint32_t uFlags, uintptr_t dwBytes)'),
@@ -204,11 +227,18 @@ function loadBindings() {
 		RtlMoveMemory: kernel32.func('void __stdcall RtlMoveMemory(void *dest, void *src, uintptr_t length)'),
 		OpenProcess: kernel32.func('intptr_t __stdcall OpenProcess(uint32_t dwDesiredAccess, bool bInheritHandle, uint32_t dwProcessId)'),
 		QueryFullProcessImageNameW: kernel32.func('bool __stdcall QueryFullProcessImageNameW(intptr_t hProcess, uint32_t dwFlags, _Out_ uint16_t *lpExeName, _Inout_ uint32_t *lpdwSize)'),
+		GetApplicationUserModelId: kernel32.func('int32_t __stdcall GetApplicationUserModelId(intptr_t hProcess, _Inout_ uint32_t *length, _Out_ uint16_t *applicationUserModelId)'),
 		CloseHandle: kernel32.func('bool __stdcall CloseHandle(intptr_t hObject)'),
+		CreateMutexW: kernel32.func('intptr_t __stdcall CreateMutexW(void *attributes, bool initialOwner, str16 name)'),
+		WaitForSingleObject: kernel32.func('uint32_t __stdcall WaitForSingleObject(intptr_t h, uint32_t milliseconds)'),
+		ReleaseMutex: kernel32.func('bool __stdcall ReleaseMutex(intptr_t h)'),
 		lstrlenW: kernel32.func('int __stdcall lstrlenW(void *str)'),
 		CoInitializeEx: ole32.func('int32_t __stdcall CoInitializeEx(void *reserved, uint32_t coInit)'),
 		CoCreateInstance: ole32.func('int32_t __stdcall CoCreateInstance(CUA_GUID *clsid, void *outer, uint32_t dwClsContext, CUA_GUID *riid, _Out_ void **ppv)'),
 		VariantClear: oleaut32.func('int32_t __stdcall VariantClear(void *variant)'),
+		SafeArrayDestroy: oleaut32.func('int32_t __stdcall SafeArrayDestroy(void *array)'),
+		SysAllocString: oleaut32.func('void * __stdcall SysAllocString(str16 text)'),
+		SysFreeString: oleaut32.func('void __stdcall SysFreeString(void *text)'),
 	};
 
 	// Per-monitor-v2 awareness for this thread (Win10 1607+). Electron hosts are
@@ -258,6 +288,27 @@ export function isInputDesktopAccessible(): boolean {
 	if (!desktop) return false;
 	b.CloseDesktop(desktop);
 	return true;
+}
+
+/** The JS queue handles one thread; the Windows mutex also covers other app instances. */
+export async function acquireDesktop(signal?: AbortSignal): Promise<() => void> {
+	const b = api();
+	const mutex = b.CreateMutexW(null, false, 'Local\\PiDesktop.ComputerUse.Input');
+	if (!mutex) throw new CuaError('INTERNAL', '无法创建桌面控制互斥锁');
+	try {
+		while (!signal?.aborted) {
+			const result = b.WaitForSingleObject(mutex, 0);
+			if (result === 0 || result === 0x80) {
+				return () => { b.ReleaseMutex(mutex); b.CloseHandle(mutex); };
+			}
+			if (result !== 0x102) throw new CuaError('INTERNAL', '无法等待桌面控制互斥锁');
+			await delay(25, signal);
+		}
+		throw new CuaError('ABORTED', '等待桌面控制已中止');
+	} catch (error) {
+		b.CloseHandle(mutex);
+		throw error;
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -333,16 +384,20 @@ export function mouseUp(button: MouseButton): void {
 }
 
 /** Press at the start point, ease toward the target, always release the button. */
-export async function mouseDrag(fromX: number, fromY: number, toX: number, toY: number, durationMs = 350, signal?: AbortSignal): Promise<void> {
+export async function mouseDrag(
+	fromX: number, fromY: number, toX: number, toY: number, durationMs = 350, signal?: AbortSignal,
+	beforePress?: () => void, beforeMove?: (point: { x: number; y: number }) => void,
+): Promise<void> {
 	const screen = getVirtualScreen();
 	const start = toAbsolute(fromX, fromY, screen);
-	const target = toAbsolute(toX, toY, screen);
 	send([mouseInput(ABSOLUTE_MOVE, start.dx, start.dy)]);
 	let pressed = false;
 	let failure: unknown;
 	try {
 		await delay(60, signal);
-		send([mouseInput(MOUSEEVENTF_LEFTDOWN)]);
+		beforePress?.();
+		const down = mouseInput(MOUSEEVENTF_LEFTDOWN);
+		send(beforePress ? [mouseInput(ABSOLUTE_MOVE, start.dx, start.dy), down] : [down]);
 		pressed = true;
 		const duration = Math.min(Math.max(durationMs, 50), 5000);
 		const steps = Math.max(2, Math.min(60, Math.round(duration / 16)));
@@ -350,9 +405,13 @@ export async function mouseDrag(fromX: number, fromY: number, toX: number, toY: 
 		for (let i = 1; i <= steps; i++) {
 			const t = i / steps;
 			const eased = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
-			send([mouseInput(ABSOLUTE_MOVE, Math.round(start.dx + (target.dx - start.dx) * eased), Math.round(start.dy + (target.dy - start.dy) * eased))]);
+			const point = { x: Math.round(fromX + (toX - fromX) * eased), y: Math.round(fromY + (toY - fromY) * eased) };
+			beforeMove?.(point);
+			const position = toAbsolute(point.x, point.y, screen);
+			send([mouseInput(ABSOLUTE_MOVE, position.dx, position.dy)]);
 			await delay(stepDelay, signal);
 		}
+		beforeMove?.({ x: toX, y: toY });
 	} catch (error) {
 		failure = error;
 	} finally {
@@ -370,12 +429,18 @@ export async function mouseDrag(fromX: number, fromY: number, toX: number, toY: 
 	if (failure) throw CuaError.from(failure, { actionSent: true });
 }
 
-export function mouseScroll(amountClicks: number, horizontal = false): void {
+export function mouseScroll(amountClicks: number, horizontal = false, point?: { x: number; y: number }): void {
 	const data = Math.round(amountClicks) * WHEEL_DELTA;
 	if (data === 0) return;
 	// Vertical wheel: positive mouseData scrolls up, so "positive = down" negates.
 	// Horizontal wheel: positive mouseData already scrolls right.
-	send([mouseInput(horizontal ? MOUSEEVENTF_HWHEEL : MOUSEEVENTF_WHEEL, 0, 0, horizontal ? data : -data)]);
+	const wheel = mouseInput(horizontal ? MOUSEEVENTF_HWHEEL : MOUSEEVENTF_WHEEL, 0, 0, horizontal ? data : -data);
+	if (point) {
+		const { dx, dy } = toAbsolute(point.x, point.y, getVirtualScreen());
+		send([mouseInput(ABSOLUTE_MOVE, dx, dy), wheel]);
+	} else {
+		send([wheel]);
+	}
 }
 
 /** Hold modifiers down, tap the chord body, then release modifiers in reverse — one atomic batch. */
@@ -454,7 +519,7 @@ export function captureScreen(region?: { x: number; y: number; width: number; he
 		const got = b.GetDIBits(memDc, bitmap, 0, rect.height, pixels, info, DIB_RGB_COLORS);
 		if (got !== rect.height) throw new Error(`GetDIBits 失败（${got}/${rect.height} 行）`);
 		for (let i = 3; i < pixels.length; i += 4) pixels[i] = 0xff; // GDI X channel → opaque
-		return { width: rect.width, height: rect.height, bgra: pixels };
+		return { width: rect.width, height: rect.height, origin: { x: rect.x, y: rect.y }, bgra: pixels };
 	} finally {
 		if (memDc && previous) b.SelectObject(memDc, previous);
 		if (bitmap) b.DeleteObject(bitmap);
@@ -468,20 +533,43 @@ export function captureScreen(region?: { x: number; y: number; width: number; he
 // ---------------------------------------------------------------------------
 
 /** Executable file name for a pid (best-effort; undefined when not queryable). */
-function processNameForPid(b: Bindings, pid: number): string | undefined {
-	if (!pid) return undefined;
-	const handle = b.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid);
-	if (!handle) return undefined;
+function processPath(b: Bindings, handle: number | bigint): string | undefined {
+	const buffer = Buffer.alloc(32768 * 2);
+	const size = [32768];
+	if (!b.QueryFullProcessImageNameW(handle, 0, buffer, size)) return undefined;
+	return buffer.subarray(0, size[0] * 2).toString('utf16le') || undefined;
+}
+
+function withProcess<T>(b: Bindings, pid: number, read: (handle: number | bigint) => T): T | undefined {
+	const handle = pid && b.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid);
+	if (!handle) return;
 	try {
-		const buffer = Buffer.alloc(1024);
-		const size = [512];
-		if (!b.QueryFullProcessImageNameW(handle, 0, buffer, size)) return undefined;
-		const path = buffer.subarray(0, size[0] * 2).toString('utf16le');
-		const base = path.replace(/.*[\\/]/, '');
-		return base || undefined;
+		return read(handle);
 	} finally {
 		b.CloseHandle(handle);
 	}
+}
+
+function processNameForPid(b: Bindings, pid: number): string | undefined {
+	return withProcess(b, pid, (handle) => processPath(b, handle)?.replace(/.*[\\/]/, ''));
+}
+
+export function getWindowApplication(hwnd: number): { key: string; label: string; pid: number } {
+	const b = api();
+	const pid = [0];
+	if (!b.GetWindowThreadProcessId(hwnd, pid) || !pid[0]) throw new CuaError('TARGET_GONE', `窗口已关闭：hwnd=${hwnd}`);
+	const app = withProcess(b, pid[0], (handle) => {
+		const buffer = Buffer.alloc(256 * 2);
+		const size = [256];
+		if (b.GetApplicationUserModelId(handle, size, buffer) === 0 && size[0] > 1) {
+			const aumid = buffer.subarray(0, (size[0] - 1) * 2).toString('utf16le');
+			return { key: `app:${aumid.toLowerCase()}`, label: aumid, pid: pid[0] };
+		}
+		const path = processPath(b, handle);
+		if (path && !/[\\/]applicationframehost\.exe$/i.test(path)) return { key: `exe:${path.toLowerCase()}`, label: path, pid: pid[0] };
+	});
+	if (!app) throw new CuaError('PERMISSION_DENIED', `无法验证目标应用的身份：hwnd=${hwnd}`);
+	return app;
 }
 
 export function listWindows(limit = 80): { windows: WindowInfo[]; truncated: boolean } {
@@ -530,7 +618,59 @@ export function listWindows(limit = 80): { windows: WindowInfo[]; truncated: boo
 	return { windows, truncated };
 }
 
-export async function activateWindow(hwnd: number): Promise<boolean> {
+export function getForegroundWindow(): number {
+	return handleToNumber(api().GetForegroundWindow());
+}
+
+export function isWindowEnabled(hwnd: number): boolean {
+	return api().IsWindowEnabled(hwnd);
+}
+
+/** Resolve the focused child in the foreground input queue, including modal dialogs. */
+export function getKeyboardWindow(): number {
+	const b = api();
+	const info = {
+		cbSize: b.guiThreadInfoSize, flags: 0, active: 0, focus: 0, capture: 0,
+		menuOwner: 0, moveSize: 0, caret: 0, caretRect: { left: 0, top: 0, right: 0, bottom: 0 },
+	};
+	if (!b.GetGUIThreadInfo(0, info) || !info.focus) return 0;
+	return handleToNumber(b.GetAncestor(info.focus, GA_ROOT));
+}
+
+/** Resolve child controls to their top-level window, without following popup owners. */
+export function getWindowAtPoint(x: number, y: number): number {
+	const b = api();
+	const hwnd = b.WindowFromPoint({ x, y });
+	return handleToNumber(hwnd) ? handleToNumber(b.GetAncestor(hwnd, GA_ROOT)) : 0;
+}
+
+/**
+ * Whether `candidate` is a popup belonging to `target`: same process, and
+ * either owned (directly or transitively) by the target, or an ownerless
+ * menu / combo drop-down created by the target's UI thread.
+ */
+export function isWindowOwnedBy(candidate: number, target: number): boolean {
+	const b = api();
+	if (!candidate || !target || candidate === target || !b.IsWindow(candidate) || !b.IsWindow(target)) return false;
+	const candidatePid = [0];
+	const targetPid = [0];
+	const candidateThread = b.GetWindowThreadProcessId(candidate, candidatePid);
+	const targetThread = b.GetWindowThreadProcessId(target, targetPid);
+	if (!candidatePid[0] || candidatePid[0] !== targetPid[0]) return false;
+	let current = candidate;
+	for (let depth = 0; depth < 16; depth++) {
+		const owner = handleToNumber(b.GetWindow(current, GW_OWNER));
+		if (!owner) break;
+		if (owner === target) return true;
+		current = owner;
+	}
+	if (!candidateThread || candidateThread !== targetThread) return false;
+	const buffer = Buffer.alloc(64 * 2);
+	const length = b.GetClassNameW(candidate, buffer, 64);
+	return length > 0 && THREAD_POPUP_CLASSES.has(buffer.subarray(0, length * 2).toString('utf16le'));
+}
+
+export async function activateWindow(hwnd: number, allowAltFallback = true): Promise<boolean> {
 	const b = api();
 	if (!b.IsWindow(hwnd)) throw new CuaError('TARGET_GONE', `窗口句柄无效或窗口已关闭：hwnd=${hwnd}`);
 	if (b.IsIconic(hwnd)) {
@@ -538,6 +678,7 @@ export async function activateWindow(hwnd: number): Promise<boolean> {
 		await delay(150);
 	}
 	if (b.SetForegroundWindow(hwnd)) return true;
+	if (!allowAltFallback) return false;
 	// Foreground lock: a synthetic Alt tap counts as user input and usually unlocks it.
 	tapChord([], 0x12 /* VK_MENU */);
 	if (b.SetForegroundWindow(hwnd)) return true;
@@ -564,79 +705,138 @@ async function withClipboard<T>(work: () => T): Promise<T> {
 	}
 }
 
-export async function readClipboardText(): Promise<string | null> {
-	const b = api();
-	return withClipboard(() => {
-		if (!b.IsClipboardFormatAvailable(CF_UNICODETEXT)) return null;
-		const handle = b.GetClipboardData(CF_UNICODETEXT);
-		if (!handle) return null;
-		const locked = b.GlobalLock(handle);
-		if (!locked) return null;
-		try {
-			const sizeBytes = handleToNumber(b.GlobalSize(handle));
-			const buffer = Buffer.alloc(Math.min(sizeBytes, 4 << 20) & ~1);
-			b.RtlMoveMemory(buffer, locked, buffer.length);
-			let end = 0;
-			while (end + 1 < buffer.length && (buffer[end] !== 0 || buffer[end + 1] !== 0)) end += 2;
-			return buffer.subarray(0, end).toString('utf16le');
-		} finally {
-			b.GlobalUnlock(handle);
-		}
-	});
+function readOpenClipboardText(b: Bindings, backup = false): string | null {
+	if (!b.IsClipboardFormatAvailable(CF_UNICODETEXT)) return null;
+	const handle = b.GetClipboardData(CF_UNICODETEXT);
+	if (!handle) throw new CuaError('CLIPBOARD_BUSY', '无法读取现有剪贴板内容');
+	const locked = b.GlobalLock(handle);
+	if (!locked) throw new CuaError('CLIPBOARD_BUSY', '无法锁定现有剪贴板内容');
+	try {
+		const sizeBytes = handleToNumber(b.GlobalSize(handle));
+		if (backup && sizeBytes > (4 << 20)) throw new CuaError('CLIPBOARD_FORMATS', '剪贴板文本过大，无法完整恢复；可使用 Unicode 键入');
+		const buffer = Buffer.alloc(Math.min(sizeBytes, 4 << 20) & ~1);
+		b.RtlMoveMemory(buffer, locked, buffer.length);
+		let end = 0;
+		while (end + 1 < buffer.length && (buffer[end] !== 0 || buffer[end + 1] !== 0)) end += 2;
+		return buffer.subarray(0, end).toString('utf16le');
+	} finally {
+		b.GlobalUnlock(handle);
+	}
 }
 
-export async function writeClipboardText(text: string): Promise<void> {
-	const b = api();
+export function readClipboardText(): Promise<string | null> {
+	return withClipboard(() => readOpenClipboardText(api()));
+}
+
+function writeOpenClipboardText(b: Bindings, text: string): void {
 	const encoded = Buffer.from(`${text}\0`, 'utf16le');
-	await withClipboard(() => {
-		if (!b.EmptyClipboard()) throw new Error('清空剪贴板失败');
-		const handle = b.GlobalAlloc(GMEM_MOVEABLE, encoded.length);
-		if (!handle) throw new Error('GlobalAlloc 失败');
-		const locked = b.GlobalLock(handle);
-		if (!locked) {
-			b.GlobalFree(handle);
-			throw new Error('GlobalLock 失败');
-		}
-		try {
-			b.RtlMoveMemory(locked, encoded, encoded.length);
-		} finally {
-			b.GlobalUnlock(handle);
-		}
-		// On success the system owns the memory; free it only on failure.
-		if (!b.SetClipboardData(CF_UNICODETEXT, handle)) {
-			b.GlobalFree(handle);
-			throw new Error('SetClipboardData 失败');
-		}
-	});
+	const handle = b.GlobalAlloc(GMEM_MOVEABLE, encoded.length);
+	if (!handle) throw new Error('GlobalAlloc 失败');
+	const locked = b.GlobalLock(handle);
+	if (!locked) {
+		b.GlobalFree(handle);
+		throw new Error('GlobalLock 失败');
+	}
+	try {
+		b.RtlMoveMemory(locked, encoded, encoded.length);
+	} finally {
+		b.GlobalUnlock(handle);
+	}
+	// On success the system owns the memory; free it only on failure.
+	if (!b.EmptyClipboard() || !b.SetClipboardData(CF_UNICODETEXT, handle)) {
+		b.GlobalFree(handle);
+		throw new Error('SetClipboardData 失败');
+	}
+}
+
+export function writeClipboardText(text: string): Promise<void> {
+	return withClipboard(() => writeOpenClipboardText(api(), text));
 }
 
 /**
  * Paste via clipboard + Ctrl+V. The previous *text* clipboard is restored
- * best-effort; non-text content (images, files) cannot be preserved.
+ * best-effort. When the clipboard holds anything besides plain text (images,
+ * files, HTML/RTF, app-private formats) it is left untouched and
+ * CLIPBOARD_FORMATS is thrown before any input, so callers can fall back to
+ * typeUnicode instead of destroying content that cannot be restored.
  */
-export async function pasteText(text: string, signal?: AbortSignal): Promise<void> {
-	let previous: string | null = null;
-	try {
-		previous = await readClipboardText();
-	} catch {
-		previous = null;
-	}
-	await writeClipboardText(text);
+export async function pasteText(text: string, signal?: AbortSignal, beforePaste?: () => void): Promise<void> {
+	const b = api();
+	return clipboardPaste(text, {
+		open: withClipboard,
+		sequence: b.GetClipboardSequenceNumber,
+		canReplace: () => {
+			for (let format = b.EnumClipboardFormats(0); format; format = b.EnumClipboardFormats(format)) {
+				if (!TEXT_CLIPBOARD_FORMATS.has(format)) return false;
+			}
+			return true;
+		},
+		read: () => readOpenClipboardText(b, true),
+		write: (value) => { if (value === null) b.EmptyClipboard(); else writeOpenClipboardText(b, value); },
+		press: () => tapChord([VK_CONTROL], VK_V),
+	}, signal, beforePaste);
+}
+
+interface ClipboardPastePort {
+	open<T>(work: () => T): Promise<T>;
+	sequence(): number;
+	canReplace(): boolean;
+	read(): string | null;
+	write(value: string | null): void;
+	press(): void;
+}
+
+export async function clipboardPaste(text: string, clipboard: ClipboardPastePort, signal?: AbortSignal, beforePaste?: () => void): Promise<void> {
+	const { previous, sequence } = await clipboard.open(() => {
+		if (signal?.aborted) throw new CuaError('ABORTED', '已中止');
+		beforePaste?.();
+		if (!clipboard.canReplace()) throw new CuaError('CLIPBOARD_FORMATS', '剪贴板含图片、文件或富文本，为避免丢失未执行粘贴；可传 method="unicode"（上限 1000 字符，换行和 Tab 按真实按键发送）或分段输入');
+		const previous = clipboard.read();
+		clipboard.write(text);
+		return { previous, sequence: clipboard.sequence() };
+	});
 	try {
 		await delay(50, signal);
-	} catch {
-		throw new CuaError('ABORTED', '已中止（剪贴板已被写入目标文本，原文本未恢复）');
-	}
-	tapChord([VK_CONTROL], VK_V);
-	// Give the target time to read the clipboard before it is restored.
-	await delay(150);
-	if (previous !== null && previous !== text) {
+		if (clipboard.sequence() !== sequence) throw new CuaError('CLIPBOARD_CHANGED', '粘贴前剪贴板已改变，请重新观察再输入');
+		beforePaste?.();
+		clipboard.press();
+		// Give the target time to read the clipboard before it is restored.
+		await delay(150);
+	} finally {
 		try {
-			await writeClipboardText(previous);
+			await clipboard.open(() => {
+				if (clipboard.sequence() === sequence && previous !== text) clipboard.write(previous);
+			});
 		} catch {
 			/* restore is best-effort */
 		}
 	}
+}
+
+/**
+ * Type text as KEYEVENTF_UNICODE events, leaving the clipboard untouched.
+ * Line breaks and tabs become real Enter/Tab key presses, since many controls
+ * ignore a Unicode U+000A/U+0009 event. Surrogate pairs are sent as two code
+ * units, which SendInput reassembles. One batch, so it is never interleaved.
+ */
+export function typeUnicode(text: string): void {
+	const events: InputEvent[] = [];
+	const unicode = (codeUnit: number, up: boolean): InputEvent => ({
+		type: INPUT_KEYBOARD,
+		u: { ki: { wVk: 0, wScan: codeUnit, dwFlags: KEYEVENTF_UNICODE | (up ? KEYEVENTF_KEYUP : 0), time: 0, dwExtraInfo: 0 } },
+	});
+	for (let index = 0; index < text.length; index++) {
+		const codeUnit = text.charCodeAt(index);
+		if (codeUnit === 0x0d || codeUnit === 0x0a) {
+			if (codeUnit === 0x0d && text.charCodeAt(index + 1) === 0x0a) index++;
+			events.push(keyInput(VK_RETURN, false), keyInput(VK_RETURN, true));
+		} else if (codeUnit === 0x09) {
+			events.push(keyInput(VK_TAB, false), keyInput(VK_TAB, true));
+		} else {
+			events.push(unicode(codeUnit, false), unicode(codeUnit, true));
+		}
+	}
+	send(events);
 }
 
 // ---------------------------------------------------------------------------
@@ -662,8 +862,8 @@ export function windowRect(hwnd: number): Rect {
 /**
  * Capture one window instead of the whole screen: smaller images and no
  * unrelated desktop content. PrintWindow(PW_RENDERFULLCONTENT) renders even
- * occluded DirectComposition/Chromium windows; a screen BitBlt at the window
- * rect is the fallback for windows that refuse PrintWindow.
+ * occluded DirectComposition/Chromium windows. Never substitute a screen
+ * crop here, since it could contain an unrelated app over the target.
  */
 export function captureWindow(hwnd: number): RawCapture {
 	const b = api();
@@ -689,12 +889,12 @@ export function captureWindow(hwnd: number): RawCapture {
 		} catch {
 			printed = false;
 		}
-		if (!printed && !b.BitBlt(memDc, 0, 0, bounds.width, bounds.height, screenDc, bounds.x, bounds.y, SRCCOPY | CAPTUREBLT)) {
-			throw new CuaError('CAPTURE_BLOCKED', `截取窗口失败（PrintWindow 与 BitBlt 均失败）：hwnd=${hwnd}`);
+		if (!printed) {
+			throw new CuaError('CAPTURE_BLOCKED', `无法隔离截取目标窗口：hwnd=${hwnd}。请尝试读取该窗口的无障碍树。`);
 		}
 		b.SelectObject(memDc, previous);
 		previous = 0;
-		return { width: bounds.width, height: bounds.height, bgra: readBitmap(b, memDc, bitmap, bounds.width, bounds.height) };
+		return { width: bounds.width, height: bounds.height, origin: { x: bounds.x, y: bounds.y }, bgra: readBitmap(b, memDc, bitmap, bounds.width, bounds.height) };
 	} finally {
 		if (memDc && previous) b.SelectObject(memDc, previous);
 		if (bitmap) b.DeleteObject(bitmap);
@@ -744,8 +944,11 @@ function readBitmap(b: Bindings, memDc: number, bitmap: number, width: number, h
 const UIA_SLOT = {
 	elementFromHandle: 6,
 	getControlViewWalker: 14,
+	getRawViewWalker: 16,
 	release: 2,
+	getRuntimeId: 4,
 	getCurrentPropertyValue: 10,
+	getCurrentPatternAs: 14,
 	getFirstChildElement: 4,
 	getNextSiblingElement: 6,
 } as const;
@@ -763,7 +966,10 @@ const UIA_PROPERTY = {
 	isPassword: 30019,
 	nativeWindowHandle: 30020,
 	isOffscreen: 30022,
+	invokeAvailable: 30031,
+	valueAvailable: 30043,
 	valueValue: 30045,
+	valueIsReadOnly: 30046,
 } as const;
 
 /** Control-type ids → stable role names (UIA_ControlTypeIds). */
@@ -790,13 +996,17 @@ const RPC_E_CHANGED_MODE = -2147417850;
 const CLSCTX_INPROC_SERVER = 0x1;
 const CLSID_CUIAUTOMATION = { Data1: 0xff48dba4, Data2: 0x60ef, Data3: 0x4201, Data4: [0xaa, 0x87, 0x54, 0x10, 0x3e, 0xef, 0x59, 0x4e] };
 const IID_IUIAUTOMATION = { Data1: 0x30cbe57d, Data2: 0xd9d0, Data3: 0x452a, Data4: [0xab, 0x13, 0x7a, 0xc5, 0xac, 0x48, 0x25, 0xee] };
+const INVOKE_PATTERN = { id: 10000, iid: { Data1: 0xfb377fbe, Data2: 0x8ea6, Data3: 0x46d5, Data4: [0x9c, 0x73, 0x64, 0x99, 0x64, 0x2d, 0x30, 0x59] } };
+const VALUE_PATTERN = { id: 10002, iid: { Data1: 0xa94cd8b1, Data2: 0x0844, Data3: 0x4cd6, Data4: [0x9d, 0x2d, 0x64, 0x05, 0x37, 0xab, 0x39, 0xe9] } };
 
 type UiaPointer = bigint;
 
 interface UiaRuntime {
 	automation: UiaPointer;
 	walker: UiaPointer;
+	rawWalker: UiaPointer;
 	call(self: UiaPointer, slot: number, proto: unknown, ...args: unknown[]): number;
+	callAsync(self: UiaPointer, slot: number, proto: unknown, ...args: unknown[]): Promise<number>;
 	protos: {
 		release: unknown;
 		elementFromHandle: unknown;
@@ -804,6 +1014,10 @@ interface UiaRuntime {
 		getFirstChildElement: unknown;
 		getNextSiblingElement: unknown;
 		getCurrentPropertyValue: unknown;
+		getRuntimeId: unknown;
+		getCurrentPatternAs: unknown;
+		invoke: unknown;
+		setValue: unknown;
 	};
 }
 
@@ -812,7 +1026,7 @@ let uiaRuntime: UiaRuntime | null = null;
 /**
  * Manual COM client for UIA: CoCreateInstance(CUIAutomation) once per
  * process, then vtable calls through koffi-decoded function pointers.
- * Read-only (elements, properties, tree walking); no events, no callbacks.
+ * No events or callbacks are registered in the target process.
  */
 function ensureUia(b: Bindings): UiaRuntime {
 	uiaRuntime ??= createUiaRuntime(b);
@@ -835,18 +1049,35 @@ function createUiaRuntime(b: Bindings): UiaRuntime {
 		getFirstChildElement: koffi.proto('int32_t __stdcall CuaUiaGetFirstChildElement(void *self, void *element, _Out_ void **child)'),
 		getNextSiblingElement: koffi.proto('int32_t __stdcall CuaUiaGetNextSiblingElement(void *self, void *element, _Out_ void **sibling)'),
 		getCurrentPropertyValue: koffi.proto('int32_t __stdcall CuaUiaGetCurrentPropertyValue(void *self, int32_t propId, void *out)'),
+		getRuntimeId: koffi.proto('int32_t __stdcall CuaUiaGetRuntimeId(void *self, _Out_ void **array)'),
+		getCurrentPatternAs: koffi.proto('int32_t __stdcall CuaUiaGetCurrentPatternAs(void *self, int32_t patternId, CUA_GUID *iid, _Out_ void **pattern)'),
+		invoke: koffi.proto('int32_t __stdcall CuaUiaInvoke(void *self)'),
+		setValue: koffi.proto('int32_t __stdcall CuaUiaSetValue(void *self, void *value)'),
 	};
 	// Manual vtable call: [self] = vtable, [vtable + 8*slot] = method address.
-	const call = (self: UiaPointer, slot: number, proto: unknown, ...args: unknown[]): number => {
+	type NativeMethod = ((...callArgs: unknown[]) => unknown) & { async(...callArgs: unknown[]): void };
+	const method = (self: UiaPointer, slot: number, proto: unknown): NativeMethod => {
 		const vtable = koffi.decode(self, 0, 'void *');
 		const address = koffi.decode(vtable, slot * 8, 'void *');
-		const callable = koffi.decode(address, proto as never) as (...callArgs: unknown[]) => unknown;
-		return callable(self, ...args) as number;
+		return koffi.decode(address, proto as never) as NativeMethod;
 	};
-	const walker: unknown[] = [null];
-	const hrWalker = call(ppv[0] as UiaPointer, UIA_SLOT.getControlViewWalker, protos.getControlViewWalker, walker);
-	if (hrWalker !== 0 || !walker[0]) throw new CuaError('INTERNAL', `get_ControlViewWalker 失败：0x${(hrWalker >>> 0).toString(16)}`);
-	return { automation: ppv[0] as UiaPointer, walker: walker[0] as UiaPointer, call, protos };
+	const call = (self: UiaPointer, slot: number, proto: unknown, ...args: unknown[]): number =>
+		method(self, slot, proto)(self, ...args) as number;
+	// Same vtable call on a libuv worker thread (valid: UIA lives in the MTA).
+	const callAsync = (self: UiaPointer, slot: number, proto: unknown, ...args: unknown[]): Promise<number> =>
+		new Promise((resolve, reject) => {
+			method(self, slot, proto).async(self, ...args, (error: unknown, result: unknown) => {
+				if (error) reject(error);
+				else resolve(result as number);
+			});
+		});
+	const getWalker = (slot: number): UiaPointer => {
+		const out: unknown[] = [null];
+		const hr = call(ppv[0] as UiaPointer, slot, protos.getControlViewWalker, out);
+		if (hr !== 0 || !out[0]) throw new CuaError('INTERNAL', `无法构建 UIA 树遍历器：0x${(hr >>> 0).toString(16)}`);
+		return out[0] as UiaPointer;
+	};
+	return { automation: ppv[0] as UiaPointer, walker: getWalker(UIA_SLOT.getControlViewWalker), rawWalker: getWalker(UIA_SLOT.getRawViewWalker), call, callAsync, protos };
 }
 
 /** Copy a NUL-terminated UTF-16 string from native memory. koffi's str16
@@ -908,33 +1139,155 @@ function uiaRect(variant: UiaVariant): Rect | null {
 	return { x: Math.round(left), y: Math.round(top), width: Math.round(width), height: Math.round(height) };
 }
 
+function uiaRuntimeId(uia: UiaRuntime, b: Bindings, element: UiaPointer): string | undefined {
+	const out: unknown[] = [null];
+	if (uia.call(element, UIA_SLOT.getRuntimeId, uia.protos.getRuntimeId, out) !== 0 || !out[0]) return;
+	try {
+		const header = Buffer.alloc(32);
+		b.RtlMoveMemory(header, out[0], header.length);
+		const count = header.readUInt32LE(24);
+		const data = Number(header.readBigUInt64LE(16));
+		if (header.readUInt16LE(0) !== 1 || header.readUInt32LE(4) !== 4 || !count || count > 128 || !data) return;
+		const bytes = Buffer.alloc(count * 4);
+		b.RtlMoveMemory(bytes, data, bytes.length);
+		return bytes.toString('hex');
+	} finally {
+		b.SafeArrayDestroy(out[0]);
+	}
+}
+
 function describeUiaElement(uia: UiaRuntime, b: Bindings, element: UiaPointer): Omit<UiaElementNode, 'children'> {
 	const type = readUiaProperty(uia, b, element, UIA_PROPERTY.controlType);
 	const name = readUiaProperty(uia, b, element, UIA_PROPERTY.name);
 	const automationId = readUiaProperty(uia, b, element, UIA_PROPERTY.automationId);
 	const className = readUiaProperty(uia, b, element, UIA_PROPERTY.className);
-	const value = readUiaProperty(uia, b, element, UIA_PROPERTY.valueValue);
+	const password = readUiaProperty(uia, b, element, UIA_PROPERTY.isPassword).truth === true;
+	const value = password ? undefined : readUiaProperty(uia, b, element, UIA_PROPERTY.valueValue);
 	const rect = uiaRect(readUiaProperty(uia, b, element, UIA_PROPERTY.boundingRectangle));
 	const enabled = readUiaProperty(uia, b, element, UIA_PROPERTY.isEnabled);
 	const focusable = readUiaProperty(uia, b, element, UIA_PROPERTY.isKeyboardFocusable);
 	const focused = readUiaProperty(uia, b, element, UIA_PROPERTY.hasKeyboardFocus);
 	const offscreen = readUiaProperty(uia, b, element, UIA_PROPERTY.isOffscreen);
-	const password = readUiaProperty(uia, b, element, UIA_PROPERTY.isPassword);
 	const native = readUiaProperty(uia, b, element, UIA_PROPERTY.nativeWindowHandle);
 	return {
 		role: type.kind === 'number' ? UIA_CONTROL_TYPE_NAMES[type.value ?? -1] ?? `type${type.value}` : 'unknown',
 		name: name.kind === 'string' ? name.text ?? '' : '',
 		...(automationId.kind === 'string' && automationId.text ? { automationId: automationId.text } : {}),
 		...(className.kind === 'string' && className.text ? { className: className.text } : {}),
-		...(value.kind === 'string' && value.text ? { value: value.text } : {}),
+		...(value?.kind === 'string' && value.text ? { value: value.text } : {}),
 		rect,
 		enabled: enabled.kind === 'bool' ? enabled.truth ?? true : true,
 		focusable: focusable.kind === 'bool' ? focusable.truth ?? false : false,
 		focused: focused.kind === 'bool' ? focused.truth ?? false : false,
 		offscreen: offscreen.kind === 'bool' ? offscreen.truth ?? false : false,
-		password: password.kind === 'bool' ? password.truth ?? false : false,
+		password,
+		processId: readUiaProperty(uia, b, element, UIA_PROPERTY.processId).value,
+		runtimeId: uiaRuntimeId(uia, b, element),
+		canInvoke: readUiaProperty(uia, b, element, UIA_PROPERTY.invokeAvailable).truth === true,
+		canSetValue: !password && readUiaProperty(uia, b, element, UIA_PROPERTY.valueAvailable).truth === true
+			&& readUiaProperty(uia, b, element, UIA_PROPERTY.valueIsReadOnly).truth === false,
 		...(native.kind === 'number' && native.value ? { hwnd: native.value } : {}),
 	};
+}
+
+/** How long a UIA Invoke/SetValue may take before the tool reports it as still pending. */
+const UIA_ACTION_REPLY_MS = 5000;
+/** Invoke/SetValue calls whose cross-process reply has not arrived yet (each holds a libuv pool thread). */
+let pendingUiaActions = 0;
+
+/**
+ * Locate the observed element again, verify it, then run Invoke/SetValue.
+ * Providers such as WinForms run the click synchronously on their UI thread,
+ * so an Invoke that opens a modal dialog does not return until the dialog
+ * closes. The pattern call therefore runs on a koffi worker thread (UIA is
+ * initialized MTA): the agent's event loop and the desktop lock are never
+ * held hostage. After UIA_ACTION_REPLY_MS the result is reported as
+ * delivered-but-pending; COM references are released when the call returns.
+ */
+export async function performUiaAction(
+	hwnd: number,
+	observed: { path: number[]; runtimeId: string; view: 'raw' | 'control'; anchorHwnd?: number },
+	action: { kind: 'invoke' } | { kind: 'setValue'; value: string },
+	beforeAction: () => void,
+): Promise<{ completed: boolean }> {
+	if (pendingUiaActions > 0) {
+		throw new CuaError('INPUT_BLOCKED', '上一次 UIA 操作仍在等待目标应用返回（可能打开了模态窗口）；请先观察并处理该窗口');
+	}
+	const b = api();
+	const uia = ensureUia(b);
+	const walker = observed.view === 'raw' ? uia.rawWalker : uia.walker;
+	const acquired: UiaPointer[] = [];
+	const pid = [0];
+	if (!b.GetWindowThreadProcessId(hwnd, pid)) throw new CuaError('TARGET_GONE', '窗口已关闭');
+	if (observed.anchorHwnd !== undefined && handleToNumber(b.GetAncestor(observed.anchorHwnd, GA_ROOT)) !== hwnd) {
+		throw new CuaError('STALE_STATE', '原生子窗口已变化，请重新观察窗口');
+	}
+	const find = (self: UiaPointer, slot: number, proto: unknown, ...args: unknown[]): UiaPointer => {
+		const out: unknown[] = [null];
+		if (uia.call(self, slot, proto, ...args, out) !== 0 || !out[0]) {
+			throw new CuaError('ELEMENT_UNAVAILABLE', 'UIA 控件或操作已不可用，请重新观察窗口');
+		}
+		const pointer = out[0] as UiaPointer;
+		acquired.push(pointer);
+		return pointer;
+	};
+	let value: unknown;
+	const cleanup = () => {
+		if (value) b.SysFreeString(value);
+		for (const pointer of acquired.reverse()) {
+			try { uia.call(pointer, UIA_SLOT.release, uia.protos.release); }
+			catch { /* release must not mask the operation result */ }
+		}
+	};
+	let started = false;
+	try {
+		let element = find(uia.automation, UIA_SLOT.elementFromHandle, uia.protos.elementFromHandle, observed.anchorHwnd ?? hwnd);
+		for (const index of observed.path) {
+			element = find(walker, UIA_SLOT.getFirstChildElement, uia.protos.getFirstChildElement, element);
+			for (let sibling = 0; sibling < index; sibling++) element = find(walker, UIA_SLOT.getNextSiblingElement, uia.protos.getNextSiblingElement, element);
+		}
+		if (uiaRuntimeId(uia, b, element) !== observed.runtimeId || readUiaProperty(uia, b, element, UIA_PROPERTY.processId).value !== pid[0]) {
+			throw new CuaError('STALE_STATE', 'UIA 控件已变化或属于其他进程，请重新观察窗口');
+		}
+		if (readUiaProperty(uia, b, element, UIA_PROPERTY.isEnabled).truth !== true || readUiaProperty(uia, b, element, UIA_PROPERTY.isOffscreen).truth !== false) {
+			throw new CuaError('ELEMENT_UNAVAILABLE', 'UIA 控件当前不可见或已禁用');
+		}
+		if (action.kind === 'setValue' && (readUiaProperty(uia, b, element, UIA_PROPERTY.isPassword).truth !== false || readUiaProperty(uia, b, element, UIA_PROPERTY.valueIsReadOnly).truth !== false)) {
+			throw new CuaError('ELEMENT_UNAVAILABLE', 'UIA 控件不可直接写入');
+		}
+		const pattern = action.kind === 'invoke' ? INVOKE_PATTERN : VALUE_PATTERN;
+		const instance = find(element, UIA_SLOT.getCurrentPatternAs, uia.protos.getCurrentPatternAs, pattern.id, pattern.iid);
+		if (action.kind === 'setValue') {
+			value = b.SysAllocString(action.value);
+			if (!value) throw new CuaError('INTERNAL', '无法分配 UIA 文本');
+		}
+		beforeAction();
+		const call = action.kind === 'invoke'
+			? uia.callAsync(instance, 3, uia.protos.invoke)
+			: uia.callAsync(instance, 3, uia.protos.setValue, value);
+		started = true;
+		pendingUiaActions += 1;
+		const settled = call.finally(() => {
+			pendingUiaActions -= 1;
+			cleanup();
+		});
+		settled.catch(() => { /* reported below, or after the tool already returned */ });
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		const timedOut = new Promise<null>((resolve) => { timer = setTimeout(() => resolve(null), UIA_ACTION_REPLY_MS); });
+		let hr: number | null;
+		try {
+			hr = await Promise.race([settled, timedOut]);
+		} catch (error) {
+			throw CuaError.from(error, { actionSent: true });
+		} finally {
+			clearTimeout(timer);
+		}
+		if (hr === null) return { completed: false };
+		if (hr !== 0) throw new CuaError('INPUT_BLOCKED', 'UIA 操作失败，HRESULT=0x' + (hr >>> 0).toString(16), { actionSent: true });
+		return { completed: true };
+	} finally {
+		if (!started) cleanup();
+	}
 }
 
 /**
@@ -942,11 +1295,12 @@ function describeUiaElement(uia: UiaRuntime, b: Bindings, element: UiaPointer): 
  * get_app_state observation). Every COM element acquired during the walk is
  * released afterwards; only serializable data escapes this function.
  */
-export function captureUiaTree(hwnd: number, options: { maxNodes?: number; maxDepth?: number } = {}): UiaTreeCapture {
+export function captureUiaTree(hwnd: number, options: { maxNodes?: number; maxDepth?: number; view?: 'control' | 'raw' } = {}): UiaTreeCapture {
 	const b = api();
 	if (!b.IsWindow(hwnd)) throw new CuaError('TARGET_GONE', `窗口句柄无效或窗口已关闭：hwnd=${hwnd}`);
 	if (b.IsIconic(hwnd)) throw new CuaError('INVALID_ARGUMENTS', `窗口已最小化，UIA 树不可用（先用 cua_activate_window 还原）：hwnd=${hwnd}`);
 	const uia = ensureUia(b);
+	const walker = options.view === 'raw' ? uia.rawWalker : uia.walker;
 	const maxNodes = Math.min(Math.max(Math.round(options.maxNodes ?? 400), 10), 1000);
 	const maxDepth = Math.min(Math.max(Math.round(options.maxDepth ?? 30), 4), 64);
 	const rootOut: unknown[] = [null];
@@ -957,7 +1311,7 @@ export function captureUiaTree(hwnd: number, options: { maxNodes?: number; maxDe
 	let truncated = false;
 	const fetch = (slot: number, proto: unknown, from: UiaPointer): UiaPointer | null => {
 		const out: unknown[] = [null];
-		const hr = uia.call(uia.walker, slot, proto, from, out);
+		const hr = uia.call(walker, slot, proto, from, out);
 		const element = hr === 0 && out[0] ? (out[0] as UiaPointer) : null;
 		if (element) acquired.push(element);
 		return element;
@@ -979,6 +1333,26 @@ export function captureUiaTree(hwnd: number, options: { maxNodes?: number; maxDe
 			return node;
 		};
 		const root = buildNode(acquired[0], 0);
+		if (count < maxNodes && root.children.every((child) => child.role === 'titlebar')) {
+			// Some Win32 providers expose the chrome but omit their HWND children.
+			// Ask each direct same-process child for its own UIA provider.
+			const handles: number[] = [];
+			b.EnumChildWindows(hwnd, (raw: unknown) => {
+				const child = handleToNumber(raw);
+				const pid = [0];
+				if (b.IsWindowVisible(child) && handleToNumber(b.GetAncestor(child, GA_PARENT)) === hwnd
+					&& b.GetWindowThreadProcessId(child, pid) && pid[0] === root.processId) handles.push(child);
+				return handles.length < maxNodes;
+			}, 0);
+			for (const child of handles) {
+				if (count >= maxNodes) { truncated = true; break; }
+				const out: unknown[] = [null];
+				if (uia.call(uia.automation, UIA_SLOT.elementFromHandle, uia.protos.elementFromHandle, child, out) !== 0 || !out[0]) continue;
+				const element = out[0] as UiaPointer;
+				acquired.push(element);
+				root.children.push({ ...buildNode(element, 1), anchorHwnd: child });
+			}
+		}
 		return { root, count, truncated };
 	} finally {
 		for (const element of acquired) {

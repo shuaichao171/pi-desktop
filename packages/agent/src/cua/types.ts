@@ -3,6 +3,7 @@
 export interface RawCapture {
 	width: number;
 	height: number;
+	origin?: { x: number; y: number };
 	/** Top-down 32bpp BGRA with alpha forced to 0xff. */
 	bgra: Buffer;
 }
@@ -46,11 +47,14 @@ export type CuaErrorCode =
 	| 'SCREEN_LOCKED'
 	| 'STALE_STATE'
 	| 'TARGET_GONE'
+	| 'TARGET_MISMATCH'
 	| 'AMBIGUOUS_TARGET'
 	| 'FOREGROUND_FAILED'
 	| 'INPUT_BLOCKED'
 	| 'CAPTURE_BLOCKED'
 	| 'CLIPBOARD_BUSY'
+	| 'CLIPBOARD_CHANGED'
+	| 'CLIPBOARD_FORMATS'
 	| 'ABORTED'
 	| 'ABORTED'
 	| 'ELEMENT_UNAVAILABLE'
@@ -92,7 +96,7 @@ export class CuaError extends Error {
 		if (error instanceof CuaError) {
 			return !actionSent || error.actionSent ? error : error.escalateActionSent();
 		}
-		return new CuaError(fallback.code ?? 'INTERNAL', error instanceof Error ? error.message : String(error));
+		return new CuaError(fallback.code ?? 'INTERNAL', error instanceof Error ? error.message : String(error), { actionSent });
 	}
 }
 
@@ -106,12 +110,16 @@ export interface FrameRecord {
 	screen: VirtualScreen;
 	/** Captured region, or null when the whole desktop was captured. */
 	region: { x: number; y: number; width: number; height: number } | null;
+	image: { bounds: Rect; width: number; height: number };
 	time: number;
 	/** Set when the frame is a window-scoped capture: window identity + its
-	 * on-screen rectangle at capture time, re-validated before element actions. */
+	 * on-screen rectangle at capture time, re-validated before input. */
 	windowHwnd?: number;
 	windowRect?: Rect;
+	windowOwner?: WindowOwner;
 }
+
+export interface WindowOwner { appKey: string; pid: number }
 
 // ---------------------------------------------------------------------------
 // UIA accessibility tree (zcode-style get_app_state surface)
@@ -132,6 +140,11 @@ export interface UiaElementNode {
 	focused: boolean;
 	offscreen: boolean;
 	password: boolean;
+	runtimeId?: string;
+	canInvoke?: boolean;
+	canSetValue?: boolean;
+	processId?: number;
+	anchorHwnd?: number;
 	/** Native window handle when the element is (or owns) a top-level window. */
 	hwnd?: number;
 	children: UiaElementNode[];
@@ -145,6 +158,8 @@ export interface UiaTreeCapture {
 	truncated: boolean;
 }
 
+export type UiaView = 'control' | 'raw';
+
 /** Flattened element kept for index addressing after one cua_get_state call. */
 export interface ObservedElement {
 	role: string;
@@ -152,11 +167,17 @@ export interface ObservedElement {
 	rect: Rect | null;
 	offscreen: boolean;
 	enabled: boolean;
+	path: number[];
+	runtimeId?: string;
+	anchorHwnd?: number;
 }
 
 /** The most recent cua_get_state observation, for element-index addressing. */
 export interface ElementObservation {
+	id: number;
+	view: UiaView;
 	hwnd: number;
+	windowOwner?: WindowOwner;
 	title: string;
 	rect: Rect;
 	/** Pre-order DFS flat list; index i of the displayed tree = flat[i]. */

@@ -118,7 +118,7 @@ import { ModelTestService } from './modelTest.ts';
 import { ProjectDefaultsService } from './projectDefaults.ts';
 import { McpManager } from './mcpManager.ts';
 import { CuaSessionState, cuaExtension } from './cua/index.ts';
-import { CuaPermissionStore } from './cua/permissions.ts';
+import { CuaPermissionStore, CuaScopeStore } from './cua/permissions.ts';
 import { createInterruptibleShellTools, shellRunRegistry } from './shellInterrupt.ts';
 import { backgroundTaskManager, createBackgroundTaskTool } from './backgroundTasks.ts';
 import type { UiMcpSaveRequest, UiMcpTarget } from '../../shared/src/mcpFeatures.ts';
@@ -434,7 +434,11 @@ function createRuntimeFactory(
 			resourceLoaderOptions: { extensionFactories: [
 				{ name: 'desktop-file-changes', hidden: true, factory: fileChanges.extension },
 				{ name: 'desktop-mcp', hidden: true, factory: mcp.extension(cwd, sessionManager.getSessionId()) },
-				{ name: 'desktop-cua', hidden: true, factory: cuaExtension({ state: cuaState, permissions: cuaPermissions }) },
+				{ name: 'desktop-cua', hidden: true, factory: cuaExtension({
+					state: cuaState,
+					permissions: cuaPermissions,
+					scopes: new CuaScopeStore(join(agentDir, 'desktop-cua-app-permissions')),
+				}) },
 			] },
 			resourceLoaderReloadOptions: shouldPrompt && nativeNeedsTrust ? {
 				resolveProjectTrust: async () => {

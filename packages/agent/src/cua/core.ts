@@ -7,7 +7,7 @@
  * but only loads koffi and the DLLs on first use.
  */
 
-import type { ElementObservation, FrameRecord, RawCapture, Rect, UiaTreeCapture, VirtualScreen, WindowInfo } from './types.ts';
+import type { ElementObservation, FrameRecord, RawCapture, Rect, UiaTreeCapture, UiaView, VirtualScreen, WindowInfo, WindowOwner } from './types.ts';
 import { CuaError } from './types.ts';
 import * as win32 from './win32Native.ts';
 
@@ -23,19 +23,26 @@ export interface CuaBackend {
 	virtualScreen(): VirtualScreen;
 	capture(region?: { x: number; y: number; width: number; height: number }): RawCapture;
 	listWindows(): { windows: WindowInfo[]; truncated: boolean };
-	activateWindow(hwnd: number): Promise<boolean>;
+	activateWindow(hwnd: number, allowAltFallback?: boolean): Promise<boolean>;
+	foregroundWindow(): number;
+	keyboardWindow(): number;
+	windowEnabled(hwnd: number): boolean;
+	windowAtPoint(x: number, y: number): number;
+	/** True when `candidate` is a same-process popup owned by `target` (menus, dropdowns, owned popups). */
+	windowOwnedBy?(candidate: number, target: number): boolean;
+	windowApplication?(hwnd: number): { key: string; label: string; pid: number };
+	acquireDesktop?(signal?: AbortSignal): Promise<() => void>;
 	mouseMove(x: number, y: number): void;
 	mouseClick(button: MouseButton, x?: number, y?: number, doubleClick?: boolean): void;
-	mouseDrag(fromX: number, fromY: number, toX: number, toY: number, durationMs?: number, signal?: AbortSignal): Promise<void>;
-	mouseScroll(clicks: number, horizontal: boolean): void;
+	mouseDrag(fromX: number, fromY: number, toX: number, toY: number, durationMs?: number, signal?: AbortSignal, beforePress?: () => void, beforeMove?: (point: { x: number; y: number }) => void): Promise<void>;
+	mouseScroll(clicks: number, horizontal: boolean, point?: { x: number; y: number }): void;
 	tapChord(modifiers: number[], body: number): void;
-	typeText(text: string, signal?: AbortSignal): Promise<void>;
+	typeText(text: string, signal?: AbortSignal, beforeInput?: () => void, method?: 'unicode' | 'clipboard'): Promise<void>;
 	readClipboard(): Promise<string | null>;
 	writeClipboard(text: string): Promise<void>;
 	cursorPosition(): { x: number; y: number };
 	/** Best-effort release of every held modifier key (session end / revoke). */
 	releaseModifiers?(): void;
-	/** false when the interactive input desktop is inaccessible (locked screen / secure desktop). */
 	/** false when the interactive input desktop is inaccessible (locked screen / secure desktop). */
 	inputDesktopAccessible?(): boolean;
 	/** Window-scoped capture: only the target window's pixels (v2). */
@@ -43,7 +50,8 @@ export interface CuaBackend {
 	/** Current on-screen rectangle of a window (DWM bounds; v2). */
 	windowRect?(hwnd: number): Rect;
 	/** Control-view UIA accessibility tree of a window (v2, read-only). */
-	uiaTree?(hwnd: number, options?: { maxNodes?: number; maxDepth?: number }): UiaTreeCapture;
+	uiaTree?(hwnd: number, options?: { maxNodes?: number; maxDepth?: number; view?: UiaView }): UiaTreeCapture;
+	uiaAction?(hwnd: number, element: { path: number[]; runtimeId: string; view: UiaView; anchorHwnd?: number }, action: { kind: 'invoke' } | { kind: 'setValue'; value: string }, beforeAction: () => void): Promise<{ completed: boolean }> | { completed: boolean } | void;
 }
 
 export const UNSUPPORTED_PLATFORM_MESSAGE = 'computer-use 尚未支持此平台（当前仅支持 Windows；macOS 需要 Accessibility 与屏幕录制权限，Linux 需要 X11/Wayland 适配）';
@@ -57,13 +65,24 @@ const win32Backend: CuaBackend = {
 	virtualScreen: () => win32.getVirtualScreen(),
 	capture: (region) => win32.captureScreen(region),
 	listWindows: () => win32.listWindows(),
-	activateWindow: (hwnd) => win32.activateWindow(hwnd),
+	activateWindow: win32.activateWindow,
+	foregroundWindow: win32.getForegroundWindow,
+	keyboardWindow: win32.getKeyboardWindow,
+	windowEnabled: win32.isWindowEnabled,
+	windowAtPoint: win32.getWindowAtPoint,
+	windowOwnedBy: win32.isWindowOwnedBy,
+	windowApplication: win32.getWindowApplication,
+	acquireDesktop: win32.acquireDesktop,
 	mouseMove: (x, y) => win32.mouseMove(x, y),
 	mouseClick: (button, x, y, doubleClick) => win32.mouseButtonClick(button, x, y, doubleClick),
-	mouseDrag: (fx, fy, tx, ty, durationMs, signal) => win32.mouseDrag(fx, fy, tx, ty, durationMs, signal),
-	mouseScroll: (clicks, horizontal) => win32.mouseScroll(clicks, horizontal),
+	mouseDrag: win32.mouseDrag,
+	mouseScroll: win32.mouseScroll,
 	tapChord: (modifiers, body) => win32.tapChord(modifiers, body),
-	typeText: (text, signal) => win32.pasteText(text, signal),
+	typeText: async (text, signal, beforeInput, method) => {
+		if (method !== 'unicode') return win32.pasteText(text, signal, beforeInput);
+		beforeInput?.();
+		win32.typeUnicode(text);
+	},
 	readClipboard: () => win32.readClipboardText(),
 	writeClipboard: (text) => win32.writeClipboardText(text),
 	cursorPosition: () => win32.getCursorPosition(),
@@ -72,6 +91,7 @@ const win32Backend: CuaBackend = {
 	captureWindow: (hwnd) => win32.captureWindow(hwnd),
 	windowRect: (hwnd) => win32.windowRect(hwnd),
 	uiaTree: (hwnd, options) => win32.captureUiaTree(hwnd, options),
+	uiaAction: win32.performUiaAction,
 };
 
 const unsupported = (): never => {
@@ -84,6 +104,10 @@ const unsupportedBackend: CuaBackend = {
 	capture: unsupported,
 	listWindows: unsupported,
 	activateWindow: async () => unsupported(),
+	foregroundWindow: unsupported,
+	keyboardWindow: unsupported,
+	windowEnabled: unsupported,
+	windowAtPoint: unsupported,
 	mouseMove: unsupported,
 	mouseClick: unsupported,
 	mouseDrag: async () => unsupported(),
@@ -106,6 +130,38 @@ export function getBackend(): CuaBackend {
 /** How many recent screenshot frames stay addressable by coordinate actions. */
 const MAX_FRAME_RECORDS = 8;
 
+let desktopQueue = Promise.resolve();
+
+/** Serialize operations across Pi sessions without holding the desktop during prompts or model turns. */
+export async function withCuaDesktop<T>(backend: CuaBackend, signal: AbortSignal | undefined, work: () => Promise<T>): Promise<T> {
+	const previous = desktopQueue;
+	let done!: () => void;
+	const current = new Promise<void>((resolve) => { done = resolve; });
+	desktopQueue = previous.then(() => current);
+	let release: (() => void) | undefined;
+	const assertActive = () => {
+		if (signal?.aborted) throw new CuaError('ABORTED', '等待桌面控制已中止');
+	};
+	try {
+		assertActive();
+		if (signal) {
+			await new Promise<void>((resolve, reject) => {
+				const abort = () => reject(new CuaError('ABORTED', '等待桌面控制已中止'));
+				signal.addEventListener('abort', abort, { once: true });
+				void previous.then(() => { signal.removeEventListener('abort', abort); resolve(); });
+			});
+		} else {
+			await previous;
+		}
+		assertActive();
+		release = await backend.acquireDesktop?.(signal);
+		assertActive();
+		return await work();
+	} finally {
+		try { release?.(); } finally { done(); }
+	}
+}
+
 /** Per-session CUA state. The desktop host owns one instance per Pi runtime. */
 export class CuaSessionState {
 	enabled = false;
@@ -113,6 +169,7 @@ export class CuaSessionState {
 	lastScreenshot: { width: number; height: number; scale: number } | null = null;
 	/** Most recent cua_get_state observation, for element-index addressing (v2). */
 	observation: ElementObservation | null = null;
+	private observationSeq = 0;
 	/** Monotonic frame sequence handed out with each screenshot. */
 	private frameSeq = 0;
 	/** Last few screenshot frames, for coordinate-action staleness checks. */
@@ -123,9 +180,9 @@ export class CuaSessionState {
 	 * actions may pass that number back to verify the screen layout (the only
 	 * cheap staleness signal: content changes are not detected, layout changes are).
 	 */
-	recordFrame(screen: VirtualScreen, region: FrameRecord['region'], window?: { hwnd: number; rect: Rect }): number {
+	recordFrame(screen: VirtualScreen, region: FrameRecord['region'], image: FrameRecord['image'], window?: { hwnd: number; rect: Rect; owner?: WindowOwner }): number {
 		const seq = ++this.frameSeq;
-		this.frames.set(seq, { seq, screen, region, time: Date.now(), ...(window ? { windowHwnd: window.hwnd, windowRect: window.rect } : {}) });
+		this.frames.set(seq, { seq, screen, region, image, time: Date.now(), ...(window ? { windowHwnd: window.hwnd, windowRect: window.rect, windowOwner: window.owner } : {}) });
 		while (this.frames.size > MAX_FRAME_RECORDS) {
 			const oldest = this.frames.keys().next().value;
 			if (oldest === undefined) break;
@@ -140,6 +197,10 @@ export class CuaSessionState {
 
 	resetObservation(): void {
 		this.observation = null;
+	}
+
+	recordObservation(observation: Omit<ElementObservation, 'id'>): ElementObservation {
+		return this.observation = { ...observation, id: ++this.observationSeq };
 	}
 }
 

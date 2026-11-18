@@ -1,5 +1,5 @@
 // Real SDK/desktop confirmation pipeline with an offline loopback model.
-// The only CUA primitive called is cua_wait; no screenshot or input is performed.
+// The screen call deliberately fails validation after permission, and the clipboard request is denied.
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
@@ -7,9 +7,8 @@ import { tmpdir } from 'node:os';
 import { isAbsolute, join, relative, resolve } from 'node:path';
 import { test } from 'node:test';
 import { seedTestModel, TEST_MODEL_ID, TEST_MODEL_PROVIDER } from './helpers/testModel.mjs';
-import { CUA_PERMISSION_TITLE } from '../packages/agent/src/cua/permissions.ts';
 
-test('real model CUA calls wait for conversation consent and reuse it after reopening', { skip: process.platform !== 'win32', timeout: 30000 }, async () => {
+test('real model CUA calls wait for resource consent, reuse remembered grants, and honor revocation', { skip: process.platform !== 'win32', timeout: 30000 }, async () => {
 	const root = await mkdtemp(join(tmpdir(), 'pi-cua-confirm-'));
 	const workspace = join(root, 'workspace'), agentDir = join(root, 'agent');
 	const previous = new Map(['PI_CODING_AGENT_DIR', 'PI_OFFLINE'].map(key => [key, process.env[key]]));
@@ -33,8 +32,10 @@ test('real model CUA calls wait for conversation consent and reuse it after reop
 		let raw = ''; for await (const part of request) raw += part;
 		const body = JSON.parse(raw); modelRequests.push(body);
 		const toolCall = body.messages.at(-1).role === 'user';
+		const clipboard = JSON.stringify(body.messages.at(-1).content).includes('clipboard');
+		const call = clipboard ? { name: 'cua_read_clipboard', arguments: '{}' } : { name: 'cua_screenshot', arguments: '{"x":0}' };
 		const delta = toolCall
-			? { role: 'assistant', tool_calls: [{ index: 0, id: `wait-${modelRequests.length}`, type: 'function', function: { name: 'cua_wait', arguments: '{"ms":50}' } }] }
+			? { role: 'assistant', tool_calls: [{ index: 0, id: `cua-${modelRequests.length}`, type: 'function', function: call }] }
 			: { role: 'assistant', content: 'Finished.' };
 		const chunk = (delta, finish_reason) => 'data: ' + JSON.stringify({ id: 'local-cua', object: 'chat.completion.chunk', model: body.model, choices: [{ index: 0, delta, finish_reason }] }) + '\n\n';
 		response.writeHead(200, { 'content-type': 'text/event-stream' });
@@ -51,43 +52,48 @@ test('real model CUA calls wait for conversation consent and reuse it after reop
 		process.env.PI_CODING_AGENT_DIR = agentDir; process.env.PI_OFFLINE = '1';
 		const { AgentService } = await import('../packages/agent/src/index.ts');
 		const requestConfirmation = async (request, signal) => {
+			if (request.kind !== 'select') return;
 			requests.push(request);
-			return requests.length === 1 ? new Promise(resolve => { reply = resolve; signal?.addEventListener('abort', () => resolve(false), { once: true }); }) : false;
+			return requests.length === 1 ? new Promise(resolve => { reply = resolve; signal?.addEventListener('abort', () => resolve(undefined), { once: true }); }) : '拒绝';
 		};
 		const open = () => new AgentService(async () => ({ trusted: true, remember: false }), requestConfirmation);
 		service = open();
 		await service.init({ cwd: workspace, fresh: true });
 		await service.setModel(TEST_MODEL_PROVIDER, TEST_MODEL_ID);
 		const scope = service.getSnapshot();
-		await service.prompt('Run cua_wait once.');
+		await service.prompt('Request screen capture.');
 		await waitFor(() => requests.length === 1);
-		assert.equal(requests[0].title, CUA_PERMISSION_TITLE);
-		assert.equal(requests[0].kind, 'confirm');
+		assert.match(requests[0].title, /截取桌面整屏或指定区域/);
+		assert.equal(requests[0].kind, 'select');
+		assert.deepEqual(requests[0].options, ['本对话内允许', '仅本次允许', '始终允许（所有对话）', '拒绝']);
 		assert.equal(requests[0].scope.sessionId, scope.sessionId);
 		assert.equal(modelRequests.length, 1, 'the model cannot proceed to a tool result before consent');
-		reply(true);
+		reply('始终允许（所有对话）');
 		await waitFor(() => service.getSnapshot().status === 'idle');
-		assert.match(modelRequests.at(-1).messages.at(-1).content, /已等待/);
-		await promptAndSettle('Run cua_wait again.');
+		assert.match(modelRequests.at(-1).messages.at(-1).content, /INVALID_ARGUMENTS.*截屏区域/);
+		await promptAndSettle('Request screen capture again.');
 		assert.equal(requests.length, 1, 'later calls in the conversation do not prompt');
 		await service.dispose();
 		service = open();
 		await service.init({ cwd: workspace, sessionPath: scope.sessionPath });
 		await service.setModel(TEST_MODEL_PROVIDER, TEST_MODEL_ID);
-		await promptAndSettle('Run cua_wait after reopening.');
-		assert.equal(requests.length, 1, 'the same conversation retains local consent after its runtime is recreated');
+		await promptAndSettle('Request screen capture after reopening.');
+		assert.equal(requests.length, 1, 'the resource grant survives reopening the conversation');
 		await service.executeSlashCommand({ cwd: workspace, sessionId: scope.sessionId, name: 'cua', args: 'off' });
-		await promptAndSettle('Try cua_wait after revocation.');
+		await promptAndSettle('Request screen capture after disabling this conversation.');
 		assert.equal(requests.length, 1);
 		assert.match(modelRequests.at(-1).messages.at(-1).content, /拒绝或关闭/);
 		await service.newSession();
 		await service.setModel(TEST_MODEL_PROVIDER, TEST_MODEL_ID);
 		assert.notEqual(service.getSnapshot().sessionId, scope.sessionId);
-		await promptAndSettle('Run cua_wait in this new conversation.');
-		assert.equal(requests.length, 2, 'a new conversation asks separately');
-		assert.match(modelRequests.at(-1).messages.at(-1).content, /拒绝或关闭/);
-		await promptAndSettle('Try again after declining.');
-		assert.equal(requests.length, 2, 'a declined conversation does not repeatedly prompt');
+		await promptAndSettle('Request screen capture in a new conversation.');
+		assert.equal(requests.length, 1, 'remembered scope grants apply in a new conversation');
+		await promptAndSettle('Request clipboard access.');
+		assert.equal(requests.length, 2, 'clipboard access needs a separate grant');
+		assert.match(requests[1].title, /读取系统剪贴板/);
+		assert.match(modelRequests.at(-1).messages.at(-1).content, /用户未批准/);
+		await promptAndSettle('Request clipboard again.');
+		assert.equal(requests.length, 2, 'a declined scope does not repeatedly prompt');
 	} finally {
 		await service?.dispose();
 		server.closeAllConnections();

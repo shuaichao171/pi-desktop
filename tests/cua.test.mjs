@@ -9,9 +9,9 @@ import { tmpdir } from 'node:os';
 import { join, resolve, sep } from 'node:path';
 import { CuaError, CuaSessionState, getBackend, isCuaSupported, parseKeys } from '../packages/agent/src/cua/core.ts';
 import { downscaleBgra, encodeImage } from '../packages/agent/src/cua/imageEncode.ts';
-import { clampRegion, toAbsolute } from '../packages/agent/src/cua/win32Native.ts';
+import { clampRegion, clipboardPaste, toAbsolute } from '../packages/agent/src/cua/win32Native.ts';
 import { cuaExtension } from '../packages/agent/src/cua/extension.ts';
-import { CUA_PERMISSION_MESSAGE, CUA_PERMISSION_TITLE, CuaPermissionStore } from '../packages/agent/src/cua/permissions.ts';
+import { CUA_PERMISSION_MESSAGE, CUA_PERMISSION_TITLE, CuaPermissionStore, CuaScopeStore } from '../packages/agent/src/cua/permissions.ts';
 
 test('parseKeys maps letters case-insensitively (regression: letters used to be unknown)', () => {
 	assert.deepEqual(parseKeys('ctrl+c'), { modifiers: [0x11], key: 0x43 });
@@ -102,8 +102,8 @@ test('extension registers the tool surface without touching native code', () => 
 	const pi = fakePi();
 	cuaExtension({ state: new CuaSessionState() })(pi.api);
 	assert.deepEqual([...pi.tools.keys()].sort(), [
-		'cua_activate_window', 'cua_double_click', 'cua_drag', 'cua_get_state', 'cua_key', 'cua_left_click', 'cua_list_windows', 'cua_mouse_move',
-		'cua_read_clipboard', 'cua_right_click', 'cua_screenshot', 'cua_scroll', 'cua_type', 'cua_wait', 'cua_write_clipboard',
+		'cua_activate_window', 'cua_double_click', 'cua_drag', 'cua_get_state', 'cua_invoke', 'cua_key', 'cua_left_click', 'cua_list_windows', 'cua_mouse_move',
+		'cua_read_clipboard', 'cua_right_click', 'cua_screenshot', 'cua_scroll', 'cua_set_value', 'cua_type', 'cua_wait', 'cua_write_clipboard',
 	]);
 	assert.ok(pi.commands.has('cua'));
 	for (const tool of pi.tools.values()) assert.equal(tool.executionMode, 'sequential', tool.name);
@@ -324,6 +324,12 @@ function fullFakeBackend(overrides = {}) {
 		windows: [],
 		moves: [],
 		clicks: [],
+		scrolls: [],
+		keys: [],
+		pastes: [],
+		activations: [],
+		foreground: 77,
+		hitWindow: 77,
 		window: { hwnd: 77, title: 'Demo', rect: { x: 10, y: 20, width: 400, height: 300 } },
 		windowGone: false,
 		tree: {
@@ -331,7 +337,7 @@ function fullFakeBackend(overrides = {}) {
 				role: 'window', name: 'Demo', rect: { x: 10, y: 20, width: 400, height: 300 },
 				enabled: true, focusable: true, focused: false, offscreen: false, password: false,
 				children: [
-					{ role: 'button', name: '确定', automationId: 'ok', rect: { x: 110, y: 200, width: 60, height: 24 }, enabled: true, focusable: true, focused: false, offscreen: false, password: false, children: [] },
+					{ role: 'button', name: '确定', automationId: 'ok', runtimeId: 'button-ok', canInvoke: true, rect: { x: 110, y: 200, width: 60, height: 24 }, enabled: true, focusable: true, focused: false, offscreen: false, password: false, children: [] },
 					{ role: 'edit', name: '搜索', value: 'hi', rect: { x: 20, y: 40, width: 120, height: 20 }, enabled: true, focusable: true, focused: true, offscreen: false, password: false, children: [] },
 				],
 			},
@@ -343,13 +349,22 @@ function fullFakeBackend(overrides = {}) {
 		capture: () => ({ width: 4, height: 4, bgra: Buffer.alloc(4 * 4 * 4, 0xff) }),
 		captureWindow: (hwnd) => { fake.windowUsed = hwnd; return { width: fake.window.rect.width, height: fake.window.rect.height, bgra: Buffer.alloc(fake.window.rect.width * fake.window.rect.height * 4, 0x80) }; },
 		listWindows: () => ({ windows: fake.windows, truncated: false }),
-		activateWindow: async () => true,
+		activateWindow: async (hwnd, allowAltFallback) => {
+			fake.activations.push({ hwnd, allowAltFallback });
+			fake.foreground = hwnd;
+			return true;
+		},
+		foregroundWindow: () => fake.foreground,
+		keyboardWindow: () => fake.foreground,
+		windowEnabled: () => true,
+		windowAtPoint: () => fake.hitWindow,
+		windowApplication: (hwnd) => ({ key: 'app:' + hwnd, label: '应用 ' + hwnd, pid: hwnd }),
 		mouseMove: (x, y) => { fake.moves.push([x, y]); },
 		mouseClick: (button, x, y) => { fake.clicks.push([button, x, y]); },
 		mouseDrag: async () => {},
-		mouseScroll() {},
-		tapChord() {},
-		typeText: async () => {},
+		mouseScroll: (amount, horizontal, point) => { fake.scrolls.push({ amount, horizontal, point }); },
+		tapChord: (modifiers, key) => { fake.keys.push({ modifiers, key }); },
+		typeText: async (text, _signal, beforePaste) => { beforePaste?.(); fake.pastes.push(text); },
 		readClipboard: async () => null,
 		writeClipboard: async () => {},
 		cursorPosition: () => ({ x: 1, y: 2 }),
@@ -507,25 +522,27 @@ test('cua_get_state returns indexed element rows and stores the observation', as
 test('element addressing resolves centers and fails closed on stale state', async () => {
 	const { backend, fake } = fullFakeBackend();
 	const f = extensionFixture(backend);
-	await f.pi.tools.get('cua_get_state').execute('id', { hwnd: fake.window.hwnd });
+	const observe = () => f.pi.tools.get('cua_get_state').execute('id', { hwnd: fake.window.hwnd });
+	const original = (await observe()).details.observationId;
 	// element 1 = button [110,200 60x24] → click center (140, 212).
-	await f.pi.tools.get('cua_left_click').execute('id', { element: 1 });
+	await f.pi.tools.get('cua_left_click').execute('id', { element: 1, observationId: original });
 	assert.deepEqual(fake.clicks.at(-1), ['left', 140, 212]);
 	// element and coordinates are mutually exclusive.
 	await assert.rejects(f.pi.tools.get('cua_left_click').execute('id', { element: 1, x: 5, y: 5 }), /CUA INVALID_ARGUMENTS.*互斥/);
 	// Unknown index → ELEMENT_UNAVAILABLE.
-	await assert.rejects(f.pi.tools.get('cua_left_click').execute('id', { element: 99 }), /CUA ELEMENT_UNAVAILABLE.*不在最近观察/);
+	await assert.rejects(f.pi.tools.get('cua_left_click').execute('id', { element: 99, observationId: original }), /CUA ELEMENT_UNAVAILABLE.*不在最近观察/);
 	// Window moved since the observation → STALE_STATE.
 	fake.window.rect = { x: 300, y: 20, width: 400, height: 300 };
-	await assert.rejects(f.pi.tools.get('cua_left_click').execute('id', { element: 1 }), /CUA STALE_STATE.*窗口已移动/);
-	// Scroll by element moves the mouse to the element center first.
+	await assert.rejects(f.pi.tools.get('cua_left_click').execute('id', { element: 1, observationId: original }), /CUA STALE_STATE.*窗口已移动/);
+	// Scroll by element uses the center for the move-and-scroll batch.
 	fake.window.rect = { x: 10, y: 20, width: 400, height: 300 };
-	await f.pi.tools.get('cua_get_state').execute('id', { hwnd: fake.window.hwnd });
-	await f.pi.tools.get('cua_scroll').execute('id', { amount: 3, element: 1 });
-	assert.deepEqual(fake.moves.at(-1), [140, 212]);
+	const current = (await observe()).details.observationId;
+	await assert.rejects(f.pi.tools.get('cua_left_click').execute('id', { element: 1, observationId: original }), /CUA STALE_STATE.*observationId/);
+	await f.pi.tools.get('cua_scroll').execute('id', { amount: 3, element: 1, observationId: current });
+	assert.deepEqual(fake.scrolls.at(-1), { amount: 3, horizontal: false, point: { x: 140, y: 212 } });
 	// No observation at all → STALE_STATE with a re-observe hint.
 	f.state.observation = null;
-	await assert.rejects(f.pi.tools.get('cua_right_click').execute('id', { element: 0 }), /CUA STALE_STATE.*没有最近的 cua_get_state/);
+	await assert.rejects(f.pi.tools.get('cua_right_click').execute('id', { element: 0 }), /CUA STALE_STATE.*没有匹配的 cua_get_state/);
 });
 
 test('cua_screenshot window scope pins the window rect into the frame', async () => {
@@ -553,4 +570,312 @@ test('revoking the session clears the element observation', async () => {
 	assert.ok(f.state.observation);
 	await f.pi.commands.get('cua').handler('off', { ui: { notify() {} } });
 	assert.equal(f.state.observation, null);
+});
+
+test('window-bound clicks activate the screenshot target and refuse overlapping windows', async () => {
+	const { backend, fake } = fullFakeBackend();
+	const { pi } = extensionFixture(backend);
+	const shot = await pi.tools.get('cua_screenshot').execute('id', { window: fake.window.hwnd });
+	const click = pi.tools.get('cua_left_click');
+	const params = { x: 40, y: 50, frame: shot.details.frame };
+
+	fake.foreground = 88;
+	await click.execute('id', params);
+	assert.deepEqual(fake.activations, [{ hwnd: 77, allowAltFallback: false }]);
+	assert.deepEqual(fake.clicks, [['left', 40, 50]]);
+
+	fake.hitWindow = 88;
+	await assert.rejects(click.execute('id', params), /CUA TARGET_MISMATCH \(actionSent=false\).*未命中/);
+	await assert.rejects(click.execute('id', { ...params, window: 88 }), /CUA INVALID_ARGUMENTS.*同一个窗口/);
+	assert.equal(fake.clicks.length, 1);
+	// A desktop-coordinate call with no target keeps its existing semantics.
+	await click.execute('id', { x: 40, y: 50 });
+	assert.equal(fake.clicks.length, 2);
+});
+
+test('window-bound element input is revalidated after activation', async () => {
+	const { backend, fake } = fullFakeBackend();
+	const { pi } = extensionFixture(backend);
+	const observation = await pi.tools.get('cua_get_state').execute('id', { hwnd: 77 });
+	fake.foreground = 88;
+	const activate = backend.activateWindow;
+	backend.activateWindow = async (hwnd, allowAltFallback) => {
+		fake.window.rect.x += 10;
+		return activate(hwnd, allowAltFallback);
+	};
+
+	await assert.rejects(
+		pi.tools.get('cua_double_click').execute('id', { element: 1, observationId: observation.details.observationId }),
+		/CUA STALE_STATE \(actionSent=false\).*窗口已移动/,
+	);
+	assert.deepEqual(fake.clicks, []);
+});
+
+test('window-bound keyboard input refuses failed activation and focus loss during paste', async () => {
+	const { backend, fake } = fullFakeBackend();
+	const { pi } = extensionFixture(backend);
+	fake.foreground = 88;
+	backend.activateWindow = async () => false;
+	await assert.rejects(pi.tools.get('cua_key').execute('id', { keys: 'enter', window: 77 }), /CUA FOREGROUND_FAILED \(actionSent=false\)/);
+	assert.deepEqual(fake.keys, []);
+
+	fake.foreground = 77;
+	const type = backend.typeText;
+	backend.typeText = async (text, signal, beforePaste) => {
+		fake.foreground = 88;
+		await type(text, signal, beforePaste);
+	};
+	await assert.rejects(pi.tools.get('cua_type').execute('id', { text: 'hi', window: 77 }), /CUA TARGET_MISMATCH \(actionSent=false\).*不在前台/);
+	assert.deepEqual(fake.pastes, []);
+});
+
+test('window-bound drag rechecks the start point before pressing the button', async () => {
+	const { backend, fake } = fullFakeBackend();
+	const { pi } = extensionFixture(backend);
+	let pressed = false;
+	backend.mouseDrag = async (_fromX, _fromY, _toX, _toY, _duration, _signal, beforePress) => {
+		fake.hitWindow = 88;
+		beforePress();
+		pressed = true;
+	};
+	await assert.rejects(
+		pi.tools.get('cua_drag').execute('id', { fromX: 40, fromY: 50, toX: 500, toY: 500, window: 77 }),
+		/CUA TARGET_MISMATCH.*未命中/,
+	);
+	assert.equal(pressed, false);
+});
+
+test('scoped permissions separate applications, screen, and clipboard and distinguish once from remembered', async () => {
+	const dir = mkdtempSync(join(tmpdir(), 'pi-cua-scopes-'));
+	try {
+		const scopes = new CuaScopeStore(dir);
+		const { backend, fake } = fullFakeBackend();
+		const pi = fakePi();
+		cuaExtension({ backend, scopes })(pi.api);
+		const choices = ['仅本次允许', '始终允许（所有对话）', '拒绝', '拒绝'];
+		const prompts = [];
+		const ctx = { hasUI: true, ui: { select: async (title) => { prompts.push(title); return choices.shift(); }, notify() {} } };
+		const call = (name, args) => pi.tools.get(name).execute('test', args, undefined, undefined, ctx);
+
+		await call('cua_screenshot', { window: 77 });
+		await call('cua_left_click', { window: 77, x: 40, y: 50 });
+		await call('cua_left_click', { window: 77, x: 40, y: 50 });
+		assert.equal(fake.clicks.length, 2);
+		assert.equal(new CuaScopeStore(dir).isAllowed('app:77'), true);
+		await assert.rejects(call('cua_screenshot', {}), /PERMISSION_DENIED/);
+		await assert.rejects(call('cua_read_clipboard', {}), /PERMISSION_DENIED/);
+		await assert.rejects(call('cua_read_clipboard', {}), /已拒绝/);
+		assert.deepEqual(prompts, [
+			'电脑控制权限 · 观察并控制应用 应用 77',
+			'电脑控制权限 · 观察并控制应用 应用 77',
+			'电脑控制权限 · 截取桌面整屏或指定区域',
+			'电脑控制权限 · 读取系统剪贴板',
+		]);
+		await pi.commands.get('cua').handler('reset', ctx);
+		assert.equal(scopes.isAllowed('app:77'), false);
+	} finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('scoped authorization refuses a replaced window even when its HWND is reused', async () => {
+	const { backend, fake } = fullFakeBackend();
+	const pi = fakePi();
+	const scopes = { isAllowed: () => false, allow() {}, clear() {} };
+	cuaExtension({ backend, scopes })(pi.api);
+	const ctx = { hasUI: true, ui: { select: async () => {
+		backend.windowApplication = () => ({ key: 'app:new', label: 'Replacement', pid: 10 });
+		return '仅本次允许';
+	} } };
+	await assert.rejects(pi.tools.get('cua_key').execute('test', { keys: 'enter', window: 77 }, undefined, undefined, ctx), /TARGET_MISMATCH.*应用身份/);
+	assert.deepEqual(fake.keys, []);
+});
+
+test('image-space input maps a scaled window frame using its native capture origin', async () => {
+	const { backend, fake } = fullFakeBackend();
+	const { pi } = extensionFixture(backend);
+	fake.screen = { x: -800, y: -400, width: 1600, height: 1000 };
+	fake.window.rect = { x: -450, y: 160, width: 512, height: 320 };
+	const shot = await pi.tools.get('cua_screenshot').execute('id', { window: 77, maxWidth: 256 });
+	const args = { frame: shot.details.frame, coordinateSpace: 'image', x: 50, y: 5 };
+	await pi.tools.get('cua_left_click').execute('id', args);
+	assert.deepEqual(fake.clicks.at(-1), ['left', -350, 170]);
+	await assert.rejects(pi.tools.get('cua_left_click').execute('id', { ...args, x: 256 }), /INVALID_ARGUMENTS.*范围外/);
+});
+
+test('UIA semantic dispatch pins the observed native identity and invalidates it after delivery', async () => {
+	const actions = [];
+	const { backend } = fullFakeBackend({
+		uiaAction: (hwnd, element, action, beforeAction) => { beforeAction(); actions.push({ hwnd, element, action }); },
+	});
+	const { pi } = extensionFixture(backend);
+	const observation = await pi.tools.get('cua_get_state').execute('id', { hwnd: 77 });
+	const params = { observationId: observation.details.observationId, element: 1 };
+	assert.match(observation.content[0].text, /Invoke/);
+	await pi.tools.get('cua_invoke').execute('id', params);
+	assert.deepEqual(actions, [{ hwnd: 77, element: { path: [0], runtimeId: 'button-ok', view: 'control' }, action: { kind: 'invoke' } }]);
+	await assert.rejects(pi.tools.get('cua_invoke').execute('id', params), /STALE_STATE/);
+});
+
+test('desktop operations in two conversations serialize and an aborted waiter sends no input', async () => {
+	const { backend, fake } = fullFakeBackend();
+	let start;
+	let finish;
+	const started = new Promise((resolve) => { start = resolve; });
+	const resumed = new Promise((resolve) => { finish = resolve; });
+	const methods = [];
+	backend.typeText = async (_text, _signal, beforeInput, method) => {
+		beforeInput();
+		methods.push(method);
+		start();
+		await resumed;
+	};
+	const first = extensionFixture(backend).pi;
+	const second = extensionFixture(backend).pi;
+	const input = first.tools.get('cua_type').execute('first', { text: '你好' });
+	await started;
+	const controller = new AbortController();
+	const waiting = second.tools.get('cua_key').execute('second', { keys: 'enter' }, controller.signal);
+	controller.abort();
+	await assert.rejects(waiting, /ABORTED/);
+	const next = second.tools.get('cua_left_click').execute('next', { x: 10, y: 10 });
+	assert.deepEqual(fake.clicks, []);
+	finish();
+	await Promise.all([input, next]);
+	assert.deepEqual(methods, ['unicode']);
+	assert.deepEqual(fake.clicks, [['left', 10, 10]]);
+	assert.deepEqual(fake.keys, []);
+});
+
+test('clipboard paste restores on cancellation and preserves a newer copy or a rich format', async () => {
+	let sequence = 1;
+	let text = 'original';
+	let rich = false;
+	let presses = 0;
+	const clipboard = {
+		open: async (work) => work(),
+		sequence: () => sequence,
+		canReplace: () => !rich,
+		read: () => text,
+		write: (value) => { sequence++; text = value; },
+		press: () => { presses++; },
+	};
+	const controller = new AbortController();
+	await assert.rejects(clipboardPaste('temporary', clipboard, controller.signal, () => controller.abort()), /ABORTED/);
+	assert.equal(text, 'original');
+	await assert.rejects(clipboardPaste('temporary', clipboard, undefined, () => {
+		setImmediate(() => clipboard.write('copied by user'));
+	}), /CLIPBOARD_CHANGED/);
+	assert.equal(text, 'copied by user');
+	rich = true;
+	const hasRichData = sequence;
+	await assert.rejects(clipboardPaste('temporary', clipboard), /CLIPBOARD_FORMATS/);
+	assert.equal(sequence, hasRichData, 'rich clipboard was never overwritten');
+	assert.equal(presses, 0);
+});
+
+test('scoped authorization never grants control of the Pi Desktop host itself', async () => {
+	const { backend, fake } = fullFakeBackend();
+	const pi = fakePi();
+	const prompts = [];
+	const scopes = { isAllowed: () => true, allow() {}, clear() {} };
+	cuaExtension({ backend, scopes, hostApplicationKey: 'app:77' })(pi.api);
+	const ctx = { hasUI: true, ui: { select: async (title) => { prompts.push(title); return '始终允许（所有对话）'; } } };
+	// Foreground defaults to the host window: refused even though a grant is remembered.
+	await assert.rejects(pi.tools.get('cua_get_state').execute('test', {}, undefined, undefined, ctx), /PERMISSION_DENIED.*Pi Desktop 自身.*cua_list_windows/);
+	await assert.rejects(pi.tools.get('cua_left_click').execute('test', { x: 40, y: 50 }, undefined, undefined, ctx), /PERMISSION_DENIED.*Pi Desktop 自身/);
+	assert.deepEqual(prompts, []);
+	assert.deepEqual(fake.clicks, []);
+});
+
+test('a conversation grant lasts until /cua off, is never persisted, and is not shared', async () => {
+	const { backend, fake } = fullFakeBackend();
+	const pi = fakePi();
+	const allowed = [];
+	const scopes = { isAllowed: () => false, allow: (key) => allowed.push(key), clear() {} };
+	cuaExtension({ backend, scopes })(pi.api);
+	const prompts = [];
+	const ctx = { hasUI: true, ui: { select: async (title, options) => { prompts.push(options); return '本对话内允许'; }, notify() {} } };
+	const click = () => pi.tools.get('cua_left_click').execute('test', { window: 77, x: 40, y: 50 }, undefined, undefined, ctx);
+	await click();
+	await click();
+	assert.equal(fake.clicks.length, 2);
+	assert.equal(prompts.length, 1, 'the conversation grant covers later calls');
+	assert.deepEqual(prompts[0], ['本对话内允许', '仅本次允许', '始终允许（所有对话）', '拒绝']);
+	assert.deepEqual(allowed, [], 'a conversation grant is not written to the shared store');
+
+	const other = fakePi();
+	cuaExtension({ backend, scopes })(other.api);
+	await other.tools.get('cua_left_click').execute('test', { window: 77, x: 40, y: 50 }, undefined, undefined, ctx);
+	assert.equal(prompts.length, 2, 'another conversation asks again');
+
+	await pi.commands.get('cua').handler('off', ctx);
+	await pi.commands.get('cua').handler('on', ctx);
+	await click();
+	assert.equal(prompts.length, 3, '/cua off revokes the conversation grant');
+});
+
+test('window-bound pointer input accepts popups owned by the target window', async () => {
+	const owned = [];
+	const { backend, fake } = fullFakeBackend({
+		windowOwnedBy: (candidate, target) => { owned.push([candidate, target]); return candidate === 99 && target === 77; },
+	});
+	const { pi } = extensionFixture(backend);
+	// A context menu (hwnd 99) owned by the target is under the pointer.
+	fake.hitWindow = 99;
+	await pi.tools.get('cua_left_click').execute('id', { window: 77, x: 40, y: 50 });
+	assert.deepEqual(fake.clicks, [['left', 40, 50]]);
+	// A popup that took activation does not trigger re-activation of the owner (which would close it).
+	fake.foreground = 99;
+	await pi.tools.get('cua_left_click').execute('id', { window: 77, x: 40, y: 50 });
+	assert.deepEqual(fake.activations, []);
+	assert.equal(fake.clicks.length, 2);
+	// Unrelated windows are still refused, and keyboard input still needs real focus in the target.
+	fake.hitWindow = 55;
+	await assert.rejects(pi.tools.get('cua_left_click').execute('id', { window: 77, x: 40, y: 50 }), /TARGET_MISMATCH.*未命中/);
+	await assert.rejects(pi.tools.get('cua_key').execute('id', { window: 77, keys: 'enter' }), /TARGET_MISMATCH.*键盘焦点/);
+	assert.ok(owned.some(([candidate]) => candidate === 55));
+});
+
+test('cua_type falls back to Unicode only for single-line text when the clipboard holds rich content', async () => {
+	const calls = [];
+	const { backend } = fullFakeBackend({
+		typeText: async (text, _signal, beforeInput, method) => {
+			beforeInput?.();
+			calls.push({ text, method });
+			if (method === 'clipboard') throw new CuaError('CLIPBOARD_FORMATS', '剪贴板含图片、文件或富文本');
+		},
+	});
+	const { pi } = extensionFixture(backend);
+	const type = pi.tools.get('cua_type');
+	const longLine = 'x'.repeat(200);
+
+	const result = await type.execute('id', { window: 77, text: longLine });
+	assert.deepEqual(calls.map((call) => call.method), ['clipboard', 'unicode']);
+	assert.equal(result.details.method, 'unicode');
+	assert.match(result.content[0].text, /Unicode 键入/);
+
+	// Multi-line text would press Enter when typed, so it is not switched silently.
+	calls.length = 0;
+	await assert.rejects(type.execute('id', { window: 77, text: 'a\nb' }), /CLIPBOARD_FORMATS/);
+	assert.deepEqual(calls.map((call) => call.method), ['clipboard']);
+	// An explicit clipboard request is honored, not rewritten.
+	calls.length = 0;
+	await assert.rejects(type.execute('id', { window: 77, text: longLine, method: 'clipboard' }), /CLIPBOARD_FORMATS/);
+	assert.deepEqual(calls.map((call) => call.method), ['clipboard']);
+	// Explicit Unicode accepts tabs and line breaks (sent as real keys); other control characters are refused.
+	calls.length = 0;
+	await type.execute('id', { window: 77, text: 'a\tb\r\nc', method: 'unicode' });
+	assert.deepEqual(calls, [{ text: 'a\tb\r\nc', method: 'unicode' }]);
+	await assert.rejects(type.execute('id', { window: 77, text: 'a\u0007b', method: 'unicode' }), /INVALID_ARGUMENTS.*Tab 与换行/);
+	await assert.rejects(type.execute('id', { window: 77, text: 'y'.repeat(1001), method: 'unicode' }), /INVALID_ARGUMENTS.*1000/);
+});
+
+test('a UIA action that has not returned is reported as delivered but pending', async () => {
+	const { backend } = fullFakeBackend({
+		uiaAction: async (_hwnd, _element, _action, beforeAction) => { beforeAction(); return { completed: false }; },
+	});
+	const { pi } = extensionFixture(backend);
+	const observation = await pi.tools.get('cua_get_state').execute('id', { hwnd: 77 });
+	const result = await pi.tools.get('cua_invoke').execute('id', { observationId: observation.details.observationId, element: 1 });
+	assert.equal(result.details.completed, false);
+	assert.match(result.content[0].text, /5 秒内没有返回.*模态窗口/);
 });
