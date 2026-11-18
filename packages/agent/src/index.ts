@@ -612,6 +612,11 @@ class SingleAgentService {
 		return this.cwd === scope.cwd && this.state.sessionId === scope.sessionId && this.state.sessionPath === scope.sessionPath;
 	}
 
+	/** Fleet updates name their conversation: a renderer that already moved to another one drops them. */
+	private fireSubagentFleet(fleet: UiSubagentFleetSnapshot | null): void {
+		this.fire({ type: 'subagent-fleet', fleet, sessionPath: this.state.sessionPath });
+	}
+
 	/** Consume a pi-subagents rpc-mode widget payload; unknown shapes never throw. */
 	private consumeSubagentWidget(key: string, content: unknown): void {
 		const line = Array.isArray(content) && content.length > 0 && typeof content[0] === 'string'
@@ -621,7 +626,7 @@ class SingleAgentService {
 				// Undefined content means the widget was cleared: no active runs.
 				if (this.subagentFleet) {
 					this.subagentFleet = null;
-					this.fire({ type: 'subagent-fleet', fleet: null });
+					this.fireSubagentFleet(null);
 				}
 				this.rememberSubagentLiveness(false);
 				return;
@@ -632,7 +637,7 @@ class SingleAgentService {
 					// Keep rows where they first appeared; the plugin re-sorts by recency on every tick.
 					const fleet = stabilizeSubagentFleetOrder(projected, this.subagentFleet);
 					this.subagentFleet = fleet;
-					this.fire({ type: 'subagent-fleet', fleet });
+					this.fireSubagentFleet(fleet);
 					this.rememberSubagentLiveness(subagentFleetHasRunning(fleet));
 				}
 			} catch {
@@ -1775,7 +1780,7 @@ class SingleAgentService {
 		// clear so a renderer that kept the old card never shows a foreign fleet.
 		if (this.subagentFleet) {
 			this.subagentFleet = null;
-			this.fire({ type: 'subagent-fleet', fleet: null });
+			this.fireSubagentFleet(null);
 		}
 		await runtime.session.bindExtensions({
 			uiContext: this.createExtensionUiContext(),
@@ -3843,6 +3848,9 @@ export class AgentService {
 		});
 		this.fire({ type: 'status', status: snapshot.status, message: snapshot.statusMessage });
 		this.fire({ type: 'queue', count: snapshot.queuedCount, items: snapshot.queuedMessages });
+		// A warm context keeps its fleet while in the background, but its widget only
+		// re-emits on change: replay it (or its absence) for the conversation now shown.
+		if (snapshot.sessionId) this.fire({ type: 'subagent-fleet', fleet: snapshot.subagentFleet ?? null, sessionPath: snapshot.sessionPath });
 		if (snapshot.error) this.fire({ type: 'error', message: snapshot.error, error: snapshot.errorInfo ?? undefined });
 	}
 

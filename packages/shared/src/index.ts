@@ -717,7 +717,8 @@ export type AgentUiEvent =
   | { type: 'provider-resync'; providers: string[]; status: 'pending' | 'done' | 'failed'; warnings?: string[]; error?: string }
   | { type: 'session-runtime'; cwd: string; path: string; runtime: UiSessionRuntimeState }
   | { type: 'error'; message: string; error?: UiAgentError }
-  | { type: 'subagent-fleet'; fleet: UiSubagentFleetSnapshot | null }
+  /** `sessionPath` names the conversation the fleet belongs to; renderers drop updates for any other. */
+  | { type: 'subagent-fleet'; fleet: UiSubagentFleetSnapshot | null; sessionPath?: string | null }
   | { type: 'subagent-inspect'; reply: UiSubagentInspectReply }
 
 export interface AgentEventEnvelope {

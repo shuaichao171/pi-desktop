@@ -184,6 +184,39 @@ test('a warm switch-back whose ready matches the painted preview repaints nothin
   assert.equal(settled.navigationPending, false);
 });
 
+test('a warm switch-back never keeps the left conversation fleet and shows the replayed target fleet', async () => {
+  const host = createHost({ snapshot: { ...baseSnapshot, messages: [userMessage('1', 'question')] } });
+  useChatStore.getState().setBridge(host.bridge);
+  await settle();
+
+  const toB = useChatStore.getState().switchSession('C:\\sessions\\b.jsonl');
+  await settle();
+  host.emit(2, { type: 'reset', cwd: 'C:\\workspace' });
+  host.emit(3, ready('C:\\workspace', 'C:\\sessions\\b.jsonl', []));
+  host.replies.get('C:\\sessions\\b.jsonl')();
+  await toB;
+  const fleetB = { owner: 'b' };
+  host.emit(4, { type: 'subagent-fleet', fleet: fleetB, sessionPath: 'C:\\sessions\\b.jsonl' });
+  assert.equal(useChatStore.getState().subagentFleet, fleetB, 'the open conversation shows its own fleet');
+
+  const backToA = useChatStore.getState().switchSession('C:\\sessions\\a.jsonl');
+  await settle();
+  assert.equal(useChatStore.getState().subagentFleet, null, 'the click retires the fleet of the conversation being left');
+  // The host still runs B until it processes the switch; B's widget keeps ticking.
+  host.emit(5, { type: 'subagent-fleet', fleet: { owner: 'b', tick: 2 }, sessionPath: 'C:\\sessions\\b.jsonl' });
+  assert.equal(useChatStore.getState().subagentFleet, null, 'a late tick from the left conversation never reaches the target');
+
+  host.emit(6, { type: 'reset', cwd: 'C:\\workspace' });
+  host.emit(7, ready('C:\\workspace', 'C:\\sessions\\a.jsonl', [userMessage('1', 'question')]));
+  assert.equal(useChatStore.getState().conversationPreviewPath, null, 'the matching ready took the warm short-circuit');
+  assert.equal(useChatStore.getState().subagentFleet, null);
+  const fleetA = { owner: 'a' };
+  host.emit(8, { type: 'subagent-fleet', fleet: fleetA, sessionPath: 'C:\\sessions\\a.jsonl' });
+  host.replies.get('C:\\sessions\\a.jsonl')();
+  await backToA;
+  assert.equal(useChatStore.getState().subagentFleet, fleetA, 'the activated conversation replays its own fleet');
+});
+
 test('a drifted ready replaces the painted preview', async () => {
   const host = createHost({ snapshot: { ...baseSnapshot, messages: [userMessage('1', 'question')] } });
   useChatStore.getState().setBridge(host.bridge);

@@ -883,6 +883,9 @@ if (!get().modelProviders.length) void get().refreshModelProviders().catch(() =>
 				return;
 			}
 			case 'subagent-fleet':
+				// While a switch is in flight the host still runs the conversation being
+				// left, and its widget keeps ticking: its fleet must not reach the target.
+				if (event.sessionPath !== undefined && event.sessionPath !== get().sessionPath) return;
 				set({ subagentFleet: event.fleet });
 				return;
 			case 'subagent-inspect':
