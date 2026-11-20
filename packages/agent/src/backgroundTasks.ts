@@ -36,6 +36,14 @@ import type { ToolDefinition } from '@earendil-works/pi-coding-agent';
 export const MAX_BACKGROUND_TASKS_PER_SESSION = 8;
 /** Longest synthetic user message tail we compose (characters). */
 export const WAKE_OUTPUT_TAIL_CHARS = 4000;
+/** Tail per task when steered into a run in progress: the assistant may already have read the log. */
+export const STEER_OUTPUT_TAIL_CHARS = 1000;
+/** Total tail budget for one notification; a merged batch splits it between tasks. */
+export const NOTIFICATION_TAIL_BUDGET_CHARS = 12000;
+/** Floor for a task's share of the budget, so each task still shows its last lines. */
+const MIN_TASK_TAIL_CHARS = 400;
+/** Raw bytes scanned from the log end before cleaning (progress redraws can be huge). */
+const OUTPUT_SCAN_BYTES = 256 * 1024;
 /** Max auto-wakes in a row without real user input before notifications stay pending. */
 export const MAX_AUTO_WAKE_CHAIN = 6;
 /** Poll interval for re-adopted (host-restart) tasks whose exit handle is gone. */
@@ -151,6 +159,65 @@ export function readTail(file: string, maxChars: number): string {
 }
 
 
+/**
+ * Make a log tail readable for the model: drop ANSI escapes, collapse `\r`
+ * redraws (progress bars) to their last frame, and cut at a line boundary.
+ * `fromFileStart` false means the text starts at an arbitrary byte offset, so
+ * its first line is partial and is dropped.
+ */
+export function cleanOutputTail(raw: string, maxChars: number, fromFileStart = true): string {
+	let text = raw
+		.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '')
+		.replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, '')
+		.replace(/\r\n/g, '\n')
+		.split('\n')
+		.map((line) => {
+			if (!line.includes('\r')) return line;
+			const frames = line.split('\r').filter((frame) => frame.length > 0);
+			return frames.length ? frames[frames.length - 1] : '';
+		})
+		.join('\n')
+		.replace(/\s+$/, '');
+	let truncated = false;
+	if (!fromFileStart) {
+		const newline = text.indexOf('\n');
+		text = newline >= 0 ? text.slice(newline + 1) : text;
+		truncated = true;
+	}
+	if (text.length > maxChars) {
+		text = text.slice(-maxChars);
+		const newline = text.indexOf('\n');
+		// 有完整行可保留时从下一行开头截，避免半行；整段只有一行就保留字符截断。
+		if (newline >= 0 && newline < text.length - 1) text = text.slice(newline + 1);
+		truncated = true;
+	}
+	return truncated && text ? `…（前面的输出已省略）\n${text}` : text;
+}
+
+/** Read and clean the end of a task log for a notification. */
+export function readOutputTail(file: string, maxChars: number): string {
+	try {
+		const size = statSync(file).size;
+		const fd = openSync(file, 'r');
+		try {
+			const bytes = Math.min(size, Math.max(OUTPUT_SCAN_BYTES, maxChars * 4 + 1024));
+			const buffer = Buffer.alloc(bytes);
+			const read = readSync(fd, buffer, 0, bytes, size - bytes);
+			return cleanOutputTail(buffer.subarray(0, read).toString('utf8'), maxChars, bytes === size);
+		} finally {
+			closeSync(fd);
+		}
+	} catch {
+		return '';
+	}
+}
+
+/** Per-task tail length for a notification carrying `count` tasks. */
+export function notificationTailChars(mode: 'wake' | 'steer', count: number): number {
+	const base = mode === 'steer' ? STEER_OUTPUT_TAIL_CHARS : WAKE_OUTPUT_TAIL_CHARS;
+	return Math.min(base, Math.max(MIN_TASK_TAIL_CHARS, Math.floor(NOTIFICATION_TAIL_BUDGET_CHARS / Math.max(1, count))));
+}
+
 export function formatDuration(ms: number): string {
 	const total = Math.max(0, Math.round(ms / 1000));
 	const minutes = Math.floor(total / 60);
@@ -169,11 +236,12 @@ export function buildWakeMessage(record: BackgroundTaskRecord, tail: string): st
  * have read the result itself — tell it so instead of asking for a recap.
  */
 export function buildNotificationMessage(entries: { record: BackgroundTaskRecord; tail: string }[], mode: 'wake' | 'steer'): string {
+	const header = '（Pi Desktop 自动发出的后台任务通知，不是用户发言；不要回复“收到”之类的确认，也不要向用户转述这条通知本身。）';
 	const blocks = entries.map(({ record, tail }) => taskBlock(record, tail));
 	const footer = mode === 'steer'
 		? (entries.length > 1 ? '以上任务在本轮进行中结束。' : '该任务在本轮进行中结束。') + '如果已经从日志拿到了结果，不必重复说明，直接继续当前工作。'
 		: entries.length > 1 ? '请基于以上结果继续之前的工作。' : '请基于该结果继续之前的工作。';
-	return [...blocks, footer].join('\n\n');
+	return [header, ...blocks, footer].join('\n\n');
 }
 
 function taskBlock(record: BackgroundTaskRecord, tail: string): string {
@@ -467,7 +535,9 @@ export class BackgroundTaskManager {
 		if (idle || steering) {
 			// 同一会话里所有已结束未投递的任务合并成一条消息：N 个任务只唤醒一次。
 			const batch = this.undeliveredBatch(record.sessionId, tracked);
-			const entries = batch.map((task) => ({ record: task.record, tail: readTail(task.record.logFile, WAKE_OUTPUT_TAIL_CHARS) }));
+			// 注入当前轮时助手可能已读过日志，尾部给短一些；合并多个任务时总长度有上限。
+			const tailChars = notificationTailChars(steering ? 'steer' : 'wake', batch.length);
+			const entries = batch.map((task) => ({ record: task.record, tail: readOutputTail(task.record.logFile, tailChars) }));
 			try {
 				if (steering) await hooks.steer!(buildNotificationMessage(entries, 'steer'));
 				else {
@@ -523,13 +593,13 @@ export function createBackgroundTaskTool(
 		label: '后台运行命令',
 		description:
 			'在后台运行一条长耗时的 shell 命令（构建、测试、下载、训练、watch 等）：立即返回任务句柄，不占用当前对话轮次；'
-			+ '命令结束（无论成败）后会自动向对话注入一条带退出码与输出末尾的通知：本轮还在进行时插入当前轮（下一次工具调用之后可见），对话已空闲时自动唤醒助手继续；同时结束的多个任务合并成一条通知。'
+			+ '启动后不必等它：有不依赖它结果的工作就继续做，没有就直接结束本轮。命令结束（无论成败）后会自动向对话注入一条带退出码与输出末尾的通知并唤醒助手继续；如果恰好在本轮还没结束时完成，通知会直接插入当前轮；同时结束的多个任务合并成一条通知。'
 			+ '返回结果包含 taskId、pid 与日志文件路径：可随时用 read 工具查看日志进度，用 bash 终止整个进程树（Windows: taskkill /F /T /PID <pid>；macOS/Linux: kill -- -<pid>）。'
 			+ '任务进程独立于本应用存活，应用重启后也会在下次打开会话时结算并通知。不要用它运行需要交互输入的命令。',
 		promptSnippet: 'run_in_background(command): run a long shell command detached from the turn; on exit its result and output tail are auto-delivered back into the conversation and the assistant resumes.',
 		promptGuidelines: [
 			'长耗时且无需盯守的命令（完整构建、大批量测试、训练、下载）优先用 run_in_background 而不是 bash：它会立刻返回，结束后结果会自动回灌并唤醒你继续。',
-			'等 run_in_background 的结果时不要再用 bash sleep/tail 反复轮询它的日志：本轮还在进行时，结束通知会在你下一次工具调用后插入；没有别的事可做就结束本轮，通知会自动唤醒你。',
+			'启动 run_in_background 后不要为等它的结果而拖住本轮：不要用 bash sleep/tail 或反复 read 轮询日志。有不依赖它的工作就继续做，没有就告诉用户已在后台运行并结束本轮，结束通知会自动唤醒你继续。',
 		],
 		parameters: BackgroundTaskParameters,
 		annotations: { openWorldHint: false },
@@ -573,7 +643,7 @@ export function createBackgroundTaskTool(
 				content: [{
 					type: 'text',
 					text: `后台任务已启动：taskId=${record.taskId}，pid=${record.pid}，日志=${record.logFile}。\n`
-						+ `命令不会阻塞本轮对话；结束后我会自动收到通知（含退出码与输出末尾）：本轮未结束时插入当前轮，否则唤醒新一轮。`
+						+ `命令不会阻塞本轮对话，也不必等它：没有其他不依赖它的工作就直接结束本轮，结束后我会自动收到通知（含退出码与输出末尾）并被唤醒继续。`
 						+ `期间可用 read 查看日志进度；需要终止时用 bash 执行 ${killHint(record.pid)}（终止整个进程树）。`,
 				}],
 				details: undefined,

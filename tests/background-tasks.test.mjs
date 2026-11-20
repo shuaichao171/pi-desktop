@@ -391,6 +391,56 @@ test('pure helpers: wake message shape, duration, tail reads', async () => {
 	assert.equal(readTail(join(dir, 'missing.log'), 10), '');
 });
 
+test('notification text: marked as automatic, not a user turn', async () => {
+	const { buildNotificationMessage } = await import('../packages/agent/src/backgroundTasks.ts');
+	const record = { taskId: 'bg-h1', sessionId: 's', command: 'cmd', cwd: '.', pid: 1, logFile: 'x.log', startedAt: 0, endedAt: 1000, exitCode: 0, status: 'completed' };
+	for (const mode of ['wake', 'steer']) {
+		const message = buildNotificationMessage([{ record, tail: 'ok' }], mode);
+		assert.match(message.split('\n')[0], /自动发出的后台任务通知，不是用户发言/);
+		assert.equal(message.match(/不是用户发言/g).length, 1);
+	}
+	const two = buildNotificationMessage([{ record, tail: 'a' }, { record: { ...record, taskId: 'bg-h2' }, tail: 'b' }], 'wake');
+	assert.equal(two.match(/不是用户发言/g).length, 1, 'header appears once per merged notification');
+});
+
+test('output tail: progress redraws collapse, ANSI stripped, cut at line boundary', async () => {
+	const { cleanOutputTail, readOutputTail } = await import('../packages/agent/src/backgroundTasks.ts');
+	// \r 重绘只保留最后一帧；CRLF 不被当成重绘。
+	assert.equal(cleanOutputTail('start\n 10%\r 50%\r100%\ndone\r\n', 1000), 'start\n100%\ndone');
+	assert.equal(cleanOutputTail('\x1b[32mPASS\x1b[0m a.test\n\x1b]0;title\x07next', 1000), 'PASS a.test\nnext');
+	// 超长时从下一行开头截，并标注省略。
+	const lines = Array.from({ length: 50 }, (_, i) => `line-${String(i).padStart(2, '0')}`).join('\n');
+	const cut = cleanOutputTail(lines, 30);
+	assert.match(cut, /^…（前面的输出已省略）\n/);
+	const body = cut.split('\n').slice(1);
+	assert.ok(body.every((line) => /^line-\d\d$/.test(line)), `no partial lines: ${body.join('|')}`);
+	assert.equal(body.at(-1), 'line-49');
+	// 单行超长时退回字符截断。
+	assert.equal(cleanOutputTail('y'.repeat(100), 10), `…（前面的输出已省略）\n${'y'.repeat(10)}`);
+	// 不从文件开头读时丢掉第一行半行。
+	assert.equal(cleanOutputTail('tial line\nfull line', 1000, false), '…（前面的输出已省略）\nfull line');
+
+	const dir = mkdtempSync(join(tmpdir(), 'bgclean-'));
+	const file = join(dir, 'log.txt');
+	// 进度条刷屏远超尾部长度时，清理后仍能看到它前面的有用输出。
+	const progress = Array.from({ length: 20000 }, (_, i) => `\r${i}`).join('');
+	writeFileSync(file, `useful result\n${progress}\nexit ok\n`, 'utf8');
+	assert.equal(readOutputTail(file, 4000), 'useful result\n19999\nexit ok');
+	assert.equal(readOutputTail(join(dir, 'missing.log'), 10), '');
+});
+
+test('notification tail budget: shorter when steered, shared across a batch', async () => {
+	const { notificationTailChars, WAKE_OUTPUT_TAIL_CHARS, STEER_OUTPUT_TAIL_CHARS, NOTIFICATION_TAIL_BUDGET_CHARS } = await import('../packages/agent/src/backgroundTasks.ts');
+	assert.equal(notificationTailChars('wake', 1), WAKE_OUTPUT_TAIL_CHARS);
+	assert.equal(notificationTailChars('steer', 1), STEER_OUTPUT_TAIL_CHARS);
+	assert.ok(STEER_OUTPUT_TAIL_CHARS < WAKE_OUTPUT_TAIL_CHARS);
+	for (const count of [2, 3, 5, 8]) {
+		assert.ok(notificationTailChars('wake', count) * count <= NOTIFICATION_TAIL_BUDGET_CHARS, `wake x${count} within budget`);
+		assert.ok(notificationTailChars('steer', count) * count <= NOTIFICATION_TAIL_BUDGET_CHARS, `steer x${count} within budget`);
+	}
+	assert.ok(notificationTailChars('wake', 100) >= 400, 'each task keeps a minimal tail');
+});
+
 test('task ending mid-run is steered into that run, with no wake after the reply', async () => {
 	const { manager } = await makeManager();
 	const dir = mkdtempSync(join(tmpdir(), 'bgtask-'));
