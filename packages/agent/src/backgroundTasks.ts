@@ -13,10 +13,16 @@
  *   (`<sessionDir>/.pi-desktop-background-tasks/<sessionId>.json`); on session
  *   attach, running tasks are re-adopted by pid polling (host restart) and
  *   already-finished-but-undelivered notifications are delivered.
- * - When a task exits, a synthetic user message carrying the exit code and the
- *   output tail is injected through the owning session's `prompt()` — a
- *   self-invoked turn with no human input. A chain guard stops runaway
- *   auto-continuation after several synthetic turns without real user input.
+ * - When a task exits while the owning session is mid-run, the notification is
+ *   queued into that run as a steering message (`steer()`): the assistant sees
+ *   it in the same turn, usually right after its current tool call, so a result
+ *   it is already polling does not come back as a second turn after the reply.
+ * - When the session is idle, a synthetic user message carrying the exit code
+ *   and the output tail is injected through `prompt()` — a self-invoked turn
+ *   with no human input. Every settled-but-undelivered task of the session goes
+ *   into that one message, so N finished tasks cost one wake, not N. A chain
+ *   guard stops runaway auto-continuation after several synthetic turns without
+ *   real user input.
  */
 
 import { spawn, type ChildProcess } from 'node:child_process';
@@ -73,6 +79,10 @@ export interface BackgroundSessionHooks {
 	prompt(text: string): Promise<void>;
 	/** True when the session can start a new run now. */
 	isIdle(): boolean;
+	/** Queue the notification into the run in progress as a steering message (same turn, no extra wake). */
+	steer?(text: string): Promise<void>;
+	/** True when a run is in progress and can take a steering message now. */
+	isRunning?(): boolean;
 	/** Live UI system notice (does not persist in the transcript). */
 	notify(kind: 'info' | 'warning' | 'error', text: string): void;
 }
@@ -150,6 +160,23 @@ export function formatDuration(ms: number): string {
 
 /** Compose the synthetic user message that re-wakes the assistant. */
 export function buildWakeMessage(record: BackgroundTaskRecord, tail: string): string {
+	return buildNotificationMessage([{ record, tail }], 'wake');
+}
+
+/**
+ * Notification for one or more settled tasks. `wake` starts a fresh turn;
+ * `steer` lands inside the run in progress, where the assistant may already
+ * have read the result itself — tell it so instead of asking for a recap.
+ */
+export function buildNotificationMessage(entries: { record: BackgroundTaskRecord; tail: string }[], mode: 'wake' | 'steer'): string {
+	const blocks = entries.map(({ record, tail }) => taskBlock(record, tail));
+	const footer = mode === 'steer'
+		? (entries.length > 1 ? '以上任务在本轮进行中结束。' : '该任务在本轮进行中结束。') + '如果已经从日志拿到了结果，不必重复说明，直接继续当前工作。'
+		: entries.length > 1 ? '请基于以上结果继续之前的工作。' : '请基于该结果继续之前的工作。';
+	return [...blocks, footer].join('\n\n');
+}
+
+function taskBlock(record: BackgroundTaskRecord, tail: string): string {
 	const exit = record.signal
 		? `被信号 ${record.signal} 终止`
 		: record.exitCode !== null && record.exitCode !== undefined
@@ -161,7 +188,7 @@ export function buildWakeMessage(record: BackgroundTaskRecord, tail: string): st
 		`结果: ${exit}（${record.status === 'failed' ? '失败' : '完成'}），耗时 ${formatDuration((record.endedAt ?? Date.now()) - record.startedAt)}`,
 	];
 	if (record.note) lines.push(`说明: ${record.note}`);
-	lines.push('输出末尾（截断保留）:', '--------', tail || '（无输出）', '--------', `完整日志: ${record.logFile}`, '', '请基于该结果继续之前的工作。');
+	lines.push('输出末尾（截断保留）:', '--------', tail || '（无输出）', '--------', `完整日志: ${record.logFile}`);
 	return lines.join('\n');
 }
 
@@ -199,6 +226,8 @@ export class BackgroundTaskManager {
 	private readonly tasks = new Map<string, TrackedTask>();
 	/** Synthetic wake chain per session since the last real user prompt. */
 	private readonly wakeChain = new Map<string, number>();
+	/** Sessions with a delivery awaiting acknowledgement (serializes batches). */
+	private readonly delivering = new Set<string>();
 
 	attach(sessionId: string, hooks: BackgroundSessionHooks): void {
 		this.hooks.set(sessionId, hooks);
@@ -355,6 +384,7 @@ export class BackgroundTaskManager {
 		this.tasks.clear();
 		this.hooks.clear();
 		this.wakeChain.clear();
+		this.delivering.clear();
 	}
 
 	private persist(tracked: TrackedTask): void {
@@ -384,30 +414,68 @@ export class BackgroundTaskManager {
 		tracked.deliverTimer = setTimeout(() => { void this.deliver(taskId); }, delayMs);
 	}
 
+	/** Settled, undelivered tasks of a session, oldest first; `first` leads the batch. */
+	private undeliveredBatch(sessionId: string, first: TrackedTask): TrackedTask[] {
+		const others = [...this.tasks.values()]
+			.filter((task) => task !== first && task.record.sessionId === sessionId && task.record.status !== 'running' && !task.record.delivered)
+			.sort((a, b) => (a.record.endedAt ?? 0) - (b.record.endedAt ?? 0));
+		return [first, ...others];
+	}
+
+	private markDelivered(batch: TrackedTask[]): void {
+		for (const task of batch) {
+			if (task.deliverTimer) clearTimeout(task.deliverTimer);
+			task.deliverTimer = undefined;
+			task.promptFailures = 0;
+			task.record.delivered = true;
+			this.persist(task);
+		}
+	}
+
 	private async deliver(taskId: string): Promise<void> {
 		const tracked = this.tasks.get(taskId);
 		if (!tracked || tracked.record.delivered) return;
 		const { record } = tracked;
 		const hooks = this.hooks.get(record.sessionId);
 		if (!hooks) return; // Session not loaded: stay pending in the registry.
-		const chain = this.wakeChain.get(record.sessionId) ?? 0;
-		if (chain >= MAX_AUTO_WAKE_CHAIN) {
-			hooks.notify('warning', `后台任务 ${record.taskId} 已结束，但连续自动唤醒次数达到上限（${chain}），等待用户下次发消息后再投递结果。`);
+		// 同会话已有一次投递在等确认：它的批次可能已含本任务，稍后再看，避免重复投递。
+		if (this.delivering.has(record.sessionId)) {
+			this.scheduleDelivery(taskId, this.timing.retryFirstMs);
 			return;
 		}
-		if ((Date.now() - (tracked.deliverStartedAt ?? Date.now())) > this.timing.deliverBudgetMs) {
-			hooks.notify('warning', `后台任务 ${record.taskId} 的结果长时间无法投递，已保留，用户下次发消息时会自动补投。`);
-			return;
+		this.delivering.add(record.sessionId);
+		try {
+			await this.deliverNow(tracked, hooks);
+		} finally {
+			this.delivering.delete(record.sessionId);
 		}
-		if (hooks.isIdle()) {
+	}
+
+	private async deliverNow(tracked: TrackedTask, hooks: BackgroundSessionHooks): Promise<void> {
+		const { record } = tracked;
+		const taskId = record.taskId;
+		const idle = hooks.isIdle();
+		// 运行中结束的任务注入当前轮（steer），助手在同一轮里看到结果，不会在回复后再被唤醒一次。
+		const steering = !idle && !!hooks.steer && !!hooks.isRunning?.();
+		if (idle) {
+			const chain = this.wakeChain.get(record.sessionId) ?? 0;
+			if (chain >= MAX_AUTO_WAKE_CHAIN) {
+				hooks.notify('warning', `后台任务 ${record.taskId} 已结束，但连续自动唤醒次数达到上限（${chain}），等待用户下次发消息后再投递结果。`);
+				return;
+			}
+		}
+		if (idle || steering) {
+			// 同一会话里所有已结束未投递的任务合并成一条消息：N 个任务只唤醒一次。
+			const batch = this.undeliveredBatch(record.sessionId, tracked);
+			const entries = batch.map((task) => ({ record: task.record, tail: readTail(task.record.logFile, WAKE_OUTPUT_TAIL_CHARS) }));
 			try {
-				const tail = readTail(record.logFile, WAKE_OUTPUT_TAIL_CHARS);
-				await hooks.prompt(buildWakeMessage(record, tail));
-				// 只有真正唤醒成功才计入连续唤醒链；失败的尝试不消耗守卫额度。
-				this.wakeChain.set(record.sessionId, (this.wakeChain.get(record.sessionId) ?? 0) + 1);
-				tracked.promptFailures = 0;
-				record.delivered = true;
-				this.persist(tracked);
+				if (steering) await hooks.steer!(buildNotificationMessage(entries, 'steer'));
+				else {
+					await hooks.prompt(buildNotificationMessage(entries, 'wake'));
+					// 只有真正唤醒成功才计入连续唤醒链；失败的尝试和注入当前轮都不消耗守卫额度。
+					this.wakeChain.set(record.sessionId, (this.wakeChain.get(record.sessionId) ?? 0) + 1);
+				}
+				this.markDelivered(batch);
 				return;
 			} catch (error) {
 				tracked.promptFailures = (tracked.promptFailures ?? 0) + 1;
@@ -417,8 +485,12 @@ export class BackgroundTaskManager {
 					return;
 				}
 			}
+		} else if ((Date.now() - (tracked.deliverStartedAt ?? Date.now())) > this.timing.deliverBudgetMs) {
+			// 既不空闲也无法注入（切换会话、更新设置等）太久：搁置，等用户回来再补投。
+			hooks.notify('warning', `后台任务 ${record.taskId} 的结果长时间无法投递，已保留，用户下次发消息时会自动补投。`);
+			return;
 		}
-		// Busy or transient prompt failure: back off and retry.
+		// Busy without a steerable run, or a transient failure: back off and retry.
 		tracked.deliverAttempts = (tracked.deliverAttempts ?? 0) + 1;
 		const backoff = Math.min(this.timing.retryMaxMs, this.timing.retryFirstMs * Math.pow(1.5, Math.min(tracked.deliverAttempts, 6)));
 		this.scheduleDelivery(taskId, backoff);
@@ -451,12 +523,13 @@ export function createBackgroundTaskTool(
 		label: '后台运行命令',
 		description:
 			'在后台运行一条长耗时的 shell 命令（构建、测试、下载、训练、watch 等）：立即返回任务句柄，不占用当前对话轮次；'
-			+ '命令结束（无论成败）后会自动向对话注入一条带退出码与输出末尾的通知，并自动唤醒助手继续后续工作。'
+			+ '命令结束（无论成败）后会自动向对话注入一条带退出码与输出末尾的通知：本轮还在进行时插入当前轮（下一次工具调用之后可见），对话已空闲时自动唤醒助手继续；同时结束的多个任务合并成一条通知。'
 			+ '返回结果包含 taskId、pid 与日志文件路径：可随时用 read 工具查看日志进度，用 bash 终止整个进程树（Windows: taskkill /F /T /PID <pid>；macOS/Linux: kill -- -<pid>）。'
 			+ '任务进程独立于本应用存活，应用重启后也会在下次打开会话时结算并通知。不要用它运行需要交互输入的命令。',
 		promptSnippet: 'run_in_background(command): run a long shell command detached from the turn; on exit its result and output tail are auto-delivered back into the conversation and the assistant resumes.',
 		promptGuidelines: [
 			'长耗时且无需盯守的命令（完整构建、大批量测试、训练、下载）优先用 run_in_background 而不是 bash：它会立刻返回，结束后结果会自动回灌并唤醒你继续。',
+			'等 run_in_background 的结果时不要再用 bash sleep/tail 反复轮询它的日志：本轮还在进行时，结束通知会在你下一次工具调用后插入；没有别的事可做就结束本轮，通知会自动唤醒你。',
 		],
 		parameters: BackgroundTaskParameters,
 		annotations: { openWorldHint: false },
@@ -500,7 +573,7 @@ export function createBackgroundTaskTool(
 				content: [{
 					type: 'text',
 					text: `后台任务已启动：taskId=${record.taskId}，pid=${record.pid}，日志=${record.logFile}。\n`
-						+ `命令不会阻塞本轮对话；结束后我会自动收到通知（含退出码与输出末尾）并继续。`
+						+ `命令不会阻塞本轮对话；结束后我会自动收到通知（含退出码与输出末尾）：本轮未结束时插入当前轮，否则唤醒新一轮。`
 						+ `期间可用 read 查看日志进度；需要终止时用 bash 执行 ${killHint(record.pid)}（终止整个进程树）。`,
 				}],
 				details: undefined,

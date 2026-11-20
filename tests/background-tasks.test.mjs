@@ -111,10 +111,13 @@ test('wake chain guard stops runaway auto-continuation until user activity', asy
 	assert.equal(calls.prompts.length, 6);
 	assert.equal(calls.notifies.length >= 1, true);
 	assert.match(calls.notifies[0].text, /上限/);
-	// Real user activity resets the chain and the pending notification delivers.
+	// Real user activity resets the chain; both parked notifications go out in one wake.
 	manager.noteUserActivity('session-c');
 	await sleep(50);
-	assert.equal(calls.prompts.length, 8);
+	assert.equal(calls.prompts.length, 7);
+	assert.match(calls.prompts[6], /job-6/);
+	assert.match(calls.prompts[6], /job-7/);
+	assert.equal(manager.currentRecords('session-c').every((item) => item.delivered), true);
 	manager.clear();
 });
 
@@ -386,4 +389,86 @@ test('pure helpers: wake message shape, duration, tail reads', async () => {
 	writeFileSync(file, 'x'.repeat(9000) + 'TAIL', 'utf8');
 	assert.equal(readTail(file, 4).endsWith('TAIL'), true);
 	assert.equal(readTail(join(dir, 'missing.log'), 10), '');
+});
+
+test('task ending mid-run is steered into that run, with no wake after the reply', async () => {
+	const { manager } = await makeManager();
+	const dir = mkdtempSync(join(tmpdir(), 'bgtask-'));
+	let running = true;
+	const calls = { prompts: [], steers: [], notifies: [] };
+	manager.attach('session-s', {
+		prompt: async (text) => { calls.prompts.push(text); },
+		steer: async (text) => { calls.steers.push(text); },
+		isIdle: () => !running,
+		isRunning: () => running,
+		notify: (kind, text) => calls.notifies.push({ kind, text }),
+	});
+	const child = fakeChild();
+	const record = manager.start({ sessionId: 'session-s', sessionDir: dir, cwd: dir, command: 'verify run' }, () => ({ child, pid: child.pid }));
+	writeFileSync(record.logFile, 'verify ok\n', 'utf8');
+	child.emit('exit', 0);
+	await sleep(30);
+	assert.equal(calls.steers.length, 1, 'delivered into the run in progress');
+	assert.match(calls.steers[0], new RegExp(record.taskId));
+	assert.match(calls.steers[0], /verify ok/);
+	assert.match(calls.steers[0], /本轮进行中结束/);
+	assert.equal(manager.currentRecords('session-s')[0].delivered, true);
+	// The run ends: nothing left to wake for.
+	running = false;
+	await sleep(80);
+	assert.equal(calls.prompts.length, 0);
+	assert.equal(manager.wakeChainCount('session-s'), 0, 'steering does not consume the wake chain');
+	manager.clear();
+});
+
+test('tasks settled while busy and not steerable go out together in one wake', async () => {
+	const { manager } = await makeManager();
+	const dir = mkdtempSync(join(tmpdir(), 'bgtask-'));
+	let idle = false;
+	const calls = { prompts: [], notifies: [] };
+	// No steer hook (or a run that cannot take steering): wait for idle.
+	manager.attach('session-m', {
+		prompt: async (text) => { calls.prompts.push(text); },
+		isIdle: () => idle,
+		notify: (kind, text) => calls.notifies.push({ kind, text }),
+	});
+	const first = fakeChild(5001), second = fakeChild(5002);
+	const a = manager.start({ sessionId: 'session-m', sessionDir: dir, cwd: dir, command: 'job-a' }, () => ({ child: first, pid: first.pid }));
+	const b = manager.start({ sessionId: 'session-m', sessionDir: dir, cwd: dir, command: 'job-b' }, () => ({ child: second, pid: second.pid }));
+	first.emit('exit', 0);
+	await sleep(5);
+	second.emit('exit', 1);
+	await sleep(30);
+	assert.equal(calls.prompts.length, 0);
+	idle = true;
+	await sleep(120);
+	assert.equal(calls.prompts.length, 1, 'one wake for both tasks');
+	assert.match(calls.prompts[0], new RegExp(a.taskId));
+	assert.match(calls.prompts[0], new RegExp(b.taskId));
+	assert.match(calls.prompts[0], /请基于以上结果继续/);
+	assert.equal(manager.wakeChainCount('session-m'), 1);
+	manager.clear();
+});
+
+test('concurrent deliveries in one session never send a task twice', async () => {
+	const { manager } = await makeManager();
+	const dir = mkdtempSync(join(tmpdir(), 'bgtask-'));
+	const calls = { prompts: [] };
+	manager.attach('session-r', {
+		// Slow acknowledgement: the second task's timer fires while the first delivery is in flight.
+		prompt: async (text) => { await sleep(40); calls.prompts.push(text); },
+		isIdle: () => true,
+		notify: () => {},
+	});
+	const first = fakeChild(6001), second = fakeChild(6002);
+	const a = manager.start({ sessionId: 'session-r', sessionDir: dir, cwd: dir, command: 'job-a' }, () => ({ child: first, pid: first.pid }));
+	const b = manager.start({ sessionId: 'session-r', sessionDir: dir, cwd: dir, command: 'job-b' }, () => ({ child: second, pid: second.pid }));
+	first.emit('exit', 0);
+	second.emit('exit', 0);
+	await sleep(200);
+	const all = calls.prompts.join('\n');
+	assert.equal(all.split(`taskId=${a.taskId}`).length - 1, 1, 'first task delivered once');
+	assert.equal(all.split(`taskId=${b.taskId}`).length - 1, 1, 'second task delivered once');
+	assert.equal(manager.currentRecords('session-r').every((item) => item.delivered), true);
+	manager.clear();
 });

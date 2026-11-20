@@ -1842,6 +1842,8 @@ class SingleAgentService {
 		backgroundTaskManager.attach(sessionId, {
 			prompt: (text) => this.deliverSyntheticPrompt(text),
 			isIdle: () => this.backgroundWakeReady(),
+			steer: (text) => this.sendPrompt(text, 'steer', [], false),
+			isRunning: () => this.backgroundSteerReady(),
 			notify: (_kind, text) => this.fire({ type: 'system-message', id: this.nextId('system'), order: this.timelineOrder++, text, systemKind: 'background-task' }),
 		});
 		backgroundTaskManager.adopt(sessionId, sessionDir);
@@ -1859,6 +1861,17 @@ class SingleAgentService {
 		return !!session && session.isIdle && this.activePromptCalls === 0 && this.activeConfigurationCalls === 0
 			&& !this.lifecycleOperation && !this.closing && this.state.status === 'idle'
 			&& !this.pluginReloadError && !this.pluginModelError;
+	}
+
+	/**
+	 * A task that ends mid-run is queued into that run as a steering message, so
+	 * the assistant sees it in the same turn instead of being re-woken after it
+	 * replied (often having already read the result from the log).
+	 */
+	private backgroundSteerReady(): boolean {
+		const session = this.runtime?.session;
+		return !!session && !session.isIdle && this.state.status === 'busy' && this.activeConfigurationCalls === 0
+			&& !this.lifecycleOperation && !this.closing && !this.pluginReloadError && !this.pluginModelError;
 	}
 
 	/** Inject the background-task notification as a user turn (self-invoked; bypasses prompt() so the wake chain guard stays armed). */
