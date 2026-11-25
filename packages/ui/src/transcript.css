@@ -100,6 +100,12 @@
 
 /* System rows: compaction/branch summaries and extension notices (3.6). */
 .pd-message-row.is-system { display: flex; justify-content: center; }
+.pd-handoff-row { display: flex; align-items: center; gap: 8px; max-width: 100%; min-width: 0; padding: 7px 12px; border: 1px dashed var(--pd-border); border-radius: var(--pd-radius-md); color: var(--pd-text-weak); font-size: var(--pd-font-sm); }
+.pd-handoff-row > svg { flex: 0 0 auto; color: var(--pd-brand); }
+.pd-handoff-row > span { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+.pd-handoff-row > button { flex: 0 0 auto; padding: 2px 8px; border: 1px solid var(--pd-border); border-radius: var(--pd-radius-sm); background: transparent; color: var(--pd-text); font-size: var(--pd-font-xs); cursor: pointer; }
+.pd-handoff-row > button:hover { background: var(--pd-surface-hover); }
+.pd-agent-mark.is-heading { width: 21px; height: 21px; border-radius: var(--pd-radius-sm); font-size: 12px; }
 .pd-system-notice { max-width: 100%; min-width: 0; border: 1px solid var(--pd-border-soft); border-radius: var(--pd-radius-md); background: var(--pd-surface-muted); }
 .pd-system-notice summary { display: flex; align-items: center; gap: 7px; padding: 5px 12px; color: var(--pd-text-weak); font-size: var(--pd-font-xs); user-select: none; cursor: pointer; list-style: none; }
 .pd-system-notice summary::-webkit-details-marker { display: none; }

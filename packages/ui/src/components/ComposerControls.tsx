@@ -1,7 +1,8 @@
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent } from 'react';
 import { ExitPresence } from './ExitPresence';
 import { createPortal } from 'react-dom';
-import type { UiModelProvider, UiModelSummary, UiProviderAuthStatus, UiThinkingLevel } from '@pidesktop/shared';
+import type { UiAgentStatus, UiModelProvider, UiModelSummary, UiProviderAuthStatus, UiThinkingLevel } from '@pidesktop/shared';
+import { PI_AGENT_ID, agentCapabilities } from '@pidesktop/shared';
 import { useChatStore } from '../store';
 import { useT } from '../i18n';
 import { groupModelsByProvider, selectModelProvider } from '../modelPicker';
@@ -12,7 +13,7 @@ import { Icon } from './Icons';
 import { imageCapability } from '../modelCapabilities';
 import './modelCapabilities.css';
 
-type Picker = 'model' | 'thinking' | 'context';
+type Picker = 'model' | 'thinking' | 'context' | 'agent' | 'agentModel' | 'agentEffort' | 'agentOptions';
 type PickerCatalog = { models: UiModelSummary[]; modelProviders: UiModelProvider[]; providerAuth: UiProviderAuthStatus[] };
 
 function readPickerCatalog(): PickerCatalog {
@@ -57,7 +58,15 @@ export function ComposerControls({ onOpenModelManagement, hasImages = false }: {
 	const refreshProviderAuth = useChatStore((s) => s.refreshProviderAuth);
 	const setModel = useChatStore((s) => s.setModel);
 	const setThinkingLevel = useChatStore((s) => s.setThinkingLevel);
+	const setAgentOption = useChatStore((s) => s.setAgentOption);
 	const bridge = useChatStore((s) => s.bridge);
+	const agent = useChatStore((s) => s.agent);
+	const agents = useChatStore((s) => s.agents);
+	const refreshAgents = useChatStore((s) => s.refreshAgents);
+	const selectAgent = useChatStore((s) => s.selectAgent);
+	const handoffToAgent = useChatStore((s) => s.handoffToAgent);
+	// The agent is locked once the conversation has a turn; another agent then means a handoff.
+	const agentLocked = useChatStore((s) => s.messages.some((message) => message.role === 'user' || message.role === 'assistant'));
 	const [open, setOpen] = useState<Picker | null>(null);
 	const [search, setSearch] = useState('');
 	const [imagesOnly, setImagesOnly] = useState(false);
@@ -74,6 +83,9 @@ export function ComposerControls({ onOpenModelManagement, hasImages = false }: {
 	const popoverRef = useRef<HTMLDivElement>(null);
 	const modelRef = useRef<HTMLButtonElement>(null);
 	const thinkingRef = useRef<HTMLButtonElement>(null);
+	const effortRef = useRef<HTMLButtonElement>(null);
+	const optionsRef = useRef<HTMLButtonElement>(null);
+	const agentRef = useRef<HTMLButtonElement>(null);
 	const searchRef = useRef<HTMLInputElement>(null);
 	const providerListRef = useRef<HTMLDivElement>(null);
 	const modelListRef = useRef<HTMLDivElement>(null);
@@ -89,9 +101,22 @@ export function ComposerControls({ onOpenModelManagement, hasImages = false }: {
 	// is still being prepared (the store defers the choice until it goes live);
 	// Catalog refreshes are read-only; only navigation and an outstanding choice block.
 	const canChange = !navigating && !pending;
-	const canThink = levels.length > 1;
+	const capabilities = agentCapabilities(agent);
+	const external = agent?.kind === 'acp';
+	const canThink = capabilities.thinkingLevels && levels.length > 1;
 	const currentModel = models.find((item) => item.id === model && item.provider === provider);
-	const modelLabel = model ? modelName?.trim() || model : t('composer.selectModel');
+	const agentModels = external ? agent.models ?? [] : [];
+	const modelLabel = external ? agentModels.find((item) => item.id === model)?.name || model || agent.displayName : model ? modelName?.trim() || model : t('composer.selectModel');
+	// Agent session settings: reasoning effort gets its own control (like Pi's thinking
+	// level); everything else (mode, speed, ...) shares one menu.
+	const agentOptions = external ? agent.options ?? [] : [];
+	const effortOption = agentOptions.find((option) => option.category === 'thought_level') ?? null;
+	const otherOptions = agentOptions.filter((option) => option !== effortOption);
+	const effortLabel = effortOption ? effortOption.values.find((item) => item.value === effortOption.currentValue)?.name ?? effortOption.currentValue : '';
+	const optionsSummary = otherOptions.map((option) => `${option.name}: ${option.values.find((item) => item.value === option.currentValue)?.name ?? option.currentValue}`).join(' · ');
+	const agentChoices = agents.filter((item) => item.enabled);
+	const showAgentPicker = external || agentChoices.length > 0;
+	const anchorRef = (picker: Picker | null) => picker === 'model' || picker === 'agentModel' ? modelRef : picker === 'context' ? contextRef : picker === 'agent' ? agentRef : picker === 'agentEffort' ? effortRef : picker === 'agentOptions' ? optionsRef : thinkingRef;
 	const capacity = usage?.contextWindow ?? currentModel?.contextWindow ?? null;
 	const percent = usage?.percent ?? null;
 	// An empty ring with no number reads as a stray control; the figure appears once usage is measurable.
@@ -128,18 +153,24 @@ export function ComposerControls({ onOpenModelManagement, hasImages = false }: {
 		focusModelsAfterProviderChange.current = false;
 	}, [sessionId, sessionPath, cwd]);
 
+	// The agent list is cheap (passive PATH probe, cached by the host); load it once per bridge.
+	useEffect(() => { if (bridge) void refreshAgents().catch(() => {}); }, [bridge, refreshAgents]);
+
 	function close(focus: 'trigger' | 'input' | 'none' = 'none') {
 		pickerRevision.current += 1;
 		focusModelsAfterProviderChange.current = false;
 		setOpen(null);
 		setCatalogLoading(false);
 		setShowCatalogProgress(false);
-		if (focus === 'trigger') (open === 'model' ? modelRef : open === 'context' ? contextRef : thinkingRef).current?.focus();
+		if (focus === 'trigger') anchorRef(open).current?.focus();
 		if (focus === 'input') document.querySelector<HTMLTextAreaElement>('.pd-composer-shell textarea')?.focus();
 	}
 
 	function toggle(picker: Picker) {
 		if (picker === 'thinking' && !canThink) return;
+		// External agents report their own models; the Pi catalog does not apply.
+		if (picker === 'model' && external) picker = 'agentModel';
+		if (picker === 'agent') void refreshAgents().catch(() => {});
 		pickerRevision.current += 1;
 		setError(null);
 		setPosition(null);
@@ -209,7 +240,7 @@ export function ComposerControls({ onOpenModelManagement, hasImages = false }: {
 		}
 		const outside = (event: Event) => {
 			const target = event.target as Node;
-			if (!popoverRef.current?.contains(target) && !modelRef.current?.contains(target) && !contextRef.current?.contains(target) && !thinkingRef.current?.contains(target)) {
+			if (!popoverRef.current?.contains(target) && !modelRef.current?.contains(target) && !contextRef.current?.contains(target) && !thinkingRef.current?.contains(target) && !agentRef.current?.contains(target)) {
 				pickerRevision.current += 1;
 				setOpen(null);
 			}
@@ -248,7 +279,7 @@ export function ComposerControls({ onOpenModelManagement, hasImages = false }: {
 
 	useLayoutEffect(() => {
 		if (!open) return;
-		const anchor = (open === 'model' ? modelRef : open === 'context' ? contextRef : thinkingRef).current;
+		const anchor = anchorRef(open).current;
 		const popover = popoverRef.current;
 		if (!anchor || !popover) return;
 		const updatePosition = (next: CSSProperties) => setPosition((current) =>
@@ -332,31 +363,55 @@ export function ComposerControls({ onOpenModelManagement, hasImages = false }: {
 		options[next]?.focus();
 	}
 
+	const pickerTitle = open === 'model' ? 'composer.pickerTitle' : open === 'context' ? 'composer.contextTitle' : open === 'agent' ? 'composer.agentPickerTitle' : open === 'agentModel' ? 'composer.agentModelTitle' : open === 'agentEffort' ? 'composer.agentEffortTitle' : open === 'agentOptions' ? 'composer.agentOptionsTitle' : 'composer.pickerThinking';
+	const pickerCloseLabel = open === 'model' || open === 'agentModel' || open === 'agentOptions' ? 'composer.pickerClose' : open === 'context' ? 'composer.contextClose' : open === 'agent' ? 'composer.agentClose' : 'composer.thinkingClose';
+	const agentStatusLabel = (item: UiAgentStatus) => item.readiness === 'install' ? t('composer.agentInstall') : item.readiness === 'attention' ? t('composer.agentAttention') : null;
+	function chooseAgent(id: string) {
+		if (id === (agent?.id ?? PI_AGENT_ID)) { close('input'); return; }
+		void choose(() => agentLocked ? handoffToAgent(id) : selectAgent(id));
+	}
+	const agentMark = (name: string, color?: string | null, pi = false) => <span className={`pd-agent-mark${pi ? ' is-pi' : ''}`} style={color ? { background: color } : undefined} aria-hidden="true">{pi ? 'π' : name.slice(0, 1).toUpperCase()}</span>;
+
 	const contextDescription = <span className="pd-context-details">
 		<span className="pd-context-summary"><strong>{amount === null ? '—' : tokenLabel(amount)} / {capacityLabel}</strong><span>{percentLabel}{percent === null ? '' : '%'}</span></span>
 		<span className="pd-context-progress" aria-hidden="true"><span style={{ width: `${Math.max(0, Math.min(100, percent ?? 0))}%` }} /></span>
 	</span>;
 
 	return <div className="pd-composer-config">
-		{hasImages && <HoverTooltip title={t(imageCapability(currentModel) === 'supported' ? 'model.imageSupportedTitle' : imageCapability(currentModel) === 'unsupported' ? 'model.imageUnsupportedTitle' : 'model.imageUnknownTitle')} disabled={open !== null}><button type="button" className={`pd-composer-control pd-model-image-notice is-${imageCapability(currentModel)}`} onClick={() => { if (open !== 'model') toggle('model'); setImagesOnly(true); }} aria-haspopup="dialog"><Icon name="image" width="14" height="14" /><span>{t(imageCapability(currentModel) === 'supported' ? 'model.imageSupportedShort' : imageCapability(currentModel) === 'unsupported' ? 'model.imageUnsupportedShort' : 'model.imageUnknownShort')}</span></button></HoverTooltip>}
-		<HoverTooltip title={t('composer.contextTitle')} description={contextDescription} disabled={open !== null}>
+		{showAgentPicker && <HoverTooltip title={t('composer.agent')} description={agentLocked ? t('composer.agentLockedShort') : t('composer.agentDescription')} disabled={open !== null}>
+			<button ref={agentRef} type="button" className="pd-composer-control pd-composer-agent-trigger" onClick={() => toggle('agent')} aria-label={`${t('composer.agent')}: ${agent?.displayName ?? 'Pi'}`} aria-haspopup="menu" aria-expanded={open === 'agent'} aria-controls={open === 'agent' ? 'pd-composer-agent-picker' : undefined}>
+				{agentMark(agent?.displayName ?? 'Pi', agent?.accentColor, !external)}<span>{agent?.displayName ?? 'Pi'}</span><Icon name="chevronDown" width="12" height="12" />
+			</button>
+		</HoverTooltip>}
+		{hasImages && !external && <HoverTooltip title={t(imageCapability(currentModel) === 'supported' ? 'model.imageSupportedTitle' : imageCapability(currentModel) === 'unsupported' ? 'model.imageUnsupportedTitle' : 'model.imageUnknownTitle')} disabled={open !== null}><button type="button" className={`pd-composer-control pd-model-image-notice is-${imageCapability(currentModel)}`} onClick={() => { if (open !== 'model') toggle('model'); setImagesOnly(true); }} aria-haspopup="dialog"><Icon name="image" width="14" height="14" /><span>{t(imageCapability(currentModel) === 'supported' ? 'model.imageSupportedShort' : imageCapability(currentModel) === 'unsupported' ? 'model.imageUnsupportedShort' : 'model.imageUnknownShort')}</span></button></HoverTooltip>}
+		{!external && <HoverTooltip title={t('composer.contextTitle')} description={contextDescription} disabled={open !== null}>
 			<button ref={contextRef} type="button" className={`pd-composer-control pd-context-trigger${percent !== null && percent >= 90 ? ' is-warning' : ''}${showContextPercent ? ' has-percent' : ' is-idle'}`} onClick={() => toggle('context')} aria-label={capacity ? t(percent === null ? 'composer.contextCapacityOnly' : 'composer.contextSummary', { capacity: capacityLabel, percent: percentLabel }) : t('composer.contextTitle')} aria-haspopup="dialog" aria-expanded={open === 'context'} aria-controls={open === 'context' ? 'pd-composer-context-picker' : undefined}>
 				<svg width="18" height="18" viewBox="0 0 20 20" aria-hidden="true"><circle className="pd-context-ring-track" cx="10" cy="10" r="6" /><circle className="pd-context-ring-value" cx="10" cy="10" r="6" pathLength="100" strokeDasharray={`${Math.max(0, Math.min(100, percent ?? 0))} 100`} transform="rotate(-90 10 10)" /></svg>
 				{showContextPercent && <span className="pd-context-percent" aria-hidden="true">{Math.round(percent!)}%</span>}
 			</button>
-		</HoverTooltip>
-		<HoverTooltip title={t('composer.selectModel')} description={model ? `${provider}/${model}` : t('composer.modelDescription')} disabled={open !== null}>
-			<button ref={modelRef} type="button" className="pd-composer-control pd-composer-model-trigger" onClick={() => toggle('model')} aria-label={`${t('composer.selectModel')}: ${modelLabel}`} aria-haspopup="dialog" aria-expanded={open === 'model'} aria-controls={open === 'model' ? 'pd-composer-model-picker' : undefined}>
+		</HoverTooltip>}
+		<HoverTooltip title={t('composer.selectModel')} description={external ? agent.displayName : model ? `${provider}/${model}` : t('composer.modelDescription')} disabled={open !== null}>
+			<button ref={modelRef} type="button" className="pd-composer-control pd-composer-model-trigger" onClick={() => toggle('model')} aria-label={`${t('composer.selectModel')}: ${modelLabel}`} aria-haspopup="dialog" aria-expanded={open === 'model' || open === 'agentModel'} aria-controls={open === 'model' || open === 'agentModel' ? `pd-composer-${open}-picker` : undefined}>
 				<Icon name="spark" className="pd-model-trigger-icon" width="16" height="16" /><span>{modelLabel}</span><Icon name="chevronDown" width="12" height="12" />
 			</button>
 		</HoverTooltip>
-		<HoverTooltip title={t('composer.pickerThinking')} description={!thinking ? t('composer.thinkingUnknown') : canThink ? undefined : t('composer.thinkingUnavailable')} disabled={open !== null}>
+		{capabilities.thinkingLevels && <HoverTooltip title={t('composer.pickerThinking')} description={!thinking ? t('composer.thinkingUnknown') : canThink ? undefined : t('composer.thinkingUnavailable')} disabled={open !== null}>
 			<button ref={thinkingRef} type="button" className="pd-composer-control pd-composer-thinking-trigger" aria-disabled={!canThink} onClick={() => toggle('thinking')} aria-label={`${t('composer.pickerThinking')}: ${thinkingLabel}`} aria-haspopup="menu" aria-expanded={open === 'thinking'} aria-controls={open === 'thinking' ? 'pd-composer-thinking-picker' : undefined}>
 				<Icon name="lightbulb" width="16" height="16" /><span>{thinking ? t('composer.thinkingTrigger', { level: thinkingLabel }) : thinkingLabel}</span>{canThink && <Icon name="chevronDown" width="12" height="12" />}
 			</button>
-		</HoverTooltip>
-			<ExitPresence show={open !== null} surface="pd-composer-config-popover">{open && createPortal(<div ref={popoverRef} id={`pd-composer-${open}-picker`} className={`pd-composer-config-popover is-${open}`} style={position ?? { visibility: 'hidden' }} role={open === 'thinking' ? 'menu' : 'dialog'} aria-label={t(open === 'model' ? 'composer.pickerLabel' : open === 'context' ? 'composer.contextTitle' : 'composer.pickerThinking')} onKeyDown={onPickerKeyDown}>
-			<div className="pd-composer-picker-head"><strong>{t(open === 'model' ? 'composer.pickerTitle' : open === 'context' ? 'composer.contextTitle' : 'composer.pickerThinking')}</strong>{open === 'model' && <span className="pd-composer-catalog-status" role="status">{showCatalogProgress && <><Icon name="loader" width="12" height="12" /><span>{t(catalog.models.length ? 'composer.pickerRefreshing' : 'composer.pickerLoading')}</span></>}</span>}<button type="button" onClick={() => close('trigger')} aria-label={t(open === 'model' ? 'composer.pickerClose' : open === 'context' ? 'composer.contextClose' : 'composer.thinkingClose')}><Icon name="close" width="14" height="14" /></button></div>
+		</HoverTooltip>}
+		{effortOption && <HoverTooltip title={effortOption.name} description={effortOption.description} disabled={open !== null}>
+			<button ref={effortRef} type="button" className="pd-composer-control pd-composer-agent-effort-trigger" onClick={() => toggle('agentEffort')} aria-label={`${effortOption.name}: ${effortLabel}`} aria-haspopup="menu" aria-expanded={open === 'agentEffort'} aria-controls={open === 'agentEffort' ? 'pd-composer-agentEffort-picker' : undefined}>
+				<Icon name="lightbulb" width="16" height="16" /><span>{effortLabel}</span><Icon name="chevronDown" width="12" height="12" />
+			</button>
+		</HoverTooltip>}
+		{otherOptions.length > 0 && <HoverTooltip title={t('composer.agentOptionsTitle')} description={optionsSummary} disabled={open !== null}>
+			<button ref={optionsRef} type="button" className="pd-composer-control pd-composer-agent-options-trigger" onClick={() => toggle('agentOptions')} aria-label={`${t('composer.agentOptionsTitle')}: ${optionsSummary}`} aria-haspopup="menu" aria-expanded={open === 'agentOptions'} aria-controls={open === 'agentOptions' ? 'pd-composer-agentOptions-picker' : undefined}>
+				<Icon name="settings" width="15" height="15" />
+			</button>
+		</HoverTooltip>}
+			<ExitPresence show={open !== null} surface="pd-composer-config-popover">{open && createPortal(<div ref={popoverRef} id={`pd-composer-${open}-picker`} className={`pd-composer-config-popover is-${open}`} style={position ?? { visibility: 'hidden' }} role={open === 'thinking' || open === 'agent' || open === 'agentModel' || open === 'agentEffort' || open === 'agentOptions' ? 'menu' : 'dialog'} aria-label={t(open === 'model' ? 'composer.pickerLabel' : pickerTitle)} onKeyDown={onPickerKeyDown}>
+			<div className="pd-composer-picker-head"><strong>{t(pickerTitle)}</strong>{open === 'model' && <span className="pd-composer-catalog-status" role="status">{showCatalogProgress && <><Icon name="loader" width="12" height="12" /><span>{t(catalog.models.length ? 'composer.pickerRefreshing' : 'composer.pickerLoading')}</span></>}</span>}<button type="button" onClick={() => close('trigger')} aria-label={t(pickerCloseLabel)}><Icon name="close" width="14" height="14" /></button></div>
 			{open === 'model' ? <>
 				<div className="pd-composer-picker-tools">
 					<label className="pd-composer-picker-searchbox"><Icon name="search" width="14" height="14" /><input ref={searchRef} className="pd-composer-picker-search" type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder={t('composer.pickerSearchPlaceholder')} aria-label={t('composer.pickerSearchLabel')} /></label>
@@ -382,7 +437,27 @@ export function ComposerControls({ onOpenModelManagement, hasImages = false }: {
 					<button type="button" disabled={pending} onClick={() => openManagement({ kind: 'add-provider' })}><Icon name="plus" width="15" height="15" /><span>{t('settings.providerAdd')}</span></button>
 					<button type="button" disabled={pending} onClick={() => openManagement({ kind: 'manage' })}><Icon name="settings" width="15" height="15" /><span>{t('settings.modelManagement')}</span></button>
 				</div>
-			</> : open === 'thinking' ? <div className="pd-composer-thinking-options">
+			</> : open === 'agent' ? <div className="pd-composer-thinking-options pd-composer-agent-options">
+				{agentLocked && <p className="pd-composer-agent-note">{t('composer.agentLocked')}</p>}
+				{[{ id: PI_AGENT_ID, displayName: 'Pi', accentColor: null, readiness: 'ready' as const }, ...agentChoices].map((item) => {
+					const current = item.id === (agent?.id ?? PI_AGENT_ID);
+					const status = 'command' in item ? agentStatusLabel(item) : null;
+					return <button key={item.id} data-picker-option data-agent-id={item.id} type="button" role="menuitemradio" aria-checked={current} disabled={!canChange || (!current && item.readiness !== 'ready')} title={'command' in item && item.readiness === 'install' ? item.installHint : undefined} onClick={() => chooseAgent(item.id)}>
+						<span className="pd-composer-agent-option">{agentMark(item.displayName, item.accentColor, item.id === PI_AGENT_ID)}<span>{item.displayName}</span>{status && <small>{status}</small>}{!current && agentLocked && item.readiness === 'ready' && <small className="is-handoff">{t('composer.agentHandoff')}</small>}</span>{current && <span aria-hidden="true">✓</span>}
+					</button>;
+				})}
+				<div className="pd-composer-model-actions"><button type="button" disabled={pending} onClick={() => openManagement({ kind: 'agents' })}><Icon name="settings" width="15" height="15" /><span>{t('composer.agentManage')}</span></button></div>
+			</div> : open === 'agentModel' ? <div className="pd-composer-thinking-options">
+				{agentModels.length ? agentModels.map((item) => <button key={item.id} data-picker-option type="button" role="menuitemradio" aria-checked={item.id === model} disabled={!canChange} onClick={() => void choose(() => setModel(`acp:${agent!.id}`, item.id))}>{agentChoiceText(item.name, item.description)}{item.id === model && <span aria-hidden="true">✓</span>}</button>)
+					: <p className="pd-composer-agent-note">{t('composer.agentModelsPending')}</p>}
+			</div> : open === 'agentEffort' && effortOption ? <div className="pd-composer-thinking-options">
+				{effortOption.values.map((item) => <button key={item.value} data-picker-option data-option-value={item.value} type="button" role="menuitemradio" aria-checked={item.value === effortOption.currentValue} disabled={!canChange} onClick={() => void choose(() => setAgentOption(effortOption.id, item.value))}>{agentChoiceText(item.name, item.description)}{item.value === effortOption.currentValue && <span aria-hidden="true">✓</span>}</button>)}
+			</div> : open === 'agentOptions' ? <div className="pd-composer-thinking-options pd-composer-agent-settings">
+				{otherOptions.map((option) => <div key={option.id} role="group" aria-label={option.name} className="pd-composer-agent-setting" data-option-id={option.id}>
+					<div className="pd-composer-provider-heading"><strong>{option.name}</strong></div>
+					{option.values.map((item) => <button key={item.value} data-picker-option data-option-value={item.value} type="button" role="menuitemradio" aria-checked={item.value === option.currentValue} disabled={!canChange} onClick={() => void choose(() => setAgentOption(option.id, item.value))}>{agentChoiceText(item.name, item.description)}{item.value === option.currentValue && <span aria-hidden="true">✓</span>}</button>)}
+				</div>)}
+			</div> : open === 'thinking' ? <div className="pd-composer-thinking-options">
 				{levels.map((level: UiThinkingLevel) => <button key={level} data-picker-option type="button" role="menuitemradio" aria-checked={thinking === level} disabled={!canChange} onClick={() => void choose(() => setThinkingLevel(level))}><span>{t(`composer.thinking.${level}`)}</span>{thinking === level && <span aria-hidden="true">✓</span>}</button>)}
 			</div> : <div className="pd-context-panel">
 				<div className="pd-context-panel-row"><span>{t('composer.contextTokens')}</span><strong>{amount === null ? '—' : tokenLabel(amount)}</strong></div>
@@ -396,4 +471,9 @@ export function ComposerControls({ onOpenModelManagement, hasImages = false }: {
 			{error && <p className="pd-composer-picker-error" role="alert">{error}{open === 'model' && catalogFailed && <button type="button" className="pd-composer-catalog-retry" onClick={() => { setError(null); setCatalogFailed(false); setCatalogLoading(true); setShowCatalogProgress(false); setRevealCatalog(false); setCatalogReload((value) => value + 1); }}>{t('composer.pickerRetry')}</button>}</p>}
 		</div>, document.body)}</ExitPresence>
 	</div>;
+}
+
+/** A menu choice with the agent's own one-line explanation under its name. */
+function agentChoiceText(name: string, description?: string) {
+	return description ? <span className="pd-composer-agent-choice"><span>{name}</span><small>{description}</small></span> : <span>{name}</span>;
 }

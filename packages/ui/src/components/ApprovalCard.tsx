@@ -5,7 +5,7 @@ import './approvalCard.css';
 
 export function ApprovalCard({ approval, pending, onRespond }: { approval: UiApprovalDetails; pending: boolean; onRespond: (decision: UiApprovalDecision) => void }) {
   const { t } = useT();
-  const [scope, setScope] = useState<UiApprovalScope>('once');
+  const [scope, setScope] = useState<UiApprovalScope>(() => approval.scopes?.[0] ?? 'once');
   const [feedback, setFeedback] = useState('');
   const scopes = approval.scopes ?? ['once'];
   const names: Record<UiApprovalScope, string> = { once: t('approval.scopeOnce'), session: t('approval.scopeSession'), workspace: t('approval.scopeWorkspace') };

@@ -1,5 +1,6 @@
 import { PLUGIN_UPDATE_CHANNELS } from '@pidesktop/shared/pluginUpdates';
 import { MCP_FEATURE_CHANNELS } from '@pidesktop/shared/mcpFeatures';
+import { AGENT_RUNTIME_CHANNELS } from '@pidesktop/shared/agentRuntimes';
 import { MANAGEMENT_FEATURE_CHANNELS } from '@pidesktop/shared/managementFeatures';
 import { WORKBENCH_FEATURE_CHANNELS } from '@pidesktop/shared/workbenchFeatures';
 import { DATA_FEATURE_CHANNELS } from '@pidesktop/shared/dataFeatures';
@@ -92,6 +93,13 @@ const bridge: AgentBridge = {
 	disconnectMcpServer: (...args) => invoke(MCP_FEATURE_CHANNELS.disconnectMcpServer, ...args),
 	testMcpServer: (...args) => invoke(MCP_FEATURE_CHANNELS.testMcpServer, ...args),
 	checkPluginUpdate: (...args) => invoke(PLUGIN_UPDATE_CHANNELS.checkPluginUpdate, ...args),
+	listAgents: (...args) => invoke(AGENT_RUNTIME_CHANNELS.listAgents, ...args),
+	probeAgents: (...args) => invoke(AGENT_RUNTIME_CHANNELS.probeAgents, ...args),
+	saveAgent: (...args) => invoke(AGENT_RUNTIME_CHANNELS.saveAgent, ...args),
+	removeAgent: (...args) => invoke(AGENT_RUNTIME_CHANNELS.removeAgent, ...args),
+	setSessionAgent: (...args) => invoke(AGENT_RUNTIME_CHANNELS.setSessionAgent, ...args),
+	setAgentOption: (...args) => invoke(AGENT_RUNTIME_CHANNELS.setAgentOption, ...args),
+	handoffToAgent: (...args) => invoke(AGENT_RUNTIME_CHANNELS.handoffToAgent, ...args),
 
 	submitInput: (...args) => invoke(INPUT_FEATURE_CHANNELS.submitInput, ...args),
 	getInputQueue: (...args) => invoke(INPUT_FEATURE_CHANNELS.getInputQueue, ...args),

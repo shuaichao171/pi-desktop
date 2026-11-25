@@ -114,7 +114,7 @@ export function AppShell() {
 	const [terminalRequest, setTerminalRequest] = useState(0);
 	const [workbenchTab, setWorkbenchTab] = useState<'files' | 'git' | 'command' | 'terminal'>('files');
 	const navigationRequest = useRef(0);
-	const [settingsInitialPage, setSettingsInitialPage] = useState<'general' | 'model' | 'updates'>('general');
+	const [settingsInitialPage, setSettingsInitialPage] = useState<'general' | 'model' | 'updates' | 'agents'>('general');
 	const [modelManagementTarget, setModelManagementTarget] = useState<ModelManagementTarget>({ kind: 'manage' });
 	const [workbenchOpen, setWorkbenchOpen] = useState(readWorkbenchOpen);
 	// 工作台按首次打开挂载：未打开时文件树/Git 图/终端连同组件代码都不进启动渲染，
@@ -446,7 +446,7 @@ export function AppShell() {
 	}
 	function openModelManagement(target: ModelManagementTarget): void {
 		setModelManagementTarget(target);
-		setSettingsInitialPage('model');
+		setSettingsInitialPage(target.kind === 'agents' ? 'agents' : 'model');
 		setSettingsOpen(true);
 	}
 	const navigationPending = useChatStore((state) => state.navigationPending || state.sessionLoading);

@@ -27,6 +27,8 @@ export interface UiSubmitInput {
 	id: string; sessionId: string; text: string; behavior?: 'steer' | 'followUp'; attachments?: UiAttachment[];
 	/** Picker choices made while a new conversation was still preparing; applied to the target session before its first prompt. */
 	model?: { provider: string; id: string }; thinkingLevel?: UiThinkingLevel;
+	/** Agent chosen while the new conversation was preparing; bound before its first prompt. */
+	agentId?: string;
 }
 export interface UiInputReceipt { id: string; state: 'accepted' | 'reserved' | 'consumed' | 'recovered' | 'failed'; message?: string }
 /** Editing keeps the original text/attachment metadata visible while withholding delivery. */

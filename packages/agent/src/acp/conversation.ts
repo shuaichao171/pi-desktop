@@ -1,0 +1,363 @@
+import type { UiAgentConfig, UiAgentModel, UiAgentOption } from '@pidesktop/shared';
+import { AcpConnection } from './connection.ts';
+import {
+	ACP_AUTH_REQUIRED, ACP_PROTOCOL_VERSION, AcpRequestError,
+	type AcpAvailableCommand, type AcpConfigOption, type AcpContentBlock, type AcpInitializeResult, type AcpNewSessionResult, type AcpPlanEntry,
+	type AcpPromptResult, type AcpRequestPermissionOutcome, type AcpRequestPermissionParams, type AcpSessionNotification, type AcpStopReason,
+} from './protocol.ts';
+import { AcpTurnAssembler, type PiImageContent, type PiMessage, type PiShapedEvent } from './turnAssembler.ts';
+
+export interface AcpConversationHooks {
+	/** Pi-shaped events for the desktop's session event handler. */
+	emit(event: PiShapedEvent): void;
+	/** Transcript messages to append to the session file. */
+	persist(message: PiMessage): void;
+	requestPermission(params: AcpRequestPermissionParams, signal: AbortSignal): Promise<AcpRequestPermissionOutcome>;
+	onPlan(entries: AcpPlanEntry[]): void;
+	onCommands(commands: AcpAvailableCommand[]): void;
+	onModels(models: UiAgentModel[], currentModelId: string | null): void;
+	/** Session settings other than the model (reasoning effort, mode, speed, ...). */
+	onConfigOptions(options: UiAgentOption[]): void;
+	onNativeSession(sessionId: string): void;
+	/** The agent process ended outside a turn. */
+	onExit(message: string): void;
+	/** Rendered transcript used when the agent cannot resume its own session. */
+	historyContext(): string | null;
+}
+
+export interface AcpTurnInput {
+	text: string;
+	images?: PiImageContent[];
+	/** Context sent ahead of the user's text (handoff), never shown in the transcript. */
+	contextPrefix?: string | null;
+	/** Called once the user message is in the transcript and the turn is running. */
+	onStarted?(): void;
+	/** Called once the agent has accepted the prompt (its session now holds the context). */
+	onDelivered?(): void;
+}
+
+export interface AcpTurnResult { stopReason: AcpStopReason | 'error'; error?: Error }
+
+/**
+ * One desktop conversation driven by an ACP agent. Starts the agent lazily
+ * on the first turn, resumes its native session when the agent supports
+ * `session/load`, and serializes turns (ACP has no mid-turn input).
+ */
+export class AcpConversation {
+	readonly config: UiAgentConfig;
+	private readonly cwd: string;
+	private readonly hooks: AcpConversationHooks;
+	private connection: AcpConnection | null = null;
+	private initialize: AcpInitializeResult | null = null;
+	private sessionId: string | null = null;
+	private nativeSessionId: string | null;
+	private starting: Promise<void> | null = null;
+	/** Updates replayed by `session/load` describe history we already hold. */
+	private replaying = false;
+	private contextLost = false;
+	private readonly assembler: AcpTurnAssembler;
+	private turn: Promise<unknown> = Promise.resolve();
+	private activeTurns = 0;
+	private permissionAbort: AbortController | null = null;
+	/** Set when the agent exposes its model as a config option (then `session/set_model` is not used). */
+	private modelOptionId: string | null = null;
+	private options: UiAgentOption[] = [];
+	/** Legacy `modes` shown as an option when the agent has no mode config option. */
+	private legacyMode: UiAgentOption | null = null;
+	private disposed = false;
+	/** Bumped by `cancel()`: every turn queued before it, running or waiting, is cancelled. */
+	private generation = 0;
+
+	constructor(config: UiAgentConfig, cwd: string, nativeSessionId: string | null, hooks: AcpConversationHooks) {
+		this.config = config;
+		this.cwd = cwd;
+		this.nativeSessionId = nativeSessionId;
+		this.hooks = hooks;
+		this.assembler = new AcpTurnAssembler({ cwd, provider: `acp:${config.id}`, model: config.displayName });
+	}
+
+	get busy(): boolean { return this.activeTurns > 0; }
+	get supportsImages(): boolean { return this.initialize?.agentCapabilities?.promptCapabilities?.image === true; }
+
+	/** Queue a turn behind any running one; resolves when the turn ends. */
+	prompt(input: AcpTurnInput): Promise<AcpTurnResult> {
+		if (this.disposed) return Promise.reject(new Error('会话已关闭'));
+		this.activeTurns += 1;
+		const generation = this.generation;
+		const run = this.turn.then(() => this.runTurn(input, generation)).finally(() => { this.activeTurns -= 1; });
+		this.turn = run.catch(() => {});
+		return run;
+	}
+
+	/** Cancel the running turn and the ones queued behind it; pending permission questions resolve as cancelled. */
+	cancel(): void {
+		if (!this.busy) return;
+		this.generation += 1;
+		this.permissionAbort?.abort();
+		if (this.sessionId) this.connection?.notify('session/cancel', { sessionId: this.sessionId });
+	}
+
+	/** Start the agent and its session ahead of the first turn. */
+	warmup(): Promise<void> {
+		if (this.disposed) return Promise.resolve();
+		return this.ensureSession();
+	}
+
+	async setModel(modelId: string): Promise<void> {
+		await this.ensureSession();
+		if (this.modelOptionId) { await this.setConfigOption(this.modelOptionId, modelId); return; }
+		await this.connection!.request('session/set_model', { sessionId: this.sessionId, modelId });
+		this.assembler.model = modelId;
+	}
+
+	/** Change one session setting; the agent answers with the full, updated list. */
+	async setConfigOption(configId: string, value: string): Promise<void> {
+		await this.ensureSession();
+		if (configId === LEGACY_MODE_OPTION && this.legacyMode) {
+			await this.connection!.request('session/set_mode', { sessionId: this.sessionId, modeId: value });
+			this.setLegacyMode(value);
+			return;
+		}
+		const result = await this.connection!.request<{ configOptions?: unknown } | null>('session/set_config_option', { sessionId: this.sessionId, configId, value });
+		if (Array.isArray(result?.configOptions)) { this.applyConfigOptions(result.configOptions); return; }
+		// An agent that does not echo the list: reflect the accepted value locally.
+		if (configId === this.modelOptionId) { this.assembler.model = value; return; }
+		this.options = this.options.map((option) => option.id === configId ? { ...option, currentValue: value } : option);
+		this.hooks.onConfigOptions(this.options);
+	}
+
+	async dispose(): Promise<void> {
+		this.disposed = true;
+		this.permissionAbort?.abort();
+		const connection = this.connection;
+		this.connection = null;
+		await connection?.close();
+	}
+
+	private async runTurn(input: AcpTurnInput, generation: number): Promise<AcpTurnResult> {
+		const cancelled = (): boolean => generation !== this.generation;
+		const user = this.assembler.userMessage(input.text, input.images ?? []);
+		this.apply(user);
+		input.onStarted?.();
+		// Stopped while waiting behind another turn: kept in the transcript, never sent.
+		if (cancelled()) return this.finish('cancelled');
+		try {
+			await this.ensureSession();
+			if (cancelled()) return this.finish('cancelled');
+			const blocks: AcpContentBlock[] = [];
+			const prefix = [this.contextLost ? this.hooks.historyContext() : null, input.contextPrefix].filter(Boolean).join('\n\n');
+			if (prefix) blocks.push({ type: 'text', text: prefix });
+			blocks.push({ type: 'text', text: input.text });
+			if (this.supportsImages) for (const image of input.images ?? []) blocks.push({ type: 'image', data: image.data, mimeType: image.mimeType });
+			this.permissionAbort = new AbortController();
+			const result = await this.connection!.request<AcpPromptResult>('session/prompt', { sessionId: this.sessionId, prompt: blocks });
+			this.contextLost = false;
+			input.onDelivered?.();
+			return this.finish(cancelled() ? 'cancelled' : result?.stopReason ?? 'end_turn');
+		} catch (error) {
+			const normalized = this.describeError(error);
+			if (cancelled()) return this.finish('cancelled');
+			this.finish('error', normalized.message);
+			return { stopReason: 'error', error: normalized };
+		} finally {
+			this.permissionAbort = null;
+		}
+	}
+
+	private finish(stopReason: AcpStopReason | 'error', message?: string): AcpTurnResult {
+		this.apply(this.assembler.finish(stopReason, message));
+		return { stopReason };
+	}
+
+	private apply(output: ReturnType<AcpTurnAssembler['update']>): void {
+		for (const message of output.persist) this.hooks.persist(message);
+		for (const event of output.events) this.hooks.emit(event);
+		if (output.plan) this.hooks.onPlan(output.plan);
+		if (output.commands) this.hooks.onCommands(output.commands);
+	}
+
+	private describeError(error: unknown): Error {
+		if (error instanceof AcpRequestError && error.code === ACP_AUTH_REQUIRED) {
+			const methods = (this.initialize?.authMethods ?? []).map((method) => method.name).filter(Boolean);
+			const how = this.config.loginHint ? `：${this.config.loginHint}` : `。请先在终端用它自己的命令完成登录${methods.length ? `（可用方式：${methods.join('、')}）` : ''}`;
+			return new Error(`${this.config.displayName} 需要登录${how}，然后重试。`);
+		}
+		return error instanceof Error ? error : new Error(String(error));
+	}
+
+	private ensureSession(): Promise<void> {
+		if (this.connection?.alive && this.sessionId) return Promise.resolve();
+		if (!this.starting) {
+			this.starting = this.startSession().finally(() => { this.starting = null; });
+		}
+		return this.starting;
+	}
+
+	private async startSession(): Promise<void> {
+		if (this.disposed) throw new Error('会话已关闭');
+		const connection = AcpConnection.start({
+			command: this.config.command,
+			args: this.config.args,
+			cwd: this.cwd,
+			env: { ...this.config.env, PI_DESKTOP_AGENT: this.config.id },
+			onNotification: (method, params) => this.onNotification(method, params),
+			onRequest: (method, params) => this.onRequest(method, params),
+			onExit: ({ expected, code, stderr }) => {
+				if (this.connection === connection) { this.connection = null; this.sessionId = null; }
+				if (!expected && !this.disposed && !this.busy) this.hooks.onExit(`${this.config.displayName} 进程已退出（${code ?? '未知'}）${stderr ? `：${stderr.split('\n').at(-1)}` : ''}`);
+			},
+		});
+		this.connection = connection;
+		try {
+			this.initialize = await connection.request<AcpInitializeResult>('initialize', {
+				protocolVersion: ACP_PROTOCOL_VERSION,
+				clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false },
+				clientInfo: { name: 'pi-desktop', title: 'Pi Desktop' },
+			});
+			let session: AcpNewSessionResult | null = null;
+			if (this.nativeSessionId && this.initialize?.agentCapabilities?.loadSession) {
+				this.replaying = true;
+				try {
+					session = await connection.request<AcpNewSessionResult>('session/load', { sessionId: this.nativeSessionId, cwd: this.cwd, mcpServers: [] });
+					session = { ...(session ?? {}), sessionId: this.nativeSessionId } as AcpNewSessionResult;
+				} catch { session = null; } finally { this.replaying = false; }
+			}
+			if (!session) {
+				// A conversation that existed before cannot be resumed natively: the next
+				// prompt carries the transcript instead.
+				if (this.nativeSessionId) this.contextLost = true;
+				session = await connection.request<AcpNewSessionResult>('session/new', { cwd: this.cwd, mcpServers: [] });
+				if (!session || typeof session.sessionId !== 'string') throw new Error(`${this.config.displayName} 没有返回会话 ID`);
+				this.nativeSessionId = session.sessionId;
+				this.hooks.onNativeSession(session.sessionId);
+			}
+			this.sessionId = session.sessionId;
+			this.applySessionSettings(session);
+		} catch (error) {
+			this.connection = null;
+			this.sessionId = null;
+			await connection.close();
+			throw this.describeError(error);
+		}
+	}
+
+	/**
+	 * Model and settings of a new or loaded session. `configOptions` (model, reasoning
+	 * effort, mode, ...) supersede the older `models` list, which agents such as
+	 * codex-acp flatten into one entry per model and effort.
+	 */
+	private applySessionSettings(session: AcpNewSessionResult): void {
+		const modes = session.modes;
+		this.legacyMode = modes && Array.isArray(modes.availableModes) && modes.availableModes.length > 1 && typeof modes.currentModeId === 'string' ? {
+			id: LEGACY_MODE_OPTION, name: 'Mode', category: 'mode', currentValue: modes.currentModeId,
+			values: modes.availableModes.filter((mode) => mode && typeof mode.id === 'string').slice(0, 50)
+				.map((mode) => ({ value: mode.id, name: mode.name || mode.id, ...(mode.description ? { description: mode.description } : {}) })),
+		} : null;
+		if (Array.isArray(session.configOptions) && this.applyConfigOptions(session.configOptions)) return;
+		this.modelOptionId = null;
+		const models = session.models;
+		if (models && Array.isArray(models.availableModels)) {
+			const list = models.availableModels.filter((model) => model && typeof model.modelId === 'string')
+				.map((model) => ({ id: model.modelId, name: model.name || model.modelId, ...(model.description ? { description: model.description } : {}) }));
+			const current = typeof models.currentModelId === 'string' ? models.currentModelId : null;
+			if (current) this.assembler.model = current;
+			this.hooks.onModels(list, current);
+		}
+		this.publishOptions([]);
+	}
+
+	/** Returns false when the list holds nothing usable. */
+	private applyConfigOptions(raw: unknown[]): boolean {
+		const parsed = raw.map(parseConfigOption).filter((option): option is UiAgentOption => option !== null);
+		if (!parsed.length) return false;
+		const model = parsed.find((option) => option.category === 'model') ?? parsed.find((option) => option.id === 'model');
+		this.modelOptionId = model?.id ?? null;
+		if (model) {
+			this.assembler.model = model.currentValue;
+			this.hooks.onModels(model.values.map((item) => ({ id: item.value, name: item.name, ...(item.description ? { description: item.description } : {}) })), model.currentValue);
+		}
+		this.publishOptions(parsed.filter((option) => option !== model));
+		return true;
+	}
+
+	private setLegacyMode(modeId: string): void {
+		if (!this.legacyMode) return;
+		this.legacyMode = { ...this.legacyMode, currentValue: modeId };
+		this.publishOptions(this.options.filter((option) => option.id !== LEGACY_MODE_OPTION));
+	}
+
+	/** The older `modes` list joins as one more option when the agent has no mode option of its own. */
+	private publishOptions(options: UiAgentOption[]): void {
+		const useLegacy = this.legacyMode !== null && !options.some((option) => option.category === 'mode');
+		this.options = useLegacy ? [...options, this.legacyMode!] : options;
+		this.hooks.onConfigOptions(this.options);
+	}
+
+	private onNotification(method: string, params: unknown): void {
+		if (method !== 'session/update' || !params || typeof params !== 'object') return;
+		const notification = params as AcpSessionNotification;
+		if (!notification.update || (this.sessionId && notification.sessionId !== this.sessionId && !this.replaying)) return;
+		const settings = notification.update as { sessionUpdate?: unknown; configOptions?: unknown; currentModeId?: unknown };
+		if (settings.sessionUpdate === 'config_option_update') {
+			if (Array.isArray(settings.configOptions)) this.applyConfigOptions(settings.configOptions);
+			return;
+		}
+		if (settings.sessionUpdate === 'current_mode_update') {
+			if (this.legacyMode && typeof settings.currentModeId === 'string') this.setLegacyMode(settings.currentModeId);
+			return;
+		}
+		if (this.replaying) {
+			// History updates are already in our transcript; only the command list is kept.
+			const update = notification.update as { sessionUpdate?: unknown; availableCommands?: unknown };
+			if (update.sessionUpdate === 'available_commands_update' && Array.isArray(update.availableCommands)) {
+				this.hooks.onCommands(update.availableCommands.filter((item): item is AcpAvailableCommand => !!item && typeof (item as AcpAvailableCommand).name === 'string'));
+			}
+			return;
+		}
+		this.apply(this.assembler.update(notification.update));
+	}
+
+	private async onRequest(method: string, params: unknown): Promise<unknown> {
+		if (method === 'session/request_permission') {
+			const request = params as AcpRequestPermissionParams;
+			if (!request || !Array.isArray(request.options) || !request.toolCall) throw new AcpRequestError({ code: -32602, message: 'Invalid params' });
+			const signal = this.permissionAbort?.signal ?? AbortSignal.abort();
+			if (signal.aborted) return { outcome: { outcome: 'cancelled' } };
+			const outcome = await this.hooks.requestPermission(request, signal).catch((): AcpRequestPermissionOutcome => ({ outcome: 'cancelled' }));
+			return { outcome };
+		}
+		throw new AcpRequestError({ code: -32601, message: `Method not found: ${method}` });
+	}
+}
+
+/** Option id for agents that expose only the older `modes` list. */
+export const LEGACY_MODE_OPTION = '__acp_mode';
+
+function text(value: unknown, max: number): string | null {
+	return typeof value === 'string' && value.trim() ? value.slice(0, max) : null;
+}
+
+/** A `select` config option in UI shape; grouped values are flattened. Null when unusable. */
+export function parseConfigOption(raw: unknown): UiAgentOption | null {
+	if (!raw || typeof raw !== 'object') return null;
+	const option = raw as Partial<AcpConfigOption>;
+	const id = text(option.id, 200);
+	if (!id || option.type !== 'select' || typeof option.currentValue !== 'string' || !Array.isArray(option.options)) return null;
+	const values: UiAgentOption['values'] = [];
+	const add = (item: unknown) => {
+		if (!item || typeof item !== 'object') return;
+		const entry = item as { value?: unknown; name?: unknown; description?: unknown };
+		const value = text(entry.value, 500);
+		if (!value || values.some((existing) => existing.value === value)) return;
+		const description = text(entry.description, 500);
+		values.push({ value, name: text(entry.name, 200) ?? value, ...(description ? { description } : {}) });
+	};
+	for (const item of option.options.slice(0, 200)) {
+		const group = item as { group?: unknown; options?: unknown };
+		if (group && typeof group === 'object' && Array.isArray(group.options)) group.options.slice(0, 200).forEach(add);
+		else add(item);
+	}
+	if (!values.length) return null;
+	const description = text(option.description, 500);
+	return { id, name: text(option.name, 200) ?? id, ...(description ? { description } : {}), category: text(option.category, 100), currentValue: option.currentValue, values };
+}

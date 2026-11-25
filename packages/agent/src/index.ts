@@ -93,6 +93,14 @@ import type {
 	UiSessionPeek,
 } from '@pidesktop/shared';
 import { createAgentError, normalizeAgentError } from '../../shared/src/agentErrors.ts';
+import { ACP_AGENT_CAPABILITIES, PI_AGENT_ID, piAgentDescriptor, type UiAgentConfig, type UiAgentDescriptor, type UiAgentModel, type UiAgentOption, type UiAgentSaveRequest, type UiAgentStatus } from '../../shared/src/agentRuntimes.ts';
+import { AgentRegistry } from './acp/agentRegistry.ts';
+import { requireApprovalDetails, requireDialogResponse, type UiApprovalDetails, type UiApprovalScope } from '../../shared/src/approval.ts';
+import { AcpConversation } from './acp/conversation.ts';
+import { planText, type PiImageContent, type PiShapedEvent } from './acp/turnAssembler.ts';
+import type { AcpRequestPermissionOutcome, AcpRequestPermissionParams } from './acp/protocol.ts';
+import { AGENT_BINDING_CUSTOM_TYPE, HANDOFF_CUSTOM_TYPE, HANDOFF_DELIVERED_CUSTOM_TYPE, hasConversation, pendingIncomingHandoff, readAgentBinding, renderHandoffContext, type HandoffRecord } from './acp/handoff.ts';
+export { AgentRegistry } from './acp/agentRegistry.ts';
 import { BUILTIN_SLASH_COMMANDS, expandSlashPrompt, validateSlashCommandRequest, validSlashCommandName } from './slashCommands.ts';
 import { CUSTOM_PROVIDER_APIS, assertWritableDocument, commitProviderDocument, connectionReadOnlyReason, getBuiltinProviderIds, getCachedDisabledModels, literalApiKey, loadModelPrefs, loadModelPrefsFile, loadUsageQueryPrefs, mergeProvider, mergeProviderModels, mergeProviderUsageQuery, parseProviderDocumentText, readProviderDocument, restoreProviderBackupFiles, safeProviderUrl, setModelDisabled, setUsageQueryPref, validateDiscoveryRequest, validateProviderId, validateProviderModelsRequest, validateProviderRequest, validateProviderWithSdk, type ProviderBackupFiles, type ProviderDocument, type ProviderModelsChange } from './customProviders.ts';
 import { discoverProviderModels, ProviderDiscoveryError } from './providerDiscovery.ts';
@@ -133,6 +141,10 @@ export interface AgentInitOptions {
 	fresh?: boolean;
 	/** Sessions currently owned by another worker must not be restored. */
 	excludeSessionPaths?: string[];
+	/** Agent of a fresh conversation (absent = Pi). */
+	agentId?: string;
+	/** Context carried into a fresh conversation from another one. */
+	handoff?: Omit<HandoffRecord, 'direction'>;
 }
 
 export interface ProjectTrustDecision {
@@ -528,6 +540,24 @@ class SingleAgentService {
 	private readonly subagentLiveSessions = new Map<string, boolean>();
 	/** Session id currently registered with backgroundTaskManager; null when detached. */
 	private attachedBackgroundSessionId: string | null = null;
+	/** External agent that owns the loaded conversation; null means Pi. */
+	private agentBinding: { agentId: string; config: UiAgentConfig | null; nativeSessionId: string | null } | null = null;
+	private acp: AcpConversation | null = null;
+	/** Pi session whose binding was read last; a new session re-reads it. */
+	private agentBindingSession: PiRuntime['session'] | null = null;
+	private acpCommands: UiSlashCommand[] = [];
+	private acpModels: UiAgentModel[] = [];
+	/** Session settings the agent exposes besides its model (reasoning effort, mode, ...). */
+	private acpOptions: UiAgentOption[] = [];
+	private acpModelId: string | null = null;
+	private readonly acpToolChanges = new Map<string, Promise<void>>();
+	/** Latest plan the agent reported this turn; saved as a notice when the turn ends. */
+	private acpPlan: string | null = null;
+	/** Runs once this conversation's file exists on disk (Pi writes it with the first message). */
+	private firstPersistHook: { file: string; run: () => void } | null = null;
+	/** The bound agent's configuration changed during a turn: restart its process once the turn ends. */
+	private acpConfigStale = false;
+	private readonly agents: AgentRegistry;
 	private state: Omit<AgentSnapshot, 'sequence'> = {
 		status: 'uninitialized',
 		model: '',
@@ -559,8 +589,10 @@ class SingleAgentService {
 		projectTrustByCwd: Map<string, boolean>,
 		reserveSessionSwitch: (path: string) => () => void,
 		mcp: McpManager,
+		agents: AgentRegistry,
 	) {
 		this.mcp = mcp;
+		this.agents = agents;
 		this.projectTrustByCwd = projectTrustByCwd;
 		this.createRuntime = createRuntimeFactory(requestProjectTrust, this.projectTrustByCwd,
 			(session, tracker) => { this.fileChangeTrackers.set(session, tracker); },
@@ -580,7 +612,7 @@ class SingleAgentService {
 
 	get canEvict(): boolean {
 		return this.activePromptCalls === 0 && this.activeConfigurationCalls === 0 && !this.lifecycleOperation &&
-			this.state.queuedCount === 0 && (this.runtime?.session.isIdle ?? true);
+			this.state.queuedCount === 0 && (this.runtime?.session.isIdle ?? true) && !this.acp?.busy;
 	}
 
 	/** Lightweight status projection; never copies transcript or attachment data. */
@@ -855,6 +887,10 @@ class SingleAgentService {
 	listSlashCommands(): UiSlashCommand[] {
 		const session = this.runtime?.session;
 		if (!session) return [];
+		if (this.agentBinding) {
+			const builtins = BUILTIN_SLASH_COMMANDS.filter((command) => command.name === 'new' || command.name === 'name').map((command) => ({ ...command }));
+			return [...builtins, ...this.acpCommands.filter((command) => !builtins.some((item) => item.name === command.name)).map((command) => ({ ...command }))];
+		}
 		const commands = new Map(BUILTIN_SLASH_COMMANDS.map((command) => [command.name, { ...command }]));
 		const add = (name: string, description: string | undefined, source: UiSlashCommand['source']) => {
 			if (!validSlashCommandName(name) || commands.has(name)) return;
@@ -874,6 +910,10 @@ class SingleAgentService {
 		const attachments = request.attachments ?? [];
 		if (!command.acceptsArguments && args) throw new Error(`/${command.name} 不接受参数`);
 		if ((command.source === 'builtin' || command.source === 'extension') && attachments.length) throw new Error('此指令不接受附件或上下文，请移除后重试');
+		if (command.source === 'agent') {
+			await this.prompt('/' + command.name + (args ? ' ' + args : ''), request.behavior, attachments, false);
+			return;
+		}
 		if (command.source !== 'builtin') {
 			const session = this.runtime?.session;
 			if (!session) throw new Error('Agent is not initialized');
@@ -1164,7 +1204,7 @@ class SingleAgentService {
 			const updated = session.modelRuntime.getModel(provider, session.model.id);
 			if (!updated) throw new Error('当前模型仍被会话使用，请先切换模型');
 			if (JSON.stringify(updated) !== JSON.stringify(session.model)) await session.setModel(updated);
-			this.fire({ type: 'model', ...modelSelection(session) });
+			this.fire({ type: 'model', ...this.selection(session) });
 		}
 	}
 
@@ -1179,6 +1219,7 @@ class SingleAgentService {
 
 	/** Select the session model, optionally retaining the user's existing default. */
 	async setModel(provider: string, id: string, persist = true): Promise<void> {
+		if (this.agentBinding) return this.setAgentModel(provider, id);
 		const session = this.requireSessionForModelSettings();
 		if (typeof provider !== 'string' || typeof id !== 'string') throw new Error('模型参数无效');
 		const model = session.modelRuntime.getAvailableSnapshot().find((item) => item.provider === provider && item.id === id);
@@ -1187,7 +1228,7 @@ class SingleAgentService {
 		try {
 			await session.setModel(model, { persist });
 			this.pluginModelError = null;
-			this.fire({ type: 'model', ...modelSelection(session) });
+			this.fire({ type: 'model', ...this.selection(session) });
 		} finally {
 			this.activeConfigurationCalls -= 1;
 		}
@@ -1214,6 +1255,7 @@ class SingleAgentService {
 
 	/** Pi clamps the requested level to the selected model's supported levels; unknown values are dropped here. */
 	async setThinkingLevel(level: UiThinkingLevel, persist = true): Promise<void> {
+		if (this.agentBinding) throw new Error(this.agentName() + ' 不支持在桌面端调整思考强度');
 		const session = this.requireSessionForModelSettings();
 		// 归一化后再交给 SDK：none/disabled 折叠为 off，未知档位直接拒绝，
 		// 保证 persist 写入设置文件的只能是规范集。
@@ -1297,11 +1339,11 @@ class SingleAgentService {
 	}
 
 	/** Create (or re-create) the agent session bound to a working directory. */
-	async init({ cwd, sessionPath, fresh }: AgentInitOptions): Promise<void> {
-		await this.runLifecycle(() => this.initSession(cwd, sessionPath, fresh));
+	async init({ cwd, sessionPath, fresh, agentId, handoff }: AgentInitOptions): Promise<void> {
+		await this.runLifecycle(() => this.initSession(cwd, sessionPath, fresh, { agentId, handoff }));
 	}
 
-	private async initSession(cwd: string, sessionPath?: string, fresh?: boolean): Promise<void> {
+	private async initSession(cwd: string, sessionPath?: string, fresh?: boolean, start: Pick<AgentInitOptions, 'agentId' | 'handoff'> = {}): Promise<void> {
 		if (this.runtime && (this.activePromptCalls > 0 || this.activeConfigurationCalls > 0 || !this.runtime.session.isIdle)) {
 			throw new Error('当前会话仍在运行，请先停止后再切换工作区');
 		}
@@ -1315,6 +1357,9 @@ class SingleAgentService {
 			const sessionManager = restorePath
 				? SessionManager.open(restorePath, undefined, cwd)
 				: SessionManager.create(cwd);
+			// A fresh conversation records its agent and any incoming handoff before
+			// the runtime loads, so Pi's context already contains a handoff aimed at Pi.
+			if (!restorePath) this.seedFreshSession(sessionManager, start);
 			const runtime = await createAgentSessionRuntime(this.createRuntime, {
 				cwd,
 				agentDir: getAgentDir(),
@@ -1389,6 +1434,14 @@ class SingleAgentService {
 	 * Same contract as the foreground path: a rejected choice never blocks the send.
 	 */
 	private async applyInputSettings(request: UiSubmitInput): Promise<void> {
+		if (typeof request.agentId === 'string') {
+			// Unlike model / thinking picks, the agent decides who receives the text: when the
+			// choice cannot be applied, the input is not sent anywhere else.
+			try { await this.setSessionAgent(request.agentId); }
+			catch (error) {
+				if ((this.agentBinding?.agentId ?? PI_AGENT_ID) !== request.agentId) throw new Error('未能切换到所选 Agent，消息未发送：' + errorMessage(error));
+			}
+		}
 		const model = request.model;
 		if (model && typeof model.provider === 'string' && typeof model.id === 'string') {
 			try { await this.setModel(model.provider, model.id); } catch (error) { console.warn('[pi-desktop] first-input model choice was not applied:', errorMessage(error)); }
@@ -1411,6 +1464,7 @@ class SingleAgentService {
 	}
 
 	private async sendPrompt(text: string, behavior: 'steer' | 'followUp' | undefined, attachments: UiAttachment[], expandPromptTemplates: boolean): Promise<void> {
+		if (this.agentBinding) return this.sendAgentPrompt(text, attachments);
 		if (this.lifecycleOperation) throw new Error('会话正在切换，请稍后发送消息');
 		if (this.pluginReloadError || this.pluginModelError) throw new Error(this.pluginReloadError ?? this.pluginModelError!);
 		const session = this.runtime?.session;
@@ -1627,6 +1681,10 @@ class SingleAgentService {
 
 	/** Abort the active run. */
 	async abort(): Promise<void> {
+		if (this.agentBinding) {
+			if (this.acp?.busy) { this.conversationRuns?.requestCancel(); this.acp.cancel(); }
+			return;
+		}
 		this.conversationRuns?.requestCancel();
 		await this.runtime?.session.abort();
 		this.finishInterruptedAssistant();
@@ -1711,6 +1769,355 @@ class SingleAgentService {
 			this.fire({ type: 'status', status: 'error' });
 			throw error;
 		}
+	}
+
+	/* ---------------- external agents (ACP) ---------------- */
+
+	private agentName(): string {
+		return this.agentBinding?.config?.displayName ?? this.agentBinding?.agentId ?? 'Pi';
+	}
+
+	/** The runtime that owns the loaded conversation, as the renderer sees it. */
+	agentDescriptor(): UiAgentDescriptor {
+		const binding = this.agentBinding;
+		if (!binding) return piAgentDescriptor();
+		return {
+			id: binding.agentId,
+			kind: 'acp',
+			displayName: this.agentName(),
+			accentColor: binding.config?.accentColor ?? null,
+			capabilities: ACP_AGENT_CAPABILITIES,
+			...(this.acpModels.length ? { models: this.acpModels.map((model) => ({ ...model })) } : {}),
+			currentModelId: this.acpModelId,
+			...(this.acpOptions.length ? { options: this.acpOptions.map((option) => ({ ...option, values: option.values.map((value) => ({ ...value })) })) } : {}),
+		};
+	}
+
+	/** Model fields for ready/model events: Pi's selection, or the external agent's own model. */
+	private selection(session: PiRuntime['session']): Pick<AgentSnapshot, 'model' | 'modelName' | 'modelProvider' | 'thinkingLevel' | 'availableThinkingLevels' | 'contextUsage'> & { agent: UiAgentDescriptor } {
+		const agent = this.agentDescriptor();
+		const binding = this.agentBinding;
+		if (!binding) return { ...modelSelection(session), agent };
+		const model = this.acpModels.find((item) => item.id === this.acpModelId);
+		return {
+			agent, model: this.acpModelId ?? '', modelName: model?.name ?? null, modelProvider: 'acp:' + binding.agentId,
+			thinkingLevel: 'off', availableThinkingLevels: ['off'], contextUsage: null,
+		};
+	}
+
+	/** Agent and incoming handoff of a brand-new conversation, written before its runtime loads. */
+	private seedFreshSession(manager: SessionManager, start: Pick<AgentInitOptions, 'agentId' | 'handoff'>): void {
+		const agentId = start.agentId && start.agentId !== PI_AGENT_ID ? start.agentId : null;
+		if (agentId) {
+			const config = this.agents.get(agentId);
+			if (!config) throw new Error('Agent 不存在：' + agentId);
+			if (!config.enabled) throw new Error(config.displayName + ' 已停用，请在设置中启用');
+			manager.appendCustomEntry(AGENT_BINDING_CUSTOM_TYPE, { agentId });
+		}
+		const handoff = start.handoff;
+		if (handoff) {
+			const record: HandoffRecord = { ...handoff, direction: 'from' };
+			manager.appendCustomEntry(HANDOFF_CUSTOM_TYPE, record);
+			// Pi reads context from the session; an external agent receives it with its first prompt.
+			if (!agentId && handoff.context) manager.appendCustomMessageEntry(HANDOFF_CUSTOM_TYPE, handoff.context, false);
+		}
+	}
+
+	/** Read the loaded session's agent binding; another session drops the previous agent process. */
+	private async bindAgent(): Promise<void> {
+		const session = this.runtime?.session;
+		if (!session || this.agentBindingSession === session) return;
+		await this.releaseAgent();
+		this.agentBindingSession = session;
+		const binding = readAgentBinding(session.sessionManager.getEntries());
+		if (!binding || binding.agentId === PI_AGENT_ID) return;
+		this.agentBinding = { agentId: binding.agentId, config: this.agents.get(binding.agentId) ?? null, nativeSessionId: binding.nativeSessionId ?? null };
+	}
+
+	private async releaseAgent(): Promise<void> {
+		const conversation = this.acp;
+		this.acp = null;
+		this.agentBinding = null;
+		this.agentBindingSession = null;
+		this.acpCommands = [];
+		this.acpModels = [];
+		this.acpModelId = null;
+		this.acpOptions = [];
+		this.acpPlan = null;
+		this.acpToolChanges.clear();
+		this.acpConfigStale = false;
+		await conversation?.dispose().catch(() => {});
+	}
+
+	/**
+	 * The configuration of an agent was saved or removed. A conversation bound to it
+	 * stops the process started from the old settings, so the next prompt (or the
+	 * warmup) runs with the new ones; a running turn finishes first.
+	 */
+	agentConfigChanged(agentId: string): void {
+		const binding = this.agentBinding;
+		if (binding?.agentId !== agentId) return;
+		binding.config = this.agents.get(agentId) ?? binding.config;
+		if (this.acp?.busy || this.activePromptCalls > 0) { this.acpConfigStale = true; return; }
+		void this.restartAgent();
+	}
+
+	private async restartAgent(): Promise<void> {
+		this.acpConfigStale = false;
+		const conversation = this.acp;
+		this.acp = null;
+		this.acpCommands = [];
+		this.acpModels = [];
+		this.acpModelId = null;
+		this.acpOptions = [];
+		this.acpToolChanges.clear();
+		await conversation?.dispose().catch(() => {});
+		if (!this.agentBinding || !this.runtime || this.acp || this.lifecycleOperation) return;
+		this.fireReady(true);
+		const config = this.agents.get(this.agentBinding.agentId);
+		if (config?.enabled) this.warmupAgent();
+	}
+
+	/** Choose the conversation's agent before its first message; afterwards it is locked. */
+	async setSessionAgent(agentId: string): Promise<void> {
+		if (typeof agentId !== 'string' || !agentId || agentId.length > 64) throw new Error('Agent 参数无效');
+		const session = this.runtime?.session;
+		if (!session || this.lifecycleOperation) throw new Error('会话正在切换，请稍后再试');
+		const current = this.agentBinding?.agentId ?? PI_AGENT_ID;
+		if (current === agentId) return;
+		if (hasConversation(session.sessionManager.getEntries())) throw new Error('对话已开始，Agent 已锁定；如需换用其他 Agent，请使用“交接到新会话”');
+		if (this.activePromptCalls > 0 || this.acp?.busy) throw new Error('会话正在运行，请稍后再试');
+		if (agentId !== PI_AGENT_ID) {
+			const config = this.agents.get(agentId);
+			if (!config) throw new Error('Agent 不存在：' + agentId);
+			if (!config.enabled) throw new Error(config.displayName + ' 已停用，请在设置中启用');
+		}
+		session.sessionManager.appendCustomEntry(AGENT_BINDING_CUSTOM_TYPE, { agentId });
+		this.agentBindingSession = null;
+		await this.bindAgent();
+		this.fireReady();
+		this.warmupAgent();
+	}
+
+	/**
+	 * Start the bound external agent ahead of the first prompt: its models and commands
+	 * appear right away, and a missing install or sign-in surfaces immediately.
+	 */
+	warmupAgent(): void {
+		const session = this.runtime?.session;
+		if (!session || !this.agentBinding) return;
+		try { void this.ensureAcp(session).warmup().catch((error: unknown) => this.fireError(error)); }
+		catch (error) { this.fireError(error); }
+	}
+
+	private ensureAcp(session: PiRuntime['session']): AcpConversation {
+		const binding = this.agentBinding;
+		if (!binding) throw new Error('此会话由 Pi 处理');
+		if (this.acp) return this.acp;
+		// Always the current configuration: a removed agent does not keep running from a cached copy.
+		const config = this.agents.get(binding.agentId);
+		if (!config) throw new Error('此会话使用的 Agent（' + binding.agentId + '）已不在配置中，请在设置中恢复它，或交接到其他 Agent');
+		if (!config.enabled) throw new Error(config.displayName + ' 已停用，请在设置中启用后继续');
+		binding.config = config;
+		const manager = session.sessionManager;
+		const owned = (): boolean => this.runtime?.session === session && this.acp === conversation;
+		const conversation: AcpConversation = new AcpConversation(config, this.cwd, binding.nativeSessionId, {
+			emit: (event) => { if (owned()) this.onAgentEvent(session, event); },
+			persist: (message) => { if (owned()) manager.appendMessage(message as Parameters<SessionManager['appendMessage']>[0]); },
+			requestPermission: (params, signal) => this.requestAgentPermission(config, params, signal),
+			onPlan: (entries) => { if (owned()) this.acpPlan = entries.length ? config.displayName + ' 的计划：\n' + planText(entries) : null; },
+			onCommands: (commands) => {
+				if (!owned()) return;
+				this.acpCommands = commands.filter((command) => validSlashCommandName(command.name)).slice(0, 200)
+					.map((command) => ({ name: command.name, description: (command.description ?? '').slice(0, 500), source: 'agent' as const, acceptsArguments: true, requiresIdle: false }));
+			},
+			onModels: (models, current) => {
+				if (!owned()) return;
+				this.acpModels = models.slice(0, 100);
+				this.acpModelId = current;
+				this.fire({ type: 'model', ...this.selection(session) });
+			},
+			onConfigOptions: (options) => {
+				if (!owned()) return;
+				this.acpOptions = options.slice(0, 20);
+				this.fire({ type: 'model', ...this.selection(session) });
+			},
+			onNativeSession: (id) => {
+				if (!owned()) return;
+				binding.nativeSessionId = id;
+				manager.appendCustomEntry(AGENT_BINDING_CUSTOM_TYPE, { agentId: binding.agentId, nativeSessionId: id });
+			},
+			onExit: (message) => { if (owned()) this.fire({ type: 'system-message', id: this.nextId('system'), order: this.timelineOrder++, text: message, systemKind: 'extension-notice' }); },
+			historyContext: () => {
+				if (!owned()) return null;
+				// The transcript minus the prompt being sent, which travels on its own.
+				const branch = manager.getBranch();
+				let last = -1;
+				for (let index = branch.length - 1; index >= 0; index -= 1) {
+					const entry = branch[index]!;
+					if (entry.type === 'message' && entry.message.role === 'user') { last = index; break; }
+				}
+				return renderHandoffContext(last >= 0 ? branch.filter((_, index) => index !== last) : branch, config.displayName);
+			},
+		});
+		this.acp = conversation;
+		return conversation;
+	}
+
+	/** External agent events take the Pi event path, plus file-change tracking around their tools. */
+	private onAgentEvent(session: PiRuntime['session'], event: PiShapedEvent): void {
+		const tracker = this.fileChangeTrackers.get(session);
+		if (tracker && event.type === 'tool_execution_start') {
+			this.acpToolChanges.set(event.toolCallId, tracker.beforeTool(event.toolCallId, event.toolName, event.args));
+		}
+		this.onSessionEvent(event as unknown as AgentSessionEvent);
+		if (tracker && event.type === 'tool_execution_end') {
+			const before = this.acpToolChanges.get(event.toolCallId) ?? Promise.resolve();
+			this.acpToolChanges.delete(event.toolCallId);
+			void before.then(() => tracker.afterTool(event.toolCallId)).catch(() => {});
+		}
+	}
+
+	/** ACP permission options shown on the desktop approval card. */
+	private async requestAgentPermission(config: UiAgentConfig, params: AcpRequestPermissionParams, signal: AbortSignal): Promise<AcpRequestPermissionOutcome> {
+		const options = params.options.filter((option) => option && typeof option.optionId === 'string');
+		const allowOnce = options.find((option) => option.kind === 'allow_once');
+		const allowAlways = options.find((option) => option.kind === 'allow_always');
+		const reject = options.find((option) => option.kind === 'reject_once') ?? options.find((option) => option.kind === 'reject_always');
+		const call = params.toolCall ?? { toolCallId: '' };
+		const raw = call.rawInput && typeof call.rawInput === 'object' ? call.rawInput as Record<string, unknown> : {};
+		const command = typeof raw.command === 'string' ? raw.command
+			: Array.isArray(raw.command) && raw.command.every((part) => typeof part === 'string') ? (raw.command as string[]).join(' ') : undefined;
+		const files = (Array.isArray(call.content) ? call.content : [])
+			.filter((item): item is { type: 'diff'; path: string; oldText?: string | null; newText: string } => !!item && item.type === 'diff' && typeof (item as { path?: unknown }).path === 'string')
+			.slice(0, 20)
+			.map((item) => ({ path: item.path, diff: [...(item.oldText ? item.oldText.split('\n').map((line) => '-' + line) : []), ...item.newText.split('\n').map((line) => '+' + line)].join('\n').slice(0, 12000) }));
+		// Only the grants the agent offers: an agent without allow_once never gets a
+		// "once" choice that would have to be answered with a permanent grant.
+		const scopes: UiApprovalScope[] = [...(allowOnce ? ['once' as const] : []), ...(allowAlways ? ['session' as const] : [])];
+		if (!scopes.length) scopes.push('once');
+		let approval: UiApprovalDetails;
+		try {
+			approval = { ...requireApprovalDetails({ source: config.displayName, cwd: this.cwd, ...(command ? { command: command.slice(0, 32000) } : {}), ...(files.length ? { files } : {}) }), scopes };
+		} catch {
+			approval = { source: config.displayName, scopes };
+		}
+		const dialog: UiExtensionDialogRequest = { id: randomUUID(), kind: 'confirm', title: config.displayName + ' 请求权限', message: call.title || '执行操作', approval };
+		const response = requireDialogResponse(dialog, await this.requestExtensionDialog(dialog, signal));
+		if (response === null) return { outcome: 'cancelled' };
+		const decision = typeof response === 'object' ? response : { approved: response === true, scope: 'once' as const };
+		const option = decision.approved
+			? (decision.scope === 'once' ? allowOnce : allowAlways)
+			: reject;
+		return option ? { outcome: 'selected', optionId: option.optionId } : { outcome: 'cancelled' };
+	}
+
+	private async setAgentModel(provider: string, id: string): Promise<void> {
+		const binding = this.agentBinding!;
+		if (provider !== 'acp:' + binding.agentId) throw new Error('此会话由 ' + this.agentName() + ' 处理，Agent 已锁定；如需换用其他 Agent，请使用“交接到新会话”');
+		const session = this.runtime?.session;
+		if (!session || this.lifecycleOperation) throw new Error('会话正在切换，请稍后再试');
+		if (!this.acpModels.some((model) => model.id === id)) throw new Error('模型不可用：' + id);
+		await this.ensureAcp(session).setModel(id);
+		this.acpModelId = id;
+		this.fire({ type: 'model', ...this.selection(session) });
+	}
+
+	/** Change one of the external agent's session settings (reasoning effort, mode, ...). */
+	async setAgentOption(optionId: string, value: string): Promise<void> {
+		const session = this.runtime?.session;
+		if (!session || this.lifecycleOperation) throw new Error('会话正在切换，请稍后再试');
+		if (!this.agentBinding) throw new Error('此会话由 Pi 处理，没有 Agent 选项');
+		const option = this.acpOptions.find((item) => item.id === optionId);
+		if (!option) throw new Error('Agent 选项不存在：' + optionId);
+		if (!option.values.some((item) => item.value === value)) throw new Error('选项值不可用：' + value);
+		if (option.currentValue === value) return;
+		await this.ensureAcp(session).setConfigOption(optionId, value);
+	}
+
+	/** One user turn for an external agent; resolves once the input is in the transcript. */
+	private async sendAgentPrompt(text: string, attachments: UiAttachment[]): Promise<void> {
+		if (this.lifecycleOperation) throw new Error('会话正在切换，请稍后发送消息');
+		const session = this.runtime?.session;
+		if (!session) throw new Error('Agent is not initialized');
+		// ACP has no mid-turn input: refuse right away instead of holding the send until the
+		// running reply ends (the draft stays in the composer).
+		if (this.activePromptCalls > 0 || this.acp?.busy) throw new Error(this.agentName() + ' 正在回复，外部 Agent 不支持运行中追加消息；请等它结束或先停止');
+		const conversation = this.ensureAcp(session);
+		const promptText = withTextAttachments(text, attachments);
+		const images: PiImageContent[] = imageAttachments(attachments);
+		const entries = session.sessionManager.getEntries();
+		const incoming = pendingIncomingHandoff(entries);
+		const tracker = this.conversationRuns;
+		const inputQueue = this.inputQueue, inputId = this.inputRequest.getStore()?.id;
+		if (this.state.status === 'idle') this.fire({ type: 'status', status: 'busy' });
+		this.activePromptCalls += 1;
+		await new Promise<void>((resolve, reject) => {
+			let acknowledged = false, started = false;
+			conversation.prompt({
+				text: promptText,
+				images,
+				contextPrefix: incoming?.context ?? null,
+				onDelivered: incoming ? () => {
+					if (this.runtime?.session !== session) return;
+					try { session.sessionManager.appendCustomEntry(HANDOFF_DELIVERED_CUSTOM_TYPE, { sessionPath: incoming.sessionPath }); }
+					catch (error) { console.warn('[pi-desktop] handoff delivery was not recorded:', errorMessage(error)); }
+				} : undefined,
+				onStarted: () => { started = true; if (!acknowledged) { acknowledged = true; resolve(); } },
+			}).then((result) => {
+				if (result.stopReason === 'cancelled') tracker?.finish('cancelled');
+				else if (result.stopReason === 'error') tracker?.finish('failed');
+				if (result.error) this.fireError(result.error, 'provider');
+				if (!acknowledged) { acknowledged = true; if (result.error) reject(result.error); else resolve(); }
+			}, (error: unknown) => {
+				tracker?.finish('failed');
+				this.fireError(error);
+				if (!acknowledged) { acknowledged = true; reject(error); }
+			}).finally(() => {
+				this.activePromptCalls -= 1;
+				// A started turn is done whichever way it ended, so its queue row never stays pending;
+				// one that failed before starting is reported by submitInput as not received.
+				if (inputId && started) inputQueue?.completePrompt(inputId);
+				if (this.runtime?.session !== session || (this.acp === conversation && conversation.busy)) return;
+				if (this.acp === conversation) {
+					const plan = this.acpPlan;
+					this.acpPlan = null;
+					if (plan) {
+						try { session.sessionManager.appendCustomEntry(EXTENSION_NOTICE_CUSTOM_TYPE, { message: plan, notificationType: 'info' }); } catch { /* the plan is informational */ }
+					}
+				}
+				this.onSessionEvent({ type: 'agent_settled', aborted: false } as AgentSessionEvent);
+				if (this.acp === conversation && this.acpConfigStale) void this.restartAgent();
+			});
+		});
+	}
+
+	/** This conversation's context for continuing in another agent. */
+	handoffSource(): { sessionPath: string; agentName: string; context: string } {
+		const session = this.runtime?.session;
+		if (!session || this.lifecycleOperation) throw new Error('会话正在切换，请稍后再试');
+		if (this.activePromptCalls > 0 || this.acp?.busy || !session.isIdle) throw new Error('会话正在运行，请结束后再交接');
+		const path = session.sessionFile;
+		const branch = session.sessionManager.getBranch();
+		if (!path || !hasConversation(branch)) throw new Error('当前会话还没有内容，可直接切换 Agent');
+		const agentName = this.agentName();
+		return { sessionPath: path, agentName, context: renderHandoffContext(branch, agentName) };
+	}
+
+	/** Run `hook` once this conversation has been written to disk. */
+	onFirstPersist(hook: () => void): void {
+		const file = this.runtime?.session.sessionFile;
+		if (!file) return;
+		if (existsSync(file)) { hook(); return; }
+		this.firstPersistHook = { file, run: hook };
+	}
+
+	/** Link this conversation to the one that continues it. */
+	recordHandoff(record: HandoffRecord): void {
+		const session = this.runtime?.session;
+		if (!session) return;
+		session.sessionManager.appendCustomEntry(HANDOFF_CUSTOM_TYPE, record);
+		this.fireReady(true);
 	}
 
 	/** Dispose everything (aborts active work, invalidates extensions). */
@@ -1828,6 +2235,7 @@ class SingleAgentService {
 		}
 		this.unsubscribe = runtime.session.subscribe((event) => this.onSessionEvent(event));
 		this.attachBackgroundTasks();
+		await this.bindAgent();
 	}
 
 	/** Register this session with the background-task manager and adopt persisted tasks (init/session switch). */
@@ -1991,6 +2399,8 @@ class SingleAgentService {
 	}
 
 	private async teardown(): Promise<void> {
+		// A handoff link waits for this conversation only; another one never fires it.
+		this.firstPersistHook = null;
 		this.detachBackgroundTasks();
 		this.conversationRuns?.finish('interrupted'); this.conversationRuns = null;
 		this.modelTests.dispose();
@@ -2010,6 +2420,7 @@ class SingleAgentService {
 		this.toolTitles.clear();
 		this.toolUpdateAt.clear();
 		this.timelineOrder = 0;
+		await this.releaseAgent();
 		const runtime = this.runtime;
 		this.runtime = null;
 		if (runtime) {
@@ -2062,7 +2473,7 @@ class SingleAgentService {
 			// stream/layout commit (following readers pin, others hold), never as
 			// navigation that re-runs reading-position restore (zcode scroll anchor).
 			...(resync ? { resync: true } : {}),
-			...modelSelection(session),
+			...this.selection(session),
 			cwd: this.cwd,
 			sessionId: session.sessionId,
 			sessionPath: session.sessionFile ?? null,
@@ -2196,6 +2607,7 @@ class SingleAgentService {
 			case 'ready':
 				this.state = {
 					...this.state,
+					agent: event.agent,
 					model: event.model,
 					modelName: event.modelName ?? null,
 					modelProvider: event.modelProvider,
@@ -2218,6 +2630,7 @@ class SingleAgentService {
 				};
 				break;
 			case 'model':
+				if (event.agent) this.state.agent = event.agent;
 				this.state.model = event.model;
 				this.state.modelName = event.modelName ?? null;
 				this.state.modelProvider = event.modelProvider;
@@ -2351,6 +2764,15 @@ class SingleAgentService {
 	}
 
 	private onSessionEvent(event: AgentSessionEvent): void {
+		if (this.firstPersistHook) {
+			const pending = this.firstPersistHook;
+			const file = this.runtime?.session.sessionFile;
+			if (file !== pending.file) this.firstPersistHook = null;
+			else if (existsSync(file)) {
+				this.firstPersistHook = null;
+				try { pending.run(); } catch (error) { console.warn('[pi-desktop] first-persist hook failed:', errorMessage(error)); }
+			}
+		}
 		if (event.type === 'message_end' || event.type === 'tool_execution_end' ||
 			event.type === 'entry_appended' || event.type === 'compaction_end' || event.type === 'agent_settled') {
 			this.scheduleContextUsageRefresh();
@@ -2390,7 +2812,7 @@ class SingleAgentService {
 			case 'entry_appended': {
 				if (event.entry.type === 'model_change') {
 					const session = this.runtime?.session;
-					if (session) this.fire({ type: 'model', ...modelSelection(session) });
+					if (session) this.fire({ type: 'model', ...this.selection(session) });
 				}
 				// pi-subagents completion notices (custom_message, display:false) are invisible
 				// without a TUI renderer; project them live so the wake is visible in the UI.
@@ -2608,6 +3030,7 @@ export class AgentService {
 	/** Save counter; a running pass compares it to know whether its file snapshot is stale. */
 	private providerResyncRevision = 0;
 	private readonly mcp = new McpManager(getAgentDir());
+	private readonly agents = new AgentRegistry(join(getAgentDir(), 'desktop-agents.json'));
 	private closing = false;
 	private readonly requestProjectTrust: RequestProjectTrust;
 	private readonly requestExtensionDialog: RequestExtensionDialog;
@@ -3415,6 +3838,71 @@ export class AgentService {
 		this.active = null;
 	}
 
+	/* ---------------- external agents ---------------- */
+
+	listAgents(): Promise<UiAgentStatus[]> { return this.agents.statuses(); }
+	probeAgents(): Promise<UiAgentStatus[]> { return this.agents.statuses(true); }
+	async saveAgent(request: UiAgentSaveRequest): Promise<UiAgentStatus[]> {
+		const saved = this.agents.save(request);
+		for (const service of this.contexts.values()) service.agentConfigChanged(saved.id);
+		return this.agents.statuses();
+	}
+	async removeAgent(id: string): Promise<UiAgentStatus[]> {
+		const inUse = [...this.contexts.values()].some((service) => service.agentDescriptor().id === id && !service.canEvict);
+		if (inUse) throw new Error('该 Agent 仍有会话在运行，请结束后再移除');
+		this.agents.remove(id);
+		for (const service of this.contexts.values()) service.agentConfigChanged(id);
+		return this.agents.statuses();
+	}
+
+	/** Choose the open conversation's agent; only before its first message. */
+	setSessionAgent(agentId: string): Promise<void> {
+		return this.requireActive().setSessionAgent(agentId);
+	}
+
+	/** Change one of the open conversation's agent session settings. */
+	setAgentOption(optionId: string, value: string): Promise<void> {
+		return this.requireActive().setAgentOption(optionId, value);
+	}
+
+	/**
+	 * Continue the open conversation in another agent: a new conversation starts with
+	 * a rendering of this one, and both carry a link to each other.
+	 */
+	async handoffToAgent(agentId: string): Promise<void> {
+		if (typeof agentId !== 'string' || !agentId || agentId.length > 64) throw new Error('Agent 参数无效');
+		const source = this.requireActive();
+		const target = agentId === PI_AGENT_ID ? null : this.agents.get(agentId);
+		if (agentId !== PI_AGENT_ID && !target) throw new Error('Agent 不存在：' + agentId);
+		if (target && !target.enabled) throw new Error(target.displayName + ' 已停用，请在设置中启用');
+		if (source.agentDescriptor().id === agentId) throw new Error('当前会话已由该 Agent 处理');
+		const origin = source.handoffSource();
+		const toAgent = target?.displayName ?? 'Pi';
+		const cwd = source.cwd;
+		await this.runTransition(async () => {
+			if (this.active !== source) throw new Error('当前会话已变化，请重试交接');
+			await this.openContext({ cwd, fresh: true, agentId, handoff: { sessionPath: origin.sessionPath, fromAgent: origin.agentName, toAgent, context: origin.context } });
+		}, { supersede: true });
+		const continuation = this.active;
+		continuation?.warmupAgent();
+		const targetPath = continuation?.getSnapshot().sessionPath;
+		if (continuation && targetPath) {
+			// The new conversation reaches disk with its first message; until then the source
+			// carries no link, so an abandoned handoff never leaves a link to a missing file.
+			const record: HandoffRecord = { direction: 'to', sessionPath: targetPath, fromAgent: origin.agentName, toAgent };
+			continuation.onFirstPersist(() => {
+				const loaded = [...this.contexts.values()].find((service) => service.getSnapshot().sessionPath === origin.sessionPath);
+				try {
+					if (loaded) loaded.recordHandoff(record);
+					else SessionManager.open(origin.sessionPath, undefined, cwd).appendCustomEntry(HANDOFF_CUSTOM_TYPE, record);
+				} catch (error) {
+					console.warn('[pi-desktop] handoff link was not recorded in the source conversation:', errorMessage(error));
+				}
+			});
+		}
+		this.fire({ type: 'sessions-changed', cwd });
+	}
+
 	private requireActive(): SingleAgentService {
 		if (this.closing) throw new Error('应用正在退出');
 		if (this.transition) throw new Error('会话正在切换，请稍后再试');
@@ -3755,7 +4243,7 @@ export class AgentService {
 			}
 			this.reservedSessionPaths.set(path, service);
 			return () => { if (this.reservedSessionPaths.get(path) === service) this.reservedSessionPaths.delete(path); };
-		}, this.mcp);
+		}, this.mcp, this.agents);
 		service.onEvent(({ event }) => {
 			// Busy tracking covers every context: a foreground run that the user
 			// switches away from must still light the unread dot when it settles.
@@ -3852,7 +4340,7 @@ export class AgentService {
 		const snapshot = service.getSnapshot();
 		this.fire({ type: 'reset', cwd: snapshot.cwd });
 		if (snapshot.sessionId) this.fire({
-			type: 'ready', resumeKind: 'warm', model: snapshot.model, modelName: snapshot.modelName ?? null, modelProvider: snapshot.modelProvider,
+			type: 'ready', resumeKind: 'warm', agent: snapshot.agent, model: snapshot.model, modelName: snapshot.modelName ?? null, modelProvider: snapshot.modelProvider,
 			thinkingLevel: snapshot.thinkingLevel, availableThinkingLevels: snapshot.availableThinkingLevels,
 			contextUsage: snapshot.contextUsage,
 			cwd: snapshot.cwd, sessionId: snapshot.sessionId, sessionPath: snapshot.sessionPath,
@@ -4135,6 +4623,18 @@ function historyTimeline(entries: SessionEntry[], liveRun?: UiConversationRun | 
 				text,
 				status: 'done',
 			});
+			continue;
+		}
+		if (entry.type === 'custom' && entry.customType === HANDOFF_CUSTOM_TYPE) {
+			const data = entry.data as Partial<HandoffRecord> | undefined;
+			if (data && (data.direction === 'from' || data.direction === 'to') && typeof data.sessionPath === 'string') {
+				const fromAgent = String(data.fromAgent ?? ''), toAgent = String(data.toAgent ?? '');
+				messages.push({
+					id: entry.id, runId, order: nextOrder++, role: 'system', systemKind: 'handoff', status: 'done',
+					text: data.direction === 'from' ? `上下文交接：${fromAgent} → ${toAgent}` : `已交接到 ${toAgent} 继续`,
+					handoff: { direction: data.direction, sessionPath: data.sessionPath, fromAgent, toAgent },
+				});
+			}
 			continue;
 		}
 		// Plugin ui.notify notices ride on plain custom entries: persisted with the

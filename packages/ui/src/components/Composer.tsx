@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ChangeEvent, type ClipboardEvent, type DragEvent, type KeyboardEvent, type ReactNode, type Ref } from 'react';
 import { ExitPresence } from './ExitPresence';
-import type { UiAttachment, UiContextRequest, UiSlashCommand } from '@pidesktop/shared';
+import { agentCapabilities, type UiAttachment, type UiContextRequest, type UiSlashCommand } from '@pidesktop/shared';
 import { inspectAttachmentFile, MAX_ATTACHMENTS } from '../attachmentPolicy';
 import { clearSubmittedDraft, restoreSubmittedDraft, type ComposerDraft } from '../composerDrafts';
 import { useT, type Translate } from '../i18n';
@@ -87,6 +87,7 @@ export function Composer({ header, onOpenModelManagement, changesSlotRef }: { he
 	const draftTransfer = useChatStore((s) => s.draftTransfer);
 	const backgroundDraftTransfers = useChatStore((s) => s.backgroundDraftTransfers);
 	const queuedMessages = useChatStore((s) => s.queuedMessages);
+	const agent = useChatStore((s) => s.agent);
 	const platform = useChatStore((s) => s.appInfo?.platform);
 	const cwd = useChatStore((s) => s.cwd);
 	const sessionPath = useChatStore((s) => s.sessionPath);
@@ -150,6 +151,8 @@ export function Composer({ header, onOpenModelManagement, changesSlotRef }: { he
 	const dismissedMention = useRef<{ start: number; prefix: string } | null>(null);
 	const composingRef = useRef(false);
 	const busy = status === 'busy';
+	// External agents have no mid-turn input: while one replies, the draft waits here.
+	const waitsForReply = busy && !agentCapabilities(agent).steer;
 	const alternateShortcut = platform === 'darwin' ? '⌘Enter' : 'Ctrl+Enter';
 	const stopping = bridge !== null && stopRequests.get(stopScopeKey)?.bridge === bridge;
 	// Not ready to SEND yet. Typing stays open during switches and startup: the
@@ -163,7 +166,7 @@ export function Composer({ header, onOpenModelManagement, changesSlotRef }: { he
 	const busyHint = t('composer.busyHint', { action: t(defaultBusyBehavior === 'followUp' ? 'composer.queueSend' : 'composer.steer'), alternate: t(defaultBusyBehavior === 'followUp' ? 'composer.steer' : 'composer.queueSend'), shortcut: alternateShortcut });
 	// ZCode-style semantic split: fresh conversation invites a new task, an
 	// existing thread invites a follow-up (busy keeps the queue/steer hint).
-	const placeholder = status === 'error' ? t('composer.connectionErrorPlaceholder') : inputLocked ? t('composer.connecting') : busy ? busyHint : t(hasConversationHistory ? 'composer.placeholderFollowUp' : 'composer.placeholder');
+	const placeholder = status === 'error' ? t('composer.connectionErrorPlaceholder') : inputLocked ? t('composer.connecting') : waitsForReply ? t('composer.agentBusyHint', { agent: agent?.displayName ?? '' }) : busy ? busyHint : t(hasConversationHistory ? 'composer.placeholderFollowUp' : 'composer.placeholder');
 	const hasContent = Boolean(text.trim() || attachments.length);
 	// "Guess your next message": shown as the placeholder only while the box is empty and idle.
 	const nextSuggestion = useNextInputSuggestion();
@@ -579,6 +582,7 @@ export function Composer({ header, onOpenModelManagement, changesSlotRef }: { he
 	async function submit(behavior?: BusyBehavior): Promise<void> {
 		const value = textRef.current.trim();
 		const submittedAttachments = attachmentsRef.current;
+		if (waitsForReply && (value || submittedAttachments.length)) { setSubmissionError(t('composer.agentBusy', { agent: agent?.displayName ?? '' })); return; }
 		if ((!value && !submittedAttachments.length) || sendingRef.current || attachmentJobsRef.current.size > 0 || (pendingDraftRestoresRef.current.get(currentKeyRef.current) ?? 0) > 0 || unavailable || status === 'error' || missingAttachments.length) return;
 		const submittedKey = currentKeyRef.current;
 		const submitted = { text: textRef.current, attachments: submittedAttachments };

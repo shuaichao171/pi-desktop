@@ -20,7 +20,8 @@ import { sidebarProjectPaths, sidebarWorkspaceKey } from './sidebarOrganization.
 import { readModelCatalogCache, writeModelCatalogCache, type ModelCatalogSnapshot } from './modelCatalogCache.ts';
 import { buildSideQuestionContext } from './sideQuestionContext.ts';
 import type { UiAgentError, UiSideQuestion } from '@pidesktop/shared';
-import { activeTreeLeafId, buildConversationTreeIndex, isOnBranchPath, sessionTreesEqual } from '@pidesktop/shared';
+import { activeTreeLeafId, buildConversationTreeIndex, isOnBranchPath, sessionTreesEqual, ACP_AGENT_CAPABILITIES, PI_AGENT_ID, piAgentDescriptor } from '@pidesktop/shared';
+import type { UiAgentDescriptor, UiAgentSaveRequest, UiAgentStatus } from '@pidesktop/shared';
 import type {
 	AgentBridge,
 	AgentEventEnvelope,
@@ -72,6 +73,10 @@ interface ChatState {
 	model: string;
 	modelName: string | null;
 	modelProvider: string;
+	/** Runtime of the open conversation (Pi or an external ACP agent); null before the first ready. */
+	agent: UiAgentDescriptor | null;
+	/** Configured external agents with their passive readiness. */
+	agents: UiAgentStatus[];
 	thinkingLevel: UiThinkingLevel | '';
 	availableThinkingLevels: UiThinkingLevel[];
 	contextUsage: UiContextUsage | null;
@@ -167,6 +172,15 @@ interface ChatState {
 	setModelEnabled(provider: string, modelId: string, enabled: boolean): Promise<void>;
 	setModel(provider: string, id: string): Promise<void>;
 	setThinkingLevel(level: UiThinkingLevel): Promise<void>;
+	refreshAgents(probe?: boolean): Promise<void>;
+	saveAgent(request: UiAgentSaveRequest): Promise<void>;
+	removeAgent(id: string): Promise<void>;
+	/** Choose the agent of a conversation that has no messages yet. */
+	selectAgent(agentId: string): Promise<void>;
+	/** Change one of the external agent's session settings (reasoning effort, mode, ...). */
+	setAgentOption(optionId: string, value: string): Promise<void>;
+	/** Continue this conversation in another agent (opens a new conversation). */
+	handoffToAgent(agentId: string): Promise<void>;
 	refreshProviderAuth(): Promise<void>;
 	setProviderApiKey(provider: string, key: string): Promise<void>;
 	removeProviderCredential(provider: string): Promise<void>;
@@ -268,12 +282,14 @@ interface SessionPreparation {
 	/** Model / thinking picked while the runtime is still being prepared; applied before the draft goes live. */
 	deferred: DeferredSessionSettings;
 	settingsApplied: boolean;
+	/** The picked agent could not be applied: the waiting first input must not go to another runtime. */
+	agentRejected: string | null;
 	/** The backend's creation receipt, once it arrived. */
 	receipt: UiNewSessionReceipt | null;
 	/** Its waiting first input was handed off to the created session when the user navigated away. */
 	handedOff: boolean;
 }
-interface DeferredSessionSettings { model?: { provider: string; id: string }; thinkingLevel?: UiThinkingLevel }
+interface DeferredSessionSettings { agentId?: string; model?: { provider: string; id: string }; thinkingLevel?: UiThinkingLevel }
 interface PreparedInput {
 	bridge: AgentBridge;
 	requestId: number;
@@ -349,6 +365,8 @@ const store = createStore<ChatState>((set, get) => ({
 	model: '',
 	modelName: null,
 	modelProvider: '',
+	agent: null,
+	agents: [],
 	thinkingLevel: '',
 	availableThinkingLevels: [],
 	contextUsage: null,
@@ -479,6 +497,7 @@ const store = createStore<ChatState>((set, get) => ({
 					model: snapshot.model,
 					modelName: snapshot.modelName ?? null,
 					modelProvider: snapshot.modelProvider,
+					agent: snapshot.agent ?? null,
 					thinkingLevel: snapshot.thinkingLevel,
 					availableThinkingLevels: snapshot.availableThinkingLevels,
 					contextUsage: snapshot.contextUsage ? { ...snapshot.contextUsage } : null,
@@ -585,6 +604,7 @@ void get().refreshModelProviders().catch(() => {});
 					model: '',
 					modelName: null,
 					modelProvider: '',
+					agent: null,
 					thinkingLevel: '',
 					availableThinkingLevels: [],
 					contextUsage: null,
@@ -653,6 +673,7 @@ modelProviders: [...get().modelProviders],
 						model: event.model,
 						modelName: event.modelName ?? null,
 						modelProvider: event.modelProvider,
+						agent: event.agent ?? null,
 						thinkingLevel: event.thinkingLevel,
 						availableThinkingLevels: event.availableThinkingLevels,
 						contextUsage: event.contextUsage ? { ...event.contextUsage } : null,
@@ -692,6 +713,7 @@ modelProviders: [...get().modelProviders],
 					model: event.model,
 					modelName: event.modelName ?? null,
 					modelProvider: event.modelProvider,
+					...(event.agent ? { agent: event.agent } : {}),
 					thinkingLevel: event.thinkingLevel,
 					availableThinkingLevels: event.availableThinkingLevels,
 					contextUsage: event.contextUsage ? { ...event.contextUsage } : null,
@@ -747,6 +769,7 @@ if (!get().modelProviders.length) void get().refreshModelProviders().catch(() =>
 					model: event.model,
 					modelName: event.modelName ?? null,
 					modelProvider: event.modelProvider,
+					...(event.agent ? { agent: event.agent } : {}),
 					thinkingLevel: event.thinkingLevel,
 					availableThinkingLevels: event.availableThinkingLevels,
 					contextUsage: event.contextUsage ? { ...event.contextUsage } : null,
@@ -1269,6 +1292,77 @@ if (!get().modelProviders.length) void get().refreshModelProviders().catch(() =>
 		}
 	},
 
+	async refreshAgents(probe = false) {
+		const bridge = get().bridge;
+		if (!bridge || typeof bridge.listAgents !== 'function') return;
+		const agents = probe ? await bridge.probeAgents() : await bridge.listAgents();
+		if (get().bridge === bridge) set({ agents });
+	},
+
+	async saveAgent(request) {
+		const bridge = get().bridge;
+		if (!bridge) return;
+		const agents = await bridge.saveAgent(request);
+		if (get().bridge === bridge) set({ agents });
+	},
+
+	async removeAgent(id) {
+		const bridge = get().bridge;
+		if (!bridge) return;
+		const agents = await bridge.removeAgent(id);
+		if (get().bridge === bridge) set({ agents });
+	},
+
+	async selectAgent(agentId) {
+		const bridge = get().bridge;
+		if (!bridge) return;
+		const preparing = activePreparation();
+		if (preparing) {
+			// The conversation does not exist yet: remember the choice and show it now.
+			// Pi model / thinking picks do not apply to an external agent.
+			preparing.deferred.agentId = agentId;
+			if (agentId !== PI_AGENT_ID) { delete preparing.deferred.model; delete preparing.deferred.thinkingLevel; }
+			set({ agent: draftAgentDescriptor(agentId, get().agents), settingsError: null });
+			return;
+		}
+		const generation = beginSettingsRequest();
+		try {
+			await bridge.setSessionAgent(agentId);
+		} catch (error) {
+			if (generation === settingsGeneration) set({ settingsError: errorMessage(error) });
+			throw error;
+		} finally {
+			endSettingsRequest(generation);
+		}
+	},
+
+	async setAgentOption(optionId, value) {
+		const bridge = get().bridge;
+		if (!bridge || typeof bridge.setAgentOption !== 'function') return;
+		const generation = beginSettingsRequest();
+		try {
+			await bridge.setAgentOption(optionId, value);
+		} catch (error) {
+			if (generation === settingsGeneration) set({ settingsError: errorMessage(error) });
+			throw error;
+		} finally {
+			endSettingsRequest(generation);
+		}
+	},
+
+	async handoffToAgent(agentId) {
+		const bridge = get().bridge;
+		if (!bridge) return;
+		const cwd = get().cwd;
+		try {
+			await bridge.handoffToAgent(agentId);
+		} catch (error) {
+			set({ settingsError: errorMessage(error) });
+			throw error;
+		}
+		void get().refreshWorkspaceSessions(cwd);
+	},
+
 	async refreshProviderAuth() {
 		const bridge = get().bridge;
 		if (!bridge) return;
@@ -1736,7 +1830,7 @@ function prepareConversation(kind: SessionPreparation['kind'], options?: { cwd?:
 	// A retry of the same draft keeps the model / thinking already picked for it.
 	const inherited = sessionPreparation && sameInputScope(sessionPreparation.draftScope, draftScope) ? { ...sessionPreparation.deferred } : {};
 	const preparing: SessionPreparation = { bridge, requestId: request, kind, options, draftScope, failed: false,
-		ready: null, reset: false, promise: Promise.resolve(), deferred: inherited, settingsApplied: false, receipt: null, handedOff: false };
+		ready: null, reset: false, promise: Promise.resolve(), deferred: inherited, settingsApplied: false, agentRejected: null, receipt: null, handedOff: false };
 	const preserveBackgroundDraft = (receipt: UiInputScope | void): void => {
 		// A handed-off first input owns this draft's fate (see deliverHandedOffInput).
 		if (kind !== 'new' || !receipt || preparing.handedOff || generation !== bridgeGeneration || store.getState().bridge !== bridge) return;
@@ -1922,6 +2016,13 @@ async function sendInput(text: string, behavior?: 'steer' | 'followUp', attachme
 	} finally { if (navigationRequest !== undefined) { finishSessionNavigation(bridge, navigationRequest); flushPendingBranchViewSync(bridge, navigationRequest); } }
 }
 
+/** Descriptor shown for a picked agent before the conversation exists (models arrive with its session). */
+function draftAgentDescriptor(agentId: string, agents: UiAgentStatus[]): UiAgentDescriptor {
+	if (agentId === PI_AGENT_ID) return piAgentDescriptor();
+	const config = agents.find((agent) => agent.id === agentId);
+	return { id: agentId, kind: 'acp', displayName: config?.displayName ?? agentId, accentColor: config?.accentColor ?? null, capabilities: ACP_AGENT_CAPABILITIES };
+}
+
 function activePreparation(): SessionPreparation | null {
 	const preparing = sessionPreparation;
 	return preparing && store.getState().sessionPreparation?.requestId === preparing.requestId
@@ -1930,11 +2031,14 @@ function activePreparation(): SessionPreparation | null {
 
 /** Applies picker choices made during preparation; returns the first failure message, if any. */
 async function applyDeferredSettings(preparing: SessionPreparation): Promise<string | null> {
-	const { model, thinkingLevel } = preparing.deferred;
-	if (!model && !thinkingLevel) return null;
+	const { agentId, model, thinkingLevel } = preparing.deferred;
+	if (!agentId && !model && !thinkingLevel) return null;
 	let failure: string | null = null;
+	// The agent comes first: it decides which model / thinking choices apply.
+	try { if (agentId) await preparing.bridge.setSessionAgent(agentId); }
+	catch (error) { failure = errorMessage(error); preparing.agentRejected = failure; }
 	try { if (model) await preparing.bridge.setModel(model.provider, model.id); }
-	catch (error) { failure = errorMessage(error); }
+	catch (error) { failure ??= errorMessage(error); }
 	try { if (thinkingLevel) await preparing.bridge.setThinkingLevel(thinkingLevel); }
 	catch (error) { failure ??= errorMessage(error); }
 	// Model / thinking events are held back during preparation; the snapshot is
@@ -2015,8 +2119,9 @@ async function deliverHandedOffInput(preparing: SessionPreparation, input: Prepa
 		if (!receipt?.sessionId || !receipt.sessionPath || !('submitInput' in bridge) || typeof bridge.submitInput !== 'function') {
 			throw new Error(translate('store.agentNotReady'));
 		}
+		if (preparing.settingsApplied && preparing.agentRejected) throw new Error(preparing.agentRejected);
 		const result = await bridge.submitInput({ id: input.id, sessionId: receipt.sessionId, text: input.text, behavior: input.behavior,
-			attachments: input.attachments, ...(deferred.model ? { model: deferred.model } : {}), ...(deferred.thinkingLevel ? { thinkingLevel: deferred.thinkingLevel } : {}) });
+			attachments: input.attachments, ...(deferred.agentId ? { agentId: deferred.agentId } : {}), ...(deferred.model ? { model: deferred.model } : {}), ...(deferred.thinkingLevel ? { thinkingLevel: deferred.thinkingLevel } : {}) });
 		if (result.state === 'recovered' || result.state === 'failed' || result.state === 'reserved') throw new Error(result.message ?? translate('store.inputNeedsConfirmation'));
 		if (generation !== bridgeGeneration || store.getState().bridge !== bridge) return;
 		// The creation skipped its sidebar refresh when the view moved on; the new
@@ -2054,6 +2159,8 @@ async function sendAfterPreparation(preparing: SessionPreparation, text: string,
 			return;
 		}
 		if (preparedInput !== input || !currentSessionNavigation(input.bridge, input.requestId)) throw cancelledSubmission();
+		// The draft returns to the composer instead of reaching an agent the user did not pick.
+		if (preparing.agentRejected) throw new Error(preparing.agentRejected);
 		input.dispatched = true;
 		await store.getState().send(trimmed, behavior, attachments, id);
 		if (parseSlashCommand(trimmed) && !input.echoed) {

@@ -92,7 +92,7 @@ export const shellRunRegistry = new ShellRunRegistry();
 /** Routes the executing toolCallId/sessionId down into the operations layer. */
 const execScope = new AsyncLocalStorage<{ sessionId: string; toolCallId: string }>();
 
-function killProcessTree(pid: number): void {
+export function killProcessTree(pid: number): void {
 	if (process.platform === 'win32') {
 		// Use the trusted System32 executable so cleanup does not depend on PATH.
 		try {

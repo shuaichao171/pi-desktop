@@ -31,6 +31,13 @@ export function installModelSettingsFixture(options = {}) {
       { id: 'docs', name: 'docs', enabled: true, transport: 'http', url: 'https://mcp.example.invalid/docs', requestTimeoutMs: 30000, scope: 'project', status: 'error', error: '连接被拒绝（ECONNREFUSED）', tools: [] },
     ],
     mcpCliServers: [],
+    // External ACP agents: one ready, one missing from PATH, one custom (all fictional commands).
+    agents: [
+      { id: 'claude-code', displayName: 'Claude Code', command: 'claude-agent-acp', args: [], enabled: true, builtin: true, accentColor: '#D97757', installHint: 'npm install -g @agentclientprotocol/claude-agent-acp', readiness: 'ready', version: '0.9.0', resolvedCommand: 'C:\\review\\bin\\claude-agent-acp.cmd' },
+      { id: 'codex', displayName: 'Codex', command: 'codex-acp', args: [], enabled: true, builtin: true, accentColor: '#10A37F', installHint: 'npm install -g @agentclientprotocol/codex-acp', readiness: 'install', version: null, resolvedCommand: null, message: '未找到命令 codex-acp' },
+      { id: 'gemini', displayName: 'Gemini CLI', command: 'gemini', args: ['--experimental-acp'], enabled: false, builtin: true, accentColor: '#4285F4', installHint: 'npm install -g @google/gemini-cli', readiness: 'disabled', version: null, resolvedCommand: null },
+      { id: 'review-agent', displayName: 'Review Agent', command: 'C:\\review\\agent.exe', args: ['--acp'], env: { REVIEW_MODE: '1' }, enabled: true, builtin: false, accentColor: null, readiness: 'ready', version: '1.0.0', resolvedCommand: 'C:\\review\\agent.exe' },
+    ],
     cloudSync: { configured: false, config: null, status: { lastUploadAt: null, lastAutoSyncAt: null, lastError: null, pending: false } },
     machineSessions: [
       { path: 'C:\\Users\\review\\.pi\\agent\\sessions\\project\\a.jsonl', id: 'machine-a', name: '重构设置面板的卡片布局', firstMessage: '重构设置面板的卡片布局', modified: '2026-10-30T08:00:00Z', messageCount: 12, cwd: 'C:\\renderer-review\\project', registered: true, running: false, bytes: 48213 },
@@ -92,6 +99,29 @@ export function installModelSettingsFixture(options = {}) {
     setAppearance: (value) => { state.appearance = clone(value); },
     pickConversationStorageDirectory: () => null,
     listSlashCommands: () => [],
+    listAgents: () => clone(state.agents),
+    probeAgents: () => clone(state.agents),
+    saveAgent: (request) => {
+      const index = state.agents.findIndex((agent) => agent.id === request.id);
+      const previous = index >= 0 ? state.agents[index] : { id: request.displayName.toLowerCase().replace(/[^a-z0-9]+/g, '-'), builtin: false };
+      const next = { ...previous, ...request, id: previous.id, readiness: request.enabled ? 'ready' : 'disabled', version: request.enabled ? '1.0.0' : null, resolvedCommand: request.enabled ? request.command : null };
+      if (index >= 0) state.agents[index] = next; else state.agents.push(next);
+      return clone(state.agents);
+    },
+    removeAgent: (id) => { state.agents = state.agents.filter((agent) => agent.id !== id || agent.builtin); return clone(state.agents); },
+    setSessionAgent: (agentId) => {
+      const config = state.agents.find((agent) => agent.id === agentId);
+      const agent = agentId === 'pi'
+        ? { id: 'pi', kind: 'pi', displayName: 'Pi', accentColor: null, capabilities: { streamsThinking: true, interrupt: true, steer: true, thinkingLevels: true, slashCommands: true, extensions: true, images: true, session: { branch: true, fork: true, editUserMessage: true, rewind: true } } }
+        : { id: agentId, kind: 'acp', displayName: config.displayName, accentColor: config.accentColor, capabilities: { streamsThinking: true, interrupt: true, steer: false, thinkingLevels: false, slashCommands: true, extensions: false, images: false, session: { branch: false, fork: false, editUserMessage: false, rewind: false } }, models: [{ id: 'sonnet', name: 'Sonnet' }, { id: 'opus', name: 'Opus' }], currentModelId: 'sonnet' };
+      Object.assign(state.snapshot, { agent, ...(agentId === 'pi' ? {} : { model: 'sonnet', modelName: 'Sonnet', modelProvider: `acp:${agentId}`, thinkingLevel: 'off', availableThinkingLevels: ['off'] }) });
+      state.emitAgent({ type: 'model', agent, model: state.snapshot.model, modelName: state.snapshot.modelName, modelProvider: state.snapshot.modelProvider, thinkingLevel: state.snapshot.thinkingLevel, availableThinkingLevels: state.snapshot.availableThinkingLevels, contextUsage: null });
+    },
+    setAgentOption: (optionId, value) => {
+      const agent = state.snapshot.agent;
+      agent.options = (agent.options ?? []).map((option) => option.id === optionId ? { ...option, currentValue: value } : option);
+      state.emitAgent({ type: 'model', agent, model: state.snapshot.model, modelName: state.snapshot.modelName, modelProvider: state.snapshot.modelProvider, thinkingLevel: state.snapshot.thinkingLevel, availableThinkingLevels: state.snapshot.availableThinkingLevels, contextUsage: null });
+    },
     getWorkspaceBranches: () => ({ isRepository: true, current: 'review-fixture', detached: false, branches: ['review-fixture'] }),
     getWorkspaceGitStatus: () => ({ isRepository: true, branch: 'review-fixture', entries: [], truncated: false }),
     listWorkspaceOpeners: () => [],

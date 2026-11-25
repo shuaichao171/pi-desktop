@@ -24,10 +24,10 @@ export interface ComposerSlashPickerHandle {
 
 type Source = UiSlashCommand['source'];
 type CommandRow = { id: string; command: UiSlashCommand; description: string; score: number; index: number };
-const SOURCES: Source[] = ['builtin', 'extension', 'prompt', 'skill'];
+const SOURCES: Source[] = ['builtin', 'agent', 'extension', 'prompt', 'skill'];
 const SOURCE_LABELS: Record<Source, string> = {
 	builtin: 'composer.slashBuiltin', extension: 'composer.slashExtension',
-	prompt: 'composer.slashPrompt', skill: 'composer.slashSkill',
+	prompt: 'composer.slashPrompt', skill: 'composer.slashSkill', agent: 'composer.slashAgent',
 };
 const RESULT_LIMIT = 200;
 const LOCALIZED_BUILTINS = new Set(['new', 'compact', 'name', 'reload']);

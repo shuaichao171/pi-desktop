@@ -14,7 +14,7 @@ export default async function settingsSearchScenarios(review) {
   await review.key('ArrowDown');
   await review.key('Enter');
   await review.assert('document.querySelector(".pd-settings-content h2").textContent === "外观" && document.activeElement.matches("[data-setting=font] input") && Boolean(document.querySelector(".pd-settings-row.pd-settings-search-target"))', 'Keyboard selection opens the page, focuses the matching control, and highlights its row');
-  await review.assert(`document.querySelector(${JSON.stringify(input)}).value === '' && document.querySelectorAll('.pd-settings-nav button').length === 13`, 'Choosing a result restores the complete category navigation');
+  await review.assert(`document.querySelector(${JSON.stringify(input)}).value === '' && document.querySelectorAll('.pd-settings-nav button').length === 14`, 'Choosing a result restores the complete category navigation');
 
   await review.fill(input, '  命令   字号  ');
   await review.assert('document.querySelectorAll(".pd-settings-search-result").length === 1', 'Search handles whitespace and multiple keywords');

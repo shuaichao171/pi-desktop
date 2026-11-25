@@ -1,4 +1,4 @@
-import { MCP_FEATURE_CHANNELS, PLUGIN_UPDATE_CHANNELS } from '@pidesktop/shared';
+import { AGENT_RUNTIME_CHANNELS, MCP_FEATURE_CHANNELS, PLUGIN_UPDATE_CHANNELS, isValidAgentId, requireAgentOptionChange, requireAgentSaveRequest } from '@pidesktop/shared';
 import { registerCloudSyncIpc } from './cloudSyncIpc';
 import { registerDebugApiIpc } from './debugApiIpc';
 /**
@@ -1402,6 +1402,34 @@ export function registerIpc(options: {
 	handleRendererInvoke(MCP_FEATURE_CHANNELS.connectMcpServer, (event, request: Parameters<typeof agentService.connectMcpServer>[0]) => agentFor(event).connectMcpServer(request));
 	handleRendererInvoke(MCP_FEATURE_CHANNELS.disconnectMcpServer, (event, request: Parameters<typeof agentService.disconnectMcpServer>[0]) => agentFor(event).disconnectMcpServer(request));
 	handleRendererInvoke(MCP_FEATURE_CHANNELS.testMcpServer, (event, request: Parameters<typeof agentService.testMcpServer>[0]) => agentFor(event).testMcpServer(request));
+	handleRendererInvoke(AGENT_RUNTIME_CHANNELS.listAgents, (event) => agentFor(event).listAgents());
+	handleRendererInvoke(AGENT_RUNTIME_CHANNELS.probeAgents, (event) => agentFor(event).probeAgents());
+	handleRendererInvoke(AGENT_RUNTIME_CHANNELS.saveAgent, (event, request: unknown) => agentFor(event).saveAgent(requireAgentSaveRequest(request)));
+	handleRendererInvoke(AGENT_RUNTIME_CHANNELS.removeAgent, (event, id: unknown) => {
+		if (!isValidAgentId(id)) throw new Error('Agent 参数无效');
+		return agentFor(event).removeAgent(id);
+	});
+	handleRendererInvoke(AGENT_RUNTIME_CHANNELS.setSessionAgent, (event, agentId: unknown) => {
+		if (!isValidAgentId(agentId)) throw new Error('Agent 参数无效');
+		return agentFor(event).setSessionAgent(agentId);
+	});
+	handleRendererInvoke(AGENT_RUNTIME_CHANNELS.setAgentOption, (event, optionId: unknown, value: unknown) => {
+		const change = requireAgentOptionChange(optionId, value);
+		return agentFor(event).setAgentOption(change.optionId, change.value);
+	});
+	handleRendererInvoke(AGENT_RUNTIME_CHANNELS.handoffToAgent, async (event, agentId: unknown) => {
+		if (!isValidAgentId(agentId)) throw new Error('Agent 参数无效');
+		const hosted = (paneSlotForSender(event.sender) as { sessionPath?: string } | undefined) ?? (paiSlotForSender(event.sender) as { sessionPath?: string } | undefined);
+		const run = async () => {
+			const agent = agentFor(event);
+			await agent.handoffToAgent(agentId);
+			// The surface now shows the new conversation; authorize its draft scope like a new conversation.
+			if (hosted) hosted.sessionPath = undefined;
+			const snapshot = await agent.getSnapshot();
+			inputFeatures?.rememberScope({ cwd: snapshot.cwd, sessionPath: snapshot.sessionPath });
+		};
+		return hosted ? run() : queueWorkspaceActivation(run);
+	});
 	workbenchService = registerWorkbenchIpc(() => activeWorkspace, {
 		// App-side remark store: only used when a project root has no .code-workspace
 		// file; keys follow the same normalization as every other workspace record.

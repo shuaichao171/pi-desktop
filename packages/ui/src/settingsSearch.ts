@@ -1,11 +1,11 @@
 import type { Translate } from './i18n';
 
-export type SettingsPage = 'general' | 'conversation' | 'notifications' | 'appearance' | 'personalization' | 'model' | 'backup' | 'debug' | 'engine' | 'shortcuts' | 'updates' | 'sessions' | 'mcp';
+export type SettingsPage = 'general' | 'conversation' | 'notifications' | 'appearance' | 'personalization' | 'model' | 'backup' | 'debug' | 'engine' | 'shortcuts' | 'updates' | 'sessions' | 'mcp' | 'agents';
 
 export const SETTINGS_PAGE_LABELS: Record<SettingsPage, string> = {
 	general: 'settings.general', conversation: 'settings.conversation', notifications: 'settings.notificationsPage', appearance: 'settings.appearance', personalization: 'settings.personalization',
 	model: 'settings.modelManagement', backup: 'settings.cloudBackup', debug: 'settings.debugApi',
-	engine: 'settings.engine', shortcuts: 'settings.shortcuts', updates: 'settings.updates', sessions: 'settings.sessions', mcp: 'MCP',
+	engine: 'settings.engine', shortcuts: 'settings.shortcuts', updates: 'settings.updates', sessions: 'settings.sessions', mcp: 'MCP', agents: 'agents.title',
 };
 
 type SearchEntry = {
@@ -50,6 +50,7 @@ const SETTINGS_SEARCH_ENTRIES: SearchEntry[] = [
 	{ page: 'shortcuts', labelKey: 'settings.shortcuts', descriptionKey: 'settings.shortcutsDescription' },
 	{ page: 'updates', labelKey: 'settings.autoInstallUpdates', descriptionKey: 'settings.autoInstallUpdatesDescription', selector: '[data-setting="auto-install-updates"]', desktopSettings: true },
 	{ page: 'mcp', labelKey: 'mcp.addServer', descriptionKey: 'mcp.description' },
+	{ page: 'agents', labelKey: 'agents.add', descriptionKey: 'agents.description' },
 ];
 
 export type SettingsSearchResult = { page: SettingsPage; title: string; category: string; selector?: string };

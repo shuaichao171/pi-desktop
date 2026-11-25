@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react';
 import { ExitPresence } from './ExitPresence';
 import type { UiMessage, UiSessionMetaPatch } from '@pidesktop/shared';
+import { agentCapabilities } from '@pidesktop/shared';
 import { useT } from '../i18n';
 import { useChatStore } from '../store';
 import { Icon } from './Icons';
@@ -24,6 +25,8 @@ export function ChatHeaderMenu({ title, sessionPath, cwd, onOpenCommit }: { titl
 	const [anchor, setAnchor] = useState<HTMLElement | null>(null);
 	const [notice, setNotice] = useState<string | null>(null);
 	const [panel, setPanel] = useState<'stats' | 'tree' | null>(null);
+	// External agents keep a linear history: no session tree to browse.
+	const canBranch = useChatStore((s) => agentCapabilities(s.agent).session.branch);
 	const panelTrigger = useRef<HTMLElement | null>(null);
 	const saved = Boolean(sessionPath);
 
@@ -101,7 +104,7 @@ export function ChatHeaderMenu({ title, sessionPath, cwd, onOpenCommit }: { titl
 			{item(t('chat.menuCopyPath'), () => { if (sessionPath) void copyText(sessionPath); }, !saved)}
 			<hr />
 			{item(t('chat.stats.menuEntry'), () => openPanel('stats'))}
-			{item(t('chat.tree.menuEntry'), () => openPanel('tree'))}
+			{canBranch && item(t('chat.tree.menuEntry'), () => openPanel('tree'))}
 			{item(t('chat.menuCopyMarkdown'), () => copyConversationMarkdown())}
 			{item(t('chat.menuExportHtml'), () => { close(); void exportAs('html'); })}
 			{item(t('chat.menuExportJsonl'), () => { close(); void exportAs('jsonl'); })}

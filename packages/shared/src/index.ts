@@ -31,6 +31,8 @@ export * from './dataFeatures.ts';
 export * from './workbenchFeatures.ts';
 export * from './cloudSync.ts';
 export * from './debugApi.ts';
+export * from './agentRuntimes.ts';
+import type { AgentRuntimeFeaturesBridge, UiAgentDescriptor, UiHandoffLink } from './agentRuntimes';
 /**
  * @pidesktop/shared — IPC contract shared between the Electron main process,
  * the preload bridge, and the React renderer.
@@ -496,7 +498,9 @@ export interface UiMessage {
   order: number;
   role: 'user' | 'assistant' | 'system';
   /** System-row flavor: compaction/branch summaries and extension notices (role 'system' only). */
-  systemKind?: 'compaction' | 'branch-summary' | 'custom' | 'extension-notice' | 'subagent-notify' | 'goal-audit' | 'background-task';
+  systemKind?: 'compaction' | 'branch-summary' | 'custom' | 'extension-notice' | 'subagent-notify' | 'goal-audit' | 'background-task' | 'handoff';
+  /** Agent handoff link (systemKind 'handoff' only). */
+  handoff?: UiHandoffLink;
   /** Extension-notice flavor: info/warning/error styling (systemKind 'extension-notice' only). */
   notificationType?: 'info' | 'warning' | 'error';
   /** Accumulated text (grows while streaming). */
@@ -538,7 +542,7 @@ export interface UiSlashCommand {
   /** Invocation name without the leading slash. */
   name: string;
   description: string;
-  source: 'builtin' | 'extension' | 'prompt' | 'skill';
+  source: 'builtin' | 'extension' | 'prompt' | 'skill' | 'agent';
   acceptsArguments: boolean;
   requiresIdle: boolean;
 }
@@ -692,8 +696,8 @@ export interface UiSubagentActivity {
 export type AgentUiEvent =
   | { type: 'reset'; cwd: string }
   | { type: 'status'; status: AgentStatus; message?: string; attempt?: number; maxAttempts?: number }
-  | { type: 'ready'; /** Same branch re-published as-is (settled-turn id swap, idle notice): a content change, not navigation — reading positions are not restored. */ resync?: boolean; resumeKind?: 'cold' | 'warm'; model: string; modelName?: string | null; modelProvider: string; thinkingLevel: UiThinkingLevel; availableThinkingLevels: UiThinkingLevel[]; contextUsage: UiContextUsage | null; cwd: string; sessionId: string; sessionPath: string | null; messages: UiMessage[]; activities: UiToolActivity[]; fileChanges: UiFileChange[]; fileChangeTurns?: UiFileChangeTurn[]; fileChangeActiveRunId?: string | null; historyTotal?: number; runs?: UiConversationRun[] }
-  | { type: 'model'; model: string; modelName?: string | null; modelProvider: string; thinkingLevel: UiThinkingLevel; availableThinkingLevels: UiThinkingLevel[]; contextUsage: UiContextUsage | null }
+  | { type: 'ready'; /** Runtime that owns the conversation; absent means Pi (older hosts). */ agent?: UiAgentDescriptor; /** Same branch re-published as-is (settled-turn id swap, idle notice): a content change, not navigation — reading positions are not restored. */ resync?: boolean; resumeKind?: 'cold' | 'warm'; model: string; modelName?: string | null; modelProvider: string; thinkingLevel: UiThinkingLevel; availableThinkingLevels: UiThinkingLevel[]; contextUsage: UiContextUsage | null; cwd: string; sessionId: string; sessionPath: string | null; messages: UiMessage[]; activities: UiToolActivity[]; fileChanges: UiFileChange[]; fileChangeTurns?: UiFileChangeTurn[]; fileChangeActiveRunId?: string | null; historyTotal?: number; runs?: UiConversationRun[] }
+  | { type: 'model'; agent?: UiAgentDescriptor; model: string; modelName?: string | null; modelProvider: string; thinkingLevel: UiThinkingLevel; availableThinkingLevels: UiThinkingLevel[]; contextUsage: UiContextUsage | null }
   | { type: 'context-usage'; contextUsage: UiContextUsage | null }
   | { type: 'thinking-level'; level: UiThinkingLevel }
   | { type: 'user-message'; id: string; order: number; text: string; attachments?: UiAttachment[]; attachmentsOmitted?: number; attachmentReferences?: UiAttachmentReference[]; runId?: string }
@@ -732,6 +736,8 @@ export interface AgentSnapshot {
   sessionRuntimes?: UiSessionRuntimeSummary[];
   /** Live pi-subagents async fleet snapshot (null when the plugin is absent or idle). */
   subagentFleet?: UiSubagentFleetSnapshot | null;
+  /** Runtime that owns the loaded conversation; absent means Pi. */
+  agent?: UiAgentDescriptor;
   status: AgentStatus;
   statusMessage?: string;
   /** Auto-retry progress while the agent retries a failed model call (4.4). */
@@ -1169,7 +1175,7 @@ export interface UiInterruptedRun { cwd: string; path: string }
 
 export type UiAppCommand = { type: 'new-session' } | { type: 'switch-session'; path: string; cwd?: string } | { type: 'open-settings' } | { type: 'appearance-changed'; appearance: UiAppearanceState } | { type: 'cycle-loaded-session'; direction: 1 | -1 };
 
-export interface AgentBridge extends InputFeatureBridge, DataFeaturesBridge, WorkbenchFeaturesBridge, ManagementFeaturesBridge, PluginUpdatesBridge, McpFeaturesBridge, ResultFilesBridge, CloudSyncFeaturesBridge, GoalFeaturesBridge, SideQuestionFeatureBridge {
+export interface AgentBridge extends AgentRuntimeFeaturesBridge, InputFeatureBridge, DataFeaturesBridge, WorkbenchFeaturesBridge, ManagementFeaturesBridge, PluginUpdatesBridge, McpFeaturesBridge, ResultFilesBridge, CloudSyncFeaturesBridge, GoalFeaturesBridge, SideQuestionFeatureBridge {
   getPersonalization(): Promise<UiInstructionDocument[]>;
   saveInstruction(request: UiSaveInstructionRequest): Promise<UiSaveInstructionResult>;
   getPluginCatalog(cwd: string): Promise<UiPluginCatalog>;

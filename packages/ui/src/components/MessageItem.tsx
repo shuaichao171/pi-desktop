@@ -1,4 +1,5 @@
 import type { UiAttachment, UiFileCheckpoint, UiMessage } from '@pidesktop/shared';
+import { agentCapabilities } from '@pidesktop/shared';
 import { memo, useContext, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { createPortal } from 'react-dom';
 import { useT } from '../i18n';
@@ -78,6 +79,8 @@ const UserMessageItem = memo(function UserMessageItem({ message, highlighted, fi
 	const [submitting, setSubmitting] = useState(false);
 	const [draft, setDraft] = useState(message.text);
 	const [fileMode, setFileMode] = useState<'keep' | 'rewind'>('keep');
+	// External agents own their history; editing a sent message needs Pi's session tree.
+	const canEdit = useChatStore((s) => agentCapabilities(s.agent).session.editUserMessage);
 	const [rewindLookup, setRewindLookup] = useState<{ state: 'loading' } | { state: 'none' } | { state: 'error' } | { state: 'ready'; preview: UiFileCheckpoint; conflict: boolean } | null>(null);
 	const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 	const query = useContext(TranscriptSearchContext).trim().toLocaleLowerCase();
@@ -205,7 +208,7 @@ const UserMessageItem = memo(function UserMessageItem({ message, highlighted, fi
 				{Boolean(message.attachmentsOmitted) && <p className="pd-activity-note">{t('message.attachmentsOmitted', { count: String(message.attachmentsOmitted) })}</p>}
 				<div className="pd-message-actions">
 					<HoverTooltip title={t(copied ? 'message.copied' : 'message.copy')}><button type="button" className="pd-message-action" onClick={() => void copy()} disabled={!message.text} aria-label={t(copied ? 'message.copied' : 'message.copy')}><Icon name={copied ? 'check' : 'copy'} width="14" height="14" /></button></HoverTooltip>
-					<HoverTooltip title={t('message.edit')}><button type="button" className="pd-message-action" onClick={startEdit} aria-label={t('message.edit')}><Icon name="pencil" width="14" height="14" /></button></HoverTooltip>
+					{canEdit && <HoverTooltip title={t('message.edit')}><button type="button" className="pd-message-action" onClick={startEdit} aria-label={t('message.edit')}><Icon name="pencil" width="14" height="14" /></button></HoverTooltip>}
 					<HoverTooltip title={t('sideQuestion.action')} description={t('sideQuestion.placeholder')}><button type="button" className="pd-message-action" onClick={() => useChatStore.getState().openSideQuestion(message.id)} aria-label={t('sideQuestion.action')}><Icon name="spark" width="14" height="14" /></button></HoverTooltip>
 				</div>
 				<SideQuestionRegion anchorEntryId={message.id} />
@@ -226,6 +229,11 @@ const AssistantMessageItem = memo(function AssistantMessageItem({ message, highl
 	const [selectionPosition, setSelectionPosition] = useState({ left: 0, top: 0 });
 	const [copied, setCopied] = useState(false);
 	const [forking, setForking] = useState(false);
+	const canFork = useChatStore((s) => agentCapabilities(s.agent).session.fork);
+	const canBranch = useChatStore((s) => agentCapabilities(s.agent).session.branch);
+	const agentName = useChatStore((s) => s.agent?.displayName ?? 'Pi');
+	const agentColor = useChatStore((s) => s.agent?.kind === 'acp' ? s.agent.accentColor ?? null : null);
+	const externalAgent = useChatStore((s) => s.agent?.kind === 'acp');
 	const [regenerating, setRegenerating] = useState(false);
 	const actionPending = useRef(false);
 
@@ -293,7 +301,7 @@ const AssistantMessageItem = memo(function AssistantMessageItem({ message, highl
 	return (
 		<div className={`pd-message-row is-assistant${process ? ' is-process-message' : ''}${highlighted ? ' is-search-match' : ''}${findMatch ? ' is-find-match' : ''}`} data-message-id={message.id}>
 			<div className="pd-message-column">
-				{showHeading && <div className="pd-assistant-heading"><span className="pd-assistant-mark">π</span><span>Pi</span></div>}
+				{showHeading && <div className="pd-assistant-heading">{externalAgent ? <span className="pd-agent-mark is-heading" style={agentColor ? { background: agentColor } : undefined} aria-hidden="true">{agentName.slice(0, 1).toUpperCase()}</span> : <span className="pd-assistant-mark">π</span>}<span>{agentName}</span></div>}
 				{hasThinking && !hideThinking && showReasoning && <ThinkingActivity message={message} />}
 				{hasThinking && !showReasoning && !hideThinking && message.status === 'streaming' && message.thinkingStatus === 'streaming' && <span className="pd-response-pending" role="status"><ActivityLabel active>{t('message.generating')}</ActivityLabel></span>}
 				{message.text && <div ref={bodyRef} data-message-body className="pd-markdown" onPointerUp={inspectSelection} onKeyUp={inspectSelection}><StreamingContentContext.Provider value={message.status === 'streaming'}><ConversationMarkdown>{message.text}</ConversationMarkdown></StreamingContentContext.Provider></div>}
@@ -303,8 +311,8 @@ const AssistantMessageItem = memo(function AssistantMessageItem({ message, highl
 				{showActions && (
 					<div className="pd-message-actions">
 						<HoverTooltip title={t(copied ? 'message.copied' : 'message.copy')}><button type="button" className="pd-message-action" onClick={() => void copy()} aria-label={t(copied ? 'message.copied' : 'message.copy')}><Icon name={copied ? 'check' : 'copy'} width="14" height="14" /></button></HoverTooltip>
-						{canRegenerate && <HoverTooltip title={t('message.regenerate')} description={c('regenerateHint')}><button type="button" className="pd-message-action" onClick={() => void regenerate()} disabled={regenerating || !idle} aria-label={t('message.regenerate')}><Icon name="rotateCcw" width="14" height="14" />{regenerating && <span role="status">{c('regenerating')}</span>}</button></HoverTooltip>}
-						<HoverTooltip title={t('message.fork')} description={c('forkHint')}><button type="button" className="pd-message-action" onClick={() => void fork()} disabled={forking || !idle} aria-label={t('message.fork')}><Icon name="gitBranch" width="14" height="14" />{forking && <span role="status">{c('forking')}</span>}</button></HoverTooltip>
+						{canRegenerate && canBranch && <HoverTooltip title={t('message.regenerate')} description={c('regenerateHint')}><button type="button" className="pd-message-action" onClick={() => void regenerate()} disabled={regenerating || !idle} aria-label={t('message.regenerate')}><Icon name="rotateCcw" width="14" height="14" />{regenerating && <span role="status">{c('regenerating')}</span>}</button></HoverTooltip>}
+						{canFork && <HoverTooltip title={t('message.fork')} description={c('forkHint')}><button type="button" className="pd-message-action" onClick={() => void fork()} disabled={forking || !idle} aria-label={t('message.fork')}><Icon name="gitBranch" width="14" height="14" />{forking && <span role="status">{c('forking')}</span>}</button></HoverTooltip>}
 						{jumpToMessage && <HoverTooltip title={t('message.jumpToStart')}><button type="button" className="pd-message-action" onClick={() => jumpToMessage(message.id)} aria-label={t('message.jumpToStart')}><Icon name="arrowUp" width="14" height="14" /></button></HoverTooltip>}
 						<HoverTooltip title={t('sideQuestion.action')} description={t('sideQuestion.placeholder')}><button type="button" className="pd-message-action" onClick={() => {
 							// An aside anchors on the turn's opening user message (btw_history semantics).
@@ -322,6 +330,20 @@ const AssistantMessageItem = memo(function AssistantMessageItem({ message, highl
 const SystemMessageItem = memo(function SystemMessageItem({ message, highlighted, findMatch }: { message: UiMessage; highlighted?: boolean; findMatch?: boolean }) {
 	const { t } = useT();
 	const query = useContext(TranscriptSearchContext).trim().toLocaleLowerCase();
+	const link = message.systemKind === 'handoff' ? message.handoff : undefined;
+	if (link) {
+		const open = () => {
+			const state = useChatStore.getState();
+			void state.selectSession(state.cwd, link.sessionPath).catch((error: unknown) => operationFeedback.show({ id: `handoff:${message.id}`, kind: 'error', title: t('message.handoffOpenFailed'), detail: error instanceof Error ? error.message : String(error) }));
+		};
+		return <div className={`pd-message-row is-system${highlighted ? ' is-search-match' : ''}${findMatch ? ' is-find-match' : ''}`} data-message-id={message.id}>
+			<div className="pd-handoff-row" data-message-body>
+				<Icon name="arrowRight" width="13" height="13" />
+				<span>{t(link.direction === 'from' ? 'message.handoffFrom' : 'message.handoffTo', { from: link.fromAgent, to: link.toAgent })}</span>
+				<button type="button" onClick={open}>{t(link.direction === 'from' ? 'message.handoffOpenSource' : 'message.handoffOpenTarget')}</button>
+			</div>
+		</div>;
+	}
 	return (
 		<div className={`pd-message-row is-system${highlighted ? ' is-search-match' : ''}${findMatch ? ' is-find-match' : ''}`} data-message-id={message.id}>
 			<details className="pd-system-notice" data-system-kind={message.systemKind} open={query && message.text.toLocaleLowerCase().includes(query) ? true : undefined}>

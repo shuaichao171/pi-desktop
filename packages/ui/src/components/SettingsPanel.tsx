@@ -1,4 +1,5 @@
 import { McpSettingsPanel } from './McpSettingsPanel';
+import { AgentsSettingsPanel } from './AgentsSettingsPanel';
 import { SessionManagementPanel } from './SessionManagementPanel';
 import { useCallback, useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
 import type { UiDebugApiConfig, UiDebugApiState, UiDesktopSettings, UiProviderAuthStatus, UiUpdateState } from '@pidesktop/shared';
@@ -44,7 +45,7 @@ const SETTINGS_NAV: Array<{ id: 'app' | 'models' | 'data' | 'advanced'; pages: A
 		{ page: 'general', icon: 'settings' }, { page: 'conversation', icon: 'message' }, { page: 'appearance', icon: 'palette' }, { page: 'notifications', icon: 'alert' }, { page: 'shortcuts', icon: 'keyboard' },
 	] },
 	{ id: 'models', pages: [
-		{ page: 'model', icon: 'spark' }, { page: 'personalization', icon: 'user' }, { page: 'mcp', icon: 'plugins' },
+		{ page: 'model', icon: 'spark' }, { page: 'personalization', icon: 'user' }, { page: 'agents', icon: 'cpu' }, { page: 'mcp', icon: 'plugins' },
 	] },
 	{ id: 'data', pages: [
 		{ page: 'backup', icon: 'cloud' }, { page: 'sessions', icon: 'message', desktopOnly: true }, { page: 'updates', icon: 'update', desktopOnly: true },
@@ -149,7 +150,7 @@ function ProviderCredentialRow({ provider, configured, source, supportsApiKey, o
 	);
 }
 
-export function SettingsPanel({ initialPage = 'general', modelManagementTarget, onClose, themePreference, onThemePreferenceChange, colorPreferences, onColorPreferencesChange, colorSaveFailed }: { initialPage?: 'general' | 'appearance' | 'model' | 'updates'; modelManagementTarget?: ModelManagementTarget; onClose(): void; themePreference: ThemePreference; onThemePreferenceChange(theme: ThemePreference): void; colorPreferences: ThemeColorPreferences; onColorPreferencesChange(preferences: ThemeColorPreferences): void; colorSaveFailed: boolean }) {
+export function SettingsPanel({ initialPage = 'general', modelManagementTarget, onClose, themePreference, onThemePreferenceChange, colorPreferences, onColorPreferencesChange, colorSaveFailed }: { initialPage?: 'general' | 'appearance' | 'model' | 'updates' | 'agents'; modelManagementTarget?: ModelManagementTarget; onClose(): void; themePreference: ThemePreference; onThemePreferenceChange(theme: ThemePreference): void; colorPreferences: ThemeColorPreferences; onColorPreferencesChange(preferences: ThemeColorPreferences): void; colorSaveFailed: boolean }) {
 	const { t, locale, setLocale } = useT();
 	const appInfo = useChatStore((s) => s.appInfo);
 	const [paiLaunch] = useState(() => new URLSearchParams(window.location.search).get('mode') === 'pai');
@@ -470,6 +471,7 @@ export function SettingsPanel({ initialPage = 'general', modelManagementTarget, 
 						<ScopedErrorBoundary scope="settings" resetKeys={[page]}>
 						{!paiMode && page === 'sessions' && <SessionManagementPanel />}
 						{page === 'mcp' && <McpSettingsPanel />}
+						{page === 'agents' && <AgentsSettingsPanel />}
 						{page === 'personalization' && <PersonalizationPanel active onDraftStateChange={reportDraftState} />}
 						{page === 'general' && <>
 							<div className="pd-settings-section-head"><h2>{t('settings.general')}</h2><p>{t('settings.generalDescription')}</p></div>
