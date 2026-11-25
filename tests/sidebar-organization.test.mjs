@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { test } from 'node:test';
 import {
+  advanceRecentlyViewed,
   assignProjectToGroup,
   buildSidebarGroups,
   buildSidebarProjectGroups,
@@ -19,6 +20,7 @@ import {
   readSidebarProjectGroups,
   readSidebarSectionLayout,
   readPinnedProjects,
+  RECENTLY_VIEWED_GRACE_MS,
   reorderSidebarProjectPositions,
   saveSidebarPreferences,
   saveSidebarProjectGroups,
@@ -60,6 +62,26 @@ test('folded projects retain ongoing work and unread results until they are sett
   assert.ok(!paths(visible(read)).includes('running'), 'viewing the finished result restores the project fold');
   assert.equal(isSessionOngoingOrUnread(session('idle')), false);
   assert.deepEqual(visible([session('idle')]), []);
+});
+
+test('folded projects keep the viewed conversation and the ones left within the grace period', () => {
+  const rows = [session('ordinary'), session('viewed'), session('left'), session('unread', { unread: true })];
+  const fold = keepVisible => paths(selectProjectSessionRows(rows, { collapsed: true, limit: 5, keepVisible }));
+  assert.deepEqual(fold(undefined), ['unread']);
+  assert.deepEqual(fold(new Set(['viewed'])), ['viewed', 'unread'], 'the conversation on screen survives the fold');
+
+  let lingering = new Map();
+  lingering = advanceRecentlyViewed(lingering, ['left'], ['viewed'], 1000);
+  assert.deepEqual([...lingering], [['left', 1000 + RECENTLY_VIEWED_GRACE_MS]], 'switching away starts a 5s grace');
+  assert.equal(RECENTLY_VIEWED_GRACE_MS, 5000);
+  assert.deepEqual(fold(new Set(['viewed', ...lingering.keys()])), ['viewed', 'left', 'unread']);
+  assert.equal(advanceRecentlyViewed(lingering, ['viewed'], ['viewed'], 5999), lingering, 'unchanged state keeps its identity');
+  assert.deepEqual([...advanceRecentlyViewed(lingering, [], ['viewed'], 6000)], [], 'the grace period ends after 5s');
+  assert.deepEqual([...advanceRecentlyViewed(lingering, ['viewed'], ['left'], 2000)], [['viewed', 7000]], 'returning to a row ends its grace and starts one for the row just left');
+
+  const ordinary = Array.from({ length: 7 }, (_, index) => session(`ordinary-${index}`));
+  assert.deepEqual(paths(selectProjectSessionRows(ordinary, { collapsed: false, limit: 5, keepVisible: new Set(['ordinary-1']) })), paths(ordinary.slice(0, 5)), 'a viewed row inside the page keeps its slot');
+  assert.deepEqual(paths(selectProjectSessionRows(ordinary, { collapsed: false, limit: 5, keepVisible: new Set(['ordinary-6']) })), [...paths(ordinary.slice(0, 5)), 'ordinary-6'], 'a viewed row past the page is still listed');
 });
 
 test('project pages never hide attention rows or count them against ordinary pagination', () => {

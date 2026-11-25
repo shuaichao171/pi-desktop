@@ -334,10 +334,47 @@ export function isSessionOngoingOrUnread(session: UiSessionSummary): boolean {
     || phase === 'running' || phase === 'waiting-input' || phase === 'waiting-approval');
 }
 
+/** How long a conversation the user just left keeps its row in a folded project. */
+export const RECENTLY_VIEWED_GRACE_MS = 5000;
+
+/**
+ * Advances the "just viewed" linger map (session path → expiry timestamp). Paths that were
+ * being viewed and no longer are start a grace period; paths viewed again or past their
+ * expiry drop out. Returns the same map instance when nothing changed.
+ */
+export function advanceRecentlyViewed(
+  lingering: ReadonlyMap<string, number>,
+  previousViewing: readonly string[],
+  viewing: readonly string[],
+  now: number,
+  graceMs = RECENTLY_VIEWED_GRACE_MS,
+): ReadonlyMap<string, number> {
+  const current = new Set(viewing);
+  const next = new Map<string, number>();
+  let changed = false;
+  for (const [path, expiresAt] of lingering) {
+    if (current.has(path) || expiresAt <= now) { changed = true; continue; }
+    next.set(path, expiresAt);
+  }
+  for (const path of previousViewing) {
+    if (current.has(path) || next.get(path) === now + graceMs) continue;
+    next.set(path, now + graceMs);
+    changed = true;
+  }
+  return changed ? next : lingering;
+}
+
 /** Keep the existing order; pagination applies only to ordinary conversations. */
-export function selectProjectSessionRows(sessions: SidebarSession[], options: { collapsed: boolean; limit: number }): SidebarSession[] {
+export function selectProjectSessionRows(sessions: SidebarSession[], options: { collapsed: boolean; limit: number; keepVisible?: ReadonlySet<string> }): SidebarSession[] {
   let ordinary = 0;
-  return sessions.filter(session => isSessionOngoingOrUnread(session) || (!options.collapsed && ordinary++ < options.limit));
+  // Viewed (or just-left) conversations survive the fold and the page limit like attention
+  // rows, but still occupy their ordinary page slot so other rows never shift around them.
+  return sessions.filter(session => {
+    if (isSessionOngoingOrUnread(session)) return true;
+    const kept = Boolean(options.keepVisible?.has(session.path));
+    if (options.collapsed) return kept;
+    return ordinary++ < options.limit || kept;
+  });
 }
 
 export function buildSidebarGroups(sessions: SidebarSession[], groups: UiSessionGroup[]): {

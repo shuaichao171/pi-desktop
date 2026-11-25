@@ -20,7 +20,7 @@ import { SessionDeleteDialog } from './SessionDeleteDialog';
 import { SessionBulkDeleteDialog, type SessionDeleteTarget } from './SessionBulkDeleteDialog';
 import { ProjectCreationDialog } from './ProjectCreationDialog';
 import { ProjectRemovalDialog, type ProjectRemovalSummary } from './ProjectRemovalDialog';
-import { assignProjectToGroup, buildSidebarGroups, buildSidebarProjectGroups, clearPinnedProjects, collectSidebarSessions, groupSidebarProjects, groupSessionsByDate, mergeSidebarProjectOrder, moveProjectToGroupPosition, orderSidebarProjects, readPinnedProjects, readSidebarPreferences, readSidebarProjectGroups, readSidebarSectionLayout, reorderSidebarProjectPositions, saveSidebarPreferences, saveSidebarProjectGroups, saveSidebarSectionLayout, selectProjectSessionRows, selectSidebarSessions, sidebarProjectPaths, sidebarWorkspaceKey, splitSidebarProjects, type SidebarPreferences, type SidebarSession } from '../sidebarOrganization';
+import { advanceRecentlyViewed, assignProjectToGroup, buildSidebarGroups, buildSidebarProjectGroups, clearPinnedProjects, collectSidebarSessions, groupSidebarProjects, groupSessionsByDate, mergeSidebarProjectOrder, moveProjectToGroupPosition, orderSidebarProjects, readPinnedProjects, readSidebarPreferences, readSidebarProjectGroups, readSidebarSectionLayout, reorderSidebarProjectPositions, saveSidebarPreferences, saveSidebarProjectGroups, saveSidebarSectionLayout, selectProjectSessionRows, selectSidebarSessions, sidebarProjectPaths, sidebarWorkspaceKey, splitSidebarProjects, type SidebarPreferences, type SidebarSession } from '../sidebarOrganization';
 import { HoverTooltip } from './HoverTooltip';
 import { SESSION_PREVIEW_OPEN_DELAY_MS, SessionHoverPreview } from './SessionHoverPreview';
 import { Icon, type IconName } from './Icons';
@@ -86,6 +86,26 @@ const DRAG_THRESHOLD = 5;
 const PROJECT_DRAG_THRESHOLD = 6;
 const EDGE_SCROLL_MARGIN = 28;
 const EDGE_SCROLL_STEP = 9;
+
+/** Paths being viewed plus those left within RECENTLY_VIEWED_GRACE_MS; re-renders when a grace period ends. */
+function useRecentlyViewedSessions(viewing: readonly string[]): ReadonlySet<string> {
+	// Last committed viewing list: during the render that switches conversations the one just
+	// left is not lingering yet, so it is kept from here to avoid a one-frame fold flash.
+	const committed = useRef(viewing);
+	const [lingering, setLingering] = useState<ReadonlyMap<string, number>>(() => new Map());
+	useEffect(() => {
+		const previous = committed.current;
+		committed.current = viewing;
+		if (previous !== viewing) setLingering((current) => advanceRecentlyViewed(current, previous, viewing, Date.now()));
+	}, [viewing]);
+	useEffect(() => {
+		if (!lingering.size) return;
+		const expiresAt = Math.min(...lingering.values());
+		const timer = setTimeout(() => setLingering((current) => advanceRecentlyViewed(current, [], committed.current, Math.max(Date.now(), expiresAt))), Math.max(0, expiresAt - Date.now()));
+		return () => clearTimeout(timer);
+	}, [lingering]);
+	return new Set([...viewing, ...committed.current, ...lingering.keys()]);
+}
 
 export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alternateViewOpen = false, onNavigate, onError, onOpenTerminal }: { visible: boolean; projectRevealRequest?: number; alternateViewOpen?: boolean; onNavigate(): void; onError(value: string | null): void; onOpenTerminal?: () => void }) {
 	const { t, locale } = useT();
@@ -335,7 +355,14 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 	const projectGroups = useMemo(() => buildSidebarProjectGroups(sessions, orderedWorkspaces), [sessions, orderedWorkspaces]);
 	const projectByWorkspace = useMemo(() => new Map(projectGroups.projects.map(project => [project.workspace, project])), [projectGroups]);
 	const sessionByPath = useMemo(() => new Map(sessions.map((session) => [session.path, session])), [sessions]);
-	const { main: loadedMain } = useLoadedSessions();
+	const { main: loadedMain, panes: loadedPanes } = useLoadedSessions();
+	// Conversations on screen (main view unless an alternate page covers it, plus shown split
+	// panes) and the ones left within the last few seconds stay listed inside folded projects.
+	const viewingPaths = useMemo(() => [...new Set([
+		...(!alternateViewOpen && sessionPath ? [sessionPath] : []),
+		...loadedPanes.flatMap((pane) => !pane.hidden && pane.sessionPath ? [pane.sessionPath] : []),
+	])], [alternateViewOpen, sessionPath, loadedPanes]);
+	const recentlyViewed = useRecentlyViewedSessions(viewingPaths);
 	const dragMode = false;
 	const projectDragMode = !archived;
 	const dragSections = useMemo<DragSection[]>(() => {
@@ -1084,8 +1111,8 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 		const key = projectKey(workspace);
 		const items = projectByWorkspace.get(workspace)?.sessions ?? [];
 		const expanded = !collapsed.has(key);
-		const rows = selectProjectSessionRows(items, { collapsed: !expanded, limit: limitOf(key) });
-		const showDraft = showUnsaved && workspace === unsavedProject && (expanded || status === 'busy' || status === 'starting');
+		const rows = selectProjectSessionRows(items, { collapsed: !expanded, limit: limitOf(key), keepVisible: recentlyViewed });
+		const showDraft = showUnsaved && workspace === unsavedProject && (expanded || !alternateViewOpen || status === 'busy' || status === 'starting');
 		return section(key, projectDisplayName(workspace), <>
 			{showDraft && unsaved()}
 			{rows.map(session => renderSession(session, null))}

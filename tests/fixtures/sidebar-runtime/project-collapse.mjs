@@ -92,15 +92,25 @@ export default async function projectCollapseScenarios(review) {
   await review.waitFor(`Boolean(document.querySelector(${q(row('running') + ' .is-unread')}))`);
   await review.assert(`${ids}.includes('running') && document.querySelector(${q(toggle)}).getAttribute('aria-expanded') === 'false'`, 'A background run remains in its folded project after completing with an unread result');
   await review.click(`${row('old-unread')} .pd-session-row`);
-  await review.waitFor(`!document.querySelector(${q(row('old-unread'))})`);
-  await review.assert(`window.__projectCollapseReview.updates.some(update => update.path === ${q(paths.Alpha + '\\old-unread.jsonl')} && update.patch.unread === false && update.patch.expectedUnreadAt === 10) && ${ids}.includes('running')`, 'Opening a result clears its unread watermark and lets only that row fold away');
+  await review.waitFor(`document.querySelector(${q(row('old-unread') + ' .pd-session-row')})?.getAttribute('aria-current') === 'page' && !document.querySelector(${q(row('old-unread') + ' .is-unread')})`);
+  await review.assert(`window.__projectCollapseReview.updates.some(update => update.path === ${q(paths.Alpha + '\\old-unread.jsonl')} && update.patch.unread === false && update.patch.expectedUnreadAt === 10) && ${ids}.includes('running') && ${ids}.includes('old-unread') && document.querySelector(${q(toggle)}).getAttribute('aria-expanded') === 'false'`, 'Opening a result clears its unread watermark while the conversation being viewed stays in the folded project');
+  await review.screenshot('project-collapse-viewing-dark');
+  // Leaving a conversation keeps its row for a 5-second grace period, then it folds away.
+  await review.click(`${row('running')} .pd-session-row`);
+  await review.waitFor(`document.querySelector(${q(row('running') + ' .pd-session-row')})?.getAttribute('aria-current') === 'page'`);
+  await review.evaluate('window.__leftAt = Date.now()');
+  await review.assert(`${ids}.includes('old-unread') && ${ids}.includes('running')`, 'The conversation just left is still listed right after switching away');
+  await review.screenshot('project-collapse-recent-dark');
+  await review.waitFor(`!document.querySelector(${q(row('old-unread'))})`, 8000);
+  await review.record('recently-viewed-linger-ms', 'Date.now() - window.__leftAt');
+  await review.assert('(() => { const elapsed = Date.now() - window.__leftAt; return elapsed >= 4000 && elapsed <= 6500; })()', 'The left conversation folds away about five seconds later');
   await review.evaluate(`window.__projectCollapseReview.runtime('waiting', { phase: 'idle' }); window.__projectCollapseReview.runtime('approval', { phase: 'idle' }); window.__projectCollapseReview.runtime('children', { phase: 'idle', subagentRunning: false });`);
   await review.waitFor(`${ids}.length === 2`);
-  await review.assert(`${ids}.includes('running') && ${ids}.includes('pinned-unread')`, 'Settled work folds away while both remaining unread results stay visible');
+  await review.assert(`${ids}.includes('running') && ${ids}.includes('pinned-unread')`, 'Settled work folds away while the viewed conversation and the remaining unread result stay visible');
   await review.click(toggle);
   await review.assert(`document.querySelector(${q(alpha + ' .pd-session-more')}) !== null && ${ids}.filter(id => id.startsWith('ordinary-')).length === 5`, 'Expanding restores the first five ordinary conversations alongside the unread results');
   await review.click(toggle);
-  await review.assert(`${ids}.length === 2`, 'Repeated folding preserves only unread results and the original collapsed preference');
+  await review.assert(`${ids}.length === 2`, 'Repeated folding preserves only the viewed and unread conversations and the original collapsed preference');
 
   await review.reloadWithFixture(`localStorage.setItem('pi-desktop.theme', 'light'); (${installProjectCollapseFixture.toString()})({ restore: true })`);
   await review.waitFor(`${ids}.length === 6`);
