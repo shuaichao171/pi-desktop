@@ -11,6 +11,8 @@ import { createInterface } from 'node:readline';
 
 const loadSupported = process.env.FAKE_ACP_LOAD === '1';
 const steerSupported = process.env.FAKE_ACP_STEER === '1';
+// FAKE_ACP_ACCEPT_EDITS=1: the mode lists also offer an "accept edits" mode.
+const acceptEdits = process.env.FAKE_ACP_ACCEPT_EDITS === '1' ? [{ value: 'acceptEdits', name: 'Accept edits' }] : [];
 // FAKE_ACP_SETTINGS=options: config options (grouped model values, reasoning effort, mode);
 // FAKE_ACP_SETTINGS=modes: only the older `modes` list.
 const settings = process.env.FAKE_ACP_SETTINGS ?? '';
@@ -21,13 +23,13 @@ const configOptions = () => [
 		{ group: 'legacy', name: 'Legacy', options: [{ value: 'fake-old', name: 'Fake Old' }] },
 	] },
 	{ id: 'effort', name: 'Reasoning effort', category: 'thought_level', type: 'select', currentValue: option.effort, options: [{ value: 'low', name: 'Low' }, { value: 'medium', name: 'Medium' }, { value: 'high', name: 'High', description: 'Deeper reasoning' }] },
-	{ id: 'mode', name: 'Mode', category: 'mode', type: 'select', currentValue: option.mode, options: [{ value: 'ask', name: 'Ask' }, { value: 'auto', name: 'Auto' }] },
+	{ id: 'mode', name: 'Mode', category: 'mode', type: 'select', currentValue: option.mode, options: [{ value: 'ask', name: 'Ask' }, ...acceptEdits, { value: 'auto', name: 'Auto' }] },
 	{ id: 'toggle', name: 'Unsupported toggle', type: 'boolean', currentValue: true },
 ];
 const sessionSettings = () => ({
 	models: { currentModelId: option.model, availableModels: [{ modelId: 'fake-large', name: 'Fake Large' }, { modelId: 'fake-small', name: 'Fake Small' }] },
 	...(settings === 'options' ? { configOptions: configOptions() } : {}),
-	...(settings === 'modes' ? { modes: { currentModeId: 'ask', availableModes: [{ id: 'ask', name: 'Ask' }, { id: 'auto', name: 'Auto', description: 'No questions' }] } } : {}),
+	...(settings === 'modes' ? { modes: { currentModeId: 'ask', availableModes: [{ id: 'ask', name: 'Ask' }, ...acceptEdits.map((mode) => ({ id: mode.value, name: mode.name })), { id: 'auto', name: 'Auto', description: 'No questions' }] } } : {}),
 });
 let nextId = 1000;
 const waiting = new Map();

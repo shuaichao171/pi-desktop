@@ -421,3 +421,34 @@ test('agents without steer support never steer: input queues behind the running 
 		await conversation.dispose();
 	}
 });
+
+test('new sessions start in "accept edits" where the agent offers it; a saved choice wins', async () => {
+	for (const settings of ['options', 'modes']) {
+		const modeOf = (r) => r.state.options.find((option) => option.category === 'mode')?.currentValue;
+		const fresh = recorder();
+		const conversation = new AcpConversation(fakeConfig({ FAKE_ACP_SETTINGS: settings, FAKE_ACP_ACCEPT_EDITS: '1' }), process.cwd(), null, fresh.hooks);
+		try {
+			await conversation.warmup();
+			assert.equal(modeOf(fresh), 'acceptEdits', `${settings}: default mode`);
+		} finally {
+			await conversation.dispose();
+		}
+		const chosen = recorder({ savedSettings: () => ({ options: { [settings === 'options' ? 'mode' : LEGACY_MODE_OPTION]: 'ask' } }) });
+		const again = new AcpConversation(fakeConfig({ FAKE_ACP_SETTINGS: settings, FAKE_ACP_ACCEPT_EDITS: '1' }), process.cwd(), null, chosen.hooks);
+		try {
+			await again.warmup();
+			assert.equal(modeOf(chosen), 'ask', `${settings}: the user's choice is kept`);
+		} finally {
+			await again.dispose();
+		}
+	}
+	// Agents without such a mode keep their own default.
+	const plain = recorder();
+	const conversation = new AcpConversation(fakeConfig({ FAKE_ACP_SETTINGS: 'options' }), process.cwd(), null, plain.hooks);
+	try {
+		await conversation.warmup();
+		assert.equal(plain.state.options.find((option) => option.id === 'mode').currentValue, 'ask');
+	} finally {
+		await conversation.dispose();
+	}
+});

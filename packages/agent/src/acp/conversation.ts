@@ -347,15 +347,21 @@ export class AcpConversation {
 	 * Apply the user's earlier choices to a new or resumed session: agents start a
 	 * loaded session with their defaults. The model goes first, since changing it
 	 * can reset other settings. A choice the agent no longer offers is skipped.
+	 * Without a choice, the permission mode starts at "accept edits" where offered.
 	 */
 	private async restoreSettings(): Promise<void> {
-		const saved = this.hooks.savedSettings?.();
-		if (!saved) return;
+		const saved = this.hooks.savedSettings?.() ?? { options: {} };
 		const model = saved.model;
 		if (model && model !== this.currentModel && this.models.some((item) => item.id === model)) {
 			await this.writeModel(model).catch(() => {});
 		}
-		for (const [id, value] of Object.entries(saved.options)) {
+		const wanted = new Map(Object.entries(saved.options));
+		for (const option of this.options) {
+			if (option.category !== 'mode' || wanted.has(option.id)) continue;
+			const acceptEdits = option.values.find((item) => ACCEPT_EDITS_MODE.test(item.value));
+			if (acceptEdits) wanted.set(option.id, acceptEdits.value);
+		}
+		for (const [id, value] of wanted) {
 			const option = this.options.find((item) => item.id === id);
 			if (!option || option.currentValue === value || !option.values.some((item) => item.value === value)) continue;
 			await this.writeConfigOption(id, value).catch(() => {});
@@ -430,6 +436,9 @@ export class AcpConversation {
 
 /** Option id for agents that expose only the older `modes` list. */
 export const LEGACY_MODE_OPTION = '__acp_mode';
+
+/** The mode new sessions start in when the agent offers it (Antigravity `accept-edits`, Claude Code `acceptEdits`). */
+const ACCEPT_EDITS_MODE = /^accept[-_ ]?edits$/i;
 
 function text(value: unknown, max: number): string | null {
 	return typeof value === 'string' && value.trim() ? value.slice(0, max) : null;

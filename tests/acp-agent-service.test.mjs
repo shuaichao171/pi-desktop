@@ -52,7 +52,8 @@ test('an ACP conversation runs through AgentService: binding, transcript, lock, 
 		await until(() => service.getSnapshot().agent.models?.length === 2, 'warmup reports the agent models');
 		assert.equal(service.getSnapshot().model, 'fake-large');
 		assert.equal(service.getSnapshot().modelProvider, 'acp:fake-agent');
-		assert.ok(service.listSlashCommands().some((command) => command.name === 'review' && command.source === 'agent'));
+		// The command list is a notification that follows the session reply, so it may land a moment later.
+		await until(() => service.listSlashCommands().some((command) => command.name === 'review' && command.source === 'agent'), 'agent commands arrive');
 
 		await service.prompt('please run');
 		await until(() => service.getSnapshot().status === 'idle' && service.getSnapshot().messages.some((message) => message.text === 'Done.'), 'turn settles');
