@@ -16,13 +16,27 @@ interface CapabilityRule {
 	 * where known; when unsure we deliberately underestimate — compaction just
 	 * triggers early instead of the request failing on an oversized context.
 	 */
-	contextWindow?: number;
+	contextWindow?: number | ((endpoint: URL) => number | undefined);
+}
+
+function gpt62ContextWindow(endpoint: URL, codexWindow = 272_000): number {
+	if (endpoint.hostname.endsWith('.openai.azure.com')) return 1_050_000;
+	if (endpoint.hostname === 'chatgpt.com' && endpoint.pathname.startsWith('/backend-api/codex/')) return codexWindow;
+	// Match Pi's short-context default for OpenAI and use it for unidentified relays.
+	return 272_000;
+}
+
+function glm54ContextWindow(endpoint: URL): number | undefined {
+	if (endpoint.hostname !== 'api.z.ai' && endpoint.hostname !== 'open.bigmodel.cn') return undefined;
+	if (/^\/api\/(?:coding\/paas\/v4|anthropic)\//.test(endpoint.pathname)) return 1_000_000;
+	return undefined;
 }
 
 // Common effort ladders mapped to pi's canonical levels. Values are deliberately
 // conservative: providers accepting fewer efforts reject extras loudly, while a
 // missing level just hides an option the user could still map by hand.
 const OPENAI_EFFORT: UiThinkingLevel[] = ['off', 'minimal', 'low', 'medium', 'high'];
+const REQUIRED_EFFORT: UiThinkingLevel[] = ['low', 'medium', 'high', 'xhigh', 'max'];
 const STANDARD: UiThinkingLevel[] = ['off', 'low', 'medium', 'high'];
 const GLM: UiThinkingLevel[] = ['off', 'low', 'high', 'max'];
 const GROK: UiThinkingLevel[] = ['off', 'low', 'high'];
@@ -45,13 +59,19 @@ const RULES: readonly CapabilityRule[] = [
 	{ match: /glm-(?:[1234]|4\.[0-4])(?![\d.])/i, reasoning: false, contextWindow: 131_072 },
 	{ match: /kimi-k?2(?![\d.])/i, reasoning: false, contextWindow: 262_144 },
 	// Reasoning families, specific variants first.
+	{ match: /(?:^|\/)gpt-6\.2-astra(?=$|[-\[])/i, reasoning: true, levels: REQUIRED_EFFORT, contextWindow: gpt62ContextWindow },
+	{ match: /(?:^|\/)gpt-6\.2-sol(?=$|[-\[])/i, reasoning: true, levels: REQUIRED_EFFORT, contextWindow: (endpoint) => gpt62ContextWindow(endpoint, 500_000) },
 	{ match: /gpt-(?:5\.6|5\.4-pro|6-astra)/i, reasoning: true, levels: OPENAI_EFFORT, contextWindow: 1_050_000 },
 	{ match: /gpt-5\.4-(?:mini|nano)/i, reasoning: true, levels: OPENAI_EFFORT, contextWindow: 400_000 },
 	{ match: /gpt-[56]|codex/i, reasoning: true, levels: OPENAI_EFFORT, contextWindow: 400_000 },
 	{ match: /(?:^|[^a-z0-9])o[34](?:[^a-z0-9]|$)/i, reasoning: true, levels: OPENAI_EFFORT, contextWindow: 200_000 },
+	// GLM-5.4's launch confirms long context for the Coding Plan. Use advertised
+	// effort levels and leave the context size unknown for other bare-ID routes.
+	{ match: /(?:^|\/)glm-5\.4(?=$|[-\[])/i, reasoning: true, contextWindow: glm54ContextWindow },
 	{ match: /glm-5\.[23]/i, reasoning: true, levels: GLM, contextWindow: 1_000_000 },
 	{ match: /glm-4\.[5-9]/i, reasoning: true, levels: GLM, contextWindow: 131_072 },
 	{ match: /glm-[5-9]/i, reasoning: true, levels: GLM, contextWindow: 200_000 },
+	{ match: /(?:^|\/)claude-(?:fable|mythos)-5[.-]2(?=$|[-\[])/i, reasoning: true, levels: REQUIRED_EFFORT, contextWindow: 1_000_000 },
 	{ match: /claude-(?:fable|mythos|opus|sonnet)-?[5-9]/i, reasoning: true, levels: STANDARD, contextWindow: 1_000_000 },
 	{ match: /claude-(?:opus|sonnet|haiku|fable|[4-9])/i, reasoning: true, levels: STANDARD, contextWindow: 200_000 },
 	{ match: /grok-4\.3/i, reasoning: true, levels: GROK, contextWindow: 1_000_000 },
@@ -61,10 +81,14 @@ const RULES: readonly CapabilityRule[] = [
 	{ match: /deepseek-reasoner/i, reasoning: true, levels: STANDARD, contextWindow: 128_000 },
 	{ match: /kimi-k[3-9]/i, reasoning: true, levels: STANDARD, contextWindow: 1_048_576 },
 	{ match: /kimi-k2\.[5-9]/i, reasoning: true, levels: STANDARD, contextWindow: 262_144 },
+	{ match: /(?:^|\/)qwen-?4-max-preview(?=$|[-\[])/i, reasoning: true, levels: ['low', 'medium', 'xhigh'], contextWindow: 1_000_000 },
+	{ match: /(?:^|\/)qwen-?4-max(?=$|[-\[])/i, reasoning: true, levels: ['low', 'high', 'xhigh'], contextWindow: 1_000_000 },
 	{ match: /qwen3\.8-omni/i, reasoning: true, levels: STANDARD, contextWindow: 65_536 },
 	{ match: /qwen-?3\.[5-9]|qwen-[4-9]|qwen-(?:plus|flash)/i, reasoning: true, levels: STANDARD, contextWindow: 1_000_000 },
 	{ match: /qwen3-(?:max|vl)/i, reasoning: true, levels: STANDARD, contextWindow: 262_144 },
 	{ match: /qwen(?:3|[4-9])/i, reasoning: true, levels: STANDARD, contextWindow: 131_072 },
+	{ match: /(?:^|\/)gemini-4-(?:neon|hydrogen)(?=$|[-\[])/i, reasoning: true, levels: ['low', 'medium', 'high', 'xhigh'], contextWindow: 1_048_576 },
+	{ match: /(?:^|\/)gemini-4-(?:argon|carbon)(?=$|[-\[])/i, reasoning: true, levels: ['low', 'medium', 'high'], contextWindow: 1_048_576 },
 	{ match: /gemini-(?:[3-9]|2\.5)/i, reasoning: true, levels: STANDARD, contextWindow: 1_048_576 },
 	{ match: /minimax-m[3-9]/i, reasoning: true, levels: STANDARD, contextWindow: 1_000_000 },
 	{ match: /minimax|abab/i, reasoning: true, levels: STANDARD, contextWindow: 204_800 },
@@ -81,7 +105,8 @@ export function guessReasoning(modelId: string): ReasoningGuess | undefined {
 	return { reasoning: rule.reasoning as boolean, ...(rule.levels ? { levels: rule.levels } : {}) };
 }
 
-/** Best-effort context window guess (tokens) from the model id alone; undefined when unknown. */
-export function guessContextWindow(modelId: string): number | undefined {
-	return RULES.find((rule) => rule.contextWindow !== undefined && rule.match.test(modelId))?.contextWindow;
+/** Best-effort context window guess (tokens) for a model and its serving endpoint. */
+export function guessContextWindow(modelId: string, endpoint: URL): number | undefined {
+	const window = RULES.find((rule) => rule.contextWindow !== undefined && rule.match.test(modelId))?.contextWindow;
+	return typeof window === 'function' ? window(endpoint) : window;
 }

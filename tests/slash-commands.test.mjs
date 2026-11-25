@@ -17,7 +17,7 @@ test('attachment-safe template expansion matches the installed Pi argument synta
     '${@:0} | ${@:2} | ${@:1:0} | ${@:2:2}',
     '${1:-$2} ${@:-$ARGUMENTS} $1 $@',
   ];
-  for (const input of ['', 'one two three', '"quoted words" \'中文 路径\' plain', '"" spaced\nline', '"unfinished quote', '$1 $@ ${2:-value}']) {
+  for (const input of ['', 'one two three', '"quoted words" \'中文 路径\' plain', '"" spaced\nline', '"unfinished quote', 'don\'t stop', '"say \\"hi\\"" next', '$1 $@ ${2:-value}']) {
     for (const template of templates) assert.equal(expandSlashPrompt(template, input), substituteArgs(template, parseCommandArgs(input)));
   }
 });

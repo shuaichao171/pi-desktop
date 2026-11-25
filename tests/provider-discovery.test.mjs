@@ -247,6 +247,61 @@ test('builtin rules fill only missing capabilities and advertised data always wi
   assert(result.warnings.some((warning) => warning.includes('保存前确认')));
 });
 
+test('new model imports infer only the supported thinking levels when metadata is missing', async () => {
+  const data = [
+    { id: 'openai/gpt-6.2-astra' },
+    { id: 'gpt-6.2-sol', context_window: 500000, max_output_tokens: 128000, supported_reasoning_efforts: ['high'] },
+    { id: 'google/gemini-4-neon' },
+    { id: 'gemini-4-carbon' },
+    { id: 'anthropic/claude-fable-5.2' },
+    { id: 'claude-mythos-5-2' },
+    { id: 'alibaba/qwen4-max' },
+    { id: 'qwen4-max-preview' },
+  ];
+  const result = await discoverProviderModels(options('https://relay.example/v1'), async () => Response.json({ data }));
+  const requiredEffort = ['low', 'medium', 'high', 'xhigh', 'max'];
+  assert.deepEqual(result.models, [
+    { id: 'openai/gpt-6.2-astra', contextWindow: 272000, reasoning: true, thinkingLevels: requiredEffort, inferred: true },
+    { id: 'gpt-6.2-sol', contextWindow: 500000, maxTokens: 128000, reasoning: true, thinkingLevels: ['high'] },
+    { id: 'google/gemini-4-neon', contextWindow: 1048576, reasoning: true, thinkingLevels: ['low', 'medium', 'high', 'xhigh'], inferred: true },
+    { id: 'gemini-4-carbon', contextWindow: 1048576, reasoning: true, thinkingLevels: ['low', 'medium', 'high'], inferred: true },
+    { id: 'anthropic/claude-fable-5.2', contextWindow: 1000000, reasoning: true, thinkingLevels: requiredEffort, inferred: true },
+    { id: 'claude-mythos-5-2', contextWindow: 1000000, reasoning: true, thinkingLevels: requiredEffort, inferred: true },
+    { id: 'alibaba/qwen4-max', contextWindow: 1000000, reasoning: true, thinkingLevels: ['low', 'high', 'xhigh'], inferred: true },
+    { id: 'qwen4-max-preview', contextWindow: 1000000, reasoning: true, thinkingLevels: ['low', 'medium', 'xhigh'], inferred: true },
+  ]);
+});
+
+test('GPT-6.2 context defaults follow the serving endpoint and model variant', async () => {
+  const data = [{ id: 'gpt-6.2-astra' }, { id: 'gpt-6.2-sol' }];
+  const cases = [
+    ['https://api.openai.com/v1', [272000, 272000]],
+    ['https://deployment.openai.azure.com/openai/v1', [1050000, 1050000]],
+    ['https://chatgpt.com/backend-api/codex', [272000, 500000]],
+    ['https://deployment.openai.azure.com.relay.example/v1', [272000, 272000]],
+  ];
+  for (const [baseUrl, windows] of cases) {
+    const result = await discoverProviderModels(options(baseUrl, 'openai-responses'), async () => Response.json({ data }));
+    assert.deepEqual(result.models.map((model) => model.contextWindow), windows, baseUrl);
+  }
+});
+
+test('GLM-5.4 discovers Coding Plan and explicit long context without inventing effort levels', async () => {
+  const data = [
+    { id: 'glm-5.4' },
+    { id: 'zai/GLM-5.4[1m]' },
+    { id: 'glm-5.4-custom', context_window: 64000, supported_reasoning_efforts: ['max'] },
+  ];
+  const fetch = async () => Response.json({ data });
+  const plan = await discoverProviderModels(options('https://api.z.ai/api/coding/paas/v4'), fetch);
+  const relay = await discoverProviderModels(options('https://relay.example/v1'), fetch);
+  assert.deepEqual(plan.models[0], { id: 'glm-5.4', contextWindow: 1000000, reasoning: true, inferred: true });
+  assert.deepEqual(relay.models[0], { id: 'glm-5.4', reasoning: true, inferred: true });
+  assert.deepEqual(relay.models[1], { id: 'zai/GLM-5.4[1m]', contextWindow: 1000000, reasoning: true, inferred: true });
+  assert.deepEqual(relay.models[2], { id: 'glm-5.4-custom', contextWindow: 64000, reasoning: true, thinkingLevels: ['max'] });
+  assert(relay.warnings.some((warning) => warning.includes('请手动确认可用级别')));
+});
+
 test('a default User-Agent identifies discovery unless the user supplies one', async (t) => {
   const fixture = await server(t, (_request, response) => json(response, { data: [{ id: 'ua-model' }] }));
   await discoverProviderModels(options(fixture.url));

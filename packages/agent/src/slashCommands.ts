@@ -30,13 +30,26 @@ export function expandSlashPrompt(content: string, input: string): string {
 	// Tracks whether the current token started, so quoted empty strings survive as arguments.
 	let hasToken = false;
 	let quote: string | null = null;
-	for (const char of input) {
+	let quoteStart = 0;
+	for (let index = 0; index < input.length; index += 1) {
+		const char = input[index]!;
 		if (quote) {
-			if (char === quote) quote = null;
+			if (char === '\\' && input[index + 1] === quote) { current += quote; index += 1; }
+			else if (char === quote) quote = null;
 			else current += char;
-		} else if (char === '"' || char === "'") { quote = char; hasToken = true; }
+		} else if (!hasToken && (char === '"' || char === "'")) {
+			quote = char;
+			quoteStart = index;
+			hasToken = true;
+		}
 		else if (/\s/u.test(char)) { if (hasToken) { args.push(current); current = ''; hasToken = false; } }
 		else { current += char; hasToken = true; }
+		if (quote && index === input.length - 1) {
+			// Treat an unmatched opening quote literally and parse the remaining arguments normally.
+			quote = null;
+			current = input[quoteStart]!;
+			index = quoteStart;
+		}
 	}
 	if (hasToken) args.push(current);
 	const all = args.join(' ');

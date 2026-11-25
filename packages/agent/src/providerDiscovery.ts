@@ -235,7 +235,7 @@ async function discover(options: DiscoverProviderModelsOptions, url: URL, header
 	let inferredCount = 0;
 	for (const model of models.values()) {
 		const guess = guessReasoning(model.id);
-		const guessWindow = guessContextWindow(model.id);
+		const guessWindow = guessContextWindow(model.id, url);
 		if (!guess && guessWindow === undefined) continue;
 		let filled = false;
 		if (guess && model.reasoning === undefined) { model.reasoning = guess.reasoning; filled = true; }

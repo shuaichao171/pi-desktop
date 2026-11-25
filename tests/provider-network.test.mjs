@@ -6,7 +6,9 @@ import { tmpdir } from 'node:os';
 import { join, resolve, sep } from 'node:path';
 import { test } from 'node:test';
 import { ModelRuntime } from '@earendil-works/pi-coding-agent';
+import { discoverProviderModels } from '../packages/agent/src/providerDiscovery.ts';
 import { bindProviderNetwork, configureProviderNetwork, runWithProviderNetwork } from '../packages/agent/src/providerNetwork.ts';
+import { advertisedThinkingMap } from '../packages/ui/src/thinkingLevelMapEditor.ts';
 
 const inheritedFetch = globalThis.fetch;
 
@@ -183,4 +185,34 @@ test('all four real SDK adapters honor proxy changes on the next request without
   assert.equal(inheritedCalls, 1, 'existing providers without an explicit boolean keep their inherited network behavior');
   assert.equal(f.requests.length, 9);
   assert.equal(f.isProxied(f.requests[8]), false);
+});
+
+test('an imported Gemini 4 Neon xhigh selection reaches the Google SDK request', async (t) => {
+  const f = await fixture(t, (request, response) => {
+    response.setHeader('content-type', 'application/json');
+    if (request.method === 'GET') return response.end(JSON.stringify({ models: [{ name: 'models/gemini-4-neon' }] }));
+    response.writeHead(401);
+    response.end(JSON.stringify({ error: { message: 'Local fixture response' } }));
+  });
+  const baseUrl = f.url + '/v1beta';
+  const api = 'google-generative-ai';
+  const { models: [discovered] } = await discoverProviderModels({ baseUrl, api });
+  const root = await mkdtemp(join(tmpdir(), 'pi-gemini-thinking-'));
+  const modelsPath = join(root, 'models.json');
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await writeFile(modelsPath, JSON.stringify({ providers: { 'gemini-fixture': {
+    api, baseUrl, apiKey: 'local-fixture-key',
+    models: [{ id: discovered.id, input: ['text'], reasoning: discovered.reasoning, contextWindow: discovered.contextWindow,
+      maxTokens: 8192, thinkingLevelMap: advertisedThinkingMap(discovered.thinkingLevels) }],
+  } } }));
+  const credentials = { read: async () => undefined, list: async () => [], modify: async () => undefined, delete: async () => {} };
+  const runtime = await ModelRuntime.create({ modelsPath, credentials, refreshOnCreate: false, allowModelNetwork: false });
+  assert.equal(runtime.getError(), undefined);
+  const model = runtime.getModel('gemini-fixture', 'gemini-4-neon');
+  assert.ok(model);
+  const context = { messages: [{ role: 'user', content: 'Local Gemini thinking test', timestamp: Date.now() }] };
+  await runtime.streamSimple(model, context, { reasoning: 'xhigh', maxRetries: 0, timeoutMs: 3000 }).result();
+  const request = f.requests.find((request) => request.method === 'POST');
+  assert.ok(request, 'the adapter must send the request instead of rejecting xhigh locally');
+  assert.deepEqual(JSON.parse(request.body).generationConfig.thinkingConfig, { includeThoughts: true, thinkingLevel: 'XHIGH' });
 });

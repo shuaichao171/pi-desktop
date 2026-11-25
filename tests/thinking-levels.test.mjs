@@ -7,7 +7,7 @@ import { test } from 'node:test';
 import { ModelRuntime } from '@earendil-works/pi-coding-agent';
 import { bindProviderNetwork } from '../packages/agent/src/providerNetwork.ts';
 import { applyCanonicalThinkingLevel, normalizeThinkingLevel, sanitizeReasoningRequest } from '../packages/agent/src/thinkingLevels.ts';
-import { seedTestModel } from './helpers/testModel.mjs';
+import { seedTestModel, TEST_MODEL_ID, TEST_MODEL_PROVIDER } from './helpers/testModel.mjs';
 
 test('normalizeThinkingLevel folds off aliases and drops unknown values', () => {
   for (const alias of ['off', 'none', 'disabled']) assert.equal(normalizeThinkingLevel(alias), 'off');
@@ -144,6 +144,7 @@ test('host thinking-level entry normalizes aliases before the SDK persists them'
   const service = new AgentService();
   await service.init({ cwd: workspace });
   try {
+    await service.setModel(TEST_MODEL_PROVIDER, TEST_MODEL_ID);
     // none/disabled 折叠为 off，而不是把非法档位交给 SDK 持久化。
     for (const alias of ['none', 'disabled']) {
       await service.setThinkingLevel(alias, false);

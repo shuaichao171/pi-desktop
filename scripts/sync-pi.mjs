@@ -12,6 +12,7 @@ export const PI_PACKAGES = [
   PI_PACKAGE,
   '@earendil-works/pi-codemode',
   '@earendil-works/pi-mcp',
+  '@earendil-works/pi-schema',
   '@earendil-works/pi-telemetry',
   '@earendil-works/pi-tui',
 ];

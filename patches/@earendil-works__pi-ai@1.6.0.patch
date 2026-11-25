@@ -1,0 +1,53 @@
+diff --git a/dist/api/google-shared.d.ts b/dist/api/google-shared.d.ts
+index 3a3bb54d994a42b3b1ad66cb0642d2089a4b4e85..e516fcb18feadbf8801295009a02bcb0d9f70e32 100644
+--- a/dist/api/google-shared.d.ts
++++ b/dist/api/google-shared.d.ts
+@@ -8,8 +8,8 @@ type GoogleApiType = "google-generative-ai" | "google-vertex";
+  * Thinking level for Gemini 3 models.
+  * Mirrors Google's ThinkingLevel enum values.
+  */
+-export type GoogleApiThinkingLevel = "THINKING_LEVEL_UNSPECIFIED" | "MINIMAL" | "LOW" | "MEDIUM" | "HIGH";
+-export type ResolvedGoogleThinkingLevel = Exclude<ThinkingLevel, "xhigh" | "max">;
++export type GoogleApiThinkingLevel = "THINKING_LEVEL_UNSPECIFIED" | "MINIMAL" | "LOW" | "MEDIUM" | "HIGH" | "XHIGH";
++export type ResolvedGoogleThinkingLevel = Exclude<ThinkingLevel, "off" | "max">;
+ /** Resolve a supported pi level or model-specific Google mapping to a standard Google level. */
+ export declare function resolveGoogleThinkingLevel<T extends GoogleApiType>(model: Model<T>, level: ThinkingLevel): ResolvedGoogleThinkingLevel;
+ /**
+@@ -19,7 +19,7 @@ export declare function resolveGoogleThinkingLevel<T extends GoogleApiType>(mode
+  */
+ export declare function usesGoogleThinkingLevel<T extends GoogleApiType>(model: Model<T>): boolean;
+ export declare function toGoogleThinkingLevel(level: ResolvedGoogleThinkingLevel): GoogleApiThinkingLevel;
+-export declare function toGoogleSdkThinkingLevel(level: GoogleApiThinkingLevel): GoogleSdkThinkingLevel;
++export declare function toGoogleSdkThinkingLevel(level: GoogleApiThinkingLevel): GoogleSdkThinkingLevel | "XHIGH";
+ export declare function getDisabledGoogleThinkingConfig<T extends GoogleApiType>(model: Model<T>): ThinkingConfig;
+ /**
+  * Determines whether a streamed Gemini `Part` should be treated as "thinking".
+diff --git a/dist/api/google-shared.js b/dist/api/google-shared.js
+index 4e1d11eecbac251b702746d696a5c3927989890f..38a6439d4104f21699cf154a721638c007b26f46 100644
+--- a/dist/api/google-shared.js
++++ b/dist/api/google-shared.js
+@@ -14,11 +14,15 @@ const GOOGLE_SDK_THINKING_LEVEL_MAP = {
+     LOW: GoogleSdkThinkingLevel.LOW,
+     MEDIUM: GoogleSdkThinkingLevel.MEDIUM,
+     HIGH: GoogleSdkThinkingLevel.HIGH,
++    XHIGH: "XHIGH",
+ };
+ /** Resolve a supported pi level or model-specific Google mapping to a standard Google level. */
+ export function resolveGoogleThinkingLevel(model, level) {
+     const mapped = model.thinkingLevelMap?.[level];
+     const resolvedLevel = typeof mapped === "string" ? mapped.toLowerCase() : level;
++    if (resolvedLevel === "xhigh" && usesGoogleThinkingLevel(model)) {
++        return resolvedLevel;
++    }
+     switch (resolvedLevel) {
+         case "minimal":
+         case "low":
+@@ -57,6 +61,8 @@ export function toGoogleThinkingLevel(level) {
+             return "MEDIUM";
+         case "high":
+             return "HIGH";
++        case "xhigh":
++            return "XHIGH";
+     }
+ }
+ export function toGoogleSdkThinkingLevel(level) {
