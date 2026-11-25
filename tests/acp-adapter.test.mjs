@@ -5,14 +5,22 @@ import { join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 
-const { AcpTurnAssembler, piToolName, planText } = await import('../packages/agent/src/acp/turnAssembler.ts');
+const { AcpTurnAssembler, piToolName, planText, toolCommand } = await import('../packages/agent/src/acp/turnAssembler.ts');
 const { AcpConversation, parseConfigOption, LEGACY_MODE_OPTION } = await import('../packages/agent/src/acp/conversation.ts');
-const { renderHandoffContext, readAgentBinding, readIncomingHandoff, hasConversation, AGENT_BINDING_CUSTOM_TYPE, HANDOFF_CUSTOM_TYPE } = await import('../packages/agent/src/acp/handoff.ts');
+const { renderHandoffContext, readAgentBinding, readAgentSettings, readIncomingHandoff, hasConversation, AGENT_BINDING_CUSTOM_TYPE, AGENT_SETTINGS_CUSTOM_TYPE, HANDOFF_CUSTOM_TYPE } = await import('../packages/agent/src/acp/handoff.ts');
 const { AgentRegistry, BUILTIN_AGENTS } = await import('../packages/agent/src/acp/agentRegistry.ts');
-const { resolveCommand, spawnResolved } = await import('../packages/agent/src/acp/command.ts');
+const { resolveCommand, spawnResolved, withAgentSearchPath } = await import('../packages/agent/src/acp/command.ts');
 
 const FAKE_AGENT = fileURLToPath(new URL('./fixtures/acp/fake-agent.mjs', import.meta.url));
 const fakeConfig = (env = {}) => ({ id: 'fake', displayName: 'Fake Agent', command: process.execPath, args: [FAKE_AGENT], env, enabled: true, builtin: false });
+
+async function until(check, message, timeout = 10000) {
+	const started = Date.now();
+	while (!check()) {
+		if (Date.now() - started > timeout) throw new Error(`timed out: ${message}`);
+		await new Promise((resolve) => setTimeout(resolve, 20));
+	}
+}
 
 function recorder(overrides = {}) {
 	const events = [];
@@ -323,4 +331,93 @@ test('config option parsing is bounded and skips unusable entries', () => {
 	assert.equal(parseConfigOption({ id: 'x', type: 'select', currentValue: 'a', options: [] }), null, 'an option without values is dropped');
 	const parsed = parseConfigOption({ id: 'x', name: 'X', type: 'select', currentValue: 'a', options: [{ value: 'a', name: 'A' }, { value: 'a', name: 'dup' }, { value: '' }, { group: 'g', name: 'G', options: [{ value: 'b' }] }] });
 	assert.deepEqual(parsed, { id: 'x', name: 'X', category: null, currentValue: 'a', values: [{ value: 'a', name: 'A' }, { value: 'b', name: 'b' }] });
+});
+
+test('tool commands are read whatever the agent calls the field', () => {
+	assert.equal(toolCommand({ command: 'npm test' }), 'npm test');
+	assert.equal(toolCommand({ command: ['git', 'status'] }), 'git status');
+	assert.equal(toolCommand({ CommandLine: 'node --version', WaitMsBeforeAsync: 5000 }), 'node --version', 'Antigravity');
+	assert.equal(toolCommand({ command: 3 }), undefined);
+	assert.equal(toolCommand(null), undefined);
+	const assembler = new AcpTurnAssembler({ cwd: process.cwd(), provider: 'acp:x', model: 'x' });
+	const out = assembler.update({ sessionUpdate: 'tool_call', toolCallId: 't1', title: 'node --version', kind: 'execute', status: 'in_progress', rawInput: { CommandLine: 'node --version' } });
+	assert.equal(out.events.find((event) => event.type === 'tool_execution_start').args.command, 'node --version');
+});
+
+test('agy is found in its install folder when the PATH predates the install', { skip: process.platform !== 'win32' }, async () => {
+	const root = await mkdtemp(join(tmpdir(), 'pi-agy-path-'));
+	try {
+		await mkdir(join(root, 'agy', 'bin'), { recursive: true });
+		await writeFile(join(root, 'agy', 'bin', 'agy.exe'), '');
+		const env = { LOCALAPPDATA: root, PATH: join(root, 'empty'), PATHEXT: '.EXE;.CMD' };
+		assert.equal(resolveCommand('agy', env), null, 'not on the PATH this process started with');
+		// Folders from the machine's stored PATH may come first (another real agy), so check the folder is searched.
+		const searched = withAgentSearchPath(env).PATH.split(';');
+		assert.ok(searched.includes(join(root, 'agy', 'bin')));
+		assert.match(resolveCommand('agy', withAgentSearchPath(env)) ?? '', /[\\/]agy[\\/]bin[\\/]agy\.exe$/i);
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
+});
+
+test('saved agent settings: the latest record wins and its content is bounded', () => {
+	const entry = (data) => ({ type: 'custom', customType: AGENT_SETTINGS_CUSTOM_TYPE, data });
+	assert.equal(readAgentSettings([]), null);
+	assert.deepEqual(readAgentSettings([entry({ model: 'a', options: { effort: 'low' } }), entry({ model: 'b', options: { effort: 'high', mode: 'auto' } })]), { model: 'b', options: { effort: 'high', mode: 'auto' } });
+	assert.deepEqual(readAgentSettings([entry({ model: 7, options: { ok: 'x', bad: 3, ['k'.repeat(600)]: 'y' } })]), { options: { ok: 'x' } });
+	assert.deepEqual(readAgentSettings([entry({ options: Object.fromEntries(Array.from({ length: 40 }, (_, index) => [`o${index}`, 'v'])) })]).options.o19, 'v');
+	assert.equal(Object.keys(readAgentSettings([entry({ options: Object.fromEntries(Array.from({ length: 40 }, (_, index) => [`o${index}`, 'v'])) })]).options).length, 20);
+});
+
+test('steering: input sent mid-turn splits the transcript and the newer turn reports the outcome', async () => {
+	const r = recorder();
+	const conversation = new AcpConversation({ ...fakeConfig({ FAKE_ACP_STEER: '1' }), steer: true }, process.cwd(), null, r.hooks);
+	const text = (message) => typeof message.content === 'string' ? message.content : message.content.map((part) => part.text ?? part.thinking ?? '').join('');
+	try {
+		assert.equal(conversation.canSteer, false, 'nothing is running yet');
+		const first = conversation.prompt({ text: 'slow please' });
+		await until(() => conversation.canSteer, 'the first prompt is running');
+		const started = [];
+		const second = conversation.steer({ text: 'go instead', onStarted: () => started.push('go') });
+		assert.deepEqual(started, ['go'], 'the steered message is in the transcript at once');
+		assert.deepEqual(await first, { stopReason: 'end_turn', superseded: true });
+		assert.equal((await second).stopReason, 'end_turn');
+		assert.equal(conversation.busy, false);
+		assert.deepEqual(r.persisted.filter((message) => message.role !== 'toolResult').map((message) => [message.role, text(message), message.stopReason ?? null]), [
+			['user', 'slow please', null],
+			['assistant', 'working', 'stop'],
+			['user', 'go instead', null],
+			['assistant', 'Considering the requestblocks=1 Hello', 'toolUse'],
+			['assistant', 'Done.', 'stop'],
+		]);
+
+		// Cancelling a steered turn ends it like any other.
+		const slow = conversation.prompt({ text: 'slow please' });
+		await until(() => conversation.canSteer, 'slow turn running');
+		const slowAgain = conversation.steer({ text: 'slow again' });
+		await until(() => conversation.canSteer && r.persisted.at(-1)?.role === 'user', 'steered slow turn running');
+		conversation.cancel();
+		assert.equal((await slow).superseded, true);
+		assert.equal((await slowAgain).stopReason, 'cancelled');
+		assert.equal(r.persisted.at(-1).stopReason, 'aborted');
+		assert.equal((await conversation.prompt({ text: 'go' })).stopReason, 'end_turn', 'the next turn runs normally');
+	} finally {
+		await conversation.dispose();
+	}
+});
+
+test('agents without steer support never steer: input queues behind the running turn', async () => {
+	const r = recorder();
+	const conversation = new AcpConversation(fakeConfig(), process.cwd(), null, r.hooks);
+	try {
+		const slow = conversation.prompt({ text: 'slow please' });
+		await new Promise((resolve) => setTimeout(resolve, 150));
+		assert.equal(conversation.canSteer, false);
+		const queued = conversation.steer({ text: 'go' });
+		conversation.cancel();
+		assert.equal((await slow).stopReason, 'cancelled');
+		assert.equal((await queued).stopReason, 'cancelled');
+	} finally {
+		await conversation.dispose();
+	}
 });

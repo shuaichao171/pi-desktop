@@ -124,6 +124,8 @@ export function installModelSettingsFixture(options = {}) {
       Object.assign(state.snapshot, { agent, ...(agentId === 'pi' ? {} : { model: 'sonnet', modelName: 'Sonnet', modelProvider: `acp:${agentId}`, thinkingLevel: 'off', availableThinkingLevels: ['off'] }) });
       state.emitAgent({ type: 'model', agent, model: state.snapshot.model, modelName: state.snapshot.modelName, modelProvider: state.snapshot.modelProvider, thinkingLevel: state.snapshot.thinkingLevel, availableThinkingLevels: state.snapshot.availableThinkingLevels, contextUsage: null });
     },
+    // Sends are only recorded; the reply is driven by the scenario's own events.
+    submitInput: (request) => ({ id: request.id, state: 'accepted' }),
     setAgentOption: (optionId, value) => {
       const agent = state.snapshot.agent;
       agent.options = (agent.options ?? []).map((option) => option.id === optionId ? { ...option, currentValue: value } : option);

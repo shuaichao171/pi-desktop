@@ -560,6 +560,7 @@ export const translations: Record<string, { 'zh-CN': string; 'en-US': string }> 
   'composer.agentEffortTitle': { 'zh-CN': '推理强度', 'en-US': 'Reasoning effort' },
   'composer.agentOptionsTitle': { 'zh-CN': 'Agent 选项', 'en-US': 'Agent options' },
   'composer.agentBusyHint': { 'zh-CN': '{agent} 回复中，结束后再发送 · Shift+Enter 换行', 'en-US': '{agent} is replying; send when it finishes · Shift+Enter: new line' },
+  'composer.agentSteerHint': { 'zh-CN': '{agent} 回复中，发送的消息会插入当前回复 · Shift+Enter 换行', 'en-US': '{agent} is replying; a message you send joins the current reply · Shift+Enter: new line' },
   'composer.agentBusy': { 'zh-CN': '{agent} 不支持在回复过程中追加消息，请等它结束或先停止。草稿已保留。', 'en-US': '{agent} cannot take messages while it replies. Wait for it to finish or stop it first; your draft is kept.' },
   'composer.stopTitle': { 'zh-CN': '停止当前任务', 'en-US': 'Stop current task' },
   'composer.stopping': { 'zh-CN': '正在停止…', 'en-US': 'Stopping…' },

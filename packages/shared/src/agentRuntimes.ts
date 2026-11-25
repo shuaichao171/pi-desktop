@@ -99,6 +99,11 @@ export interface UiAgentConfig {
 	loginHint?: string;
 	/** Interactive sign-in the app can open in a terminal window (built-in agents only). */
 	login?: { command: string; args: string[] };
+	/**
+	 * A prompt sent while a turn runs reaches that turn (the agent ends it and continues
+	 * with the new input). ACP does not advertise this, so only verified built-ins set it.
+	 */
+	steer?: boolean;
 	homepage?: string;
 }
 

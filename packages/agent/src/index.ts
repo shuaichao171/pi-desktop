@@ -97,9 +97,9 @@ import { ACP_AGENT_CAPABILITIES, PI_AGENT_ID, piAgentDescriptor, type UiAgentCon
 import { AgentRegistry } from './acp/agentRegistry.ts';
 import { requireApprovalDetails, requireDialogResponse, type UiApprovalDetails, type UiApprovalScope } from '../../shared/src/approval.ts';
 import { AcpConversation } from './acp/conversation.ts';
-import { planText, type PiImageContent, type PiShapedEvent } from './acp/turnAssembler.ts';
+import { planText, toolCommand, type PiImageContent, type PiShapedEvent } from './acp/turnAssembler.ts';
 import type { AcpRequestPermissionOutcome, AcpRequestPermissionParams } from './acp/protocol.ts';
-import { AGENT_BINDING_CUSTOM_TYPE, HANDOFF_CUSTOM_TYPE, HANDOFF_DELIVERED_CUSTOM_TYPE, hasConversation, pendingIncomingHandoff, readAgentBinding, renderHandoffContext, type HandoffRecord } from './acp/handoff.ts';
+import { AGENT_BINDING_CUSTOM_TYPE, AGENT_SETTINGS_CUSTOM_TYPE, HANDOFF_CUSTOM_TYPE, HANDOFF_DELIVERED_CUSTOM_TYPE, hasConversation, pendingIncomingHandoff, readAgentBinding, readAgentSettings, renderHandoffContext, type HandoffRecord } from './acp/handoff.ts';
 export { AgentRegistry } from './acp/agentRegistry.ts';
 import { BUILTIN_SLASH_COMMANDS, expandSlashPrompt, validateSlashCommandRequest, validSlashCommandName } from './slashCommands.ts';
 import { CUSTOM_PROVIDER_APIS, assertWritableDocument, commitProviderDocument, connectionReadOnlyReason, getBuiltinProviderIds, getCachedDisabledModels, literalApiKey, loadModelPrefs, loadModelPrefsFile, loadUsageQueryPrefs, mergeProvider, mergeProviderModels, mergeProviderUsageQuery, parseProviderDocumentText, readProviderDocument, restoreProviderBackupFiles, safeProviderUrl, setModelDisabled, setUsageQueryPref, validateDiscoveryRequest, validateProviderId, validateProviderModelsRequest, validateProviderRequest, validateProviderWithSdk, type ProviderBackupFiles, type ProviderDocument, type ProviderModelsChange } from './customProviders.ts';
@@ -1786,7 +1786,7 @@ class SingleAgentService {
 			kind: 'acp',
 			displayName: this.agentName(),
 			accentColor: binding.config?.accentColor ?? null,
-			capabilities: ACP_AGENT_CAPABILITIES,
+			capabilities: binding.config?.steer ? { ...ACP_AGENT_CAPABILITIES, steer: true } : ACP_AGENT_CAPABILITIES,
 			...(this.acpModels.length ? { models: this.acpModels.map((model) => ({ ...model })) } : {}),
 			currentModelId: this.acpModelId,
 			...(this.acpOptions.length ? { options: this.acpOptions.map((option) => ({ ...option, values: option.values.map((value) => ({ ...value })) })) } : {}),
@@ -1959,6 +1959,7 @@ class SingleAgentService {
 				}
 				return renderHandoffContext(last >= 0 ? branch.filter((_, index) => index !== last) : branch, config.displayName);
 			},
+			savedSettings: () => owned() ? readAgentSettings(manager.getEntries()) : null,
 		});
 		this.acp = conversation;
 		return conversation;
@@ -1985,9 +1986,7 @@ class SingleAgentService {
 		const allowAlways = options.find((option) => option.kind === 'allow_always');
 		const reject = options.find((option) => option.kind === 'reject_once') ?? options.find((option) => option.kind === 'reject_always');
 		const call = params.toolCall ?? { toolCallId: '' };
-		const raw = call.rawInput && typeof call.rawInput === 'object' ? call.rawInput as Record<string, unknown> : {};
-		const command = typeof raw.command === 'string' ? raw.command
-			: Array.isArray(raw.command) && raw.command.every((part) => typeof part === 'string') ? (raw.command as string[]).join(' ') : undefined;
+		const command = toolCommand(call.rawInput);
 		const files = (Array.isArray(call.content) ? call.content : [])
 			.filter((item): item is { type: 'diff'; path: string; oldText?: string | null; newText: string } => !!item && item.type === 'diff' && typeof (item as { path?: unknown }).path === 'string')
 			.slice(0, 20)
@@ -2020,7 +2019,17 @@ class SingleAgentService {
 		if (!this.acpModels.some((model) => model.id === id)) throw new Error('模型不可用：' + id);
 		await this.ensureAcp(session).setModel(id);
 		this.acpModelId = id;
+		this.saveAgentSettings(session, { model: id });
 		this.fire({ type: 'model', ...this.selection(session) });
+	}
+
+	/** Remember the user's choice so a resumed session gets it back. */
+	private saveAgentSettings(session: PiRuntime['session'], change: { model?: string; option?: [string, string] }): void {
+		const manager = session.sessionManager;
+		const previous = readAgentSettings(manager.getEntries()) ?? { options: {} };
+		const model = change.model ?? previous.model;
+		const options = change.option ? { ...previous.options, [change.option[0]]: change.option[1] } : previous.options;
+		try { manager.appendCustomEntry(AGENT_SETTINGS_CUSTOM_TYPE, { ...(model ? { model } : {}), options }); } catch { /* the choice still applies now */ }
 	}
 
 	/** Change one of the external agent's session settings (reasoning effort, mode, ...). */
@@ -2033,6 +2042,7 @@ class SingleAgentService {
 		if (!option.values.some((item) => item.value === value)) throw new Error('选项值不可用：' + value);
 		if (option.currentValue === value) return;
 		await this.ensureAcp(session).setConfigOption(optionId, value);
+		this.saveAgentSettings(session, { option: [optionId, value] });
 	}
 
 	/** One user turn for an external agent; resolves once the input is in the transcript. */
@@ -2040,21 +2050,28 @@ class SingleAgentService {
 		if (this.lifecycleOperation) throw new Error('会话正在切换，请稍后发送消息');
 		const session = this.runtime?.session;
 		if (!session) throw new Error('Agent is not initialized');
-		// ACP has no mid-turn input: refuse right away instead of holding the send until the
-		// running reply ends (the draft stays in the composer).
-		if (this.activePromptCalls > 0 || this.acp?.busy) throw new Error(this.agentName() + ' 正在回复，外部 Agent 不支持运行中追加消息；请等它结束或先停止');
+		// Most agents have no mid-turn input: refuse right away instead of holding the send
+		// until the running reply ends (the draft stays in the composer). Agents marked
+		// `steer` take it into the running turn once its prompt has been sent.
+		const steering = this.activePromptCalls > 0 || this.acp?.busy === true;
+		if (steering && !this.acp?.canSteer) {
+			throw new Error(this.agentBinding?.config?.steer
+				? this.agentName() + ' 正在准备回复，请稍后再发送'
+				: this.agentName() + ' 正在回复，外部 Agent 不支持运行中追加消息；请等它结束或先停止');
+		}
 		const conversation = this.ensureAcp(session);
 		const promptText = withTextAttachments(text, attachments);
 		const images: PiImageContent[] = imageAttachments(attachments);
 		const entries = session.sessionManager.getEntries();
-		const incoming = pendingIncomingHandoff(entries);
+		// The running turn already carries a pending handoff's context.
+		const incoming = steering ? null : pendingIncomingHandoff(entries);
 		const tracker = this.conversationRuns;
 		const inputQueue = this.inputQueue, inputId = this.inputRequest.getStore()?.id;
 		if (this.state.status === 'idle') this.fire({ type: 'status', status: 'busy' });
 		this.activePromptCalls += 1;
 		await new Promise<void>((resolve, reject) => {
 			let acknowledged = false, started = false;
-			conversation.prompt({
+			(steering ? conversation.steer : conversation.prompt).call(conversation, {
 				text: promptText,
 				images,
 				contextPrefix: incoming?.context ?? null,
@@ -2065,6 +2082,8 @@ class SingleAgentService {
 				} : undefined,
 				onStarted: () => { started = true; if (!acknowledged) { acknowledged = true; resolve(); } },
 			}).then((result) => {
+				// The input sent into this turn reports how the run ends.
+				if (result.superseded) { if (!acknowledged) { acknowledged = true; resolve(); } return; }
 				if (result.stopReason === 'cancelled') tracker?.finish('cancelled');
 				else if (result.stopReason === 'error') tracker?.finish('failed');
 				if (result.error) this.fireError(result.error, 'provider');

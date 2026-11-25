@@ -94,7 +94,7 @@ test('an ACP conversation runs through AgentService: binding, transcript, lock, 
 		await service.saveAgent(config(false));
 		await assert.rejects(service.prompt('please run'), /已停用/);
 		await service.saveAgent(config(true));
-		await until(() => service.getSnapshot().model === 'fake-large' && service.getSnapshot().agent.models?.length === 2, 'restarted agent reports its default model');
+		await until(() => service.getSnapshot().model === 'fake-small' && service.getSnapshot().agent.models?.length === 2, 'restarted agent gets the chosen model back');
 
 		// Handoff to Pi: a new conversation carries the context. Until it is written to disk
 		// (first message) the source holds no link, so an abandoned handoff leaves nothing dangling.
@@ -172,10 +172,11 @@ test('agent session settings reach the renderer descriptor and change through Ag
 	process.env.PI_CODING_AGENT_DIR = join(root, 'agent');
 	process.env.PI_OFFLINE = '1';
 	let service;
+	let reopened;
 	try {
 		const { AgentService } = await import('../packages/agent/src/index.ts');
 		service = new AgentService(undefined, async () => true);
-		await service.saveAgent({ displayName: 'Option Agent', command: process.execPath, args: [FAKE_AGENT], env: { FAKE_ACP_SETTINGS: 'options' }, enabled: true });
+		await service.saveAgent({ displayName: 'Option Agent', command: process.execPath, args: [FAKE_AGENT], env: { FAKE_ACP_SETTINGS: 'options', FAKE_ACP_LOAD: '1' }, enabled: true });
 		await service.init({ cwd: workspace, fresh: true });
 		await service.setSessionAgent('option-agent');
 		await until(() => service.getSnapshot().agent.options?.length === 2, 'options reach the descriptor');
@@ -188,6 +189,59 @@ test('agent session settings reach the renderer descriptor and change through Ag
 		await assert.rejects(service.setAgentOption('missing', 'x'), /选项不存在/);
 		await service.setModel('acp:option-agent', 'fake-small');
 		assert.equal(service.getSnapshot().model, 'fake-small');
+		await service.setAgentOption('mode', 'auto');
+		await service.prompt('please run');
+		await until(() => service.getSnapshot().status === 'idle' && service.getSnapshot().messages.some((message) => message.text === 'Done.'), 'turn settles');
+		const path = service.getSnapshot().sessionPath;
+
+		// The agent loads its session with default settings; the user's choices come back.
+		await service.dispose();
+		reopened = new AgentService(undefined, async () => true);
+		await reopened.init({ cwd: workspace, sessionPath: path });
+		await reopened.prompt('continue');
+		await until(() => reopened.getSnapshot().status === 'idle' && reopened.getSnapshot().messages.filter((message) => message.text === 'Done.').length === 2, 'resumed turn settles');
+		const resumed = reopened.getSnapshot();
+		assert.equal(resumed.model, 'fake-small');
+		assert.deepEqual(resumed.agent.options.map((option) => [option.id, option.currentValue]), [['effort', 'low'], ['mode', 'auto']]);
+	} finally {
+		await service?.dispose().catch(() => {});
+		await reopened?.dispose().catch(() => {});
+		try { rmSync(root, { recursive: true, force: true, maxRetries: 50, retryDelay: 100 }); }
+		catch (error) { console.warn('temp cleanup skipped:', error.message); }
+		for (const [name, value] of environment) {
+			if (value === undefined) delete process.env[name];
+			else process.env[name] = value;
+		}
+	}
+});
+
+test('steering through AgentService: Antigravity takes a message while it replies, in the same run', async () => {
+	const root = mkdtempSync(join(tmpdir(), 'pi-acp-steer-'));
+	const workspace = join(root, 'workspace');
+	mkdirSync(workspace);
+	const environment = new Map(['PI_CODING_AGENT_DIR', 'PI_OFFLINE'].map((name) => [name, process.env[name]]));
+	process.env.PI_CODING_AGENT_DIR = join(root, 'agent');
+	process.env.PI_OFFLINE = '1';
+	let service;
+	try {
+		const { AgentService } = await import('../packages/agent/src/index.ts');
+		service = new AgentService(undefined, async () => true);
+		// The built-in entry (marked steer) pointed at the fake agent.
+		const builtin = (await service.listAgents()).find((agent) => agent.id === 'antigravity');
+		await service.saveAgent({ id: 'antigravity', displayName: builtin.displayName, command: process.execPath, args: [FAKE_AGENT], env: { FAKE_ACP_STEER: '1' }, enabled: true, accentColor: builtin.accentColor });
+		await service.init({ cwd: workspace, fresh: true });
+		await service.setSessionAgent('antigravity');
+		assert.equal(service.getSnapshot().agent.capabilities.steer, true);
+		await service.prompt('slow please');
+		await until(() => service.getSnapshot().messages.some((message) => message.text === 'working'), 'first reply streams');
+		await service.prompt('please run');
+		await until(() => service.getSnapshot().status === 'idle' && service.getSnapshot().messages.some((message) => message.text === 'Done.'), 'steered turn settles');
+		const snapshot = service.getSnapshot();
+		assert.deepEqual(snapshot.messages.filter((message) => message.role === 'user').map((message) => message.text), ['slow please', 'please run']);
+		const order = snapshot.messages.filter((message) => message.role !== 'system').map((message) => message.text);
+		assert.ok(order.indexOf('working') < order.indexOf('please run') && order.indexOf('please run') < order.indexOf('Done.'), 'the reply so far comes before the steered message');
+		assert.equal(snapshot.runs.length, 1, 'the steered message joins the running run');
+		assert.equal(snapshot.runs[0].status, 'completed');
 	} finally {
 		await service?.dispose().catch(() => {});
 		try { rmSync(root, { recursive: true, force: true, maxRetries: 50, retryDelay: 100 }); }

@@ -23,6 +23,8 @@ export interface AcpConversationHooks {
 	onExit(message: string): void;
 	/** Rendered transcript used when the agent cannot resume its own session. */
 	historyContext(): string | null;
+	/** Settings the user chose earlier, applied again to a resumed session (agents reset them). */
+	savedSettings?(): { model?: string; options: Record<string, string> } | null;
 }
 
 export interface AcpTurnInput {
@@ -36,12 +38,18 @@ export interface AcpTurnInput {
 	onDelivered?(): void;
 }
 
-export interface AcpTurnResult { stopReason: AcpStopReason | 'error'; error?: Error }
+export interface AcpTurnResult {
+	stopReason: AcpStopReason | 'error';
+	error?: Error;
+	/** Input sent mid-turn took this turn over; the newer turn reports the outcome. */
+	superseded?: boolean;
+}
 
 /**
  * One desktop conversation driven by an ACP agent. Starts the agent lazily
  * on the first turn, resumes its native session when the agent supports
- * `session/load`, and serializes turns (ACP has no mid-turn input).
+ * `session/load`, and serializes turns; agents marked `steer` also take
+ * input while a turn runs (see `steer`).
  */
 export class AcpConversation {
 	readonly config: UiAgentConfig;
@@ -58,9 +66,13 @@ export class AcpConversation {
 	private readonly assembler: AcpTurnAssembler;
 	private turn: Promise<unknown> = Promise.resolve();
 	private activeTurns = 0;
+	/** The turn whose prompt the agent is working on (sent, not answered yet). */
+	private running: { superseded: boolean } | null = null;
 	private permissionAbort: AbortController | null = null;
 	/** Set when the agent exposes its model as a config option (then `session/set_model` is not used). */
 	private modelOptionId: string | null = null;
+	private models: UiAgentModel[] = [];
+	private currentModel: string | null = null;
 	private options: UiAgentOption[] = [];
 	/** Legacy `modes` shown as an option when the agent has no mode config option. */
 	private legacyMode: UiAgentOption | null = null;
@@ -105,14 +117,24 @@ export class AcpConversation {
 
 	async setModel(modelId: string): Promise<void> {
 		await this.ensureSession();
-		if (this.modelOptionId) { await this.setConfigOption(this.modelOptionId, modelId); return; }
-		await this.connection!.request('session/set_model', { sessionId: this.sessionId, modelId });
-		this.assembler.model = modelId;
+		await this.writeModel(modelId);
 	}
 
 	/** Change one session setting; the agent answers with the full, updated list. */
 	async setConfigOption(configId: string, value: string): Promise<void> {
 		await this.ensureSession();
+		await this.writeConfigOption(configId, value);
+	}
+
+	private async writeModel(modelId: string): Promise<void> {
+		if (this.modelOptionId) { await this.writeConfigOption(this.modelOptionId, modelId); return; }
+		await this.connection!.request('session/set_model', { sessionId: this.sessionId, modelId });
+		this.assembler.model = modelId;
+		this.currentModel = modelId;
+		this.hooks.onModels(this.models, modelId);
+	}
+
+	private async writeConfigOption(configId: string, value: string): Promise<void> {
 		if (configId === LEGACY_MODE_OPTION && this.legacyMode) {
 			await this.connection!.request('session/set_mode', { sessionId: this.sessionId, modeId: value });
 			this.setLegacyMode(value);
@@ -121,7 +143,7 @@ export class AcpConversation {
 		const result = await this.connection!.request<{ configOptions?: unknown } | null>('session/set_config_option', { sessionId: this.sessionId, configId, value });
 		if (Array.isArray(result?.configOptions)) { this.applyConfigOptions(result.configOptions); return; }
 		// An agent that does not echo the list: reflect the accepted value locally.
-		if (configId === this.modelOptionId) { this.assembler.model = value; return; }
+		if (configId === this.modelOptionId) { this.assembler.model = value; this.currentModel = value; return; }
 		this.options = this.options.map((option) => option.id === configId ? { ...option, currentValue: value } : option);
 		this.hooks.onConfigOptions(this.options);
 	}
@@ -134,8 +156,40 @@ export class AcpConversation {
 		await connection?.close();
 	}
 
+	/** True while a sent prompt is running and the agent accepts input into it (`config.steer`). */
+	get canSteer(): boolean {
+		return this.config.steer === true && this.running !== null && this.connection?.alive === true && this.sessionId !== null;
+	}
+
+	/**
+	 * Send input into the running turn. Agents that support it (Antigravity) end the
+	 * running prompt and carry on with this one, so the transcript splits here: the
+	 * reply so far closes, the new user message follows and later output belongs to
+	 * it. Falls back to queueing when nothing is running.
+	 */
+	steer(input: AcpTurnInput): Promise<AcpTurnResult> {
+		const current = this.running;
+		if (!this.canSteer || !current || this.disposed) return this.prompt(input);
+		current.superseded = true;
+		// A question still open for the superseded turn is answered as cancelled.
+		this.permissionAbort?.abort();
+		this.activeTurns += 1;
+		const cancelled = this.cancelledSince(this.generation);
+		this.apply(this.assembler.split());
+		this.apply(this.assembler.userMessage(input.text, input.images ?? []));
+		input.onStarted?.();
+		const run = this.sendPrompt(input, cancelled, false).finally(() => { this.activeTurns -= 1; });
+		// Later prompts queue behind both the superseded turn and this one.
+		this.turn = Promise.allSettled([this.turn, run]);
+		return run;
+	}
+
+	private cancelledSince(generation: number): () => boolean {
+		return () => generation !== this.generation;
+	}
+
 	private async runTurn(input: AcpTurnInput, generation: number): Promise<AcpTurnResult> {
-		const cancelled = (): boolean => generation !== this.generation;
+		const cancelled = this.cancelledSince(generation);
 		const user = this.assembler.userMessage(input.text, input.images ?? []);
 		this.apply(user);
 		input.onStarted?.();
@@ -143,25 +197,45 @@ export class AcpConversation {
 		if (cancelled()) return this.finish('cancelled');
 		try {
 			await this.ensureSession();
-			if (cancelled()) return this.finish('cancelled');
+		} catch (error) {
+			return this.failTurn(error, cancelled);
+		}
+		if (cancelled()) return this.finish('cancelled');
+		return this.sendPrompt(input, cancelled, true);
+	}
+
+	/** `withHistory`: a turn that starts the conversation again carries the transcript when the agent lost it. */
+	private async sendPrompt(input: AcpTurnInput, cancelled: () => boolean, withHistory: boolean): Promise<AcpTurnResult> {
+		const turn = { superseded: false };
+		const permission = new AbortController();
+		try {
 			const blocks: AcpContentBlock[] = [];
-			const prefix = [this.contextLost ? this.hooks.historyContext() : null, input.contextPrefix].filter(Boolean).join('\n\n');
+			const prefix = [withHistory && this.contextLost ? this.hooks.historyContext() : null, input.contextPrefix].filter(Boolean).join('\n\n');
 			if (prefix) blocks.push({ type: 'text', text: prefix });
 			blocks.push({ type: 'text', text: input.text });
 			if (this.supportsImages) for (const image of input.images ?? []) blocks.push({ type: 'image', data: image.data, mimeType: image.mimeType });
-			this.permissionAbort = new AbortController();
+			this.running = turn;
+			this.permissionAbort = permission;
 			const result = await this.connection!.request<AcpPromptResult>('session/prompt', { sessionId: this.sessionId, prompt: blocks });
 			this.contextLost = false;
 			input.onDelivered?.();
+			// Input sent into this turn took over: that turn reports the outcome.
+			if (turn.superseded) return { stopReason: result?.stopReason ?? 'end_turn', superseded: true };
 			return this.finish(cancelled() ? 'cancelled' : result?.stopReason ?? 'end_turn');
 		} catch (error) {
-			const normalized = this.describeError(error);
-			if (cancelled()) return this.finish('cancelled');
-			this.finish('error', normalized.message);
-			return { stopReason: 'error', error: normalized };
+			if (turn.superseded) return { stopReason: cancelled() ? 'cancelled' : 'end_turn', superseded: true };
+			return this.failTurn(error, cancelled);
 		} finally {
-			this.permissionAbort = null;
+			if (this.running === turn) this.running = null;
+			if (this.permissionAbort === permission) this.permissionAbort = null;
 		}
+	}
+
+	private failTurn(error: unknown, cancelled: () => boolean): AcpTurnResult {
+		const normalized = this.describeError(error);
+		if (cancelled()) return this.finish('cancelled');
+		this.finish('error', normalized.message);
+		return { stopReason: 'error', error: normalized };
 	}
 
 	private finish(stopReason: AcpStopReason | 'error', message?: string): AcpTurnResult {
@@ -233,6 +307,7 @@ export class AcpConversation {
 			}
 			this.sessionId = session.sessionId;
 			this.applySessionSettings(session);
+			await this.restoreSettings();
 		} catch (error) {
 			this.connection = null;
 			this.sessionId = null;
@@ -261,9 +336,30 @@ export class AcpConversation {
 				.map((model) => ({ id: model.modelId, name: model.name || model.modelId, ...(model.description ? { description: model.description } : {}) }));
 			const current = typeof models.currentModelId === 'string' ? models.currentModelId : null;
 			if (current) this.assembler.model = current;
+			this.models = list;
+			this.currentModel = current;
 			this.hooks.onModels(list, current);
 		}
 		this.publishOptions([]);
+	}
+
+	/**
+	 * Apply the user's earlier choices to a new or resumed session: agents start a
+	 * loaded session with their defaults. The model goes first, since changing it
+	 * can reset other settings. A choice the agent no longer offers is skipped.
+	 */
+	private async restoreSettings(): Promise<void> {
+		const saved = this.hooks.savedSettings?.();
+		if (!saved) return;
+		const model = saved.model;
+		if (model && model !== this.currentModel && this.models.some((item) => item.id === model)) {
+			await this.writeModel(model).catch(() => {});
+		}
+		for (const [id, value] of Object.entries(saved.options)) {
+			const option = this.options.find((item) => item.id === id);
+			if (!option || option.currentValue === value || !option.values.some((item) => item.value === value)) continue;
+			await this.writeConfigOption(id, value).catch(() => {});
+		}
 	}
 
 	/** Returns false when the list holds nothing usable. */
@@ -274,7 +370,9 @@ export class AcpConversation {
 		this.modelOptionId = model?.id ?? null;
 		if (model) {
 			this.assembler.model = model.currentValue;
-			this.hooks.onModels(model.values.map((item) => ({ id: item.value, name: item.name, ...(item.description ? { description: item.description } : {}) })), model.currentValue);
+			this.models = model.values.map((item) => ({ id: item.value, name: item.name, ...(item.description ? { description: item.description } : {}) }));
+			this.currentModel = model.currentValue;
+			this.hooks.onModels(this.models, model.currentValue);
 		}
 		this.publishOptions(parsed.filter((option) => option !== model));
 		return true;

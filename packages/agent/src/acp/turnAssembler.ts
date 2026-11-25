@@ -124,6 +124,16 @@ function displayPath(cwd: string, path: string): string {
 	return rel && !rel.startsWith('..') && !isAbsolute(rel) ? rel.replace(/\\/g, '/') : path;
 }
 
+/** The command line in a tool call's raw input; agents name the field differently (Antigravity: `CommandLine`). */
+export function toolCommand(rawInput: unknown): string | undefined {
+	if (!rawInput || typeof rawInput !== 'object') return undefined;
+	const raw = rawInput as Record<string, unknown>;
+	const command = raw.command ?? raw.CommandLine ?? raw.commandLine;
+	if (typeof command === 'string') return command;
+	if (Array.isArray(command) && command.every((part) => typeof part === 'string')) return (command as string[]).join(' ');
+	return undefined;
+}
+
 interface OpenTool { name: string; args: Record<string, unknown> }
 
 export class AcpTurnAssembler {
@@ -174,6 +184,13 @@ export class AcpTurnAssembler {
 			}
 			default: break;
 		}
+		return out;
+	}
+
+	/** Close the reply so far without ending the turn: input sent mid-turn follows it, tools keep running. */
+	split(): AssemblerOutput {
+		const out: AssemblerOutput = { events: [], persist: [] };
+		this.closeAssistant(out, 'stop');
 		return out;
 	}
 
@@ -236,10 +253,8 @@ export class AcpTurnAssembler {
 		const diff = Array.isArray(call.content) ? call.content.find((item) => item?.type === 'diff') as Extract<AcpToolCallContent, { type: 'diff' }> | undefined : undefined;
 		const path = location?.path ?? diff?.path;
 		if (path) args.path = displayPath(this.cwd, path);
-		const raw = call.rawInput && typeof call.rawInput === 'object' ? call.rawInput as Record<string, unknown> : null;
-		const command = raw?.command;
-		if (typeof command === 'string' && command.trim()) args.command = command;
-		else if (Array.isArray(command) && command.every((part) => typeof part === 'string')) args.command = (command as string[]).join(' ');
+		const command = toolCommand(call.rawInput);
+		if (command?.trim()) args.command = command;
 		if (!args.path && !args.command && call.title) args.prompt = call.title;
 		return args;
 	}

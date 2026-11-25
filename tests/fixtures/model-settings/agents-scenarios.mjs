@@ -77,6 +77,17 @@ export default async function agentsScenarios(review) {
   await review.assert('document.querySelector(".pd-composer-shell textarea").value === "再补一个测试" && !window.__modelReview.calls.some(call => call.name === "submitInput" || call.name === "prompt")', 'A message typed while the agent replies stays in the composer and is not sent');
   await review.screenshot('agents-acp-busy');
   await review.fill('.pd-composer-shell textarea', '');
+
+  // An agent that takes mid-turn input (Antigravity) gets the message right away, as steering.
+  await review.evaluate(`(() => { const s = window.__modelReview.snapshot; s.agent = { ...s.agent, capabilities: { ...s.agent.capabilities, steer: true } }; window.__modelReview.emitAgent({ type: 'model', agent: s.agent, model: s.model, modelName: s.modelName, modelProvider: s.modelProvider, thinkingLevel: s.thinkingLevel, availableThinkingLevels: s.availableThinkingLevels, contextUsage: null }); })()`);
+  await review.waitFor('document.querySelector(".pd-composer-shell textarea")?.placeholder.includes("发送的消息会插入当前回复")');
+  await review.fill('.pd-composer-shell textarea', '改成只看 README');
+  await review.key('Enter');
+  await review.waitFor('window.__modelReview.calls.some(call => (call.name === "submitInput" && call.args[0]?.behavior === "steer" && call.args[0]?.text === "改成只看 README") || (call.name === "prompt" && call.args[1] === "steer"))');
+  await review.waitFor('document.querySelector(".pd-composer-shell textarea")?.value === ""');
+  await review.assert('!document.querySelector(".pd-composer-error")', 'A steering agent receives the message instead of refusing it');
+  await review.screenshot('agents-acp-steer');
+  await review.evaluate(`(() => { const s = window.__modelReview.snapshot; s.agent = { ...s.agent, capabilities: { ...s.agent.capabilities, steer: false } }; window.__modelReview.emitAgent({ type: 'model', agent: s.agent, model: s.model, modelName: s.modelName, modelProvider: s.modelProvider, thinkingLevel: s.thinkingLevel, availableThinkingLevels: s.availableThinkingLevels, contextUsage: null }); })()`);
   await review.evaluate('window.__modelReview.snapshot.status = "idle"; window.__modelReview.emitAgent({type:"status",status:"idle"})');
 
   await review.click('.pd-settings-entry');

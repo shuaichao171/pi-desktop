@@ -153,6 +153,8 @@ export function Composer({ header, onOpenModelManagement, changesSlotRef }: { he
 	const busy = status === 'busy';
 	// External agents have no mid-turn input: while one replies, the draft waits here.
 	const waitsForReply = busy && !agentCapabilities(agent).steer;
+	// An external agent that takes mid-turn input has no queue: a message goes straight into the reply.
+	const agentSteers = busy && agent?.kind === 'acp' && agentCapabilities(agent).steer;
 	const alternateShortcut = platform === 'darwin' ? '⌘Enter' : 'Ctrl+Enter';
 	const stopping = bridge !== null && stopRequests.get(stopScopeKey)?.bridge === bridge;
 	// Not ready to SEND yet. Typing stays open during switches and startup: the
@@ -166,7 +168,7 @@ export function Composer({ header, onOpenModelManagement, changesSlotRef }: { he
 	const busyHint = t('composer.busyHint', { action: t(defaultBusyBehavior === 'followUp' ? 'composer.queueSend' : 'composer.steer'), alternate: t(defaultBusyBehavior === 'followUp' ? 'composer.steer' : 'composer.queueSend'), shortcut: alternateShortcut });
 	// ZCode-style semantic split: fresh conversation invites a new task, an
 	// existing thread invites a follow-up (busy keeps the queue/steer hint).
-	const placeholder = status === 'error' ? t('composer.connectionErrorPlaceholder') : inputLocked ? t('composer.connecting') : waitsForReply ? t('composer.agentBusyHint', { agent: agent?.displayName ?? '' }) : busy ? busyHint : t(hasConversationHistory ? 'composer.placeholderFollowUp' : 'composer.placeholder');
+	const placeholder = status === 'error' ? t('composer.connectionErrorPlaceholder') : inputLocked ? t('composer.connecting') : waitsForReply ? t('composer.agentBusyHint', { agent: agent?.displayName ?? '' }) : agentSteers ? t('composer.agentSteerHint', { agent: agent?.displayName ?? '' }) : busy ? busyHint : t(hasConversationHistory ? 'composer.placeholderFollowUp' : 'composer.placeholder');
 	const hasContent = Boolean(text.trim() || attachments.length);
 	// "Guess your next message": shown as the placeholder only while the box is empty and idle.
 	const nextSuggestion = useNextInputSuggestion();
@@ -591,7 +593,7 @@ export function Composer({ header, onOpenModelManagement, changesSlotRef }: { he
 		textEdits.current.set(submittedKey, (textEdits.current.get(submittedKey) ?? 0) + 1);
 		attachmentEdits.current.set(submittedKey, (attachmentEdits.current.get(submittedKey) ?? 0) + 1);
 		const prior = sendRequest.current;
-		const request: NonNullable<typeof sendRequest.current> = prior?.key === submittedKey && prior.text === value && prior.attachments === submittedAttachments ? prior : { key: submittedKey, scope: draftScope, text: value, attachments: submittedAttachments, id: crypto.randomUUID(), behavior: busy ? behavior ?? defaultBusyBehavior : undefined };
+		const request: NonNullable<typeof sendRequest.current> = prior?.key === submittedKey && prior.text === value && prior.attachments === submittedAttachments ? prior : { key: submittedKey, scope: draftScope, text: value, attachments: submittedAttachments, id: crypto.randomUUID(), behavior: agentSteers ? 'steer' : busy ? behavior ?? defaultBusyBehavior : undefined };
 		request.preparationRequestId = sessionPreparation?.requestId;
 		let optimisticallyCleared = false;
 		sendingRef.current = true;

@@ -5,9 +5,12 @@
 //   "crash"  exits the process mid-turn
 //   other    thinks, replies, runs one tool behind a permission request
 //            ("always-only": the request offers no allow_once option)
+// FAKE_ACP_STEER=1: a prompt sent while "slow" runs ends that turn (end_turn) and is
+// handled next, like Antigravity.
 import { createInterface } from 'node:readline';
 
 const loadSupported = process.env.FAKE_ACP_LOAD === '1';
+const steerSupported = process.env.FAKE_ACP_STEER === '1';
 // FAKE_ACP_SETTINGS=options: config options (grouped model values, reasoning effort, mode);
 // FAKE_ACP_SETTINGS=modes: only the older `modes` list.
 const settings = process.env.FAKE_ACP_SETTINGS ?? '';
@@ -21,6 +24,11 @@ const configOptions = () => [
 	{ id: 'mode', name: 'Mode', category: 'mode', type: 'select', currentValue: option.mode, options: [{ value: 'ask', name: 'Ask' }, { value: 'auto', name: 'Auto' }] },
 	{ id: 'toggle', name: 'Unsupported toggle', type: 'boolean', currentValue: true },
 ];
+const sessionSettings = () => ({
+	models: { currentModelId: option.model, availableModels: [{ modelId: 'fake-large', name: 'Fake Large' }, { modelId: 'fake-small', name: 'Fake Small' }] },
+	...(settings === 'options' ? { configOptions: configOptions() } : {}),
+	...(settings === 'modes' ? { modes: { currentModeId: 'ask', availableModes: [{ id: 'ask', name: 'Ask' }, { id: 'auto', name: 'Auto', description: 'No questions' }] } } : {}),
+});
 let nextId = 1000;
 const waiting = new Map();
 let cancelled = null;
@@ -37,8 +45,8 @@ async function prompt(id, params) {
 	if (text.includes('crash')) { process.exit(3); }
 	if (text.includes('slow')) {
 		update(sessionId, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'working' } });
-		await new Promise((resolve) => { cancelled = resolve; });
-		send({ id, result: { stopReason: 'cancelled' } });
+		const stopReason = await new Promise((resolve) => { cancelled = resolve; });
+		send({ id, result: { stopReason } });
 		return;
 	}
 	update(sessionId, { sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text: 'Considering ' } });
@@ -73,16 +81,14 @@ createInterface({ input: process.stdin }).on('line', (line) => {
 			send({ id: message.id, result: { protocolVersion: 1, agentCapabilities: { loadSession: loadSupported, promptCapabilities: { image: false } }, authMethods: [{ id: 'login', name: 'fake login' }] } });
 			return;
 		case 'session/new':
-			send({ id: message.id, result: { sessionId: 'fake-session',
-				models: { currentModelId: 'fake-large', availableModels: [{ modelId: 'fake-large', name: 'Fake Large' }, { modelId: 'fake-small', name: 'Fake Small' }] },
-				...(settings === 'options' ? { configOptions: configOptions() } : {}),
-				...(settings === 'modes' ? { modes: { currentModeId: 'ask', availableModes: [{ id: 'ask', name: 'Ask' }, { id: 'auto', name: 'Auto', description: 'No questions' }] } } : {}) } });
+			send({ id: message.id, result: { sessionId: 'fake-session', ...sessionSettings() } });
 			update('fake-session', { sessionUpdate: 'available_commands_update', availableCommands: [{ name: 'review', description: 'Review changes', input: { hint: 'scope' } }] });
 			return;
 		case 'session/load':
 			update(message.params.sessionId, { sessionUpdate: 'user_message_chunk', content: { type: 'text', text: 'replayed' } });
 			update(message.params.sessionId, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'replayed answer' } });
-			send({ id: message.id, result: {} });
+			// Like real agents, a loaded session starts again from the default settings.
+			send({ id: message.id, result: settings ? sessionSettings() : {} });
 			return;
 		case 'session/set_model':
 			send({ id: message.id, result: {} });
@@ -104,10 +110,11 @@ createInterface({ input: process.stdin }).on('line', (line) => {
 			update(message.params.sessionId, { sessionUpdate: 'current_mode_update', currentModeId: message.params.modeId });
 			return;
 		case 'session/prompt':
+			if (steerSupported && cancelled) { const running = cancelled; cancelled = null; running('end_turn'); }
 			void prompt(message.id, message.params);
 			return;
 		case 'session/cancel':
-			cancelled?.();
+			cancelled?.('cancelled');
 			cancelled = null;
 			return;
 		default:
