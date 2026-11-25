@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
-import type { UiSessionStats, UiUsageQueryResult } from '@pidesktop/shared';
+import type { UiAgentQuota, UiSessionStats, UiUsageQueryResult } from '@pidesktop/shared';
 import { useChatStore } from '../store';
 import { useT } from '../i18n';
 import { useFocusAwarePoll } from '../focusStore';
 import { useConversationMetricsPreferences } from '../conversationMetricsPreferences';
 import { conversationMetricsAt, formatMetricDuration, formatMetricTokens } from '../conversationMetrics';
 import { formatUsageBalance, usageBalanceTooltip } from '../usageDisplay';
+import { agentQuotaLevel, agentQuotaTooltip, agentQuotaWindowLabel, formatAgentQuotaPercent, mainAgentQuotaWindows } from '../agentQuotaDisplay';
 import { Icon } from './Icons';
 import './conversationMetrics.css';
 
@@ -25,7 +26,9 @@ export function ConversationMetrics() {
 	const providers = useChatStore(s => s.modelProviders);
 	const balanceEnabled = preferences.balance && providers.some((entry) => entry.provider === providerId && entry.usageQuery?.enabled);
 	const balancePending = preferences.balance && navigating;
-	const balanceVisible = balanceEnabled || balancePending;
+	const agent = useChatStore(s => s.agent);
+	const quotaAgentId = preferences.balance && !navigating && agent?.kind === 'acp' && agent.quota && typeof bridge?.readAgentQuota === 'function' ? agent.id : null;
+	const balanceVisible = balanceEnabled || balancePending || quotaAgentId !== null;
 	const enabled = Object.values(preferences).some(Boolean);
 	const scope = JSON.stringify([cwd, sessionPath, sessionId, generation]);
 	const [sample, setSample] = useState<{ scope: string; stats: UiSessionStats } | null>(null);
@@ -71,7 +74,8 @@ export function ConversationMetrics() {
 		{showSpeed && <span className="pd-metric-group pd-metric-speed" aria-label={`${t('settings.metrics.speed')}: ${speed?.toFixed(1)} t/s`}>{speed?.toLocaleString(locale, { maximumFractionDigits: 1 })} t/s</span>}
 		{showTokens && <span className="pd-metric-group" aria-label={t('metrics.tokensDescription', { input: exact(stats?.tokens.input), output: exact(stats?.tokens.output), total: exact(stats?.tokens.total) })}><span className="pd-metric-input">↑{tokens(stats?.tokens.input)}</span><span className="pd-metric-output">↓{tokens(stats?.tokens.output)}</span><span>Σ {tokens(stats?.tokens.total)}</span></span>}
 		{showDuration && <span className="pd-metric-group pd-metric-duration" aria-label={`${t('settings.metrics.duration')}: ${formatMetricDuration(metrics.durationMs)}`}><Icon name="clock" width="12" height="12" />{formatMetricDuration(metrics.durationMs)}</span>}
-		{balanceVisible && <ProviderBalance pending={balancePending} />}
+		{(balanceEnabled || balancePending) && <ProviderBalance pending={balancePending} />}
+		{quotaAgentId && <AgentQuotaMetric key={quotaAgentId} agentId={quotaAgentId} />}
 	</div>;
 }
 
@@ -123,4 +127,45 @@ function ProviderBalance({ pending: switching = false }: { pending?: boolean }) 
 	if (!result.ok && !result.data?.length) return <button type="button" className={className} data-action="refresh-balance" title={tooltip} aria-label={tooltip} onClick={refresh}>{busy ? t('usage.refreshing') : t('usage.queryFailedShort')}</button>;
 	if (!first) return <button type="button" className={className} data-action="refresh-balance" title={tooltip} aria-label={tooltip} onClick={refresh}>{t('usage.queryFailedShort')}</button>;
 	return <button type="button" className={className} data-action="refresh-balance" title={tooltip} aria-label={tooltip} onClick={refresh}>{formatUsageBalance(first)}</button>;
+}
+
+/** 5-hour and weekly plan limits of the conversation's external agent; click to re-read. */
+function AgentQuotaMetric({ agentId }: { agentId: string }) {
+	const { t, locale } = useT();
+	const bridge = useChatStore(s => s.bridge);
+	const status = useChatStore(s => s.status);
+	const [quota, setQuota] = useState<UiAgentQuota | null>(null);
+	const [busy, setBusy] = useState(false);
+	// `refresh` bypasses the host cache (a click); turn ends and polls reuse a recent read.
+	const [request, setRequest] = useState({ tick: 0, refresh: false });
+	const wasBusy = useRef(false);
+	const pollRef = useRef(() => {});
+	// 额度轮询（非关键）：未聚焦降频、持续未聚焦暂停；宿主有短时缓存，不会频繁启动 Agent。
+	useFocusAwarePoll(() => { pollRef.current(); }, 10 * 60_000);
+	useEffect(() => {
+		if (wasBusy.current && status !== 'busy') setRequest((current) => ({ tick: current.tick + 1, refresh: false }));
+		wasBusy.current = status === 'busy';
+	}, [status]);
+	useEffect(() => {
+		if (!bridge?.readAgentQuota) return;
+		let active = true;
+		pollRef.current = () => setRequest((current) => ({ tick: current.tick + 1, refresh: false }));
+		setBusy(true);
+		bridge.readAgentQuota(agentId, request.refresh)
+			.then((next) => { if (active) setQuota(next); })
+			.catch(() => { /* keep the last reading */ })
+			.finally(() => { if (active) setBusy(false); });
+		return () => { active = false; pollRef.current = () => {}; };
+	}, [bridge, agentId, request]);
+	const refresh = () => setRequest((current) => ({ tick: current.tick + 1, refresh: true }));
+	const windows = mainAgentQuotaWindows(quota);
+	const tooltip = agentQuotaTooltip(quota, t, locale);
+	const className = `pd-metric-group pd-metric-balance pd-metric-quota${quota && !quota.ok ? ' is-error' : ''}`;
+	if (!quota) return <button type="button" className={className} data-action="refresh-agent-quota" title={tooltip} aria-label={tooltip} onClick={refresh}>{busy ? t('usage.refreshing') : '—'}</button>;
+	// The account has no plan limits (an API key): nothing to show.
+	if (quota.ok && !windows.length) return null;
+	if (!windows.length) return <button type="button" className={className} data-action="refresh-agent-quota" title={tooltip} aria-label={tooltip} onClick={refresh}>{busy ? t('usage.refreshing') : t('agentQuota.failedShort')}</button>;
+	return <button type="button" className={className} data-action="refresh-agent-quota" title={tooltip} aria-label={tooltip} onClick={refresh} aria-busy={busy || undefined}>
+		{windows.map((window) => <span key={window.kind} className={`pd-metric-quota-window is-${agentQuotaLevel(window)}`}>{agentQuotaWindowLabel(window, t, true)} {formatAgentQuotaPercent(window.usedPercent)}</span>)}
+	</button>;
 }

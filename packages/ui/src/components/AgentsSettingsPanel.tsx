@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
-import type { UiAgentInstallState, UiAgentSaveRequest, UiAgentStatus } from '@pidesktop/shared';
+import type { UiAgentInstallState, UiAgentQuota, UiAgentSaveRequest, UiAgentStatus } from '@pidesktop/shared';
 import { useChatStore } from '../store';
 import { useT } from '../i18n';
 import { technicalInputAttributes } from '../technicalInputAttributes';
+import { agentQuotaLevel, agentQuotaWindowLabel, formatAgentQuotaPercent, formatAgentQuotaReset } from '../agentQuotaDisplay';
 import { HoverTooltip } from './HoverTooltip';
 import { Icon } from './Icons';
 import './mcpSettingsPanel.css';
@@ -34,6 +35,44 @@ function envFromText(value: string): Record<string, string> {
 	return output;
 }
 const envText = (value?: Record<string, string>) => Object.entries(value ?? {}).map(([key, item]) => `${key}=${item}`).join('\n');
+
+/** The account's plan limits (5-hour and weekly windows), read when the card shows. */
+function AgentQuotaSection({ agentId }: { agentId: string }) {
+	const bridge = useChatStore((state) => state.bridge);
+	const { t, locale } = useT();
+	const [quota, setQuota] = useState<UiAgentQuota | null>(null);
+	const [loading, setLoading] = useState(true);
+	const [request, setRequest] = useState({ tick: 0, refresh: false });
+	useEffect(() => {
+		let active = true;
+		setLoading(true);
+		bridge!.readAgentQuota(agentId, request.refresh)
+			.then((next) => { if (active) setQuota(next); })
+			.catch((failure) => { if (active) setQuota({ agentId, ok: false, queriedAt: Date.now(), windows: [], error: errorText(failure) }); })
+			.finally(() => { if (active) setLoading(false); });
+		return () => { active = false; };
+	}, [bridge, agentId, request]);
+	return <section className="pd-agent-quota" aria-busy={loading || undefined} data-agent-quota={agentId}>
+		<header>
+			<strong>{t('agentQuota.title')}</strong>
+			{quota?.plan && <span className="pd-mcp-chip">{quota.plan}</span>}
+			<span className="pd-mcp-footer-spacer" />
+			<HoverTooltip title={t('agentQuota.refresh')} align="end">
+				<button type="button" className="pd-mcp-icon-button is-ghost" disabled={loading} aria-label={t('agentQuota.refresh')} onClick={() => setRequest((current) => ({ tick: current.tick + 1, refresh: true }))}><Icon name="refresh" width="14" height="14" className={loading ? 'is-spinning' : undefined} /></button>
+			</HoverTooltip>
+		</header>
+		{!quota && loading && <p className="pd-agent-quota-muted" role="status">{t('agentQuota.loading')}</p>}
+		{quota && quota.windows.length > 0 && <ul>{quota.windows.map((window, index) => <li key={`${window.kind}-${window.label ?? ''}-${index}`} className={`is-${agentQuotaLevel(window)}`}>
+			<span className="pd-agent-quota-label">{agentQuotaWindowLabel(window, t)}</span>
+			<span className="pd-agent-quota-bar" role="meter" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(window.usedPercent)} aria-label={agentQuotaWindowLabel(window, t)}><span style={{ width: `${Math.min(100, Math.max(0, window.usedPercent))}%` }} /></span>
+			<span className="pd-agent-quota-value">{t('agentQuota.used', { percent: formatAgentQuotaPercent(window.usedPercent) })}</span>
+			<span className="pd-agent-quota-reset">{window.resetsAt ? t('agentQuota.resets', { time: formatAgentQuotaReset(window.resetsAt, locale) }) : ''}</span>
+		</li>)}</ul>}
+		{quota?.ok && !quota.windows.length && <p className="pd-agent-quota-muted">{t('agentQuota.none')}</p>}
+		{quota && !quota.ok && <p className="pd-agent-quota-error" role="alert">{t('agentQuota.failed', { error: quota.error ?? '' })}{quota.windows.length ? ` ${t('agentQuota.stale')}` : ''}</p>}
+		<p className="pd-agent-quota-muted">{t('agentQuota.hint')}</p>
+	</section>;
+}
 
 type Draft = { id?: string; displayName: string; command: string; args: string; env: string; enabled: boolean; accentColor: string | null; builtin: boolean };
 
@@ -181,6 +220,7 @@ export function AgentsSettingsPanel() {
 			{agent.readiness === 'install' && agent.installHint && <p className="pd-mcp-callout is-warning">{t('agents.installHint')}<code>{agent.installHint}</code></p>}
 			{installPanel(agent)}
 			{loginError[agent.id] && <p className="pd-mcp-callout pd-mcp-error" role="alert">{loginError[agent.id]}</p>}
+			{agent.quota && agent.readiness === 'ready' && typeof bridge?.readAgentQuota === 'function' && <AgentQuotaSection key={`${agent.id}:${agent.command}`} agentId={agent.id} />}
 			<footer>
 				{agent.readiness === 'install' && agent.installer && installSupported && installs[agent.id]?.phase !== 'running'
 					&& <button type="button" className="pd-btn pd-mcp-button is-primary" disabled={busy || installRunning} onClick={() => setConfirmInstall(agent)}><Icon name="update" width="14" height="14" />{t('agents.install')}</button>}

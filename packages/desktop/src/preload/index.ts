@@ -104,6 +104,7 @@ const bridge: AgentBridge = {
 	cancelAgentInstall: (...args) => invoke(AGENT_RUNTIME_CHANNELS.cancelAgentInstall, ...args),
 	listAgentInstalls: (...args) => invoke(AGENT_RUNTIME_CHANNELS.listAgentInstalls, ...args),
 	openAgentLogin: (...args) => invoke(AGENT_RUNTIME_CHANNELS.openAgentLogin, ...args),
+	readAgentQuota: (...args) => invoke(AGENT_RUNTIME_CHANNELS.readAgentQuota, ...args),
 	onAgentInstallEvent: (listener) => {
 		const handler = (_event: Electron.IpcRendererEvent, state: import('@pidesktop/shared').UiAgentInstallState) => listener(state);
 		ipcRenderer.on(AGENT_RUNTIME_CHANNELS.agentInstallEvent, handler);

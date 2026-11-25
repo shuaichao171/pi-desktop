@@ -93,8 +93,9 @@ import type {
 	UiSessionPeek,
 } from '@pidesktop/shared';
 import { createAgentError, normalizeAgentError } from '../../shared/src/agentErrors.ts';
-import { ACP_AGENT_CAPABILITIES, PI_AGENT_ID, piAgentDescriptor, type UiAgentConfig, type UiAgentDescriptor, type UiAgentModel, type UiAgentOption, type UiAgentSaveRequest, type UiAgentStatus } from '../../shared/src/agentRuntimes.ts';
+import { ACP_AGENT_CAPABILITIES, PI_AGENT_ID, piAgentDescriptor, type UiAgentConfig, type UiAgentDescriptor, type UiAgentModel, type UiAgentOption, type UiAgentQuota, type UiAgentSaveRequest, type UiAgentStatus } from '../../shared/src/agentRuntimes.ts';
 import { AgentRegistry } from './acp/agentRegistry.ts';
+import { AgentQuotaService } from './acp/agentQuota.ts';
 import { requireApprovalDetails, requireDialogResponse, type UiApprovalDetails, type UiApprovalScope } from '../../shared/src/approval.ts';
 import { AcpConversation } from './acp/conversation.ts';
 import { planText, toolCommand, type PiImageContent, type PiShapedEvent } from './acp/turnAssembler.ts';
@@ -1790,6 +1791,7 @@ class SingleAgentService {
 			...(this.acpModels.length ? { models: this.acpModels.map((model) => ({ ...model })) } : {}),
 			currentModelId: this.acpModelId,
 			...(this.acpOptions.length ? { options: this.acpOptions.map((option) => ({ ...option, values: option.values.map((value) => ({ ...value })) })) } : {}),
+			...(binding.config?.quota ? { quota: true } : {}),
 		};
 	}
 
@@ -3050,6 +3052,7 @@ export class AgentService {
 	private providerResyncRevision = 0;
 	private readonly mcp = new McpManager(getAgentDir());
 	private readonly agents = new AgentRegistry(join(getAgentDir(), 'desktop-agents.json'));
+	private readonly agentQuota = new AgentQuotaService({ workDir: join(getAgentDir(), 'agent-quota') });
 	private closing = false;
 	private readonly requestProjectTrust: RequestProjectTrust;
 	private readonly requestExtensionDialog: RequestExtensionDialog;
@@ -3861,6 +3864,12 @@ export class AgentService {
 
 	listAgents(): Promise<UiAgentStatus[]> { return this.agents.statuses(); }
 	probeAgents(): Promise<UiAgentStatus[]> { return this.agents.statuses(true); }
+	readAgentQuota(agentId: string, refresh = false): Promise<UiAgentQuota> {
+		const agent = this.agents.get(agentId);
+		if (!agent) return Promise.reject(new Error('Agent 不存在'));
+		// The Antigravity reader needs the CLI version (older ones would send `/usage` to the model).
+		return this.agents.status(agent).then((status) => this.agentQuota.read({ ...agent, version: status.version }, refresh));
+	}
 	async saveAgent(request: UiAgentSaveRequest): Promise<UiAgentStatus[]> {
 		const saved = this.agents.save(request);
 		for (const service of this.contexts.values()) service.agentConfigChanged(saved.id);

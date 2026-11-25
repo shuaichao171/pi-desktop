@@ -56,6 +56,8 @@ export interface UiAgentDescriptor {
 	currentModelId?: string | null;
 	/** Other session settings the agent exposes (reasoning effort, mode, ...). */
 	options?: UiAgentOption[];
+	/** The agent's account plan limits can be read (`readAgentQuota`). */
+	quota?: boolean;
 }
 
 export const PI_AGENT_ID = 'pi';
@@ -108,7 +110,39 @@ export interface UiAgentConfig {
 	community?: boolean;
 	/** Requirements or caveats shown on the agent's settings card. */
 	note?: string;
+	/** How the account plan limits are read (built-in agents only). */
+	quota?: UiAgentQuotaSource;
 	homepage?: string;
+}
+
+/**
+ * `codex`: the Codex app-server's `account/rateLimits/read`; `claude`: Claude Code's `/usage`;
+ * `antigravity`: `agy -p /usage --output-format json`.
+ */
+export type UiAgentQuotaSource = 'codex' | 'claude' | 'antigravity';
+
+/** One plan-limit window of an agent account. */
+export interface UiAgentQuotaWindow {
+	/** `five_hour` and `weekly` are the plan's main windows; `other` carries a label (a model, a separate limit). */
+	kind: 'five_hour' | 'weekly' | 'other';
+	label?: string;
+	/** Models sharing the window when the account has several limit groups (Antigravity: Gemini, Claude and GPT). */
+	group?: string;
+	/** 0-100. */
+	usedPercent: number;
+	/** Epoch ms; null when the agent gives none. */
+	resetsAt: number | null;
+}
+
+export interface UiAgentQuota {
+	agentId: string;
+	ok: boolean;
+	queriedAt: number;
+	/** Empty when the account has no plan limits (an API key, for example). On failure: the last known windows. */
+	windows: UiAgentQuotaWindow[];
+	/** Plan name as the agent reports it (`plus`, `max`, ...). */
+	plan?: string | null;
+	error?: string;
 }
 
 /**
@@ -190,6 +224,8 @@ export interface AgentRuntimeFeaturesBridge {
 	/** Open a terminal window running the agent's own interactive sign-in. */
 	openAgentLogin(agentId: string): Promise<void>;
 	onAgentInstallEvent(listener: (state: UiAgentInstallState) => void): () => void;
+	/** Account plan limits (5-hour and weekly windows); cached briefly unless `refresh`. */
+	readAgentQuota(agentId: string, refresh?: boolean): Promise<UiAgentQuota>;
 }
 
 export const AGENT_RUNTIME_CHANNELS = {
@@ -205,6 +241,7 @@ export const AGENT_RUNTIME_CHANNELS = {
 	setSessionAgent: 'agents:set-session-agent',
 	handoffToAgent: 'agents:handoff',
 	setAgentOption: 'agents:set-option',
+	readAgentQuota: 'agents:quota',
 } as const;
 
 /** Bounded wire validation for an agent option change. */

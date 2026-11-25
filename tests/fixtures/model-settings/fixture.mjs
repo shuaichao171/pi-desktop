@@ -33,8 +33,9 @@ export function installModelSettingsFixture(options = {}) {
     mcpCliServers: [],
     // External ACP agents: one ready, one missing from PATH, one custom (all fictional commands).
     agents: [
-      { id: 'claude-code', displayName: 'Claude Code', command: 'claude-agent-acp', args: [], enabled: true, builtin: true, accentColor: '#D97757', installHint: 'npm install -g @agentclientprotocol/claude-agent-acp', installer: { kind: 'npm', package: '@agentclientprotocol/claude-agent-acp' }, login: { command: 'claude-agent-acp', args: ['--cli'] }, loginHint: '在打开的 Claude Code 里输入 /login 完成登录', readiness: 'ready', version: '0.9.0', resolvedCommand: 'C:\\review\\bin\\claude-agent-acp.cmd' },
-      { id: 'codex', displayName: 'Codex', command: 'codex-acp', args: [], enabled: true, builtin: true, accentColor: '#10A37F', installHint: 'npm install -g @agentclientprotocol/codex-acp', installer: { kind: 'npm', package: '@agentclientprotocol/codex-acp' }, login: { command: 'codex-acp', args: ['login'] }, loginHint: '或在终端运行 codex login', readiness: 'install', version: null, resolvedCommand: null, message: '未找到命令 codex-acp' },
+      { id: 'claude-code', displayName: 'Claude Code', command: 'claude-agent-acp', args: [], enabled: true, builtin: true, accentColor: '#D97757', installHint: 'npm install -g @agentclientprotocol/claude-agent-acp', installer: { kind: 'npm', package: '@agentclientprotocol/claude-agent-acp' }, login: { command: 'claude-agent-acp', args: ['--cli'] }, loginHint: '在打开的 Claude Code 里输入 /login 完成登录', quota: 'claude', readiness: 'ready', version: '0.9.0', resolvedCommand: 'C:\\review\\bin\\claude-agent-acp.cmd' },
+      { id: 'codex', displayName: 'Codex', command: 'codex-acp', args: [], enabled: true, builtin: true, accentColor: '#10A37F', installHint: 'npm install -g @agentclientprotocol/codex-acp', installer: { kind: 'npm', package: '@agentclientprotocol/codex-acp' }, login: { command: 'codex-acp', args: ['login'] }, loginHint: '或在终端运行 codex login', quota: 'codex', readiness: 'install', version: null, resolvedCommand: null, message: '未找到命令 codex-acp' },
+      { id: 'antigravity', displayName: 'Antigravity', command: 'agy', args: ['acp'], enabled: true, builtin: true, accentColor: '#3186FF', quota: 'antigravity', readiness: 'ready', version: '1.5.17', resolvedCommand: 'C:\\review\\agy\\agy.exe' },
       { id: 'gemini', displayName: 'Gemini CLI', command: 'gemini', args: ['--experimental-acp'], enabled: false, builtin: true, accentColor: '#4285F4', installHint: 'npm install -g @google/gemini-cli', readiness: 'disabled', version: null, resolvedCommand: null },
       { id: 'zcode', displayName: 'ZCode', command: 'zcode-acp-server', args: [], enabled: true, builtin: true, accentColor: '#2F6BFF', installHint: 'npm install -g zcode-acp-server', installer: { kind: 'npm', package: 'zcode-acp-server' }, login: { command: 'zcode-acp', args: ['setup', '--provider', 'bigmodel'] }, community: true, note: '需要本机已安装 ZCode（桌面版或 CLI 0.14.8 以上）；它默认使用 yolo 模式，不经确认执行操作，可在 Agent 选项中切换。', readiness: 'ready', version: '0.94.0', resolvedCommand: 'C:\review\bin\zcode-acp-server.cmd' },
       { id: 'review-agent', displayName: 'Review Agent', command: 'C:\\review\\agent.exe', args: ['--acp'], env: { REVIEW_MODE: '1' }, enabled: true, builtin: false, accentColor: null, readiness: 'ready', version: '1.0.0', resolvedCommand: 'C:\\review\\agent.exe' },
@@ -116,12 +117,20 @@ export function installModelSettingsFixture(options = {}) {
     cancelAgentInstall: () => {},
     listAgentInstalls: () => [],
     openAgentLogin: () => {},
+    // Plan limits: Claude Code reports a near-full week; anything else has no plan limits.
+    readAgentQuota: (agentId) => {
+      const now = Date.now();
+      if (agentId === 'claude-code') return { agentId, ok: true, queriedAt: now, plan: 'max', windows: [{ kind: 'five_hour', usedPercent: 37, resetsAt: now + 2 * 3600_000 }, { kind: 'weekly', usedPercent: 86, resetsAt: now + 3 * 86400_000 }, { kind: 'other', label: 'Opus', usedPercent: 8, resetsAt: null }] };
+      // Antigravity: each model group has its own windows.
+      if (agentId === 'antigravity') return { agentId, ok: true, queriedAt: now, plan: null, windows: [{ kind: 'weekly', group: 'Gemini Models', usedPercent: 1.22, resetsAt: now + 6 * 86400_000 }, { kind: 'five_hour', group: 'Gemini Models', usedPercent: 12, resetsAt: now + 4 * 3600_000 }, { kind: 'weekly', group: 'Claude and GPT models', usedPercent: 0, resetsAt: null }, { kind: 'five_hour', group: 'Claude and GPT models', usedPercent: 64, resetsAt: now + 3600_000 }] };
+      return { agentId, ok: true, queriedAt: now, windows: [] };
+    },
     removeAgent: (id) => { state.agents = state.agents.filter((agent) => agent.id !== id || agent.builtin); return clone(state.agents); },
     setSessionAgent: (agentId) => {
       const config = state.agents.find((agent) => agent.id === agentId);
       const agent = agentId === 'pi'
         ? { id: 'pi', kind: 'pi', displayName: 'Pi', accentColor: null, capabilities: { streamsThinking: true, interrupt: true, steer: true, thinkingLevels: true, slashCommands: true, extensions: true, images: true, session: { branch: true, fork: true, editUserMessage: true, rewind: true } } }
-        : { id: agentId, kind: 'acp', displayName: config.displayName, accentColor: config.accentColor, capabilities: { streamsThinking: true, interrupt: true, steer: false, thinkingLevels: false, slashCommands: true, extensions: false, images: false, session: { branch: false, fork: false, editUserMessage: false, rewind: false } }, models: [{ id: 'sonnet', name: 'Sonnet' }, { id: 'opus', name: 'Opus' }], currentModelId: 'sonnet' };
+        : { id: agentId, kind: 'acp', displayName: config.displayName, accentColor: config.accentColor, capabilities: { streamsThinking: true, interrupt: true, steer: false, thinkingLevels: false, slashCommands: true, extensions: false, images: false, session: { branch: false, fork: false, editUserMessage: false, rewind: false } }, models: [{ id: 'sonnet', name: 'Sonnet' }, { id: 'opus', name: 'Opus' }], currentModelId: 'sonnet', ...(config.quota ? { quota: true } : {}) };
       Object.assign(state.snapshot, { agent, ...(agentId === 'pi' ? {} : { model: 'sonnet', modelName: 'Sonnet', modelProvider: `acp:${agentId}`, thinkingLevel: 'off', availableThinkingLevels: ['off'] }) });
       state.emitAgent({ type: 'model', agent, model: state.snapshot.model, modelName: state.snapshot.modelName, modelProvider: state.snapshot.modelProvider, thinkingLevel: state.snapshot.thinkingLevel, availableThinkingLevels: state.snapshot.availableThinkingLevels, contextUsage: null });
     },

@@ -1407,6 +1407,10 @@ export function registerIpc(options: {
 	handleRendererInvoke(MCP_FEATURE_CHANNELS.testMcpServer, (event, request: Parameters<typeof agentService.testMcpServer>[0]) => agentFor(event).testMcpServer(request));
 	handleRendererInvoke(AGENT_RUNTIME_CHANNELS.listAgents, (event) => agentFor(event).listAgents());
 	handleRendererInvoke(AGENT_RUNTIME_CHANNELS.probeAgents, (event) => agentFor(event).probeAgents());
+	handleRendererInvoke(AGENT_RUNTIME_CHANNELS.readAgentQuota, (event, id: unknown, refresh: unknown) => {
+		if (!isValidAgentId(id)) throw new Error('Agent 参数无效');
+		return agentFor(event).readAgentQuota(id, refresh === true);
+	});
 	handleRendererInvoke(AGENT_RUNTIME_CHANNELS.saveAgent, (event, request: unknown) => agentFor(event).saveAgent(requireAgentSaveRequest(request)));
 	handleRendererInvoke(AGENT_RUNTIME_CHANNELS.removeAgent, (event, id: unknown) => {
 		if (!isValidAgentId(id)) throw new Error('Agent 参数无效');

@@ -25,10 +25,12 @@ export const BUILTIN_AGENTS: readonly UiAgentConfig[] = [
 	builtin({ id: 'claude-code', displayName: 'Claude Code', command: 'claude-agent-acp', args: [], accentColor: '#D97757',
 		installer: { kind: 'npm', package: '@agentclientprotocol/claude-agent-acp' },
 		login: { command: 'claude-agent-acp', args: ['--cli'] }, loginHint: '在 设置 → Agents 中点击“在终端中登录”，在打开的 Claude Code 里输入 /login 完成登录',
+		quota: 'claude',
 		homepage: 'https://github.com/agentclientprotocol/claude-agent-acp' }),
 	builtin({ id: 'codex', displayName: 'Codex', command: 'codex-acp', args: [], accentColor: '#10A37F',
 		installer: { kind: 'npm', package: '@agentclientprotocol/codex-acp' },
 		login: { command: 'codex-acp', args: ['login'] }, loginHint: '在 设置 → Agents 中点击“在终端中登录”，或在终端运行 codex login',
+		quota: 'codex',
 		homepage: 'https://github.com/agentclientprotocol/codex-acp' }),
 	// Antigravity CLI 1.5+ speaks ACP itself (`agy acp`) and reuses the login of an interactive `agy` session.
 	builtin({ id: 'antigravity', displayName: 'Antigravity', command: 'agy', args: ['acp'], accentColor: '#3186FF',
@@ -36,6 +38,7 @@ export const BUILTIN_AGENTS: readonly UiAgentConfig[] = [
 		login: { command: 'agy', args: [] }, loginHint: '在 设置 → Agents 中点击“在终端中登录”，或在终端运行一次 agy 并登录',
 		// Verified with agy 1.5.17: a prompt sent mid-turn ends the running one and continues.
 		steer: true,
+		quota: 'antigravity',
 		homepage: 'https://antigravity.google/docs/ide/extensions/acp/' }),
 	builtin({ id: 'gemini', displayName: 'Gemini CLI', command: 'gemini', args: ['--experimental-acp'], accentColor: '#4285F4',
 		installer: { kind: 'npm', package: '@google/gemini-cli' }, login: { command: 'gemini', args: [] },

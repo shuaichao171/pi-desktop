@@ -21,7 +21,7 @@ export const AGENT_HOST_METHODS = [
 'submitInput', 'getInputQueue', 'mutateInputQueue', 'getFileCheckpoint', 'rewindFileCheckpoint', 'getEditRewindPreview', 'getFileChangeDiffs',
  'searchSessionsPage', 'searchProjectFiles', 'rebuildSearchIndex', 'cancelDataSearch', 'getProjectSearchRules', 'setProjectSearchRules',
  'testProviderModel', 'cancelProviderModelTest', 'getProjectDefaults', 'saveProjectDefaults', 'queryProviderUsage', 'saveProviderUsageQuery', 'resetProvider',
-	'listAgents', 'probeAgents', 'saveAgent', 'removeAgent', 'setSessionAgent', 'handoffToAgent', 'setAgentOption',
+	'listAgents', 'probeAgents', 'saveAgent', 'removeAgent', 'setSessionAgent', 'handoffToAgent', 'setAgentOption', 'readAgentQuota',
 	'getPersonalization',
 	'saveInstruction',
 	'init',

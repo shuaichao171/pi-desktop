@@ -21,3 +21,8 @@
 .pd-metric-balance:hover { text-decoration: underline dotted; }
 .pd-metric-balance.is-error { color: var(--pd-text-subtle); }
 .pd-metric-balance.is-invalid { color: light-dark(#a3573f, #e3a186); }
+.pd-metric-quota { gap: 8px; color: var(--pd-text-subtle); }
+.pd-metric-quota-window.is-ok { color: light-dark(#3f7a52, #93d4a9); }
+.pd-metric-quota-window.is-warning { color: light-dark(#9a6a12, #e8c07a); }
+.pd-metric-quota-window.is-exhausted { color: light-dark(#b23b3b, #f09a9a); }
+.pd-metric-quota[aria-busy=true] { opacity: 0.7; }

@@ -18,6 +18,8 @@ export default async function agentsScenarios(review) {
   await review.waitFor(`document.querySelector(${JSON.stringify(trigger)})?.textContent.includes('Claude Code')`);
   await review.assert('window.__modelReview.calls.some(call => call.name === "setSessionAgent" && call.args[0] === "claude-code")', 'Choosing an agent before the first message binds the conversation');
   await review.assert('!document.querySelector(".pd-composer-thinking-trigger") && !document.querySelector(".pd-context-trigger") && document.querySelector(".pd-composer-model-trigger").textContent.includes("Sonnet")', 'An ACP conversation hides thinking and context controls and shows the agent model');
+  await review.waitFor('document.querySelector(".pd-metric-quota")?.textContent.includes("5h 37%")');
+  await review.assert('document.querySelector(".pd-metric-quota").textContent.includes("周 86%") && Boolean(document.querySelector(".pd-metric-quota-window.is-warning")) && document.querySelector(".pd-metric-quota").title.includes("套餐：max") && document.querySelector(".pd-metric-quota").title.includes("Opus")', 'An agent conversation shows the 5-hour and weekly limits under the composer, warning near the limit');
   await review.screenshot('agents-acp-composer');
 
   await review.click('.pd-composer-model-trigger');
@@ -94,9 +96,18 @@ export default async function agentsScenarios(review) {
   await review.click('.pd-settings-entry');
   await review.clickText('.pd-settings-nav button', 'Agents');
   await review.waitFor('Boolean(document.querySelector("[data-settings-page=agents] .pd-mcp-server"))');
-  await review.assert('document.querySelectorAll("[data-settings-page=agents] .pd-mcp-server").length === 5 && document.querySelector("[data-settings-page=agents]").textContent.includes("npm install -g @agentclientprotocol/codex-acp")', 'The Agents page lists every agent with its install hint');
+  await review.assert('document.querySelectorAll("[data-settings-page=agents] .pd-mcp-server").length === 6 && document.querySelector("[data-settings-page=agents]").textContent.includes("npm install -g @agentclientprotocol/codex-acp")', 'The Agents page lists every agent with its install hint');
   await review.assert('(() => { const card = [...document.querySelectorAll("[data-settings-page=agents] .pd-mcp-server")].find((item) => item.textContent.includes("ZCode")); return card && card.textContent.includes("社区 ACP") && card.querySelector(".pd-agent-note")?.textContent.includes("非官方") && card.textContent.includes("yolo"); })()', 'A community ACP adapter is marked as such on its settings card, with its note');
   await review.assert('![...document.querySelectorAll("[data-settings-page=agents] .pd-mcp-server")].find((item) => item.textContent.includes("Claude Code")).querySelector(".pd-agent-note")', 'Official adapters carry no community note');
+  await review.waitFor('document.querySelectorAll("[data-agent-quota=claude-code] [role=meter]").length === 3');
+  await review.assert('document.querySelector("[data-agent-quota=claude-code]").textContent.includes("已用 37%") && document.querySelector("[data-agent-quota=claude-code]").textContent.includes("max") && !document.querySelector("[data-agent-quota=codex]") && !document.querySelector("[data-agent-quota=zcode]")', 'Ready agents with plan limits show them on their card; others show none');
+  await review.waitFor('document.querySelectorAll("[data-agent-quota=antigravity] [role=meter]").length === 4');
+  await review.assert('document.querySelector("[data-agent-quota=antigravity]").textContent.includes("Gemini Models · 5 小时额度") && document.querySelector("[data-agent-quota=antigravity]").textContent.includes("Claude and GPT models · 每周额度")', 'Agents with several limit groups name the group of each window');
+  await review.evaluate('document.querySelector("[data-agent-quota=antigravity]").scrollIntoView({ block: "center" })');
+  await review.screenshot('agents-settings-antigravity-quota');
+  await review.evaluate('document.querySelector("[data-settings-page=agents] .pd-mcp-server").scrollIntoView({ block: "start" })');
+  await review.click('[data-agent-quota=claude-code] button');
+  await review.waitFor('window.__modelReview.calls.some(call => call.name === "readAgentQuota" && call.args[0] === "claude-code" && call.args[1] === true)');
   await review.screenshot('agents-settings');
   await review.evaluate('[...document.querySelectorAll("[data-settings-page=agents] .pd-mcp-server")].find((item) => item.textContent.includes("ZCode")).scrollIntoView({ block: "center" })');
   await review.screenshot('agents-settings-community');
@@ -126,7 +137,7 @@ export default async function agentsScenarios(review) {
   await review.screenshot('agents-install-done');
   await review.clickText(`${codexCard} footer button`, '在终端中登录');
   await review.waitFor('window.__modelReview.calls.some(call => call.name === "openAgentLogin" && call.args[0] === "codex")');
-  await review.assert('![...document.querySelectorAll("[data-settings-page=agents] .pd-mcp-server:nth-child(5) footer button")].some(button => button.textContent === "在终端中登录" || button.textContent === "安装")', 'Custom agents offer neither install nor terminal sign-in');
+  await review.assert('![...document.querySelectorAll("[data-settings-page=agents] .pd-mcp-server:nth-child(6) footer button")].some(button => button.textContent === "在终端中登录" || button.textContent === "安装")', 'Custom agents offer neither install nor terminal sign-in');
   await review.viewport(600, 800);
   await review.assert('document.documentElement.scrollWidth <= innerWidth', 'The Agents page fits a narrow window');
   await review.screenshot('agents-settings-narrow');
