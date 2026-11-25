@@ -3,6 +3,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { UiAgentConfig, UiAgentInstaller } from '@pidesktop/shared';
+import { refreshAgentSystemProxy, withSystemProxy } from './agentProxy.ts';
 import { BUILTIN_AGENTS, installerCommandLine } from './agentRegistry.ts';
 import { resolveCommand, spawnResolved, withAgentSearchPath } from './command.ts';
 
@@ -14,6 +15,7 @@ import { resolveCommand, spawnResolved, withAgentSearchPath } from './command.ts
 
 export { BUILTIN_AGENTS, installerCommandLine } from './agentRegistry.ts';
 export { refreshStoredSearchPath, withAgentSearchPath } from './command.ts';
+export { configureAgentSystemProxy } from './agentProxy.ts';
 
 /** Catalog entries only accept plain tokens, so no shell quoting can go wrong. */
 const SAFE_TOKEN = /^[\w@./:=-]+$/;
@@ -104,7 +106,12 @@ export async function openAgentLoginTerminal(agent: UiAgentConfig, platform: Nod
 	const login = agent.login;
 	if (!login) throw new Error(`${agent.displayName} 没有可在终端中运行的登录命令`);
 	if (![login.command, ...login.args].every((token) => SAFE_TOKEN.test(token))) throw new Error('登录命令无效');
-	const env = withAgentSearchPath({ ...process.env, ...agent.env });
+	let env = withAgentSearchPath({ ...process.env, ...agent.env });
+	if (agent.systemProxy) {
+		// Sign-in pages and token exchanges go through the same proxy as the sessions.
+		await refreshAgentSystemProxy();
+		env = withSystemProxy(env);
+	}
 	const resolved = resolveCommand(login.command, env);
 	if (!resolved) throw new Error(`未找到命令 ${login.command}，请先安装 ${agent.displayName}`);
 

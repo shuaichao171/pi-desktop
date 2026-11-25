@@ -8,6 +8,7 @@ import { QUESTION_AUTO_RESOLUTION_FINAL_NOTICE_MS, useQuestionAutoResolutionMinu
 import { Icon } from './Icons';
 import { ExtensionNotifications } from './ExtensionNotifications';
 import { ApprovalCard } from './ApprovalCard';
+import { ElicitationForm } from './ElicitationForm';
 import { ErrorDetails } from './ErrorDetails';
 import './extensionRequests.css';
 
@@ -340,7 +341,7 @@ export function ExtensionDialogHost({ children, chatVisible, notificationTarget,
 		void respond(active.id, active.kind === 'confirm' ? false : null);
 	}
 
-	const card = active ? <section ref={cardRef} className={`pd-extension-request${collapsed ? ' is-collapsed' : ''}`} role="region" aria-labelledby={titleId} aria-describedby={!collapsed && active.message ? messageId : undefined} aria-busy={pending} onKeyDown={onCardKeyDown}>
+	const card = active ? <section ref={cardRef} className={`pd-extension-request${active.kind === 'form' ? ' has-form' : ''}${collapsed ? ' is-collapsed' : ''}`} role="region" aria-labelledby={titleId} aria-describedby={!collapsed && active.message ? messageId : undefined} aria-busy={pending} onKeyDown={onCardKeyDown}>
 		<header className="pd-extension-request-head">
 			<Icon name="message" width="16" height="16" />
 			<div className="pd-extension-request-heading"><span>{t('extension.request')}</span><h2 id={titleId}>{active.title}</h2></div>
@@ -358,6 +359,7 @@ export function ExtensionDialogHost({ children, chatVisible, notificationTarget,
 				<div className="pd-extension-request-actions"><button type="button" className="pd-btn is-sm" disabled={pending} onClick={() => void respond(active.id, null)}>{t('extension.cancel')}</button><button type="submit" className="pd-btn is-sm is-primary" disabled={pending}>{t('extension.submit')}</button></div>
 			</form>}
 			{active.kind === 'select' && <div className="pd-extension-request-actions"><button type="button" className="pd-btn is-sm" disabled={pending} onClick={() => void respond(active.id, null)}>{t('extension.cancel')}</button></div>}
+			{active.kind === 'form' && active.form && <ElicitationForm key={active.id} form={active.form} pending={pending} onRespond={(response) => void respond(active.id, response)} />}
 		</div>
 	</section> : null;
 

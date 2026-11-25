@@ -18,7 +18,7 @@ export async function requestDesktopConfirmation(
   if (approval && !options?.onApprovalDecision) approval.scopes = ['once'];
   const dialog: UiExtensionDialogRequest = { id: randomUUID(), kind: 'confirm', title, message, timeout: options?.timeout, ...(approval ? { approval } : {}) };
   const response = requireDialogResponse(dialog, await request(dialog, options?.signal));
-  const decision: UiApprovalDecision = response && typeof response === 'object' ? response : { approved: response === true, scope: 'once' };
+  const decision: UiApprovalDecision = response && typeof response === 'object' && 'approved' in response ? response : { approved: response === true, scope: 'once' };
   if (approval) await options?.onApprovalDecision?.(decision);
   return decision.approved;
 }

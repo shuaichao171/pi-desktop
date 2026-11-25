@@ -1,3 +1,5 @@
+import { requireElicitationResponse, type UiElicitationForm, type UiElicitationResponse } from './elicitation.ts';
+
 /** Display metadata supplied by an extension; it never grants permission by itself. */
 export type UiApprovalScope = 'once' | 'session' | 'workspace';
 export interface UiApprovalDetails {
@@ -8,7 +10,7 @@ export interface UiApprovalDetails {
   scopes?: UiApprovalScope[];
 }
 export interface UiApprovalDecision { approved: boolean; scope: UiApprovalScope; feedback?: string }
-export type UiExtensionDialogResponse = string | boolean | null | UiApprovalDecision;
+export type UiExtensionDialogResponse = string | boolean | null | UiApprovalDecision | UiElicitationResponse;
 
 const SCOPES: UiApprovalScope[] = ['once', 'session', 'workspace'];
 const text = (value: unknown, max: number): value is string => typeof value === 'string' && value.length <= max;
@@ -43,8 +45,9 @@ export function requireApprovalDetails(value: unknown): UiApprovalDetails {
   return result;
 }
 
-export function requireDialogResponse(request: { kind: string; options?: string[]; approval?: UiApprovalDetails }, value: unknown): UiExtensionDialogResponse {
+export function requireDialogResponse(request: { kind: string; options?: string[]; approval?: UiApprovalDetails; form?: UiElicitationForm }, value: unknown): UiExtensionDialogResponse {
   if (value === null) return null;
+  if (request.kind === 'form' && request.form) return requireElicitationResponse(request.form, value);
   if (request.kind === 'confirm' && request.approval) {
     if (typeof value === 'boolean') return { approved: value, scope: 'once' };
     if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('审批结果无效');

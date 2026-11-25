@@ -8,7 +8,7 @@ import { registerDebugApiIpc } from './debugApiIpc';
  * call is a typed invoke against the contract in @pidesktop/shared. Hosted pai
  */
 
-import { app, BrowserWindow, dialog, nativeImage, nativeTheme, shell, type IpcMainInvokeEvent } from 'electron';
+import { app, BrowserWindow, dialog, nativeImage, nativeTheme, session, shell, type IpcMainInvokeEvent } from 'electron';
 import { statSync } from 'node:fs';
 import { mkdir, rm, stat } from 'node:fs/promises';
 import { basename, dirname, join, resolve } from 'node:path';
@@ -27,6 +27,7 @@ import type { WorkbenchService } from './workbenchService';
 import { backupCorruptStateFile, backupCorruptStateFileAsync, CorruptStateFileError, readStateFile, readStateFileAsync, writeStateFile, writeStateFileAsync } from './stateFiles';
 import { SessionGroupService } from './sessionGroups';
 import { AgentInstallService } from './agentInstaller';
+import { configureAgentSystemProxy } from '@pidesktop/agent/agentSetup';
 import { broadcastToRenderers, handleRendererInvoke, hostedSenderWorkspace, requireRendererSender, setRendererSenderRestriction } from './rendererIpc';
 import { normalizeUiDiagnostic } from '@pidesktop/shared';
 import { flushDiagnostics, initializeDiagnostics, recordDiagnostic } from './diagnostics';
@@ -1426,6 +1427,8 @@ export function registerIpc(options: {
 	});
 	// Installers and sign-in terminals run here, not in the agent host: they are
 	// app-wide, outlive a workspace switch, and take only a built-in agent id.
+	// Sign-in terminals of agents marked `systemProxy` get the system proxy as variables.
+	void configureAgentSystemProxy((url) => session.defaultSession.resolveProxy(url));
 	const installs = agentInstalls ??= new AgentInstallService((state) => broadcastToRenderers(AGENT_RUNTIME_CHANNELS.agentInstallEvent, state, (win) => !isPaiWindow(win)));
 	const requireAgentId = (id: unknown): string => { if (!isValidAgentId(id)) throw new Error('Agent 参数无效'); return id; };
 	handleRendererInvoke(AGENT_RUNTIME_CHANNELS.installAgent, (_event, id: unknown) => installs.start(requireAgentId(id)));
@@ -2438,7 +2441,7 @@ export function registerIpc(options: {
 	});
 	handleRendererInvoke(IPC_CHANNELS.agentExtensionDialogResponse, (event, id: string, value: unknown) => {
 		if (typeof id !== 'string') throw new Error('交互结果无效');
-		if (isPaneSender(event) && resolvePanePendingDialog(id, value)) return;
+		if (isPaneSender(event) && resolvePanePendingDialog(event.sender, id, value)) return;
 		const pending = pendingDialogs.get(id);
 		if (pending && pending.owner.webContents === event.sender) pending.resolve(requireDialogResponse(pending.request, value));
 	});

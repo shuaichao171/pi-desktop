@@ -441,7 +441,9 @@ button:focus-visible, textarea:focus-visible, input:focus-visible { outline: 2px
 .pd-message-edit-rewind li span { flex: 0 0 auto; color: var(--pd-text-subtle); }
 .pd-message-edit-rewind li small { flex-basis: 100%; color: var(--pd-text-subtle); }
 .pd-assistant-heading { display: flex; align-items: center; gap: 7px; margin-bottom: 9px; color: var(--pd-text-subtle); font-size: var(--pd-font-caption); font-weight: var(--pd-weight-semibold); }
-.pd-assistant-mark { display: grid; place-items: center; width: 21px; height: 21px; border: 1px solid var(--pd-mark-border); border-radius: var(--pd-radius-sm); background: var(--pd-assistant-mark-bg); color: var(--pd-brand); font: 16px Georgia, serif; }
+/* π is only x-height tall, so a line box centred in the mark leaves the glyph visibly low: lift it optically.
+   align-content keeps the single line centred once the padding has shrunk the content box below the line box. */
+.pd-assistant-mark { display: grid; place-items: center; width: 21px; height: 21px; border: 1px solid var(--pd-mark-border); border-radius: var(--pd-radius-sm); background: var(--pd-assistant-mark-bg); color: var(--pd-brand); font: 16px Georgia, serif; padding-bottom: 3.5px; align-content: center; }
 .pd-stream-cursor { display: inline-block; color: var(--pd-brand); animation: pd-pulse 1s ease-in-out infinite; }
 .pd-message-interrupted { margin-top: 8px; color: var(--pd-warning); font-size: var(--pd-font-caption); }
 @keyframes pd-pulse { 50% { opacity: .25; } }
@@ -1083,7 +1085,8 @@ html:has(dialog[open]) .pd-app-shell.is-frameless .pd-settings-overlay::before {
 .pd-composer-agent-trigger { flex: 0 1 auto; min-width: 28px; max-width: 160px; }
 .pd-composer-agent-trigger > span:not(.pd-agent-mark) { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pd-agent-mark { display: inline-grid; flex: 0 0 auto; place-items: center; width: 16px; height: 16px; border-radius: 5px; background: var(--pd-brand); color: #fff; font-size: 10px; font-weight: var(--pd-weight-semibold); line-height: 1; }
-.pd-agent-mark.is-pi { border: 1px solid var(--pd-mark-border); background: var(--pd-assistant-mark-bg); color: var(--pd-brand); font: 12px Georgia, serif; }
+/* Same optical lift as .pd-assistant-mark, tuned for the 12px glyph in a 16px box. */
+.pd-agent-mark.is-pi { border: 1px solid var(--pd-mark-border); background: var(--pd-assistant-mark-bg); color: var(--pd-brand); font: 12px Georgia, serif; padding-bottom: 2.5px; align-content: center; }
 .pd-composer-agent-options { min-width: 240px; max-width: 320px; }
 .pd-composer-agent-option { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .pd-composer-agent-option > span:not(.pd-agent-mark) { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

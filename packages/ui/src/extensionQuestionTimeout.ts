@@ -98,7 +98,7 @@ export function useQuestionAutoResolutionMinutes(): [number, typeof setQuestionA
 
 /** Question kinds the agent blocks on; approvals (confirm) and notices never auto-cancel. */
 export function isQuestionAutoResolutionKind(kind: string): boolean {
-	return kind === 'select' || kind === 'input' || kind === 'editor';
+	return kind === 'select' || kind === 'input' || kind === 'editor' || kind === 'form';
 }
 
 export type QuestionAutoResolutionPlan =

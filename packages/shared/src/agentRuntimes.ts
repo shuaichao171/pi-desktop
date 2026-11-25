@@ -103,9 +103,14 @@ export interface UiAgentConfig {
 	login?: { command: string; args: string[] };
 	/**
 	 * A prompt sent while a turn runs reaches that turn (the agent ends it and continues
-	 * with the new input). ACP does not advertise this, so only verified built-ins set it.
+	 * with the new input). Only built-ins verified to support this legacy behavior set it.
 	 */
 	steer?: boolean;
+	/**
+	 * The agent reads its proxy only from HTTP(S)_PROXY, not the system setting, so
+	 * the app hands the system proxy down as variables (built-in agents only).
+	 */
+	systemProxy?: boolean;
 	/** A community-maintained ACP adapter rather than the agent vendor's own (shown as such). */
 	community?: boolean;
 	/** Requirements or caveats shown on the agent's settings card. */

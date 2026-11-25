@@ -16,6 +16,7 @@ function installExtensionScopeFixture() {
     ask: request => fixture.emit('onExtensionDialog', request),
     answer: (id, value) => { fixture.calls.push({ name: 'respondExtensionDialog', args: [id, value] }); fixture.emit('onExtensionDialogClosed', id); },
   };
+  bridge.respondExtensionDialog = async (id, value) => window.__scopeReview.answer(id, value);
   window.__scopeReview.openConversation('conv-a');
 }
 
@@ -54,4 +55,21 @@ export default async function extensionScopeScenarios(review) {
   await review.assert(`document.querySelector(${q(card)})?.textContent.includes('当前会话的问题')`, 'a scoped question for the open conversation renders right away');
   await review.evaluate(`${state}.answer('fg-question', true)`);
   await review.waitFor(`!document.querySelector(${q(card)})`);
+
+  const form = { fields: [
+    { id: 'target', kind: 'select', title: '部署到哪个环境？', required: true, choices: [
+      { value: 'stage', title: '预发布', description: '先验证变更' }, { value: 'prod', title: '生产环境' },
+    ] },
+    { id: 'checks', kind: 'multi-select', title: '运行哪些检查？', required: false, choices: [{ value: 'unit', title: '单元测试' }, { value: 'build', title: '构建' }] },
+    { id: 'note', kind: 'text', title: '补充说明', required: false },
+  ] };
+  await review.evaluate(`${state}.ask({ id: 'agent-form', kind: 'form', title: 'Codex', message: '请选择发布目标。', form: ${q(form)}, scope: { cwd: ${state}.home, sessionId: 'conv-a', sessionPath: null } })`);
+  await review.waitFor(`Boolean(document.querySelector('.pd-elicitation-form input[type=radio]'))`);
+  await review.screenshot('acp-form-question');
+  await review.click('.pd-elicitation-form input[type=radio][value="0"]');
+  await review.click('.pd-elicitation-form input[type=checkbox][value="1"]');
+  await review.fill('.pd-elicitation-form input[name="2"]', '先检查构建产物');
+  await review.clickText('.pd-elicitation-form button', '提交');
+  await review.waitFor(`!document.querySelector(${q(card)})`);
+  await review.assert(`JSON.stringify(window.__modelReview.calls.find(({ name, args }) => name === 'respondExtensionDialog' && args[0] === 'agent-form')?.args[1]) === ${q(q({ action: 'accept', content: { target: 'stage', checks: ['build'], note: '先检查构建产物' } }))}`, 'an ACP form submits its option values and typed answer together');
 }

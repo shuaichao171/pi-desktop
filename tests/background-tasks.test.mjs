@@ -94,29 +94,31 @@ test('busy session defers delivery and retries until idle', async () => {
 
 test('wake chain guard stops runaway auto-continuation until user activity', async () => {
 	const { manager, BackgroundTaskManager: M } = await makeManager();
+	const { MAX_AUTO_WAKE_CHAIN: max } = await import('../packages/agent/src/backgroundTasks.ts');
 	assert.equal(M.name, 'BackgroundTaskManager');
+	assert.equal(max, 20);
 	const dir = mkdtempSync(join(tmpdir(), 'bgtask-'));
 	const { calls, hooks } = recorder();
 	manager.attach('session-c', hooks);
 	const children = [];
-	for (let index = 0; index < 8; index += 1) {
+	for (let index = 0; index < max + 2; index += 1) {
 		const child = fakeChild();
 		children.push(child);
-		const record = manager.start({ sessionId: 'session-c', sessionDir: dir, cwd: dir, command: `job-${index}` }, () => ({ child, pid: child.pid }));
+		manager.start({ sessionId: 'session-c', sessionDir: dir, cwd: dir, command: `job-${index}` }, () => ({ child, pid: child.pid }));
 		// Deliver sequentially: chain grows one per completed task.
 		child.emit('exit', 0);
 		await sleep(30);
 	}
-	// MAX_AUTO_WAKE_CHAIN = 6: first six deliver, the last two park with a warning.
-	assert.equal(calls.prompts.length, 6);
+	// The first `max` deliver, the last two park with a warning.
+	assert.equal(calls.prompts.length, max);
 	assert.equal(calls.notifies.length >= 1, true);
 	assert.match(calls.notifies[0].text, /上限/);
 	// Real user activity resets the chain; both parked notifications go out in one wake.
 	manager.noteUserActivity('session-c');
 	await sleep(50);
-	assert.equal(calls.prompts.length, 7);
-	assert.match(calls.prompts[6], /job-6/);
-	assert.match(calls.prompts[6], /job-7/);
+	assert.equal(calls.prompts.length, max + 1);
+	assert.match(calls.prompts[max], new RegExp(`job-${max}\\b`));
+	assert.match(calls.prompts[max], new RegExp(`job-${max + 1}\\b`));
 	assert.equal(manager.currentRecords('session-c').every((item) => item.delivered), true);
 	manager.clear();
 });

@@ -1,9 +1,11 @@
 import type { UiAgentConfig, UiAgentModel, UiAgentOption } from '@pidesktop/shared';
+import { refreshAgentSystemProxy } from './agentProxy.ts';
 import { AcpConnection } from './connection.ts';
+import { parseElicitationForm, type AcpElicitationResponse, type AcpFormRequest } from './elicitation.ts';
 import {
 	ACP_AUTH_REQUIRED, ACP_PROTOCOL_VERSION, AcpRequestError,
 	type AcpAvailableCommand, type AcpConfigOption, type AcpContentBlock, type AcpInitializeResult, type AcpNewSessionResult, type AcpPlanEntry,
-	type AcpPromptResult, type AcpRequestPermissionOutcome, type AcpRequestPermissionParams, type AcpSessionNotification, type AcpStopReason,
+	type AcpPromptResult, type AcpRequestPermissionOutcome, type AcpRequestPermissionParams, type AcpSessionNotification, type AcpSteeringResult, type AcpStopReason,
 } from './protocol.ts';
 import { AcpTurnAssembler, type PiImageContent, type PiMessage, type PiShapedEvent } from './turnAssembler.ts';
 
@@ -13,6 +15,7 @@ export interface AcpConversationHooks {
 	/** Transcript messages to append to the session file. */
 	persist(message: PiMessage): void;
 	requestPermission(params: AcpRequestPermissionParams, signal: AbortSignal): Promise<AcpRequestPermissionOutcome>;
+	requestElicitation(params: AcpFormRequest, signal: AbortSignal): Promise<AcpElicitationResponse>;
 	onPlan(entries: AcpPlanEntry[]): void;
 	onCommands(commands: AcpAvailableCommand[]): void;
 	onModels(models: UiAgentModel[], currentModelId: string | null): void;
@@ -36,6 +39,8 @@ export interface AcpTurnInput {
 	onStarted?(): void;
 	/** Called once the agent has accepted the prompt (its session now holds the context). */
 	onDelivered?(): void;
+	/** Called before a steer the agent could not take starts a normal turn. */
+	onSteerFallback?(): void;
 }
 
 export interface AcpTurnResult {
@@ -48,8 +53,8 @@ export interface AcpTurnResult {
 /**
  * One desktop conversation driven by an ACP agent. Starts the agent lazily
  * on the first turn, resumes its native session when the agent supports
- * `session/load`, and serializes turns; agents marked `steer` also take
- * input while a turn runs (see `steer`).
+ * `session/load`, and serializes turns. Some agents can also take input while
+ * a turn runs (see `steer`).
  */
 export class AcpConversation {
 	readonly config: UiAgentConfig;
@@ -65,6 +70,7 @@ export class AcpConversation {
 	private contextLost = false;
 	private readonly assembler: AcpTurnAssembler;
 	private turn: Promise<unknown> = Promise.resolve();
+	private nativeSteering: Promise<unknown> = Promise.resolve();
 	private activeTurns = 0;
 	/** The turn whose prompt the agent is working on (sent, not answered yet). */
 	private running: { superseded: boolean } | null = null;
@@ -90,6 +96,15 @@ export class AcpConversation {
 
 	get busy(): boolean { return this.activeTurns > 0; }
 	get supportsImages(): boolean { return this.initialize?.agentCapabilities?.promptCapabilities?.image === true; }
+	get supportsSteering(): boolean { return this.config.steer === true || this.supportsNativeSteering; }
+
+	private get supportsNativeSteering(): boolean {
+		const init = this.initialize;
+		if (init?._meta?.steering?.supported !== true || init.agentInfo?.name !== '@agentclientprotocol/codex-acp') return false;
+		// Codex 2.4 added host-owned fallback. Older releases can start a detached turn on an idle race.
+		const version = /^(\d+)\.(\d+)\.\d+/.exec(init.agentInfo.version ?? '');
+		return !!version && (Number(version[1]) > 2 || (Number(version[1]) === 2 && Number(version[2]) >= 4));
+	}
 
 	/** Queue a turn behind any running one; resolves when the turn ends. */
 	prompt(input: AcpTurnInput): Promise<AcpTurnResult> {
@@ -156,20 +171,20 @@ export class AcpConversation {
 		await connection?.close();
 	}
 
-	/** True while a sent prompt is running and the agent accepts input into it (`config.steer`). */
+	/** Whether the live session can accept an additional input. */
 	get canSteer(): boolean {
-		return this.config.steer === true && this.running !== null && this.connection?.alive === true && this.sessionId !== null;
+		return this.connection?.alive === true && this.sessionId !== null
+			&& (this.supportsNativeSteering || (this.config.steer === true && this.running !== null));
 	}
 
 	/**
-	 * Send input into the running turn. Agents that support it (Antigravity) end the
-	 * running prompt and carry on with this one, so the transcript splits here: the
-	 * reply so far closes, the new user message follows and later output belongs to
-	 * it. Falls back to queueing when nothing is running.
+	 * Send input into the running turn. Codex keeps its original prompt active;
+	 * Antigravity ends that prompt and continues under a second `session/prompt`.
 	 */
 	steer(input: AcpTurnInput): Promise<AcpTurnResult> {
-		const current = this.running;
-		if (!this.canSteer || !current || this.disposed) return this.prompt(input);
+		if (!this.canSteer || this.disposed) return this.prompt(input);
+		if (this.supportsNativeSteering) return this.steerNative(input);
+		const current = this.running!;
 		current.superseded = true;
 		// A question still open for the superseded turn is answered as cancelled.
 		this.permissionAbort?.abort();
@@ -181,6 +196,42 @@ export class AcpConversation {
 		const run = this.sendPrompt(input, cancelled, false).finally(() => { this.activeTurns -= 1; });
 		// Later prompts queue behind both the superseded turn and this one.
 		this.turn = Promise.allSettled([this.turn, run]);
+		return run;
+	}
+
+	private steerNative(input: AcpTurnInput): Promise<AcpTurnResult> {
+		const previous = this.turn;
+		const generation = this.generation;
+		const assertActive = () => {
+			if (generation !== this.generation || this.disposed) throw new Error('追加消息已取消');
+		};
+		this.activeTurns += 1;
+		const dispatch = this.nativeSteering.then(async (): Promise<{ turn: AcpTurnResult | Promise<AcpTurnResult> }> => {
+			assertActive();
+			if (this.running && this.connection?.alive && this.sessionId) {
+				const result = await this.connection.request<AcpSteeringResult>('_session/steering', {
+					sessionId: this.sessionId,
+					prompt: this.promptBlocks(input, input.contextPrefix),
+					_meta: { steering: { idleBehavior: 'promptRequired' } },
+				}, { onResult: (reply) => {
+					if (reply?.outcome !== 'injected') return;
+					this.apply(this.assembler.split());
+					this.apply(this.assembler.userMessage(input.text, input.images ?? []));
+					input.onStarted?.();
+					input.onDelivered?.();
+				} });
+				// The original session/prompt still owns this turn's completion.
+				if (result?.outcome === 'injected') return { turn: { stopReason: 'end_turn', superseded: true } };
+				if (result?.outcome !== 'promptRequired') throw new Error(`${this.config.displayName} 未能追加消息`);
+			}
+			await previous;
+			assertActive();
+			input.onSteerFallback?.();
+			return { turn: this.runTurn(input, generation) };
+		});
+		this.nativeSteering = dispatch.catch(() => {});
+		const run = dispatch.then(({ turn }) => turn).finally(() => { this.activeTurns -= 1; });
+		this.turn = Promise.allSettled([previous, run]);
 		return run;
 	}
 
@@ -209,14 +260,10 @@ export class AcpConversation {
 		const turn = { superseded: false };
 		const permission = new AbortController();
 		try {
-			const blocks: AcpContentBlock[] = [];
 			const prefix = [withHistory && this.contextLost ? this.hooks.historyContext() : null, input.contextPrefix].filter(Boolean).join('\n\n');
-			if (prefix) blocks.push({ type: 'text', text: prefix });
-			blocks.push({ type: 'text', text: input.text });
-			if (this.supportsImages) for (const image of input.images ?? []) blocks.push({ type: 'image', data: image.data, mimeType: image.mimeType });
 			this.running = turn;
 			this.permissionAbort = permission;
-			const result = await this.connection!.request<AcpPromptResult>('session/prompt', { sessionId: this.sessionId, prompt: blocks });
+			const result = await this.connection!.request<AcpPromptResult>('session/prompt', { sessionId: this.sessionId, prompt: this.promptBlocks(input, prefix) });
 			this.contextLost = false;
 			input.onDelivered?.();
 			// Input sent into this turn took over: that turn reports the outcome.
@@ -226,9 +273,18 @@ export class AcpConversation {
 			if (turn.superseded) return { stopReason: cancelled() ? 'cancelled' : 'end_turn', superseded: true };
 			return this.failTurn(error, cancelled);
 		} finally {
+			permission.abort();
 			if (this.running === turn) this.running = null;
 			if (this.permissionAbort === permission) this.permissionAbort = null;
 		}
+	}
+
+	private promptBlocks(input: AcpTurnInput, prefix?: string | null): AcpContentBlock[] {
+		const blocks: AcpContentBlock[] = [];
+		if (prefix) blocks.push({ type: 'text', text: prefix });
+		blocks.push({ type: 'text', text: input.text });
+		if (this.supportsImages) for (const image of input.images ?? []) blocks.push({ type: 'image', data: image.data, mimeType: image.mimeType });
+		return blocks;
 	}
 
 	private failTurn(error: unknown, cancelled: () => boolean): AcpTurnResult {
@@ -269,13 +325,19 @@ export class AcpConversation {
 
 	private async startSession(): Promise<void> {
 		if (this.disposed) throw new Error('会话已关闭');
+		if (this.config.systemProxy) {
+			// The user may have switched the system proxy since the last start.
+			await refreshAgentSystemProxy();
+			if (this.disposed) throw new Error('会话已关闭');
+		}
 		const connection = AcpConnection.start({
 			command: this.config.command,
 			args: this.config.args,
 			cwd: this.cwd,
 			env: { ...this.config.env, PI_DESKTOP_AGENT: this.config.id },
+			systemProxy: this.config.systemProxy,
 			onNotification: (method, params) => this.onNotification(method, params),
-			onRequest: (method, params) => this.onRequest(method, params),
+			onRequest: (method, params, signal) => this.onRequest(method, params, signal),
 			onExit: ({ expected, code, stderr }) => {
 				if (this.connection === connection) { this.connection = null; this.sessionId = null; }
 				if (!expected && !this.disposed && !this.busy) this.hooks.onExit(`${this.config.displayName} 进程已退出（${code ?? '未知'}）${stderr ? `：${stderr.split('\n').at(-1)}` : ''}`);
@@ -285,7 +347,7 @@ export class AcpConversation {
 		try {
 			this.initialize = await connection.request<AcpInitializeResult>('initialize', {
 				protocolVersion: ACP_PROTOCOL_VERSION,
-				clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false },
+				clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false, elicitation: { form: {} } },
 				clientInfo: { name: 'pi-desktop', title: 'Pi Desktop' },
 			});
 			let session: AcpNewSessionResult | null = null;
@@ -421,14 +483,22 @@ export class AcpConversation {
 		this.apply(this.assembler.update(notification.update));
 	}
 
-	private async onRequest(method: string, params: unknown): Promise<unknown> {
+	private async onRequest(method: string, params: unknown, requestSignal: AbortSignal): Promise<unknown> {
 		if (method === 'session/request_permission') {
 			const request = params as AcpRequestPermissionParams;
 			if (!request || !Array.isArray(request.options) || !request.toolCall) throw new AcpRequestError({ code: -32602, message: 'Invalid params' });
-			const signal = this.permissionAbort?.signal ?? AbortSignal.abort();
+			const signal = this.permissionAbort ? AbortSignal.any([this.permissionAbort.signal, requestSignal]) : AbortSignal.abort();
 			if (signal.aborted) return { outcome: { outcome: 'cancelled' } };
 			const outcome = await this.hooks.requestPermission(request, signal).catch((): AcpRequestPermissionOutcome => ({ outcome: 'cancelled' }));
 			return { outcome };
+		}
+		if (method === 'elicitation/create') {
+			const request = parseElicitationForm(params);
+			if (request.sessionId !== this.sessionId || this.replaying || this.disposed) return { action: 'cancel' };
+			// Codex's async questions belong to the session, even after the prompt ends.
+			const signal = !request.async && this.permissionAbort ? AbortSignal.any([requestSignal, this.permissionAbort.signal]) : requestSignal;
+			if (signal.aborted) return { action: 'cancel' };
+			return await this.hooks.requestElicitation(request, signal);
 		}
 		throw new AcpRequestError({ code: -32601, message: `Method not found: ${method}` });
 	}

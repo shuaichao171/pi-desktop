@@ -19,6 +19,37 @@ function entriesOf(path) {
 	return readFileSync(path, 'utf8').trim().split('\n').map((line) => JSON.parse(line));
 }
 
+test('an external agent question uses the scoped desktop dialog and receives the structured reply', async (t) => {
+	const root = mkdtempSync(join(tmpdir(), 'pi-acp-elicitation-'));
+	const workspace = join(root, 'workspace');
+	mkdirSync(workspace);
+	const agentDir = process.env.PI_CODING_AGENT_DIR;
+	process.env.PI_CODING_AGENT_DIR = join(root, 'agent');
+	let service;
+	t.after(async () => {
+		await service?.dispose();
+		if (agentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+		else process.env.PI_CODING_AGENT_DIR = agentDir;
+		rmSync(root, { recursive: true, force: true, maxRetries: 50, retryDelay: 100 });
+	});
+	const { AgentService } = await import('../packages/agent/src/index.ts');
+	const answer = { action: 'accept', content: { target: 'stage', checks: ['unit', 'build'], note: 'Smoke test first' } };
+	const requests = [];
+	service = new AgentService(undefined, async (request) => { requests.push(request); return answer; });
+	await service.saveAgent({ displayName: 'Question Agent', command: process.execPath, args: [FAKE_AGENT], enabled: true });
+	await service.init({ cwd: workspace, fresh: true });
+	await service.setSessionAgent('question-agent');
+	await service.prompt('question');
+	await until(() => service.getSnapshot().status === 'idle', 'question and answer round trip');
+	const snapshot = service.getSnapshot();
+	const [request] = requests;
+	assert.equal(request.kind, 'form');
+	assert.equal(request.title, 'Question Agent · Release options');
+	assert.equal(request.scope.sessionPath, snapshot.sessionPath);
+	assert.deepEqual(request.form.fields.map((field) => field.kind), ['select', 'multi-select', 'text']);
+	assert.deepEqual(JSON.parse(snapshot.messages.filter((message) => message.role === 'assistant').at(-1).text), answer);
+});
+
 test('an ACP conversation runs through AgentService: binding, transcript, lock, approval, handoff and resume', async () => {
 	const root = mkdtempSync(join(tmpdir(), 'pi-acp-service-'));
 	const workspace = join(root, 'workspace');
@@ -252,4 +283,57 @@ test('steering through AgentService: Antigravity takes a message while it replie
 			else process.env[name] = value;
 		}
 	}
+});
+
+test('Codex takes an additional message during its turn and waits for the original prompt when blocked', async (t) => {
+	const root = mkdtempSync(join(tmpdir(), 'pi-acp-codex-steer-'));
+	const workspace = join(root, 'workspace');
+	mkdirSync(workspace);
+	const agentDir = process.env.PI_CODING_AGENT_DIR;
+	process.env.PI_CODING_AGENT_DIR = join(root, 'agent');
+	let service, answerForm;
+	t.after(async () => {
+		await service?.dispose();
+		if (agentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+		else process.env.PI_CODING_AGENT_DIR = agentDir;
+		// Windows releases a killed process's working directory slightly after exit.
+		try { rmSync(root, { recursive: true, force: true, maxRetries: 50, retryDelay: 100 }); }
+		catch (error) { console.warn('temp cleanup skipped:', error.message); }
+	});
+	const { AgentService } = await import('../packages/agent/src/index.ts');
+	service = new AgentService(undefined, async (request, signal) => {
+		if (request.kind !== 'form') return true;
+		return new Promise((resolve) => {
+			answerForm = resolve;
+			signal.addEventListener('abort', () => resolve(null), { once: true });
+		});
+	});
+	await service.saveAgent({ id: 'codex', displayName: 'Codex', command: process.execPath, args: [FAKE_AGENT], env: { FAKE_ACP_CODEX_VERSION: '2.11.0' }, enabled: true });
+	await service.init({ cwd: workspace, fresh: true });
+	await service.setSessionAgent('codex');
+	await until(() => service.getSnapshot().agent.capabilities.steer, 'the runtime advertises steering to the composer');
+	const submit = (id, text) => service.submitInput({ id: `codex-input-${id}`, text, behavior: 'steer', sessionId: service.getSnapshot().sessionId });
+	const transcript = () => service.getSnapshot().messages.filter((message) => message.role !== 'system');
+
+	await service.prompt('slow please');
+	await until(() => transcript().some((message) => message.text === 'working'), 'original Codex prompt is running');
+	await assert.rejects(submit('reject', 'reject steer'), /未能追加消息/);
+	assert.equal(service.getSnapshot().status, 'busy');
+	assert.ok(!transcript().some((message) => message.text === 'reject steer'));
+	assert.equal((await submit('inject', 'one more question')).state, 'consumed');
+	await until(() => service.getSnapshot().status === 'idle', 'original prompt finishes');
+	assert.deepEqual(transcript().map((message) => message.text), ['slow please', 'working', 'one more question', 'Steered: one more question']);
+	assert.deepEqual(service.getSnapshot().runs.map((run) => run.status), ['completed']);
+
+	await service.prompt('question');
+	await until(() => answerForm, 'the agent waits for a form reply');
+	const fallback = submit('fallback', 'normal follow-up');
+	await until(() => service.listSlashCommands().some((item) => item.name === 'steer-waiting'), 'the adapter declined to inject into the blocked prompt');
+	assert.equal(service.getSnapshot().status, 'busy');
+	assert.ok(!transcript().some((message) => message.text === 'normal follow-up'));
+	answerForm({ action: 'accept', content: { target: 'stage' } });
+	await fallback;
+	await until(() => service.getSnapshot().status === 'idle', 'the follow-up completes in a normal prompt');
+	assert.deepEqual(transcript().filter((message) => message.role === 'user').map((message) => message.text), ['slow please', 'one more question', 'question', 'normal follow-up']);
+	assert.deepEqual(service.getSnapshot().runs.map((run) => run.status), ['completed', 'completed', 'completed']);
 });

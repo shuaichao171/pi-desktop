@@ -5,6 +5,8 @@ import type { UiAgentError } from './agentErrors';
 export * from './agentErrors.ts';
 import type { UiApprovalDetails, UiExtensionDialogResponse } from './approval';
 export * from './approval.ts';
+import type { UiElicitationForm } from './elicitation';
+export * from './elicitation.ts';
 export * from './activity.ts';
 import type { PluginUpdatesBridge } from './pluginUpdates';
 import type { McpFeaturesBridge } from './mcpFeatures';
@@ -616,7 +618,7 @@ export interface UiFileChangesView {
 
 export interface UiExtensionDialogRequest {
   id: string;
-  kind: 'select' | 'confirm' | 'input' | 'editor' | 'notify';
+  kind: 'select' | 'confirm' | 'input' | 'editor' | 'notify' | 'form';
   title: string;
   message?: string;
   options?: string[];
@@ -625,6 +627,7 @@ export interface UiExtensionDialogRequest {
   timeout?: number;
   notificationType?: 'info' | 'warning' | 'error';
   approval?: UiApprovalDetails;
+  form?: UiElicitationForm;
   /** Conversation that raised the question (zcode per-task interactions). The renderer only shows the card while that conversation is open; absent means legacy/global. */
   scope?: { cwd: string; sessionPath: string | null; sessionId: string | null };
 }

@@ -123,3 +123,45 @@ test('sign-in opens only for catalog agents', async () => {
 	assert.deepEqual(logins, ['fake']);
 	await assert.rejects(service.openLogin('missing'), /内置 Agent/);
 });
+
+const { proxyUrlFromResolution, withSystemProxy, configureAgentSystemProxy, refreshAgentSystemProxy } = await import('../packages/agent/src/acp/agentProxy.ts');
+
+test('system proxy resolutions become proxy URLs; direct, SOCKS and junk do not', () => {
+	assert.equal(proxyUrlFromResolution('PROXY 127.0.0.1:10808; DIRECT'), 'http://127.0.0.1:10808');
+	assert.equal(proxyUrlFromResolution('HTTPS proxy.example:443'), 'https://proxy.example');
+	assert.equal(proxyUrlFromResolution('DIRECT'), null);
+	assert.equal(proxyUrlFromResolution('SOCKS5 127.0.0.1:1080'), null);
+	assert.equal(proxyUrlFromResolution('PROXY user:pw@host:1'), null);
+	assert.equal(proxyUrlFromResolution(''), null);
+});
+
+test('agents get the system proxy as variables unless the user set one', () => {
+	const proxy = 'http://127.0.0.1:10808';
+	const noProxy = 'localhost,127.0.0.1,::1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,.local';
+	assert.deepEqual(withSystemProxy({ Path: 'x' }, proxy, 'win32'), { Path: 'x', HTTP_PROXY: proxy, HTTPS_PROXY: proxy, NO_PROXY: noProxy });
+	// Windows names are case-insensitive: an empty lowercase spelling is replaced, not duplicated.
+	assert.deepEqual(withSystemProxy({ https_proxy: '' }, proxy, 'win32'), { HTTP_PROXY: proxy, HTTPS_PROXY: proxy, NO_PROXY: noProxy });
+	assert.deepEqual(withSystemProxy({ no_proxy: '.corp' }, proxy, 'linux'), { no_proxy: '.corp', HTTP_PROXY: proxy, HTTPS_PROXY: proxy, http_proxy: proxy, https_proxy: proxy });
+	for (const own of [{ HTTPS_PROXY: 'http://mine:1' }, { all_proxy: 'socks5://mine:1' }, { http_proxy: 'http://mine:1' }]) {
+		assert.deepEqual(withSystemProxy({ ...own }, proxy, 'win32'), own);
+	}
+	assert.deepEqual(withSystemProxy({ A: '1' }, null, 'win32'), { A: '1' });
+});
+
+test('only agents marked systemProxy (Antigravity) get the system proxy, and a failing resolver keeps the last setting', async () => {
+	assert.deepEqual(BUILTIN_AGENTS.filter((agent) => agent.systemProxy).map((agent) => agent.id), ['antigravity']);
+	const base = Object.fromEntries(Object.entries(process.env).filter(([key]) => !/^(HTTPS?|ALL|NO)_PROXY$/i.test(key)));
+	await configureAgentSystemProxy(async () => 'PROXY 127.0.0.1:10808');
+	assert.equal(withSystemProxy(base).HTTPS_PROXY, 'http://127.0.0.1:10808');
+	assert.equal(withAgentSearchPath(base).HTTPS_PROXY, undefined, 'other agents are left alone');
+	await configureAgentSystemProxy(async () => { throw new Error('boom'); });
+	assert.equal(withSystemProxy(base).HTTPS_PROXY, 'http://127.0.0.1:10808', 'keeps the last known setting');
+	await configureAgentSystemProxy(async () => 'DIRECT');
+	assert.equal(withSystemProxy(base).HTTPS_PROXY, undefined);
+	// A resolver that throws synchronously must not leave later refreshes stuck on a settled promise.
+	let calls = 0;
+	await configureAgentSystemProxy(() => { calls += 1; if (calls === 1) throw new Error('sync boom'); return Promise.resolve('PROXY 127.0.0.1:7890'); });
+	await refreshAgentSystemProxy();
+	assert.equal(calls, 2);
+	assert.equal(withSystemProxy(base).HTTPS_PROXY, 'http://127.0.0.1:7890');
+});

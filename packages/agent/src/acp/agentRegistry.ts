@@ -38,6 +38,8 @@ export const BUILTIN_AGENTS: readonly UiAgentConfig[] = [
 		login: { command: 'agy', args: [] }, loginHint: '在 设置 → Agents 中点击“在终端中登录”，或在终端运行一次 agy 并登录',
 		// Verified with agy 1.5.17: a prompt sent mid-turn ends the running one and continues.
 		steer: true,
+		// A Go binary: it uses HTTP(S)_PROXY only, so without TUN it cannot reach Google.
+		systemProxy: true,
 		quota: 'antigravity',
 		homepage: 'https://antigravity.google/docs/ide/extensions/acp/' }),
 	builtin({ id: 'gemini', displayName: 'Gemini CLI', command: 'gemini', args: ['--experimental-acp'], accentColor: '#4285F4',

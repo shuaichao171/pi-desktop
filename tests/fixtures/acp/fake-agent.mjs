@@ -3,6 +3,7 @@
 //   "slow"   waits for session/cancel and ends the turn as cancelled
 //   "auth"   fails with the ACP auth-required error
 //   "crash"  exits the process mid-turn
+//   "question" asks an ACP form question ("withdraw question" cancels the request)
 //   other    thinks, replies, runs one tool behind a permission request
 //            ("always-only": the request offers no allow_once option)
 // FAKE_ACP_STEER=1: a prompt sent while "slow" runs ends that turn (end_turn) and is
@@ -11,6 +12,7 @@ import { createInterface } from 'node:readline';
 
 const loadSupported = process.env.FAKE_ACP_LOAD === '1';
 const steerSupported = process.env.FAKE_ACP_STEER === '1';
+const codexVersion = process.env.FAKE_ACP_CODEX_VERSION;
 // FAKE_ACP_ACCEPT_EDITS=1: the mode lists also offer an "accept edits" mode.
 const acceptEdits = process.env.FAKE_ACP_ACCEPT_EDITS === '1' ? [{ value: 'acceptEdits', name: 'Accept edits' }] : [];
 // FAKE_ACP_SETTINGS=options: config options (grouped model values, reasoning effort, mode);
@@ -34,10 +36,16 @@ const sessionSettings = () => ({
 let nextId = 1000;
 const waiting = new Map();
 let cancelled = null;
+let formSupported = false;
 
 const send = (message) => process.stdout.write(`${JSON.stringify({ jsonrpc: '2.0', ...message })}\n`);
 const update = (sessionId, value) => send({ method: 'session/update', params: { sessionId, update: value } });
-const ask = (method, params) => new Promise((resolve) => { const id = nextId++; waiting.set(id, resolve); send({ id, method, params }); });
+const ask = (method, params, withdraw = false) => new Promise((resolve) => {
+	const id = nextId++;
+	waiting.set(id, resolve);
+	send({ id, method, params });
+	if (withdraw) send({ method: '$/cancel_request', params: { requestId: id } });
+});
 
 async function prompt(id, params) {
 	const { sessionId, prompt: blocks } = params;
@@ -45,6 +53,28 @@ async function prompt(id, params) {
 	const text = blocks.filter((block) => block.type === 'text').at(-1)?.text ?? '';
 	if (text.includes('auth')) { send({ id, error: { code: -32000, message: 'Authentication required' } }); return; }
 	if (text.includes('crash')) { process.exit(3); }
+	if (text.endsWith('question')) {
+		if (!formSupported) { send({ id, error: { code: -32601, message: 'Form capability missing' } }); return; }
+		const async = text === 'async question';
+		const answer = ask('elicitation/create', {
+			sessionId, mode: 'form', message: 'Choose a release target.',
+			requestedSchema: { type: 'object', title: 'Release options', properties: {
+				target: { type: 'string', title: 'Environment', oneOf: [{ const: 'stage', title: 'Staging', description: 'Test first' }, { const: 'prod', title: 'Production' }] },
+				checks: { type: 'array', items: { anyOf: [{ const: 'unit', title: 'Unit tests' }, { const: 'build', title: 'Build' }] } },
+				note: { type: 'string', title: 'Additional answer or note' },
+			}, ...(async ? {} : { required: ['target'] }) },
+			...(async ? { _meta: { codex: { delivery: 'async' } } } : {}),
+		}, text === 'withdraw question');
+		if (async) send({ id, result: { stopReason: 'end_turn' } });
+		const reply = await answer;
+		if (async) {
+			update(sessionId, { sessionUpdate: 'available_commands_update', availableCommands: [{ name: reply?.content?.target ?? 'cancelled', description: 'Async answer received' }] });
+		} else {
+			update(sessionId, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: JSON.stringify(reply) } });
+			send({ id, result: { stopReason: 'end_turn' } });
+		}
+		return;
+	}
 	if (text.includes('slow')) {
 		update(sessionId, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'working' } });
 		const stopReason = await new Promise((resolve) => { cancelled = resolve; });
@@ -80,7 +110,10 @@ createInterface({ input: process.stdin }).on('line', (line) => {
 	if (message.id !== undefined && !message.method) { waiting.get(message.id)?.(message.result); waiting.delete(message.id); return; }
 	switch (message.method) {
 		case 'initialize':
-			send({ id: message.id, result: { protocolVersion: 1, agentCapabilities: { loadSession: loadSupported, promptCapabilities: { image: false } }, authMethods: [{ id: 'login', name: 'fake login' }] } });
+			formSupported = message.params.clientCapabilities?.elicitation?.form != null;
+			send({ id: message.id, result: { protocolVersion: 1, agentCapabilities: { loadSession: loadSupported, promptCapabilities: { image: false } }, authMethods: [{ id: 'login', name: 'fake login' }],
+				...(codexVersion ? { agentInfo: { name: '@agentclientprotocol/codex-acp', version: codexVersion }, _meta: { steering: { supported: true } } } : {}),
+			} });
 			return;
 		case 'session/new':
 			send({ id: message.id, result: { sessionId: 'fake-session', ...sessionSettings() } });
@@ -115,6 +148,26 @@ createInterface({ input: process.stdin }).on('line', (line) => {
 			if (steerSupported && cancelled) { const running = cancelled; cancelled = null; running('end_turn'); }
 			void prompt(message.id, message.params);
 			return;
+		case '_session/steering': {
+			const { params, id } = message;
+			if (!codexVersion || params._meta?.steering?.idleBehavior !== 'promptRequired') {
+				send({ id, error: { code: -32602, message: 'Expected the Codex steering request' } });
+				return;
+			}
+			const text = params.prompt.at(-1).text;
+			if (text === 'reject steer') { send({ id, result: { outcome: 'failed' } }); return; }
+			if (!cancelled) {
+				send({ id, result: { outcome: 'promptRequired', reason: 'noRunningTurn' } });
+				update(params.sessionId, { sessionUpdate: 'available_commands_update', availableCommands: [{ name: 'steer-waiting' }] });
+				return;
+			}
+			send({ id, result: { outcome: 'injected' } });
+			update(params.sessionId, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: `Steered: ${text}` } });
+			const running = cancelled;
+			cancelled = null;
+			running('end_turn');
+			return;
+		}
 		case 'session/cancel':
 			cancelled?.('cancelled');
 			cancelled = null;

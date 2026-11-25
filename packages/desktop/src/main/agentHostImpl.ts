@@ -5,7 +5,7 @@
  * Pi runs in an Electron utility process so SDK work cannot block the window's
  * main process. Only plain data crosses this internal RPC boundary.
  */
-import { AgentService, configureProviderNetwork } from '@pidesktop/agent';
+import { AgentService, configureAgentSystemProxy, configureProviderNetwork } from '@pidesktop/agent';
 import { getAgentDir } from '@earendil-works/pi-coding-agent';
 import { join } from 'node:path';
 import { readSessionContext, readSessionPreview, searchSessions, searchWorkspaceFiles, searchSessionsPage, searchProjectFiles, rebuildSearchIndex, cancelDataSearch, getProjectSearchRules, setProjectSearchRules } from './searchService';
@@ -55,11 +55,14 @@ function askMain<T>(
 	});
 }
 
-configureProviderNetwork(async (url) => {
+const resolveSystemProxy = async (url: string): Promise<string> => {
 	const proxy = await askMain<string | null>({ kind: 'resolve-proxy', url }, AbortSignal.timeout(10000));
 	if (proxy === null) throw new Error('系统代理解析超时，请检查本机代理设置');
 	return proxy;
-});
+};
+configureProviderNetwork(resolveSystemProxy);
+// Agent processes (agy, codex, ...) read only proxy variables, not the system setting.
+void configureAgentSystemProxy(resolveSystemProxy);
 
 const agent = new AgentService(
 	(cwd): Promise<ProjectTrustDecision> => askMain({ kind: 'project-trust', cwd }),

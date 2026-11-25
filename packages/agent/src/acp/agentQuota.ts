@@ -1,6 +1,7 @@
 import { mkdirSync } from 'node:fs';
 import type { UiAgentConfig, UiAgentQuota, UiAgentQuotaWindow } from '@pidesktop/shared';
 import { killProcessTree } from '../shellInterrupt.ts';
+import { refreshAgentSystemProxy, withSystemProxy } from './agentProxy.ts';
 import { resolveCommand, spawnResolved, withAgentSearchPath } from './command.ts';
 import { AcpConnection, MethodNotFoundError } from './connection.ts';
 
@@ -204,8 +205,9 @@ export function versionAtLeast(version: string | null | undefined, minimum: numb
 }
 
 /** Run a command to completion with stdin closed; stdout is capped, the process tree is killed on timeout. */
-function runToCompletion(command: string, args: string[], options: { cwd: string; env?: Record<string, string>; timeoutMs: number; timeoutMessage: string }): Promise<{ code: number | null; stdout: string; stderr: string }> {
-	const env = withAgentSearchPath({ ...process.env, ...options.env });
+function runToCompletion(command: string, args: string[], options: { cwd: string; env?: Record<string, string>; systemProxy?: boolean; timeoutMs: number; timeoutMessage: string }): Promise<{ code: number | null; stdout: string; stderr: string }> {
+	const base = withAgentSearchPath({ ...process.env, ...options.env });
+	const env = options.systemProxy ? withSystemProxy(base) : base;
 	const resolved = resolveCommand(command, env);
 	if (!resolved) return Promise.reject(new Error(`找不到 Agent 命令：${command}`));
 	return new Promise((resolve, reject) => {
@@ -229,7 +231,7 @@ function runToCompletion(command: string, args: string[], options: { cwd: string
 async function readAntigravity(agent: AgentQuotaTarget, deps: Required<AgentQuotaDeps>): Promise<{ windows: UiAgentQuotaWindow[]; plan: string | null }> {
 	if (!versionAtLeast(agent.version, AGY_USAGE_MIN_VERSION)) throw new Error(`需要 Antigravity CLI 1.1.11 以上才能查询额度${agent.version ? `（当前 ${agent.version}）` : ''}`);
 	const args = [...agent.args.filter((arg) => arg !== 'acp'), '-p', '/usage', '--output-format', 'json'];
-	const result = await runToCompletion(agent.command, args, { cwd: deps.workDir, env: agent.env, timeoutMs: deps.timeoutMs, timeoutMessage: 'Antigravity 额度查询超时' });
+	const result = await runToCompletion(agent.command, args, { cwd: deps.workDir, env: agent.env, systemProxy: agent.systemProxy, timeoutMs: deps.timeoutMs, timeoutMessage: 'Antigravity 额度查询超时' });
 	// Exit code 2: signed in with a GEMINI_API_KEY, which has no account quota.
 	if (result.code === 2) return { windows: [], plan: null };
 	if (result.code !== 0) throw new Error(`Antigravity 额度查询失败（${result.code ?? '已终止'}）${result.stderr.trim() ? `：${result.stderr.trim().split('\n').slice(-2).join(' ')}` : ''}`);
@@ -264,6 +266,7 @@ export class AgentQuotaService {
 			const queriedAt = this.deps.now();
 			try {
 				if (!this.workDirReady) { mkdirSync(this.deps.workDir, { recursive: true }); this.workDirReady = true; }
+				if (agent.systemProxy) await refreshAgentSystemProxy();
 				const { windows, plan } = await READERS[source](agent, this.deps);
 				const quota: UiAgentQuota = { agentId: agent.id, ok: true, queriedAt, windows, plan };
 				this.cache.set(agent.id, { command: agent.command, quota });

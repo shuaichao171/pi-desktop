@@ -9,7 +9,7 @@
  */
 import { app, BrowserWindow, dialog, WebContentsView, type WebContents } from 'electron';
 import { join } from 'node:path';
-import { IPC_CHANNELS, type AgentEventEnvelope, type UiExtensionDialogRequest, type UiExtensionDialogResponse, type UiSplitPaneState } from '@pidesktop/shared';
+import { IPC_CHANNELS, requireDialogResponse, type AgentEventEnvelope, type UiExtensionDialogRequest, type UiExtensionDialogResponse, type UiSplitPaneState } from '@pidesktop/shared';
 import { getAppLocale } from './appLocale';
 import { rendererLaunchUrl, validatePaiSession, validatePaiWorkspace } from './desktopLaunch';
 import { guardExternalNavigation } from './externalLinks';
@@ -17,6 +17,7 @@ import { createIsolatedAgentService } from './agentClient';
 import { paneHeldSessionPaths, paneSlotForSender, paneSlots, registerPaneSlot, unregisterPaneSlot, type PaiPaneSlot } from './paneRegistry';
 
 interface PaneExtensionDialog {
+	owner: WebContents;
 	request: UiExtensionDialogRequest;
 	resolve(value: UiExtensionDialogResponse): void;
 	cleanup(): void;
@@ -405,7 +406,7 @@ function extensionDialogForPane(entry: PaiPaneSlot, request: UiExtensionDialogRe
 			signal?.removeEventListener('abort', onAbort);
 			entry.webContents.removeListener('destroyed', onGone);
 		};
-		panePendingDialogs.set(request.id, { request, resolve: finish, cleanup });
+		panePendingDialogs.set(request.id, { owner: entry.webContents, request, resolve: finish, cleanup });
 		if (signal?.aborted) { finish(null); return; }
 		signal?.addEventListener('abort', onAbort, { once: true });
 		entry.webContents.once('destroyed', onGone);
@@ -427,12 +428,12 @@ function flushPaneNotices(entry: PaiPaneSlot): void {
 export function panePendingDialogRequests(sender: WebContents): UiExtensionDialogRequest[] {
 	const entry = paneSlotForSender(sender);
 	if (!entry) return [];
-	return [...panePendingDialogs.values()].map(({ request }) => request);
+	return [...panePendingDialogs.values()].filter(({ owner }) => owner === sender).map(({ request }) => request);
 }
 
-export function resolvePanePendingDialog(id: string, value: unknown): boolean {
+export function resolvePanePendingDialog(sender: WebContents, id: string, value: unknown): boolean {
 	const pending = panePendingDialogs.get(id);
-	if (!pending) return false;
-	pending.resolve((value ?? null) as UiExtensionDialogResponse);
+	if (!pending || pending.owner !== sender) return false;
+	pending.resolve(requireDialogResponse(pending.request, value));
 	return true;
 }

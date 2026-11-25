@@ -21,7 +21,7 @@
  *   and the output tail is injected through `prompt()` — a self-invoked turn
  *   with no human input. Every settled-but-undelivered task of the session goes
  *   into that one message, so N finished tasks cost one wake, not N. A chain
- *   guard stops runaway auto-continuation after several synthetic turns without
+ *   guard stops runaway auto-continuation after many synthetic turns without
  *   real user input.
  */
 
@@ -44,8 +44,12 @@ export const NOTIFICATION_TAIL_BUDGET_CHARS = 12000;
 const MIN_TASK_TAIL_CHARS = 400;
 /** Raw bytes scanned from the log end before cleaning (progress redraws can be huge). */
 const OUTPUT_SCAN_BYTES = 256 * 1024;
-/** Max auto-wakes in a row without real user input before notifications stay pending. */
-export const MAX_AUTO_WAKE_CHAIN = 6;
+/**
+ * Max auto-wakes in a row without real user input before notifications stay pending.
+ * High enough for long build/test chains, low enough to stop a self-feeding loop
+ * (each wake starting another background task) from running unattended forever.
+ */
+export const MAX_AUTO_WAKE_CHAIN = 20;
 /** Poll interval for re-adopted (host-restart) tasks whose exit handle is gone. */
 export const ADOPT_POLL_MS = 5000;
 /** First retry delay when the owning session is busy; grows to RETRY_MAX_MS. */

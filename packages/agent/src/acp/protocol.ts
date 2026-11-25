@@ -4,8 +4,8 @@
  * object per line on the agent's stdin/stdout.
  *
  * The desktop advertises no client filesystem or terminal capability, so agents
- * use their own tools for files and commands; every request the agent can make
- * back to us is `session/request_permission`.
+ * use their own tools for files and commands. The client handles permission
+ * requests and session-scoped elicitation forms.
  */
 
 export const ACP_PROTOCOL_VERSION = 1;
@@ -76,6 +76,7 @@ export interface AcpAuthMethod { id: string; name: string; description?: string 
 
 export interface AcpInitializeResult {
 	protocolVersion: number;
+	_meta?: { steering?: { supported?: boolean } | null } | null;
 	agentCapabilities?: {
 		loadSession?: boolean;
 		promptCapabilities?: { image?: boolean; audio?: boolean; embeddedContext?: boolean };
@@ -107,6 +108,7 @@ export interface AcpNewSessionResult {
 }
 
 export interface AcpPromptResult { stopReason: AcpStopReason }
+export interface AcpSteeringResult { outcome: 'injected' | 'promptRequired' | 'startedNewTurn' | 'failed' }
 
 export interface JsonRpcError { code: number; message: string; data?: unknown }
 

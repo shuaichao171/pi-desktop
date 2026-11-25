@@ -1,5 +1,7 @@
 import type { ChildProcess } from 'node:child_process';
+import { AsyncResource } from 'node:async_hooks';
 import { killProcessTree } from '../shellInterrupt.ts';
+import { withSystemProxy } from './agentProxy.ts';
 import { resolveCommand, spawnResolved, withAgentSearchPath } from './command.ts';
 import { AcpRequestError, type JsonRpcError, type JsonRpcMessage } from './protocol.ts';
 
@@ -11,10 +13,12 @@ export interface AcpConnectionOptions {
 	args: string[];
 	cwd: string;
 	env?: Record<string, string>;
+	/** Hand the system proxy down as HTTP(S)_PROXY (`UiAgentConfig.systemProxy`). */
+	systemProxy?: boolean;
 	/** Notifications from the agent (e.g. `session/update`). */
 	onNotification(method: string, params: unknown): void;
 	/** Requests from the agent; the resolved value is the JSON-RPC result. */
-	onRequest(method: string, params: unknown): Promise<unknown>;
+	onRequest(method: string, params: unknown, signal: AbortSignal): Promise<unknown>;
 	/** The agent process ended (crash, exit, or close()). */
 	onExit?(detail: { code: number | null; signal: string | null; stderr: string; expected: boolean }): void;
 }
@@ -35,6 +39,7 @@ export class AcpConnection {
 	private readonly child: ChildProcess;
 	private readonly options: AcpConnectionOptions;
 	private readonly pending = new Map<number, Pending>();
+	private readonly incoming = new Map<number | string, AbortController>();
 	private nextId = 0;
 	private buffer = '';
 	private stderrTail = '';
@@ -63,6 +68,8 @@ export class AcpConnection {
 				: `Agent 进程已退出（${code ?? signal ?? '未知'}）${stderr ? `：${stderr.split('\n').slice(-3).join(' ')}` : ''}`;
 			for (const [, pending] of this.pending) pending.reject(new Error(reason));
 			this.pending.clear();
+			for (const controller of this.incoming.values()) controller.abort();
+			this.incoming.clear();
 			this.options.onExit?.({ code, signal, stderr, expected: this.closing });
 			markExited();
 		};
@@ -72,7 +79,8 @@ export class AcpConnection {
 
 	/** Resolve and start the agent; throws when the executable cannot be found. */
 	static start(options: AcpConnectionOptions): AcpConnection {
-		const env = withAgentSearchPath({ ...process.env, ...options.env });
+		const base = withAgentSearchPath({ ...process.env, ...options.env });
+		const env = options.systemProxy ? withSystemProxy(base) : base;
 		const resolved = resolveCommand(options.command, env);
 		if (!resolved) throw new Error(`找不到 Agent 命令：${options.command}`);
 		const child = spawnResolved(resolved, options.args, {
@@ -89,10 +97,12 @@ export class AcpConnection {
 	get alive(): boolean { return !this.closed; }
 	get pid(): number | undefined { return this.child.pid; }
 
-	request<T>(method: string, params: unknown, signal?: AbortSignal): Promise<T> {
+	request<T>(method: string, params: unknown, { signal, onResult }: { signal?: AbortSignal; onResult?(value: T): void } = {}): Promise<T> {
 		if (this.closed) return Promise.reject(new Error('Agent 进程已退出'));
 		if (signal?.aborted) return Promise.reject(new Error('请求已取消'));
 		const id = ++this.nextId;
+		// A steer acknowledgement must be recorded before reading later updates in the same stdout chunk.
+		const commit = onResult && AsyncResource.bind(onResult);
 		return new Promise<T>((resolve, reject) => {
 			const abort = () => {
 				if (!this.pending.delete(id)) return;
@@ -101,7 +111,11 @@ export class AcpConnection {
 			signal?.addEventListener('abort', abort, { once: true });
 			this.pending.set(id, {
 				method,
-				resolve: (value) => resolve(value as T),
+				resolve: (value) => {
+					try { commit?.(value as T); }
+					catch (error) { reject(error); return; }
+					resolve(value as T);
+				},
 				reject,
 				cleanup: () => signal?.removeEventListener('abort', abort),
 			});
@@ -118,6 +132,7 @@ export class AcpConnection {
 	async close(): Promise<void> {
 		if (this.closed) return;
 		this.closing = true;
+		for (const controller of this.incoming.values()) controller.abort();
 		try { this.child.stdin?.end(); } catch { /* already closed */ }
 		const pid = this.child.pid;
 		if (pid) killProcessTree(pid);
@@ -153,14 +168,21 @@ export class AcpConnection {
 		const hasId = typeof record.id === 'number' || typeof record.id === 'string';
 		if (typeof record.method === 'string') {
 			if (!hasId) {
+				if (record.method === '$/cancel_request') {
+					const requestId = (record.params as { requestId?: unknown } | null)?.requestId;
+					if (typeof requestId === 'string' || typeof requestId === 'number') this.incoming.get(requestId)?.abort();
+					return;
+				}
 				try { this.options.onNotification(record.method, record.params); } catch { /* listener errors stay local */ }
 				return;
 			}
 			const id = record.id as number | string;
-			void this.options.onRequest(record.method, record.params).then(
+			const controller = new AbortController();
+			this.incoming.set(id, controller);
+			void this.options.onRequest(record.method, record.params, controller.signal).then(
 				(result) => this.write({ jsonrpc: '2.0', id, result: result ?? null }),
 				(error: unknown) => this.write({ jsonrpc: '2.0', id, error: toRpcError(error) }),
-			);
+			).finally(() => { if (this.incoming.get(id) === controller) this.incoming.delete(id); });
 			return;
 		}
 		if (!hasId || typeof record.id !== 'number') return;

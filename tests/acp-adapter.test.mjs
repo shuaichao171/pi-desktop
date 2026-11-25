@@ -31,6 +31,7 @@ function recorder(overrides = {}) {
 		emit: (event) => events.push(event),
 		persist: (message) => persisted.push(message),
 		requestPermission: async (params) => { permissions.push(params); return { outcome: 'selected', optionId: params.options[0].optionId }; },
+		requestElicitation: async () => ({ action: 'cancel' }),
 		onPlan: (entries) => { state.plan = entries; },
 		onCommands: (commands) => { state.commands = commands; },
 		onModels: (models, current) => { state.models = { models, current }; },
@@ -142,6 +143,31 @@ test('conversation forwards a rejected permission and cancels a running turn', a
 	} finally {
 		await conversation.dispose();
 	}
+});
+
+test('ACP form withdrawal closes the question, and an async form can be answered after its turn', async (t) => {
+	const requests = [];
+	const r = recorder({ requestElicitation: (request, signal) => new Promise((resolve) => {
+		requests.push({ request, signal, resolve });
+		signal.addEventListener('abort', () => resolve({ action: 'cancel' }), { once: true });
+	}) });
+	const conversation = new AcpConversation(fakeConfig(), process.cwd(), null, r.hooks);
+	t.after(() => conversation.dispose());
+	assert.equal((await conversation.prompt({ text: 'withdraw question' })).stopReason, 'end_turn');
+	assert.equal(requests[0].signal.aborted, true);
+	assert.deepEqual(JSON.parse(r.persisted.at(-1).content[0].text), { action: 'cancel' });
+	assert.equal((await conversation.prompt({ text: 'async question' })).stopReason, 'end_turn');
+	assert.equal(requests[1].request.async, true);
+	assert.equal(requests[1].signal.aborted, false, 'turn completion does not discard async questions');
+	requests[1].resolve({ action: 'accept', content: { target: 'stage' } });
+	await until(() => r.state.commands?.[0]?.name === 'stage', 'agent receives the async answer');
+});
+
+test('does not enable Codex steering on versions that can start a detached turn', async (t) => {
+	const conversation = new AcpConversation(fakeConfig({ FAKE_ACP_CODEX_VERSION: '2.3.0' }), process.cwd(), null, recorder().hooks);
+	t.after(() => conversation.dispose());
+	await conversation.warmup();
+	assert.equal(conversation.supportsSteering, false);
 });
 
 test('cancel also stops turns queued behind the running one; they never reach the agent', async () => {

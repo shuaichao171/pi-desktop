@@ -97,7 +97,9 @@ import { ACP_AGENT_CAPABILITIES, PI_AGENT_ID, piAgentDescriptor, type UiAgentCon
 import { AgentRegistry } from './acp/agentRegistry.ts';
 import { AgentQuotaService } from './acp/agentQuota.ts';
 import { requireApprovalDetails, requireDialogResponse, type UiApprovalDetails, type UiApprovalScope } from '../../shared/src/approval.ts';
+import { requireElicitationResponse } from '../../shared/src/elicitation.ts';
 import { AcpConversation } from './acp/conversation.ts';
+import type { AcpElicitationResponse, AcpFormRequest } from './acp/elicitation.ts';
 import { planText, toolCommand, type PiImageContent, type PiShapedEvent } from './acp/turnAssembler.ts';
 import type { AcpRequestPermissionOutcome, AcpRequestPermissionParams } from './acp/protocol.ts';
 import { AGENT_BINDING_CUSTOM_TYPE, AGENT_SETTINGS_CUSTOM_TYPE, HANDOFF_CUSTOM_TYPE, HANDOFF_DELIVERED_CUSTOM_TYPE, hasConversation, pendingIncomingHandoff, readAgentBinding, readAgentSettings, renderHandoffContext, type HandoffRecord } from './acp/handoff.ts';
@@ -107,6 +109,7 @@ import { CUSTOM_PROVIDER_APIS, assertWritableDocument, commitProviderDocument, c
 import { discoverProviderModels, ProviderDiscoveryError } from './providerDiscovery.ts';
 import { bindProviderNetwork, runWithProviderNetwork } from './providerNetwork.ts';
 export { configureProviderNetwork } from './providerNetwork.ts';
+export { configureAgentSystemProxy } from './acp/agentProxy.ts';
 import { applyPluginMutation, readPluginCatalog, readPluginResourcePreview } from './plugins.ts';
 import { cloneQueuedMessage, reconcileQueuedMessages, type QueuedMessageRecord, type SdkQueueSnapshot } from './queuedMessages.ts';
 import { SessionFileChanges } from './fileChanges.ts';
@@ -1787,7 +1790,7 @@ class SingleAgentService {
 			kind: 'acp',
 			displayName: this.agentName(),
 			accentColor: binding.config?.accentColor ?? null,
-			capabilities: binding.config?.steer ? { ...ACP_AGENT_CAPABILITIES, steer: true } : ACP_AGENT_CAPABILITIES,
+			capabilities: (this.acp?.supportsSteering ?? binding.config?.steer) ? { ...ACP_AGENT_CAPABILITIES, steer: true } : ACP_AGENT_CAPABILITIES,
 			...(this.acpModels.length ? { models: this.acpModels.map((model) => ({ ...model })) } : {}),
 			currentModelId: this.acpModelId,
 			...(this.acpOptions.length ? { options: this.acpOptions.map((option) => ({ ...option, values: option.values.map((value) => ({ ...value })) })) } : {}),
@@ -1927,6 +1930,7 @@ class SingleAgentService {
 			emit: (event) => { if (owned()) this.onAgentEvent(session, event); },
 			persist: (message) => { if (owned()) manager.appendMessage(message as Parameters<SessionManager['appendMessage']>[0]); },
 			requestPermission: (params, signal) => this.requestAgentPermission(config, params, signal),
+			requestElicitation: (params, signal) => this.requestAgentElicitation(config, params, signal),
 			onPlan: (entries) => { if (owned()) this.acpPlan = entries.length ? config.displayName + ' 的计划：\n' + planText(entries) : null; },
 			onCommands: (commands) => {
 				if (!owned()) return;
@@ -2006,11 +2010,18 @@ class SingleAgentService {
 		const dialog: UiExtensionDialogRequest = { id: randomUUID(), kind: 'confirm', title: config.displayName + ' 请求权限', message: call.title || '执行操作', approval };
 		const response = requireDialogResponse(dialog, await this.requestExtensionDialog(dialog, signal));
 		if (response === null) return { outcome: 'cancelled' };
-		const decision = typeof response === 'object' ? response : { approved: response === true, scope: 'once' as const };
+		const decision = typeof response === 'object' && 'approved' in response ? response : { approved: response === true, scope: 'once' as const };
 		const option = decision.approved
 			? (decision.scope === 'once' ? allowOnce : allowAlways)
 			: reject;
 		return option ? { outcome: 'selected', optionId: option.optionId } : { outcome: 'cancelled' };
+	}
+
+	private async requestAgentElicitation(config: UiAgentConfig, request: AcpFormRequest, signal: AbortSignal): Promise<AcpElicitationResponse> {
+		const title = [config.displayName, request.title].filter(Boolean).join(' · ');
+		const dialog: UiExtensionDialogRequest = { id: randomUUID(), kind: 'form', title, message: request.message, form: request.form };
+		const response = await this.requestExtensionDialog(dialog, signal);
+		return signal.aborted || response === null ? { action: 'cancel' } : requireElicitationResponse(request.form, response);
 	}
 
 	private async setAgentModel(provider: string, id: string): Promise<void> {
@@ -2052,12 +2063,11 @@ class SingleAgentService {
 		if (this.lifecycleOperation) throw new Error('会话正在切换，请稍后发送消息');
 		const session = this.runtime?.session;
 		if (!session) throw new Error('Agent is not initialized');
-		// Most agents have no mid-turn input: refuse right away instead of holding the send
-		// until the running reply ends (the draft stays in the composer). Agents marked
-		// `steer` take it into the running turn once its prompt has been sent.
+		// Agents with steering can take another input while a prompt runs.
+		// For other agents, reject the send so the composer can keep its draft.
 		const steering = this.activePromptCalls > 0 || this.acp?.busy === true;
 		if (steering && !this.acp?.canSteer) {
-			throw new Error(this.agentBinding?.config?.steer
+			throw new Error((this.acp?.supportsSteering ?? this.agentBinding?.config?.steer)
 				? this.agentName() + ' 正在准备回复，请稍后再发送'
 				: this.agentName() + ' 正在回复，外部 Agent 不支持运行中追加消息；请等它结束或先停止');
 		}
@@ -2077,6 +2087,7 @@ class SingleAgentService {
 				text: promptText,
 				images,
 				contextPrefix: incoming?.context ?? null,
+				onSteerFallback: () => { tracker?.finish(); },
 				onDelivered: incoming ? () => {
 					if (this.runtime?.session !== session) return;
 					try { session.sessionManager.appendCustomEntry(HANDOFF_DELIVERED_CUSTOM_TYPE, { sessionPath: incoming.sessionPath }); }
@@ -2084,15 +2095,17 @@ class SingleAgentService {
 				} : undefined,
 				onStarted: () => { started = true; if (!acknowledged) { acknowledged = true; resolve(); } },
 			}).then((result) => {
-				// The input sent into this turn reports how the run ends.
+				// Only the prompt owning the turn reports its completion.
 				if (result.superseded) { if (!acknowledged) { acknowledged = true; resolve(); } return; }
 				if (result.stopReason === 'cancelled') tracker?.finish('cancelled');
 				else if (result.stopReason === 'error') tracker?.finish('failed');
 				if (result.error) this.fireError(result.error, 'provider');
 				if (!acknowledged) { acknowledged = true; if (result.error) reject(result.error); else resolve(); }
 			}, (error: unknown) => {
-				tracker?.finish('failed');
-				this.fireError(error);
+				if (!steering || started) {
+					tracker?.finish('failed');
+					this.fireError(error);
+				}
 				if (!acknowledged) { acknowledged = true; reject(error); }
 			}).finally(() => {
 				this.activePromptCalls -= 1;
@@ -2303,7 +2316,7 @@ class SingleAgentService {
 			&& !this.lifecycleOperation && !this.closing && !this.pluginReloadError && !this.pluginModelError;
 	}
 
-	/** Inject the background-task notification as a user turn (self-invoked; bypasses prompt() so the wake chain guard stays armed). */
+	/** Inject the background-task notification as a user turn (self-invoked; bypasses prompt() so the wake chain guard stays armed, and skips template expansion). */
 	private async deliverSyntheticPrompt(text: string): Promise<void> {
 		return this.sendPrompt(text, undefined, [], false);
 	}
@@ -4398,7 +4411,7 @@ export class AgentService {
 		const work = (async () => {
 			for (const [key, service] of this.contexts) {
 				if (this.contexts.size <= MAX_LOADED_CONTEXTS) break;
-				if (service === this.active || !service.canEvict || this.isPinned(service)) continue;
+				if (service === this.active || !service.canEvict || this.waitingContexts.has(service) || this.isPinned(service)) continue;
 				this.contexts.delete(key);
 				if (this.lastContextByCwd.get(service.cwd) === key) this.lastContextByCwd.delete(service.cwd);
 				await service.dispose();
