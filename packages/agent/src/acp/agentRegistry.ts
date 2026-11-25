@@ -46,6 +46,14 @@ export const BUILTIN_AGENTS: readonly UiAgentConfig[] = [
 	builtin({ id: 'qwen', displayName: 'Qwen Code', command: 'qwen', args: ['--experimental-acp'], accentColor: '#615CED',
 		installer: { kind: 'npm', package: '@qwen-code/qwen-code' }, login: { command: 'qwen', args: [] },
 		homepage: 'https://github.com/QwenLM/qwen-code' }),
+	// Community adapter (not by Zhipu): bridges an installed ZCode CLI (`zcode app-server --stdio`) to ACP.
+	// Its own default mode is `yolo`; the modes are undocumented, so no mode is preset here.
+	builtin({ id: 'zcode', displayName: 'ZCode', command: 'zcode-acp-server', args: [], accentColor: '#2F6BFF',
+		installer: { kind: 'npm', package: 'zcode-acp-server' },
+		login: { command: 'zcode-acp', args: ['setup', '--provider', 'bigmodel'] },
+		loginHint: '在 设置 → Agents 中点击“在终端中登录”填入智谱 Coding Plan API Key（Z.ai 国际版账号在终端运行 zcode-acp setup --provider zai），或先在 ZCode 桌面版中登录',
+		community: true, note: '需要本机已安装 ZCode（桌面版或 CLI 0.14.8 以上）；它默认使用 yolo 模式，不经确认执行操作，可在 Agent 选项中切换。',
+		homepage: 'https://github.com/william0wang/zcode-acp' }),
 ];
 
 interface StoredAgents {

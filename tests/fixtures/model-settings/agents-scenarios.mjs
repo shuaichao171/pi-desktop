@@ -11,6 +11,7 @@ export default async function agentsScenarios(review) {
   await review.assert('document.querySelector("[data-agent-id=codex]").disabled && document.querySelector("[data-agent-id=codex]").textContent.includes("未安装")', 'An agent missing from PATH is listed but cannot be chosen');
   await review.assert('!document.querySelector("[data-agent-id=gemini]") && Boolean(document.querySelector("[data-agent-id=review-agent]"))', 'Disabled agents are hidden; custom agents are listed');
   await review.assert('!document.querySelector(".pd-composer-agent-note")', 'An empty conversation chooses its agent directly, without the handoff note');
+  await review.assert('document.querySelector("[data-agent-id=zcode]").textContent.includes("社区") && !document.querySelector("[data-agent-id=claude-code]").textContent.includes("社区")', 'A community ACP adapter is labelled in the agent menu');
   await review.screenshot('agents-menu-empty');
 
   await review.click('[data-agent-id=claude-code]');
@@ -93,8 +94,13 @@ export default async function agentsScenarios(review) {
   await review.click('.pd-settings-entry');
   await review.clickText('.pd-settings-nav button', 'Agents');
   await review.waitFor('Boolean(document.querySelector("[data-settings-page=agents] .pd-mcp-server"))');
-  await review.assert('document.querySelectorAll("[data-settings-page=agents] .pd-mcp-server").length === 4 && document.querySelector("[data-settings-page=agents]").textContent.includes("npm install -g @agentclientprotocol/codex-acp")', 'The Agents page lists every agent with its install hint');
+  await review.assert('document.querySelectorAll("[data-settings-page=agents] .pd-mcp-server").length === 5 && document.querySelector("[data-settings-page=agents]").textContent.includes("npm install -g @agentclientprotocol/codex-acp")', 'The Agents page lists every agent with its install hint');
+  await review.assert('(() => { const card = [...document.querySelectorAll("[data-settings-page=agents] .pd-mcp-server")].find((item) => item.textContent.includes("ZCode")); return card && card.textContent.includes("社区 ACP") && card.querySelector(".pd-agent-note")?.textContent.includes("非官方") && card.textContent.includes("yolo"); })()', 'A community ACP adapter is marked as such on its settings card, with its note');
+  await review.assert('![...document.querySelectorAll("[data-settings-page=agents] .pd-mcp-server")].find((item) => item.textContent.includes("Claude Code")).querySelector(".pd-agent-note")', 'Official adapters carry no community note');
   await review.screenshot('agents-settings');
+  await review.evaluate('[...document.querySelectorAll("[data-settings-page=agents] .pd-mcp-server")].find((item) => item.textContent.includes("ZCode")).scrollIntoView({ block: "center" })');
+  await review.screenshot('agents-settings-community');
+  await review.evaluate('document.querySelector("[data-settings-page=agents] .pd-mcp-server").scrollIntoView({ block: "start" })');
 
   // One-click install: confirm first, then live output, then a re-check and the sign-in step.
   const codexCard = '[data-settings-page=agents] .pd-mcp-server:nth-child(2)';
@@ -120,7 +126,7 @@ export default async function agentsScenarios(review) {
   await review.screenshot('agents-install-done');
   await review.clickText(`${codexCard} footer button`, '在终端中登录');
   await review.waitFor('window.__modelReview.calls.some(call => call.name === "openAgentLogin" && call.args[0] === "codex")');
-  await review.assert('![...document.querySelectorAll("[data-settings-page=agents] .pd-mcp-server:nth-child(4) footer button")].some(button => button.textContent === "在终端中登录" || button.textContent === "安装")', 'Custom agents offer neither install nor terminal sign-in');
+  await review.assert('![...document.querySelectorAll("[data-settings-page=agents] .pd-mcp-server:nth-child(5) footer button")].some(button => button.textContent === "在终端中登录" || button.textContent === "安装")', 'Custom agents offer neither install nor terminal sign-in');
   await review.viewport(600, 800);
   await review.assert('document.documentElement.scrollWidth <= innerWidth', 'The Agents page fits a narrow window');
   await review.screenshot('agents-settings-narrow');

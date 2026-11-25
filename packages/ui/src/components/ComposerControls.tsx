@@ -443,7 +443,7 @@ export function ComposerControls({ onOpenModelManagement, hasImages = false }: {
 					const current = item.id === (agent?.id ?? PI_AGENT_ID);
 					const status = 'command' in item ? agentStatusLabel(item) : null;
 					return <button key={item.id} data-picker-option data-agent-id={item.id} type="button" role="menuitemradio" aria-checked={current} disabled={!canChange || (!current && item.readiness !== 'ready')} title={'command' in item && item.readiness === 'install' ? item.installHint : undefined} onClick={() => chooseAgent(item.id)}>
-						<span className="pd-composer-agent-option">{agentMark(item.displayName, item.accentColor, item.id === PI_AGENT_ID)}<span>{item.displayName}</span>{status && <small>{status}</small>}{!current && agentLocked && item.readiness === 'ready' && <small className="is-handoff">{t('composer.agentHandoff')}</small>}</span>{current && <span aria-hidden="true">✓</span>}
+						<span className="pd-composer-agent-option">{agentMark(item.displayName, item.accentColor, item.id === PI_AGENT_ID)}<span>{item.displayName}</span>{'community' in item && item.community && <small>{t('composer.agentCommunity')}</small>}{status && <small>{status}</small>}{!current && agentLocked && item.readiness === 'ready' && <small className="is-handoff">{t('composer.agentHandoff')}</small>}</span>{current && <span aria-hidden="true">✓</span>}
 					</button>;
 				})}
 				<div className="pd-composer-model-actions"><button type="button" disabled={pending} onClick={() => openManagement({ kind: 'agents' })}><Icon name="settings" width="15" height="15" /><span>{t('composer.agentManage')}</span></button></div>

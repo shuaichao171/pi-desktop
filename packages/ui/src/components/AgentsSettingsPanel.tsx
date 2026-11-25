@@ -165,7 +165,7 @@ export function AgentsSettingsPanel() {
 					<h3>{agent.displayName}</h3>
 					<p>
 						<span className="pd-mcp-chip">{agent.builtin ? t('agents.builtin') : t('agents.custom')}</span>
-						<span className="pd-mcp-chip">ACP</span>
+						<span className="pd-mcp-chip">{agent.community ? t('agents.communityAcp') : 'ACP'}</span>
 						{agent.version && <span className="pd-mcp-chip" title={agent.resolvedCommand ?? undefined}>{agent.version}</span>}
 					</p>
 				</div>
@@ -177,6 +177,7 @@ export function AgentsSettingsPanel() {
 				</HoverTooltip>
 			</header>
 			<code className="pd-mcp-command" title={agent.resolvedCommand ?? commandLine(agent)}>{commandLine(agent)}</code>
+			{(agent.community || agent.note) && <p className="pd-mcp-callout pd-agent-note">{[agent.community ? t('agents.communityNote') : '', agent.note ?? ''].filter(Boolean).join(' ')}</p>}
 			{agent.readiness === 'install' && agent.installHint && <p className="pd-mcp-callout is-warning">{t('agents.installHint')}<code>{agent.installHint}</code></p>}
 			{installPanel(agent)}
 			{loginError[agent.id] && <p className="pd-mcp-callout pd-mcp-error" role="alert">{loginError[agent.id]}</p>}

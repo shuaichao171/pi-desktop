@@ -104,6 +104,10 @@ export interface UiAgentConfig {
 	 * with the new input). ACP does not advertise this, so only verified built-ins set it.
 	 */
 	steer?: boolean;
+	/** A community-maintained ACP adapter rather than the agent vendor's own (shown as such). */
+	community?: boolean;
+	/** Requirements or caveats shown on the agent's settings card. */
+	note?: string;
 	homepage?: string;
 }
 
