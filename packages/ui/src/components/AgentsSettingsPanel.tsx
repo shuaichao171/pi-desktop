@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import type { UiAgentSaveRequest, UiAgentStatus } from '@pidesktop/shared';
+import type { UiAgentInstallState, UiAgentSaveRequest, UiAgentStatus } from '@pidesktop/shared';
 import { useChatStore } from '../store';
 import { useT } from '../i18n';
 import { technicalInputAttributes } from '../technicalInputAttributes';
@@ -9,6 +9,20 @@ import './mcpSettingsPanel.css';
 
 const errorText = (error: unknown) => error instanceof Error ? error.message : String(error);
 const commandLine = (agent: UiAgentStatus) => [agent.command, ...agent.args].filter(Boolean).join(' ');
+/** Where an install comes from: the npm package, or the host serving the script. */
+const installSource = (agent: UiAgentStatus): string => agent.installer?.kind === 'npm'
+	? agent.installer.package
+	: /https:\/\/([^/\s]+)/.exec(agent.installHint ?? '')?.[1] ?? '';
+
+/** Live output of one install run; follows the tail unless the user scrolled up. */
+function InstallOutput({ text }: { text: string }) {
+	const ref = useRef<HTMLPreElement>(null), pinned = useRef(true);
+	useEffect(() => { const node = ref.current; if (node && pinned.current) node.scrollTop = node.scrollHeight; }, [text]);
+	return <pre ref={ref} className="pd-agent-install-output" tabIndex={0} onScroll={(event) => {
+		const node = event.currentTarget;
+		pinned.current = node.scrollHeight - node.scrollTop - node.clientHeight < 24;
+	}}>{text}</pre>;
+}
 
 function envFromText(value: string): Record<string, string> {
 	const output: Record<string, string> = {};
@@ -33,8 +47,30 @@ export function AgentsSettingsPanel() {
 	const { t } = useT();
 	const [busy, setBusy] = useState(false), [loading, setLoading] = useState(true), [error, setError] = useState<string | null>(null);
 	const [editing, setEditing] = useState<Draft | null>(null), [removing, setRemoving] = useState<UiAgentStatus | null>(null);
-	const editorDialog = useRef<HTMLDialogElement>(null), removeDialog = useRef<HTMLDialogElement>(null), busyRef = useRef(false);
+	const [confirmInstall, setConfirmInstall] = useState<UiAgentStatus | null>(null);
+	const [installs, setInstalls] = useState<Record<string, UiAgentInstallState>>({});
+	const [dismissed, setDismissed] = useState<Record<string, number>>({});
+	const [loginError, setLoginError] = useState<Record<string, string>>({});
+	const editorDialog = useRef<HTMLDialogElement>(null), removeDialog = useRef<HTMLDialogElement>(null), installDialog = useRef<HTMLDialogElement>(null), busyRef = useRef(false);
 	const supported = typeof bridge?.listAgents === 'function';
+	const installSupported = typeof bridge?.installAgent === 'function';
+
+	// Installs run in the main process and outlive this page: pick up runs in
+	// progress, then follow their events. A finished install re-checks readiness.
+	useEffect(() => {
+		if (!installSupported || !bridge) return;
+		let active = true;
+		const apply = (state: UiAgentInstallState) => {
+			if (!active) return;
+			if (state.phase === 'succeeded') void refreshAgents(true).catch((failure) => { if (active) setError(errorText(failure)); });
+			setInstalls((current) => ({ ...current, [state.agentId]: state }));
+		};
+		const unsubscribe = bridge.onAgentInstallEvent(apply);
+		void bridge.listAgentInstalls()
+			.then((states) => { if (active) setInstalls((current) => ({ ...Object.fromEntries(states.map((state) => [state.agentId, state])), ...current })); })
+			.catch(() => {});
+		return () => { active = false; unsubscribe(); };
+	}, [installSupported, bridge, refreshAgents]);
 
 	useEffect(() => {
 		if (!supported) { setLoading(false); return; }
@@ -46,6 +82,43 @@ export function AgentsSettingsPanel() {
 	const editorOpen = editing !== null;
 	useEffect(() => { const node = editorDialog.current; if (editorOpen) { if (!node?.open) node?.showModal(); } else node?.close(); }, [editorOpen]);
 	useEffect(() => { if (removing) removeDialog.current?.showModal(); else removeDialog.current?.close(); }, [removing]);
+	useEffect(() => { if (confirmInstall) installDialog.current?.showModal(); else installDialog.current?.close(); }, [confirmInstall]);
+
+	async function startInstall(agent: UiAgentStatus) {
+		setConfirmInstall(null);
+		setError(null);
+		try {
+			const state = await bridge!.installAgent(agent.id);
+			// An event may already have reported a later state of this run.
+			setInstalls((current) => current[agent.id]?.startedAt === state.startedAt ? current : { ...current, [agent.id]: state });
+		} catch (failure) { setError(errorText(failure)); }
+	}
+	async function openLogin(agent: UiAgentStatus) {
+		setLoginError((current) => { const next = { ...current }; delete next[agent.id]; return next; });
+		try { await bridge!.openAgentLogin(agent.id); }
+		catch (failure) { setLoginError((current) => ({ ...current, [agent.id]: errorText(failure) })); }
+	}
+	const installRunning = Object.values(installs).some((state) => state.phase === 'running');
+	function installPanel(agent: UiAgentStatus) {
+		const state = installs[agent.id];
+		if (!state || dismissed[agent.id] === state.startedAt) return null;
+		const running = state.phase === 'running';
+		const title = running ? t('agents.installRunning') : state.phase === 'succeeded' ? t('agents.installSucceeded') : state.phase === 'cancelled' ? t('agents.installCancelled') : t('agents.installFailed');
+		return <section className={`pd-agent-install is-${state.phase}`} aria-live="polite">
+			<header>
+				<Icon name={running ? 'loader' : state.phase === 'succeeded' ? 'check' : 'alert'} width="14" height="14" className={running ? 'is-spinning' : undefined} />
+				<strong>{title}</strong>
+				<span className="pd-mcp-footer-spacer" />
+				{running
+					? <button type="button" className="pd-btn pd-mcp-button" onClick={() => void bridge!.cancelAgentInstall(agent.id).catch((failure) => setError(errorText(failure)))}>{t('agents.installCancel')}</button>
+					: <button type="button" className="pd-mcp-icon-button is-ghost" aria-label={t('agents.close')} onClick={() => setDismissed((current) => ({ ...current, [agent.id]: state.startedAt }))}><Icon name="close" width="14" height="14" /></button>}
+			</header>
+			{state.error && <p className="pd-agent-install-error" role="alert">{state.error}</p>}
+			<InstallOutput text={state.output} />
+			{state.phase === 'succeeded' && agent.readiness === 'install' && <p className="pd-mcp-callout is-warning">{t('agents.installNotDetected')}</p>}
+			{state.phase === 'succeeded' && agent.readiness === 'ready' && agent.login && <p className="pd-mcp-callout">{t('agents.installNextLogin')}</p>}
+		</section>;
+	}
 
 	async function run(action: () => Promise<void>): Promise<boolean> {
 		if (busyRef.current) return false;
@@ -105,7 +178,13 @@ export function AgentsSettingsPanel() {
 			</header>
 			<code className="pd-mcp-command" title={agent.resolvedCommand ?? commandLine(agent)}>{commandLine(agent)}</code>
 			{agent.readiness === 'install' && agent.installHint && <p className="pd-mcp-callout is-warning">{t('agents.installHint')}<code>{agent.installHint}</code></p>}
+			{installPanel(agent)}
+			{loginError[agent.id] && <p className="pd-mcp-callout pd-mcp-error" role="alert">{loginError[agent.id]}</p>}
 			<footer>
+				{agent.readiness === 'install' && agent.installer && installSupported && installs[agent.id]?.phase !== 'running'
+					&& <button type="button" className="pd-btn pd-mcp-button is-primary" disabled={busy || installRunning} onClick={() => setConfirmInstall(agent)}><Icon name="update" width="14" height="14" />{t('agents.install')}</button>}
+				{agent.readiness === 'ready' && agent.login && installSupported
+					&& <HoverTooltip title={t('agents.loginTooltip', { command: [agent.login.command, ...agent.login.args].join(' ') })}><button type="button" className="pd-btn pd-mcp-button" onClick={() => void openLogin(agent)}><Icon name="terminal" width="14" height="14" />{t('agents.loginInTerminal')}</button></HoverTooltip>}
 				{agent.homepage && <a className="pd-btn pd-mcp-button" href={agent.homepage} target="_blank" rel="noreferrer">{t('agents.homepage')}</a>}
 				<span className="pd-mcp-footer-spacer" />
 				<HoverTooltip title={t('agents.edit')} align="end">
@@ -140,6 +219,16 @@ export function AgentsSettingsPanel() {
 					<button type="submit" className="pd-btn pd-mcp-button is-primary" disabled={busy}>{t('agents.save')}</button>
 				</footer>
 			</form>}
+		</dialog>
+
+		<dialog ref={installDialog} className="pd-mcp-remove pd-agent-install-confirm" aria-labelledby="pd-agent-install-title" onCancel={(event) => { event.preventDefault(); setConfirmInstall(null); }}>
+			<h3 id="pd-agent-install-title">{t('agents.installTitle', { name: confirmInstall?.displayName ?? '' })}</h3>
+			<code className="pd-mcp-command">{confirmInstall?.installHint}</code>
+			<p>{t(confirmInstall?.installer?.kind === 'script' ? 'agents.installScriptWarning' : 'agents.installNpmWarning', { source: confirmInstall ? installSource(confirmInstall) : '' })}</p>
+			<footer>
+				<button type="button" className="pd-btn pd-mcp-button" onClick={() => setConfirmInstall(null)}>{t('agents.cancel')}</button>
+				<button type="button" className="pd-btn pd-mcp-button is-primary" disabled={!confirmInstall} onClick={() => { if (confirmInstall) void startInstall(confirmInstall); }}>{t('agents.installConfirm')}</button>
+			</footer>
 		</dialog>
 
 		<dialog ref={removeDialog} className="pd-mcp-remove" aria-labelledby="pd-agent-remove-title" onCancel={(event) => { event.preventDefault(); if (!busy) setRemoving(null); }}>

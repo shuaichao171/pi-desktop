@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess, type SpawnOptions } from 'node:child_process';
+import { execFile, spawn, type ChildProcess, type SpawnOptions } from 'node:child_process';
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { delimiter, extname, isAbsolute, join } from 'node:path';
 
@@ -14,10 +14,93 @@ function windowsExtensions(env: NodeJS.ProcessEnv): string[] {
 	return list.length ? list : ['.com', '.exe', '.bat', '.cmd'];
 }
 
+function pathKey(env: NodeJS.ProcessEnv): string {
+	if (!IS_WINDOWS) return 'PATH';
+	return Object.keys(env).find((name) => name.toUpperCase() === 'PATH') ?? 'Path';
+}
+
 function pathValue(env: NodeJS.ProcessEnv): string {
 	if (!IS_WINDOWS) return env.PATH ?? process.env.PATH ?? '';
 	const key = Object.keys(env).find((name) => name.toUpperCase() === 'PATH');
 	return (key ? env[key] : undefined) ?? process.env.Path ?? process.env.PATH ?? '';
+}
+
+function envValue(env: NodeJS.ProcessEnv, name: string): string | undefined {
+	if (!IS_WINDOWS) return env[name];
+	const key = Object.keys(env).find((item) => item.toUpperCase() === name.toUpperCase());
+	return key ? env[key] : undefined;
+}
+
+/**
+ * Folders that official agent installers write to. A running app keeps the
+ * PATH it started with, so a CLI installed afterwards (or whose installer only
+ * edited the user PATH / shell profile) is still found here.
+ */
+export function knownAgentDirs(env: NodeJS.ProcessEnv = process.env): string[] {
+	if (IS_WINDOWS) {
+		const appData = envValue(env, 'APPDATA');
+		const localAppData = envValue(env, 'LOCALAPPDATA');
+		return [
+			...(appData ? [join(appData, 'npm')] : []),
+			...(localAppData ? [join(localAppData, 'agy', 'bin')] : []),
+		];
+	}
+	const home = env.HOME ?? process.env.HOME;
+	return [
+		...(home ? [join(home, '.local', 'bin'), join(home, '.npm-global', 'bin')] : []),
+		'/usr/local/bin',
+		'/opt/homebrew/bin',
+	];
+}
+
+let storedPathDirs: string[] = [];
+
+/** `reg query` value of one PATH entry, `%VAR%` expanded; entries that did not decode cleanly are dropped. */
+function readRegistryPath(key: string, env: NodeJS.ProcessEnv): Promise<string[]> {
+	return new Promise((resolve) => {
+		execFile('reg.exe', ['query', key, '/v', 'Path'], { encoding: 'utf8', windowsHide: true, timeout: 5000 }, (error, stdout) => {
+			const match = error ? null : /^\s*Path\s+REG_(?:EXPAND_)?SZ\s+(.*)$/im.exec(stdout);
+			if (!match) { resolve([]); return; }
+			resolve(match[1].split(';')
+				.map((item) => item.trim().replace(/%([^%]+)%/g, (whole, name: string) => envValue(env, name) ?? whole))
+				.filter((item) => item && !item.includes('%') && !item.includes('�')));
+		});
+	});
+}
+
+/**
+ * Re-read the user and machine PATH that installers edit (Windows registry).
+ * Later `withAgentSearchPath` calls append these folders; elsewhere this is a no-op.
+ */
+export async function refreshStoredSearchPath(env: NodeJS.ProcessEnv = process.env): Promise<void> {
+	if (!IS_WINDOWS) return;
+	const [user, machine] = await Promise.all([
+		readRegistryPath('HKCU\\Environment', env),
+		readRegistryPath('HKLM\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment', env),
+	]);
+	storedPathDirs = [...machine, ...user];
+}
+
+/**
+ * `env` with folders an installer may have added since this process started
+ * appended to PATH (never prepended: what the PATH already finds wins).
+ */
+export function withAgentSearchPath(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+	const current = pathValue(env);
+	const normalize = (dir: string) => {
+		const value = dir.trim().replace(/^"(.*)"$/, '$1').replace(/[\\/]+$/, '');
+		return IS_WINDOWS ? value.toLowerCase() : value;
+	};
+	const seen = new Set(current.split(delimiter).map(normalize).filter(Boolean));
+	const extra: string[] = [];
+	for (const dir of [...storedPathDirs, ...knownAgentDirs(env)]) {
+		const key = normalize(dir);
+		if (!key || seen.has(key)) continue;
+		seen.add(key);
+		extra.push(dir);
+	}
+	if (!extra.length) return env;
+	return { ...env, [pathKey(env)]: [current, ...extra].filter(Boolean).join(delimiter) };
 }
 
 /**

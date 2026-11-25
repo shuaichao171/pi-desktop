@@ -84,6 +84,32 @@ export default async function agentsScenarios(review) {
   await review.waitFor('Boolean(document.querySelector("[data-settings-page=agents] .pd-mcp-server"))');
   await review.assert('document.querySelectorAll("[data-settings-page=agents] .pd-mcp-server").length === 4 && document.querySelector("[data-settings-page=agents]").textContent.includes("npm install -g @agentclientprotocol/codex-acp")', 'The Agents page lists every agent with its install hint');
   await review.screenshot('agents-settings');
+
+  // One-click install: confirm first, then live output, then a re-check and the sign-in step.
+  const codexCard = '[data-settings-page=agents] .pd-mcp-server:nth-child(2)';
+  await review.clickText(`${codexCard} footer button`, '安装');
+  await review.waitFor('document.querySelector(".pd-agent-install-confirm")?.open === true');
+  await review.assert('document.querySelector(".pd-agent-install-confirm").textContent.includes("npm install -g @agentclientprotocol/codex-acp") && !window.__modelReview.calls.some(call => call.name === "installAgent")', 'Install asks for confirmation with the exact command before running anything');
+  await review.screenshot('agents-install-confirm');
+  await review.clickText('.pd-agent-install-confirm button', '确认安装');
+  await review.waitFor('Boolean(document.querySelector(".pd-agent-install.is-running"))');
+  await review.assert('window.__modelReview.calls.some(call => call.name === "installAgent" && call.args[0] === "codex")', 'Confirming starts the install of that agent only');
+  await review.evaluate(`window.__modelReview.emit('onAgentInstallEvent', { agentId: 'codex', phase: 'running', command: 'npm install -g @agentclientprotocol/codex-acp', output: '> npm install -g @agentclientprotocol/codex-acp\\n\\nadded 112 packages in 9s', startedAt: 1 })`);
+  await review.waitFor('document.querySelector(".pd-agent-install-output")?.textContent.includes("added 112 packages")');
+  await review.assert('[...document.querySelectorAll(".pd-agent-install button")].some(button => button.textContent === "停止")', 'A running install can be stopped');
+  await review.screenshot('agents-install-running');
+  await review.evaluate(`(() => {
+    const state = window.__modelReview;
+    Object.assign(state.agents.find(agent => agent.id === 'codex'), { readiness: 'ready', version: '0.14.0', resolvedCommand: 'C:\\\\review\\\\npm\\\\codex-acp.cmd', message: undefined });
+    state.emit('onAgentInstallEvent', { agentId: 'codex', phase: 'succeeded', command: 'npm install -g @agentclientprotocol/codex-acp', output: '> npm install -g @agentclientprotocol/codex-acp\\n\\nadded 112 packages in 9s', startedAt: 1, finishedAt: 2, exitCode: 0 });
+  })()`);
+  await review.waitFor('Boolean(document.querySelector(".pd-agent-install.is-succeeded")) && window.__modelReview.calls.some(call => call.name === "probeAgents")');
+  await review.waitFor(`document.querySelector('${codexCard} .pd-mcp-status')?.textContent === '可用'`);
+  await review.assert(`document.querySelector('${codexCard}').textContent.includes('下一步：登录') && [...document.querySelectorAll('${codexCard} footer button')].some(button => button.textContent === '在终端中登录')`, 'A finished install re-checks readiness and points to sign-in');
+  await review.screenshot('agents-install-done');
+  await review.clickText(`${codexCard} footer button`, '在终端中登录');
+  await review.waitFor('window.__modelReview.calls.some(call => call.name === "openAgentLogin" && call.args[0] === "codex")');
+  await review.assert('![...document.querySelectorAll("[data-settings-page=agents] .pd-mcp-server:nth-child(4) footer button")].some(button => button.textContent === "在终端中登录" || button.textContent === "安装")', 'Custom agents offer neither install nor terminal sign-in');
   await review.viewport(600, 800);
   await review.assert('document.documentElement.scrollWidth <= innerWidth', 'The Agents page fits a narrow window');
   await review.screenshot('agents-settings-narrow');

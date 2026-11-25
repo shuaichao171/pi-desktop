@@ -2,25 +2,48 @@ import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
-import { isValidAgentId, PI_AGENT_ID, requireAgentSaveRequest, type UiAgentConfig, type UiAgentSaveRequest, type UiAgentStatus } from '@pidesktop/shared';
-import { resolveCommand, spawnResolved } from './command.ts';
+import { isValidAgentId, PI_AGENT_ID, requireAgentSaveRequest, type UiAgentConfig, type UiAgentInstaller, type UiAgentSaveRequest, type UiAgentStatus } from '@pidesktop/shared';
+import { refreshStoredSearchPath, resolveCommand, spawnResolved, withAgentSearchPath } from './command.ts';
 
-/** Agents known to speak ACP. Commands are the ACP entry points, not the interactive CLIs. */
+const AGY_INSTALL = { kind: 'script', windowsUrl: 'https://antigravity.google/cli/install.ps1', posixUrl: 'https://antigravity.google/cli/install.sh' } as const;
+
+/** The official install command as a user would type it. */
+export function installerCommandLine(installer: UiAgentInstaller, platform: NodeJS.Platform = process.platform): string {
+	if (installer.kind === 'npm') return `npm install -g ${installer.package}`;
+	return platform === 'win32' ? `irm ${installer.windowsUrl} | iex` : `curl -fsSL ${installer.posixUrl} | bash`;
+}
+
+const builtin = (agent: Omit<UiAgentConfig, 'enabled' | 'builtin' | 'installHint'>): UiAgentConfig => ({
+	...agent, enabled: true, builtin: true, ...(agent.installer ? { installHint: installerCommandLine(agent.installer) } : {}),
+});
+
+/**
+ * Agents known to speak ACP. Commands are the ACP entry points, not the interactive CLIs;
+ * `login` opens the agent's own interactive sign-in (the ACP adapters bundle their CLI).
+ */
 export const BUILTIN_AGENTS: readonly UiAgentConfig[] = [
-	{ id: 'claude-code', displayName: 'Claude Code', command: 'claude-agent-acp', args: [], enabled: true, builtin: true, accentColor: '#D97757',
-		installHint: 'npm install -g @agentclientprotocol/claude-agent-acp', loginHint: '在终端运行 claude 并完成登录（/login）', homepage: 'https://github.com/agentclientprotocol/claude-agent-acp' },
-	{ id: 'codex', displayName: 'Codex', command: 'codex-acp', args: [], enabled: true, builtin: true, accentColor: '#10A37F',
-		installHint: 'npm install -g @agentclientprotocol/codex-acp', loginHint: '在终端运行 codex login', homepage: 'https://github.com/agentclientprotocol/codex-acp' },
+	builtin({ id: 'claude-code', displayName: 'Claude Code', command: 'claude-agent-acp', args: [], accentColor: '#D97757',
+		installer: { kind: 'npm', package: '@agentclientprotocol/claude-agent-acp' },
+		login: { command: 'claude-agent-acp', args: ['--cli'] }, loginHint: '在 设置 → Agents 中点击“在终端中登录”，在打开的 Claude Code 里输入 /login 完成登录',
+		homepage: 'https://github.com/agentclientprotocol/claude-agent-acp' }),
+	builtin({ id: 'codex', displayName: 'Codex', command: 'codex-acp', args: [], accentColor: '#10A37F',
+		installer: { kind: 'npm', package: '@agentclientprotocol/codex-acp' },
+		login: { command: 'codex-acp', args: ['login'] }, loginHint: '在 设置 → Agents 中点击“在终端中登录”，或在终端运行 codex login',
+		homepage: 'https://github.com/agentclientprotocol/codex-acp' }),
 	// Antigravity CLI 1.5+ speaks ACP itself (`agy acp`) and reuses the login of an interactive `agy` session.
-	{ id: 'antigravity', displayName: 'Antigravity', command: 'agy', args: ['acp'], enabled: true, builtin: true, accentColor: '#3186FF',
-		installHint: process.platform === 'win32' ? 'irm https://antigravity.google/cli/install.ps1 | iex' : 'curl -fsSL https://antigravity.google/cli/install.sh | bash',
-		loginHint: '在终端运行一次 agy 并登录，或运行 agy acp --login', homepage: 'https://antigravity.google/docs/ide/extensions/acp/' },
-	{ id: 'gemini', displayName: 'Gemini CLI', command: 'gemini', args: ['--experimental-acp'], enabled: true, builtin: true, accentColor: '#4285F4',
-		installHint: 'npm install -g @google/gemini-cli', homepage: 'https://github.com/google-gemini/gemini-cli' },
-	{ id: 'opencode', displayName: 'OpenCode', command: 'opencode', args: ['acp'], enabled: true, builtin: true, accentColor: '#6E56CF',
-		installHint: 'npm install -g opencode-ai', homepage: 'https://opencode.ai' },
-	{ id: 'qwen', displayName: 'Qwen Code', command: 'qwen', args: ['--experimental-acp'], enabled: true, builtin: true, accentColor: '#615CED',
-		installHint: 'npm install -g @qwen-code/qwen-code', homepage: 'https://github.com/QwenLM/qwen-code' },
+	builtin({ id: 'antigravity', displayName: 'Antigravity', command: 'agy', args: ['acp'], accentColor: '#3186FF',
+		installer: AGY_INSTALL,
+		login: { command: 'agy', args: [] }, loginHint: '在 设置 → Agents 中点击“在终端中登录”，或在终端运行一次 agy 并登录',
+		homepage: 'https://antigravity.google/docs/ide/extensions/acp/' }),
+	builtin({ id: 'gemini', displayName: 'Gemini CLI', command: 'gemini', args: ['--experimental-acp'], accentColor: '#4285F4',
+		installer: { kind: 'npm', package: '@google/gemini-cli' }, login: { command: 'gemini', args: [] },
+		homepage: 'https://github.com/google-gemini/gemini-cli' }),
+	builtin({ id: 'opencode', displayName: 'OpenCode', command: 'opencode', args: ['acp'], accentColor: '#6E56CF',
+		installer: { kind: 'npm', package: 'opencode-ai' }, login: { command: 'opencode', args: ['auth', 'login'] },
+		homepage: 'https://opencode.ai' }),
+	builtin({ id: 'qwen', displayName: 'Qwen Code', command: 'qwen', args: ['--experimental-acp'], accentColor: '#615CED',
+		installer: { kind: 'npm', package: '@qwen-code/qwen-code' }, login: { command: 'qwen', args: [] },
+		homepage: 'https://github.com/QwenLM/qwen-code' }),
 ];
 
 interface StoredAgents {
@@ -59,6 +82,7 @@ function probeVersion(resolved: string, env: NodeJS.ProcessEnv): Promise<string 
 export class AgentRegistry {
 	private readonly file: string;
 	private stored: StoredAgents;
+	private searchPathLoaded = false;
 	private readonly probes = new Map<string, { command: string; resolved: string | null; version: string | null }>();
 
 	constructor(file: string) {
@@ -108,13 +132,15 @@ export class AgentRegistry {
 
 	/** Readiness for every agent; `refresh` re-runs the probe instead of using the cached one. */
 	async statuses(refresh = false): Promise<UiAgentStatus[]> {
+		// An installer may have edited the user PATH since the last look.
+		if (refresh || !this.searchPathLoaded) { this.searchPathLoaded = true; await refreshStoredSearchPath(); }
 		const agents = this.list();
 		return Promise.all(agents.map((agent) => this.status(agent, refresh)));
 	}
 
 	async status(agent: UiAgentConfig, refresh = false): Promise<UiAgentStatus> {
 		if (!agent.enabled) return { ...agent, readiness: 'disabled', version: null, resolvedCommand: null };
-		const env = { ...process.env, ...agent.env };
+		const env = withAgentSearchPath({ ...process.env, ...agent.env });
 		let probe = this.probes.get(agent.id);
 		if (refresh || !probe || probe.command !== agent.command) {
 			const resolved = resolveCommand(agent.command, env);

@@ -100,6 +100,15 @@ const bridge: AgentBridge = {
 	setSessionAgent: (...args) => invoke(AGENT_RUNTIME_CHANNELS.setSessionAgent, ...args),
 	setAgentOption: (...args) => invoke(AGENT_RUNTIME_CHANNELS.setAgentOption, ...args),
 	handoffToAgent: (...args) => invoke(AGENT_RUNTIME_CHANNELS.handoffToAgent, ...args),
+	installAgent: (...args) => invoke(AGENT_RUNTIME_CHANNELS.installAgent, ...args),
+	cancelAgentInstall: (...args) => invoke(AGENT_RUNTIME_CHANNELS.cancelAgentInstall, ...args),
+	listAgentInstalls: (...args) => invoke(AGENT_RUNTIME_CHANNELS.listAgentInstalls, ...args),
+	openAgentLogin: (...args) => invoke(AGENT_RUNTIME_CHANNELS.openAgentLogin, ...args),
+	onAgentInstallEvent: (listener) => {
+		const handler = (_event: Electron.IpcRendererEvent, state: import('@pidesktop/shared').UiAgentInstallState) => listener(state);
+		ipcRenderer.on(AGENT_RUNTIME_CHANNELS.agentInstallEvent, handler);
+		return () => ipcRenderer.removeListener(AGENT_RUNTIME_CHANNELS.agentInstallEvent, handler);
+	},
 
 	submitInput: (...args) => invoke(INPUT_FEATURE_CHANNELS.submitInput, ...args),
 	getInputQueue: (...args) => invoke(INPUT_FEATURE_CHANNELS.getInputQueue, ...args),

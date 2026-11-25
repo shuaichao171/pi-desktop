@@ -33,8 +33,8 @@ export function installModelSettingsFixture(options = {}) {
     mcpCliServers: [],
     // External ACP agents: one ready, one missing from PATH, one custom (all fictional commands).
     agents: [
-      { id: 'claude-code', displayName: 'Claude Code', command: 'claude-agent-acp', args: [], enabled: true, builtin: true, accentColor: '#D97757', installHint: 'npm install -g @agentclientprotocol/claude-agent-acp', readiness: 'ready', version: '0.9.0', resolvedCommand: 'C:\\review\\bin\\claude-agent-acp.cmd' },
-      { id: 'codex', displayName: 'Codex', command: 'codex-acp', args: [], enabled: true, builtin: true, accentColor: '#10A37F', installHint: 'npm install -g @agentclientprotocol/codex-acp', readiness: 'install', version: null, resolvedCommand: null, message: '未找到命令 codex-acp' },
+      { id: 'claude-code', displayName: 'Claude Code', command: 'claude-agent-acp', args: [], enabled: true, builtin: true, accentColor: '#D97757', installHint: 'npm install -g @agentclientprotocol/claude-agent-acp', installer: { kind: 'npm', package: '@agentclientprotocol/claude-agent-acp' }, login: { command: 'claude-agent-acp', args: ['--cli'] }, loginHint: '在打开的 Claude Code 里输入 /login 完成登录', readiness: 'ready', version: '0.9.0', resolvedCommand: 'C:\\review\\bin\\claude-agent-acp.cmd' },
+      { id: 'codex', displayName: 'Codex', command: 'codex-acp', args: [], enabled: true, builtin: true, accentColor: '#10A37F', installHint: 'npm install -g @agentclientprotocol/codex-acp', installer: { kind: 'npm', package: '@agentclientprotocol/codex-acp' }, login: { command: 'codex-acp', args: ['login'] }, loginHint: '或在终端运行 codex login', readiness: 'install', version: null, resolvedCommand: null, message: '未找到命令 codex-acp' },
       { id: 'gemini', displayName: 'Gemini CLI', command: 'gemini', args: ['--experimental-acp'], enabled: false, builtin: true, accentColor: '#4285F4', installHint: 'npm install -g @google/gemini-cli', readiness: 'disabled', version: null, resolvedCommand: null },
       { id: 'review-agent', displayName: 'Review Agent', command: 'C:\\review\\agent.exe', args: ['--acp'], env: { REVIEW_MODE: '1' }, enabled: true, builtin: false, accentColor: null, readiness: 'ready', version: '1.0.0', resolvedCommand: 'C:\\review\\agent.exe' },
     ],
@@ -108,6 +108,13 @@ export function installModelSettingsFixture(options = {}) {
       if (index >= 0) state.agents[index] = next; else state.agents.push(next);
       return clone(state.agents);
     },
+    installAgent: (id) => {
+      const agent = state.agents.find((item) => item.id === id);
+      return { agentId: id, phase: 'running', command: agent.installHint, output: `> ${agent.installHint}\n`, startedAt: 1 };
+    },
+    cancelAgentInstall: () => {},
+    listAgentInstalls: () => [],
+    openAgentLogin: () => {},
     removeAgent: (id) => { state.agents = state.agents.filter((agent) => agent.id !== id || agent.builtin); return clone(state.agents); },
     setSessionAgent: (agentId) => {
       const config = state.agents.find((agent) => agent.id === agentId);
@@ -229,7 +236,7 @@ export function installModelSettingsFixture(options = {}) {
     describeSplitPanes: () => [],
     takeInterruptedRuns: () => [],
   };
-  const subscriptions = ['onAgentEvent', 'onUpdateStateChanged', 'onAppCommand', 'onWindowChromeStateChanged', 'onExtensionDialog', 'onExtensionDialogClosed', 'onWorkspaceCommandEvent', 'onAutomationChanged', 'onWorkspaceChanged', 'onGoalChanged', 'onCloudSyncChanged', 'onWorkspaceTerminalEvent', 'onSplitPaneChanged', 'onSplitPaneClosed', 'onSideQuestionsChanged'];
+  const subscriptions = ['onAgentEvent', 'onUpdateStateChanged', 'onAppCommand', 'onWindowChromeStateChanged', 'onExtensionDialog', 'onExtensionDialogClosed', 'onWorkspaceCommandEvent', 'onAutomationChanged', 'onWorkspaceChanged', 'onGoalChanged', 'onCloudSyncChanged', 'onWorkspaceTerminalEvent', 'onSplitPaneChanged', 'onSplitPaneClosed', 'onSideQuestionsChanged', 'onAgentInstallEvent'];
   const bridge = {};
   for (const name of subscriptions) bridge[name] = (listener) => {
     if (!listeners.has(name)) listeners.set(name, new Set());

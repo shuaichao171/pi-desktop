@@ -93,9 +93,38 @@ export interface UiAgentConfig {
 	builtin: boolean;
 	/** Official install command shown when the executable is missing. */
 	installHint?: string;
+	/** One-click install the main process can run (built-in agents only). */
+	installer?: UiAgentInstaller;
 	/** How to sign in, shown when the agent reports that it needs authentication. */
 	loginHint?: string;
+	/** Interactive sign-in the app can open in a terminal window (built-in agents only). */
+	login?: { command: string; args: string[] };
 	homepage?: string;
+}
+
+/**
+ * An official installer. The main process builds the command line from this
+ * catalog entry itself; the renderer only names the agent.
+ */
+export type UiAgentInstaller =
+	| { kind: 'npm'; package: string }
+	/** Remote script piped into the platform shell (`irm | iex` on Windows, `curl | bash` elsewhere). */
+	| { kind: 'script'; windowsUrl: string; posixUrl: string };
+
+export type UiAgentInstallPhase = 'running' | 'succeeded' | 'failed' | 'cancelled';
+
+/** One install run, kept by the main process so a reopened settings page sees it. */
+export interface UiAgentInstallState {
+	agentId: string;
+	phase: UiAgentInstallPhase;
+	/** The command line as shown to the user. */
+	command: string;
+	/** Tail of combined stdout/stderr, ANSI codes removed. */
+	output: string;
+	startedAt: number;
+	finishedAt?: number;
+	exitCode?: number | null;
+	error?: string;
 }
 
 /**
@@ -144,9 +173,22 @@ export interface AgentRuntimeFeaturesBridge {
 	handoffToAgent(agentId: string): Promise<void>;
 	/** Change one of the open conversation's agent session settings (`UiAgentOption`). */
 	setAgentOption(optionId: string, value: string): Promise<void>;
+	/** Start the official installer of a built-in agent; progress arrives through `onAgentInstallEvent`. */
+	installAgent(agentId: string): Promise<UiAgentInstallState>;
+	cancelAgentInstall(agentId: string): Promise<void>;
+	/** Install runs the main process still remembers (running or finished). */
+	listAgentInstalls(): Promise<UiAgentInstallState[]>;
+	/** Open a terminal window running the agent's own interactive sign-in. */
+	openAgentLogin(agentId: string): Promise<void>;
+	onAgentInstallEvent(listener: (state: UiAgentInstallState) => void): () => void;
 }
 
 export const AGENT_RUNTIME_CHANNELS = {
+	installAgent: 'agents:install',
+	cancelAgentInstall: 'agents:install-cancel',
+	listAgentInstalls: 'agents:install-list',
+	agentInstallEvent: 'agents:install-event',
+	openAgentLogin: 'agents:open-login',
 	listAgents: 'agents:list',
 	probeAgents: 'agents:probe',
 	saveAgent: 'agents:save',

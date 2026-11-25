@@ -120,6 +120,17 @@
 .pd-mcp-remove h3 { margin-bottom: 14px; font-size: var(--pd-font-lg); }
 .pd-mcp-remove strong { overflow-wrap: anywhere; }
 .pd-mcp-remove p { margin: 8px 0 20px; color: var(--pd-text-subtle); font-size: var(--pd-font-caption); line-height: 1.6; }
+.pd-agent-install-confirm .pd-mcp-command { white-space: normal; overflow-wrap: anywhere; }
+.pd-agent-install { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; border: 1px solid var(--pd-border); border-radius: var(--pd-radius-md); }
+.pd-agent-install > header { display: flex; align-items: center; gap: 8px; min-height: 28px; font-size: var(--pd-font-sm); }
+.pd-agent-install.is-succeeded > header { color: var(--pd-success, var(--pd-text)); }
+.pd-agent-install.is-failed { border-color: color-mix(in srgb, var(--pd-danger, var(--pd-warning)) 40%, transparent); }
+.pd-agent-install.is-failed > header { color: var(--pd-danger, var(--pd-warning)); }
+.pd-agent-install-error { margin: 0; color: var(--pd-danger, var(--pd-warning)); font-size: var(--pd-font-sm); overflow-wrap: anywhere; }
+.pd-agent-install-output { max-height: 180px; margin: 0; overflow: auto; padding: 8px 10px; border-radius: var(--pd-radius-sm); background: var(--pd-code-surface, color-mix(in srgb, var(--pd-text) 5%, transparent)); color: var(--pd-text-subtle); font: var(--pd-font-xs)/1.55 var(--pd-font-mono, ui-monospace, Consolas, monospace); white-space: pre-wrap; overflow-wrap: anywhere; }
+.pd-agent-install .is-spinning { animation: pd-agent-install-spin 900ms linear infinite; }
+@keyframes pd-agent-install-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .pd-agent-install .is-spinning { animation: none; } }
 
 @media (max-width: 640px) {
   .pd-mcp-head { flex-direction: column; }

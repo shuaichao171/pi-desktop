@@ -26,6 +26,7 @@ import { registerWorkbenchIpc } from './workbenchIpc';
 import type { WorkbenchService } from './workbenchService';
 import { backupCorruptStateFile, backupCorruptStateFileAsync, CorruptStateFileError, readStateFile, readStateFileAsync, writeStateFile, writeStateFileAsync } from './stateFiles';
 import { SessionGroupService } from './sessionGroups';
+import { AgentInstallService } from './agentInstaller';
 import { broadcastToRenderers, handleRendererInvoke, hostedSenderWorkspace, requireRendererSender, setRendererSenderRestriction } from './rendererIpc';
 import { normalizeUiDiagnostic } from '@pidesktop/shared';
 import { flushDiagnostics, initializeDiagnostics, recordDiagnostic } from './diagnostics';
@@ -100,6 +101,7 @@ let lastSessionMetaPrune = 0;
 let sessionGroupService: SessionGroupService | null = null;
 let automationService: ReturnType<typeof createAutomationService> | null = null;
 let goalWatchService: ReturnType<typeof createGoalWatchService> | null = null;
+let agentInstalls: AgentInstallService | null = null;
 let pluginMutationActive = false;
 /** Background plugin install while conversations run: never blocks new conversations or project switches. */
 let pluginInstallActive = false;
@@ -1334,6 +1336,7 @@ const mainOnlyChannels = new Set<string>([
 	IPC_CHANNELS.workspaceSwitch, IPC_CHANNELS.workspaceDefault, IPC_CHANNELS.workspaceRemove, IPC_CHANNELS.workspaceListPinned, IPC_CHANNELS.workspaceSetPinned,
 	IPC_CHANNELS.pluginCatalog, IPC_CHANNELS.pluginMutate, IPC_CHANNELS.pluginPreview, IPC_CHANNELS.pluginPickDirectory, IPC_CHANNELS.pluginDiscover,
 	IPC_CHANNELS.agentSetExtensionEnabled, PLUGIN_UPDATE_CHANNELS.checkPluginUpdate,
+	AGENT_RUNTIME_CHANNELS.installAgent, AGENT_RUNTIME_CHANNELS.cancelAgentInstall, AGENT_RUNTIME_CHANNELS.listAgentInstalls, AGENT_RUNTIME_CHANNELS.openAgentLogin,
 	IPC_CHANNELS.updateCheck, IPC_CHANNELS.updateInstall,
 	IPC_CHANNELS.automationSnapshot, IPC_CHANNELS.automationSave, IPC_CHANNELS.automationSetEnabled, IPC_CHANNELS.automationDelete, IPC_CHANNELS.automationRun, IPC_CHANNELS.automationCancelRun,
 	IPC_CHANNELS.workspaceOpenFolder, IPC_CHANNELS.workspaceReadFile,
@@ -1417,6 +1420,14 @@ export function registerIpc(options: {
 		const change = requireAgentOptionChange(optionId, value);
 		return agentFor(event).setAgentOption(change.optionId, change.value);
 	});
+	// Installers and sign-in terminals run here, not in the agent host: they are
+	// app-wide, outlive a workspace switch, and take only a built-in agent id.
+	const installs = agentInstalls ??= new AgentInstallService((state) => broadcastToRenderers(AGENT_RUNTIME_CHANNELS.agentInstallEvent, state, (win) => !isPaiWindow(win)));
+	const requireAgentId = (id: unknown): string => { if (!isValidAgentId(id)) throw new Error('Agent 参数无效'); return id; };
+	handleRendererInvoke(AGENT_RUNTIME_CHANNELS.installAgent, (_event, id: unknown) => installs.start(requireAgentId(id)));
+	handleRendererInvoke(AGENT_RUNTIME_CHANNELS.cancelAgentInstall, (_event, id: unknown) => installs.cancel(requireAgentId(id)));
+	handleRendererInvoke(AGENT_RUNTIME_CHANNELS.listAgentInstalls, () => installs.list());
+	handleRendererInvoke(AGENT_RUNTIME_CHANNELS.openAgentLogin, (_event, id: unknown) => installs.openLogin(requireAgentId(id)));
 	handleRendererInvoke(AGENT_RUNTIME_CHANNELS.handoffToAgent, async (event, agentId: unknown) => {
 		if (!isValidAgentId(agentId)) throw new Error('Agent 参数无效');
 		const hosted = (paneSlotForSender(event.sender) as { sessionPath?: string } | undefined) ?? (paiSlotForSender(event.sender) as { sessionPath?: string } | undefined);
@@ -2441,6 +2452,7 @@ export function disposeServices(): Promise<void> {
 	destroyAppTray();
 	goalWatchService?.dispose();
 	goalWatchService = null;
+	agentInstalls?.dispose();
 	for (const queue of startupNotifications.values()) queue.cleanup();
 	for (const pending of pendingDialogs.values()) pending.resolve(null);
 	if (automaticRecoveryTimer) clearTimeout(automaticRecoveryTimer);

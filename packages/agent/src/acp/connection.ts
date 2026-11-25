@@ -1,6 +1,6 @@
 import type { ChildProcess } from 'node:child_process';
 import { killProcessTree } from '../shellInterrupt.ts';
-import { resolveCommand, spawnResolved } from './command.ts';
+import { resolveCommand, spawnResolved, withAgentSearchPath } from './command.ts';
 import { AcpRequestError, type JsonRpcError, type JsonRpcMessage } from './protocol.ts';
 
 const MAX_LINE_BYTES = 32 * 1024 * 1024;
@@ -72,7 +72,7 @@ export class AcpConnection {
 
 	/** Resolve and start the agent; throws when the executable cannot be found. */
 	static start(options: AcpConnectionOptions): AcpConnection {
-		const env = { ...process.env, ...options.env };
+		const env = withAgentSearchPath({ ...process.env, ...options.env });
 		const resolved = resolveCommand(options.command, env);
 		if (!resolved) throw new Error(`找不到 Agent 命令：${options.command}`);
 		const child = spawnResolved(resolved, options.args, {
