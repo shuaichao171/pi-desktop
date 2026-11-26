@@ -21,7 +21,8 @@ const acceptEdits = process.env.FAKE_ACP_ACCEPT_EDITS === '1' ? [{ value: 'accep
 // FAKE_ACP_SETTINGS=options: config options (grouped model values, reasoning effort, mode);
 // FAKE_ACP_SETTINGS=modes: only the older `modes` list.
 const settings = process.env.FAKE_ACP_SETTINGS ?? '';
-const option = { model: 'fake-large', effort: 'medium', mode: 'ask' };
+// FAKE_ACP_START_MODE: the mode a new session starts in (default `ask`).
+const option = { model: 'fake-large', effort: 'medium', mode: process.env.FAKE_ACP_START_MODE || 'ask' };
 const configOptions = () => [
 	{ id: 'model', name: 'Model', category: 'model', type: 'select', currentValue: option.model, options: [
 		{ group: 'current', name: 'Current', options: [{ value: 'fake-large', name: 'Fake Large', description: 'Most capable' }, { value: 'fake-small', name: 'Fake Small' }] },
@@ -34,7 +35,7 @@ const configOptions = () => [
 const sessionSettings = () => ({
 	models: { currentModelId: option.model, availableModels: [{ modelId: 'fake-large', name: 'Fake Large' }, { modelId: 'fake-small', name: 'Fake Small' }] },
 	...(settings === 'options' ? { configOptions: configOptions() } : {}),
-	...(settings === 'modes' ? { modes: { currentModeId: 'ask', availableModes: [{ id: 'ask', name: 'Ask' }, ...acceptEdits.map((mode) => ({ id: mode.value, name: mode.name })), { id: 'auto', name: 'Auto', description: 'No questions' }] } } : {}),
+	...(settings === 'modes' ? { modes: { currentModeId: option.mode, availableModes: [{ id: 'ask', name: 'Ask' }, ...acceptEdits.map((mode) => ({ id: mode.value, name: mode.name })), { id: 'auto', name: 'Auto', description: 'No questions' }] } } : {}),
 });
 let nextId = 1000;
 const waiting = new Map();

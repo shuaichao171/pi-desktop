@@ -515,6 +515,17 @@ test('new sessions start in "accept edits" where the agent offers it; a saved ch
 			await again.dispose();
 		}
 	}
+	// An agent that already starts in a mode asking less (Claude Code `auto`) is not stepped down.
+	for (const settings of ['options', 'modes']) {
+		const auto = recorder();
+		const conversation = new AcpConversation(fakeConfig({ FAKE_ACP_SETTINGS: settings, FAKE_ACP_ACCEPT_EDITS: '1', FAKE_ACP_START_MODE: 'auto' }), process.cwd(), null, auto.hooks);
+		try {
+			await conversation.warmup();
+			assert.equal(auto.state.options.find((option) => option.category === 'mode')?.currentValue, 'auto', `${settings}: auto is kept`);
+		} finally {
+			await conversation.dispose();
+		}
+	}
 	// Agents without such a mode keep their own default.
 	const plain = recorder();
 	const conversation = new AcpConversation(fakeConfig({ FAKE_ACP_SETTINGS: 'options' }), process.cwd(), null, plain.hooks);

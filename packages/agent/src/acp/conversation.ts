@@ -415,7 +415,8 @@ export class AcpConversation {
 	 * Apply the user's earlier choices to a new or resumed session: agents start a
 	 * loaded session with their defaults. The model goes first, since changing it
 	 * can reset other settings. A choice the agent no longer offers is skipped.
-	 * Without a choice, the permission mode starts at "accept edits" where offered.
+	 * Without a choice, the permission mode starts at "accept edits" where offered,
+	 * unless the agent already starts in a mode that asks less (Claude Code `auto`).
 	 */
 	private async restoreSettings(): Promise<void> {
 		const saved = this.hooks.savedSettings?.() ?? { options: {} };
@@ -425,7 +426,7 @@ export class AcpConversation {
 		}
 		const wanted = new Map(Object.entries(saved.options));
 		for (const option of this.options) {
-			if (option.category !== 'mode' || wanted.has(option.id)) continue;
+			if (option.category !== 'mode' || wanted.has(option.id) || PERMISSIVE_MODE.test(option.currentValue)) continue;
 			const acceptEdits = option.values.find((item) => ACCEPT_EDITS_MODE.test(item.value));
 			if (acceptEdits) wanted.set(option.id, acceptEdits.value);
 		}
@@ -517,6 +518,8 @@ export const LEGACY_MODE_OPTION = '__acp_mode';
 
 /** The mode new sessions start in when the agent offers it (Antigravity `accept-edits`, Claude Code `acceptEdits`). */
 const ACCEPT_EDITS_MODE = /^accept[-_ ]?edits$/i;
+/** Modes that already ask less than "accept edits"; the default never steps down from them. */
+const PERMISSIVE_MODE = /^(auto|bypass[-_ ]?permissions|yolo|full[-_ ]?access)$/i;
 
 function text(value: unknown, max: number): string | null {
 	return typeof value === 'string' && value.trim() ? value.slice(0, max) : null;
