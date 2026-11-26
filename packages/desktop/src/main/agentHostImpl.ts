@@ -71,6 +71,7 @@ const agent = new AgentService(
 );
 agent.onEvent((envelope) => post({ kind: 'event', envelope }));
 agent.onBackgroundActivity((cwd, path) => post({ kind: 'background-activity', cwd, path }));
+agent.onInitTiming((timing) => post({ kind: 'init-timing', timing }));
 
 const methods = createAgentHostMethods(agent, {
  searchSessionsPage: (workspaces, request, metadata, excludedPaths) => searchSessionsPage(join(getAgentDir(), 'sessions'), workspaces, request, metadata, agent.getSessionBranchHeads(), excludedPaths),

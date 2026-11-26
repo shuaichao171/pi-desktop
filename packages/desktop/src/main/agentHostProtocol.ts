@@ -1,5 +1,5 @@
 import type { AgentEventEnvelope, UiExtensionDialogRequest, UiExtensionDialogResponse } from '@pidesktop/shared';
-import type { AgentService, ProjectTrustDecision } from '@pidesktop/agent';
+import type { AgentService, ProjectTrustDecision, UiInitTiming } from '@pidesktop/agent';
 import type { readSessionContext, readSessionPreview, searchSessions, searchWorkspaceFiles, searchSessionsPage, searchProjectFiles, rebuildSearchIndex, cancelDataSearch, getProjectSearchRules, setProjectSearchRules } from './searchService';
 
 type AgentServiceMethod = { [Key in keyof AgentService]: AgentService[Key] extends (...args: never[]) => unknown ? Key : never }[keyof AgentService];
@@ -128,5 +128,7 @@ export type AgentHostToMain =
 	| { kind: 'error'; id: number; message: string }
 	| { kind: 'event'; envelope: AgentEventEnvelope }
 	| { kind: 'background-activity'; cwd: string; path: string }
+	/** Phase timing of one conversation runtime initialization; durations only (see initTiming.ts). */
+	| { kind: 'init-timing'; timing: UiInitTiming }
 	| { kind: 'ui-cancel'; id: number }
 	| { kind: 'ui-request'; id: number; callId?: number; request: { kind: 'project-trust'; cwd: string } | { kind: 'extension'; dialog: UiExtensionDialogRequest } | { kind: 'resolve-proxy'; url: string } };

@@ -213,6 +213,12 @@ export class AgentHostClient {
 			case 'background-activity':
 				for (const listener of this.backgroundActivityListeners) listener(message.cwd, message.path);
 				return;
+			case 'init-timing': {
+				const timing = message.timing;
+				recordDiagnostic({ stage: 'host', action: 'session-init', outcome: timing.outcome, durationMs: timing.totalMs, code: timing.kind,
+					phases: { ...timing.phases, maxStall: timing.maxStallMs } });
+				return;
+			}
 			case 'ui-request':
 				void this.handleUiRequest(host, message);
 				return;

@@ -10,6 +10,7 @@
  */
 import { applyCaHygiene } from './caHygiene';
 import { installEngineRedirect, missingSdkExports } from './piEngine';
+import { installSharedExtensionCache } from './piExtensionCache';
 
 const parent = process.parentPort;
 if (!parent) throw new Error('Pi agent host requires an Electron parent port');
@@ -24,6 +25,9 @@ async function bootstrap(): Promise<void> {
 	// TLS hygiene runs before any SDK import so every outbound connection in
 	// this utility process sees the pruned default CA set from the start.
 	applyCaHygiene();
+	// Before any SDK import: one extension cache for every project this host serves
+	// (see piExtensionCache.ts). PI_DESKTOP_SHARED_EXTENSION_CACHE=0 keeps the SDK's per-cwd cache.
+	if (process.env.PI_DESKTOP_SHARED_EXTENSION_CACHE !== '0') installSharedExtensionCache();
 	const engineDir = process.env.PI_DESKTOP_ENGINE_DIR?.trim();
 	if (engineDir) {
 		const redirect = installEngineRedirect(engineDir);

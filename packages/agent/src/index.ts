@@ -129,6 +129,8 @@ import { clearDisabledModelsForProvider } from './customProviders.ts';
 import { ModelTestService } from './modelTest.ts';
 import { ProjectDefaultsService } from './projectDefaults.ts';
 import { McpManager } from './mcpManager.ts';
+import { InitPhaseTimer, initTimingContext, markInitPhase, type UiInitTiming } from './initTiming.ts';
+export type { UiInitTiming } from './initTiming.ts';
 import { CuaSessionState, cuaExtension } from './cua/index.ts';
 import { CuaPermissionStore, CuaScopeStore, LocalScopeStore } from './cua/permissions.ts';
 import { antigravityCommandApproval, ANTIGRAVITY_COMMAND_APPROVALS } from './acp/commandApproval.ts';
@@ -450,6 +452,7 @@ function createRuntimeFactory(
 			if (decision.remember) trustStore.set(cwd, projectTrusted);
 		}
 		const settingsManager = SettingsManager.create(cwd, agentDir, { projectTrusted });
+		markInitPhase('trust');
 		const fileChanges = new SessionFileChanges(cwd, sessionManager, (changes) => publishFileChanges(sessionManager.getSessionId(), changes));
 		const cuaState = new CuaSessionState();
 		const cuaPermissions = new CuaPermissionStore(join(agentDir, 'desktop-cua-permissions'), {
@@ -478,6 +481,7 @@ function createRuntimeFactory(
 				},
 			} : undefined,
 		});
+		markInitPhase('services');
 		bindProviderNetwork(services.modelRuntime, join(agentDir, 'models.json'));
 		void loadModelPrefs(agentDir).catch(() => {});
 		// Interruptible bash/powershell overrides: the desktop owns the child
@@ -493,12 +497,14 @@ function createRuntimeFactory(
 				}, () => settingsManager.getShellCommandPrefix())
 			: null;
 		const customTools = [...shellToolOverrides, ...(backgroundTool ? [backgroundTool] : [])];
+		markInitPhase('shellTools');
 		const created = await createAgentSessionFromServices({
 			services,
 			sessionManager,
 			sessionStartEvent,
 			customTools: customTools.length ? customTools : undefined,
 		});
+		markInitPhase('session');
 		trackFileChanges(created.session, fileChanges);
 		return {
 			...created,
@@ -1358,7 +1364,19 @@ class SingleAgentService {
 
 	/** Create (or re-create) the agent session bound to a working directory. */
 	async init({ cwd, sessionPath, fresh, agentId, handoff }: AgentInitOptions): Promise<void> {
-		await this.runLifecycle(() => this.initSession(cwd, sessionPath, fresh, { agentId, handoff }));
+		await this.runLifecycle(() => {
+			const timer = new InitPhaseTimer(sessionPath || !fresh ? 'restore' : 'fresh');
+			return initTimingContext.run(timer, () => this.initSession(cwd, sessionPath, fresh, { agentId, handoff })).then(
+				() => { this.reportInitTiming(timer.finish('success')); },
+				(error: unknown) => { this.reportInitTiming(timer.finish('failure')); throw error; });
+		});
+	}
+
+	private initTimingListener: ((timing: UiInitTiming) => void) | null = null;
+	/** Receives the phase timing of every runtime initialization (diagnostics only). */
+	onInitTiming(fn: (timing: UiInitTiming) => void): void { this.initTimingListener = fn; }
+	private reportInitTiming(timing: UiInitTiming): void {
+		try { this.initTimingListener?.(timing); } catch { /* Timing never affects initialization. */ }
 	}
 
 	private async initSession(cwd: string, sessionPath?: string, fresh?: boolean, start: Pick<AgentInitOptions, 'agentId' | 'handoff'> = {}): Promise<void> {
@@ -1371,6 +1389,7 @@ class SingleAgentService {
 
 		try {
 			await this.teardown();
+			markInitPhase('teardown');
 			const restorePath = sessionPath ?? (fresh ? undefined : (await workspaceSessions(cwd))[0]?.path);
 			const sessionManager = restorePath
 				? SessionManager.open(restorePath, undefined, cwd)
@@ -1378,15 +1397,19 @@ class SingleAgentService {
 			// A fresh conversation records its agent and any incoming handoff before
 			// the runtime loads, so Pi's context already contains a handoff aimed at Pi.
 			if (!restorePath) this.seedFreshSession(sessionManager, start);
+			markInitPhase('open');
 			const runtime = await createAgentSessionRuntime(this.createRuntime, {
 				cwd,
 				agentDir: getAgentDir(),
 				sessionManager,
 			});
+			markInitPhase('runtime');
 			this.runtime = runtime;
 			await this.bindSession();
+			markInitPhase('bind');
 			this.fireReady();
 			this.fire({ type: 'status', status: 'idle', message: runtime.modelFallbackMessage });
+			markInitPhase('ready');
 		} catch (error) {
 			const failedRuntime = this.runtime;
 			this.runtime = null;
@@ -3138,6 +3161,7 @@ export class AgentService {
 	private activeKey: string | null = null;
 	private emit: EventEmitter = () => {};
 	private backgroundActivity: (cwd: string, path: string) => void = () => {};
+	private initTiming: (timing: UiInitTiming) => void = () => {};
 	private sequence = 0;
 	private transition: Promise<void> | null = null;
 	private queuedNavigation: { operation: () => Promise<void>; resolve: () => void; reject: (error: unknown) => void } | null = null;
@@ -3196,6 +3220,8 @@ export class AgentService {
 	}
 
 	onEvent(fn: EventEmitter): void { this.emit = fn; }
+	/** Phase timing of every conversation runtime initialization, for the diagnostics log. */
+	onInitTiming(fn: (timing: UiInitTiming) => void): void { this.initTiming = fn; }
 	onBackgroundActivity(fn: (cwd: string, path: string) => void): void { this.backgroundActivity = fn; }
 
 	getSnapshot(): AgentSnapshot {
@@ -4390,6 +4416,7 @@ export class AgentService {
 			this.reservedSessionPaths.set(path, service);
 			return () => { if (this.reservedSessionPaths.get(path) === service) this.reservedSessionPaths.delete(path); };
 		}, this.mcp, this.agents);
+		service.onInitTiming((timing) => this.initTiming(timing));
 		service.onEvent(({ event }) => {
 			// Busy tracking covers every context: a foreground run that the user
 			// switches away from must still light the unread dot when it settles.

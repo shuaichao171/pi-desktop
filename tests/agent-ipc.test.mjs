@@ -663,6 +663,51 @@ test('session switches and shutdown wait for an accepted asynchronous deletion',
   assert.equal(releases, 2);
 });
 
+test('a conversation switch superseded while queued never loads; the newest click runs', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'pi-ipc-switch-latest-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await writeFile(join(root, 'workspace.json'), JSON.stringify({ cwd: root, workspaces: [root] }));
+  const [held, first, second, third] = ['held', 'first', 'second', 'third'].map((name) => join(root, `${name}.jsonl`));
+  await writeFile(held, 'transcript body');
+  const main = createIpcWindow();
+  globalThis.__ipcUserData = root;
+  globalThis.__ipcWindows = [main];
+  globalThis.__ipcHandlers = new Map();
+  let entered;
+  let release;
+  const started = new Promise((resolve) => { entered = resolve; });
+  const finished = new Promise((resolve) => { release = resolve; });
+  const switched = [];
+  globalThis.__ipcAgent = {
+    onEvent() {}, onBackgroundActivity() {},
+    listSessions: async () => [held, first, second, third].map((path) => ({ path })),
+    getSnapshot: async () => ({ cwd: root, sessionPath: null }),
+    switchSession: async (path) => { switched.push(path); },
+    // A deletion holds the activation queue while the clicks arrive.
+    prepareSessionDeletion: async () => { entered(); await finished; },
+    releaseSessionDeletion: async () => {},
+    dispose: async () => {},
+  };
+  const ipc = await import('../packages/desktop/src/main/ipc.ts?switch-latest');
+  const { IPC_CHANNELS } = await import('../packages/shared/src/index.ts');
+  ipc.registerIpc();
+  t.after(() => ipc.disposeServices());
+  const valid = { sender: main.webContents, senderFrame: main.webContents.mainFrame };
+  const invoke = (channel, ...args) => globalThis.__ipcHandlers.get(channel)(valid, ...args);
+  const deletion = invoke(IPC_CHANNELS.sessionDelete, held);
+  await started;
+  const stale = [invoke(IPC_CHANNELS.agentSwitchSession, first), invoke(IPC_CHANNELS.agentSwitchSession, second)];
+  const latest = invoke(IPC_CHANNELS.agentSwitchSession, third);
+  release();
+  await deletion;
+  for (const request of stale) await assert.rejects(request, /已有更新的切换请求/);
+  await latest;
+  assert.deepEqual(switched, [third], 'only the newest queued click reaches the agent');
+  // Without a newer click a switch runs normally.
+  await invoke(IPC_CHANNELS.agentSwitchSession, first);
+  assert.deepEqual(switched, [third, first]);
+});
+
 test('folder-drop IPC registers projects atomically without activating or trusting them', async (t) => {
   const temp = await realpath(tmpdir());
   const root = await mkdtemp(join(temp, 'pi-ipc-workspace-drop-'));

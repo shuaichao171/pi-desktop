@@ -11,6 +11,13 @@
 
 ## 已完成
 
+- [x] 新建对话 / 跨项目冷打开提速：扩展模块缓存跨目录共享（2026-11-26 提出并完成）
+  - 现象：本机诊断里新建对话 p50 约 2.4 s（就绪前不能发送），期间 agent 宿主同步阻塞约 1–2 s，其他对话的流式输出与 peek 一起卡住。
+  - 根因：Pi SDK 的扩展工厂缓存是进程级单一 cwd 缓存，`useExtensionCacheCwd` 一遇到新 cwd 就整体清空；无项目的新对话每次都是新临时目录，跨项目新建 / 冷打开也换 cwd，于是每次都把全部扩展连同依赖图重新 import（jiti `moduleCache:false`）。同目录内新建只要约 0.5 s。
+  - 修复：`piExtensionCache.ts` 在 agent 宿主启动时（任何 SDK import 之前）注册模块 load 钩子，只改写 SDK `loader.js` 里两个函数，让缓存按扩展绝对路径跨目录共享；显式重载（插件变更、/reload）仍清空。源码不完全匹配（其他 SDK 版本）时原样放行；`PI_DESKTOP_SHARED_EXTENSION_CACHE=0` 可关闭。另加 `session-init` 分阶段诊断（teardown/open/trust/services/shellTools/session/runtime/bind/ready + maxStall），主进程排队中被更新点击取代的切换会话请求直接让位。
+  - 实测（真实 Electron、真实 ~/.pi/agent、各新建 5 次）：点击到可用 2320–2998 ms → 581–776 ms；`session-init` 2274–2955 ms → 500–743 ms；宿主最长阻塞 1709–1847 ms → 100–177 ms。剩余约 0.5 s 主要是 SDK 每次查供应商凭据都重读 auth.json（约 180 ms）和第三方扩展的 session_start（pi-subagents、pi-mcp-adapter 约 100–150 ms）。
+  - 验证：`tests/session-init-performance.test.mjs`（补丁精确匹配当前 SDK、跨目录只执行一次 / 重载仍重导、阶段计时、诊断字段过滤）、`tests/agent-ipc.test.mjs` 让位用例；全量 1423 项（1421 通过、0 失败、2 跳过）；四包 typecheck、`pnpm build` 通过。基准与实测脚本在 `_ai_work/session-perf-2026-11-26/`。
+
 - [x] 主进程不再因 Pi agent 宿主进程发来的畸形消息崩溃（2026-11-14 提出并完成）
   - 现象：弹「A JavaScript error occurred in the main process：TypeError: Cannot read properties of null (reading 'kind') at AgentHostClient.handleMessage」。
   - 根因：Electron 的 utilityProcess 在父端口消息反序列化失败时，所有失败路径都返回 v8::Null 并照常以 message 事件派发（electron/shell/common/v8_util.cc 的 `Deserialize()`；VS Code 曾遇到同类问题 microsoft/vscode#174052、#176202，官方结论就是应用侧要做防御）。`AgentHostClient.handleMessage` 直接 `switch (message.kind)`，null 一到就抛 TypeError 成为未捕获异常；而子进程侧 agentHostImpl 收消息一直有 `!message || typeof message !== 'object'` 防护，主进程侧漏掉了。

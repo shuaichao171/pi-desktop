@@ -1204,6 +1204,9 @@ function activateWorkspace(cwd: string, initialize: boolean, fresh = false): Pro
 	return queueWorkspaceActivation(() => performWorkspaceActivation(cwd, initialize, fresh));
 }
 
+/** Ticket of the newest main-window conversation switch (see the agentSwitchSession handler). */
+let latestSessionSwitch = 0;
+
 function queueWorkspaceActivation<T>(action: () => Promise<T>): Promise<T> {
 	const result = workspaceActivationQueue.then(() => {
 		if (disposingServices) throw new Error('Pi agent is shutting down');
@@ -2138,13 +2141,21 @@ export function registerIpc(options: {
 		// the main window that opened it closes.
 		openPaiWindow({ cwd: owner, sessionPath: target });
 	});
-	handleRendererInvoke(IPC_CHANNELS.agentSwitchSession, (_event, path: string) => queueWorkspaceActivation(async () => {
-		path = normalizeSessionPath(path);
-		if (automationExecutor.isSessionRunning(path)) throw new Error('自动化仍在运行，请结束后再打开会话');
-		if (new Set(hostedHeldSessionPaths()).has(path)) throw new Error('会话已在 pai 小窗或分屏窗格中打开，请先关闭它');
-		await agentService.switchSession(path);
-		await markSessionRead(path);
-	}));
+	handleRendererInvoke(IPC_CHANNELS.agentSwitchSession, (_event, path: string) => {
+		const ticket = ++latestSessionSwitch;
+		return queueWorkspaceActivation(async () => {
+			// zcode latest-wins: a click superseded while still waiting in the activation
+			// queue is dropped instead of loading a conversation nobody waits for anymore.
+			// The renderer's navigation generation already ignores this request's outcome;
+			// a switch that has started still finishes (its context stays warm).
+			if (ticket !== latestSessionSwitch) throw new Error('已有更新的切换请求，本次切换已让位');
+			path = normalizeSessionPath(path);
+			if (automationExecutor.isSessionRunning(path)) throw new Error('自动化仍在运行，请结束后再打开会话');
+			if (new Set(hostedHeldSessionPaths()).has(path)) throw new Error('会话已在 pai 小窗或分屏窗格中打开，请先关闭它');
+			await agentService.switchSession(path);
+			await markSessionRead(path);
+		});
+	});
 	handleRendererInvoke(IPC_CHANNELS.agentPeekSession, (event, cwd: unknown, path: unknown) => {
 		// Read-only disk preview: deliberately NOT queued behind workspace activation —
 		// its value is answering before the real load finishes, so it must never wait on

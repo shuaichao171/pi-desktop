@@ -4,9 +4,18 @@ import { randomUUID } from 'node:crypto';
 import { zipSync, strToU8 } from 'fflate';
 import { normalizeUiDiagnostic, type UiDiagnosticEvent } from '@pidesktop/shared';
 
-export interface DiagnosticEvent { stage: 'startup' | 'rpc' | 'host' | 'plugin' | 'renderer'; action: string; outcome: 'start' | 'success' | 'failure' | 'exit'; durationMs?: number; requestId?: number; code?: string; ui?: UiDiagnosticEvent }
+export interface DiagnosticEvent { stage: 'startup' | 'rpc' | 'host' | 'plugin' | 'renderer'; action: string; outcome: 'start' | 'success' | 'failure' | 'exit'; durationMs?: number; requestId?: number; code?: string; ui?: UiDiagnosticEvent; phases?: Record<string, number> }
 const MAX_FILE = 512 * 1024, KEEP = 8, MAX_EXPORT = 4 * 1024 * 1024;
 const token = (value: string) => /^[\w:.-]{1,100}$/.test(value) ? value : 'redacted';
+/** Named durations only: short identifier keys and bounded millisecond values. */
+function durationPhases(value: unknown): Record<string, number> | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const phases: Record<string, number> = {};
+  for (const [key, ms] of Object.entries(value).slice(0, 24)) {
+    if (/^[A-Za-z]{1,32}$/.test(key) && typeof ms === 'number' && Number.isFinite(ms) && ms >= 0 && ms <= 3_600_000) phases[key] = Math.round(ms * 10) / 10;
+  }
+  return Object.keys(phases).length ? phases : null;
+}
 export class DiagnosticsService {
   private queue: Promise<void> = Promise.resolve();
   readonly directory: string;
@@ -16,7 +25,8 @@ export class DiagnosticsService {
     const record = { time: new Date().toISOString(), stage: event.stage, action: token(event.action), outcome: event.outcome,
       ...(Number.isFinite(event.durationMs) ? { durationMs: Math.max(0, Math.round(event.durationMs!)) } : {}),
       ...(Number.isSafeInteger(event.requestId) ? { requestId: event.requestId } : {}), ...(event.code ? { code: token(event.code) } : {}),
-      ...(event.ui && normalizeUiDiagnostic(event.ui) ? { ui: normalizeUiDiagnostic(event.ui) } : {}) };
+      ...(event.ui && normalizeUiDiagnostic(event.ui) ? { ui: normalizeUiDiagnostic(event.ui) } : {}),
+      ...(durationPhases(event.phases) ? { phases: durationPhases(event.phases) } : {}) };
     this.queue = this.queue.then(async () => {
       await mkdir(this.directory, { recursive: true });
       const active = join(this.directory, 'events.jsonl');
@@ -51,7 +61,7 @@ export class DiagnosticsService {
             if (!['startup', 'rpc', 'host', 'plugin', 'renderer'].includes(value.stage) || !['start', 'success', 'failure', 'exit'].includes(value.outcome)) continue;
             safe.push(JSON.stringify({ time: new Date(value.time).toISOString(), stage: value.stage, action: token(String(value.action)), outcome: value.outcome,
               ...(Number.isFinite(value.durationMs) ? { durationMs: value.durationMs } : {}), ...(Number.isSafeInteger(value.requestId) ? { requestId: value.requestId } : {}), ...(value.code ? { code: token(String(value.code)) } : {}),
-              ...(normalizeUiDiagnostic(value.ui) ? { ui: normalizeUiDiagnostic(value.ui) } : {}) }));
+              ...(normalizeUiDiagnostic(value.ui) ? { ui: normalizeUiDiagnostic(value.ui) } : {}), ...(durationPhases(value.phases) ? { phases: durationPhases(value.phases) } : {}) }));
           } catch { skip(`${name}: 跳过损坏记录`); }
         }
         const data = strToU8(safe.join('\n'));
