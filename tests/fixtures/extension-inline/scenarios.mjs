@@ -68,10 +68,23 @@ export default async function extensionInlineScenarios(review) {
   await review.evaluate(`window.__emptyChatReview.ask(${q(approval)})`);
   await review.waitFor(`document.querySelector('.pd-approval-command')?.textContent === 'npm test'`);
   await review.screenshot('antigravity-command-approval');
-  await review.assert(`document.querySelector('.pd-agent-approval-options select').value === 'once'`, 'Allow once starts selected, so the common answer is one click');
-  await review.fill('.pd-agent-approval-options select', 'persist');
+  await review.assert(`(() => { const buttons = [...document.querySelectorAll('.pd-agent-approval-options button')]; return !document.querySelector('.pd-agent-approval-options select') && buttons.at(-1).dataset.kind === 'allow_once' && buttons.at(-1).classList.contains('is-primary') && buttons[0].dataset.kind === 'reject_once' && buttons.filter(button => button.textContent === '拒绝').length === 0; })()`, 'Every native option is its own button: allow once is the primary action, the decline sits apart, and no extra decline button duplicates it');
+  await review.clickText('.pd-agent-approval-options button', 'Persist to settings');
+  await review.assert(`window.__modelReview.calls.some(call => call.name === 'respondExtensionDialog' && call.args[0] === 'agy-command' && call.args[1].optionId === 'persist')`, 'The native ACP option keeps its original ID and answers in one click');
+  const claude = {
+    id: 'claude-command', kind: 'confirm', title: 'Claude Code 请求权限', message: 'Run the test suite',
+    approval: { source: 'Claude Code', cwd: 'C:\\review\\project', command: 'pnpm test -- --reporter=verbose', scopes: ['once', 'session'], agentOptions: [
+      { id: 'allow', label: 'Yes', kind: 'allow_once' },
+      { id: 'allow_always', label: "Yes, and don't ask again for pnpm test:* commands in C:\\review\\project", kind: 'allow_always' },
+      { id: 'reject', label: 'No', kind: 'reject_once' },
+    ] },
+  };
+  await review.evaluate(`window.__emptyChatReview.ask(${q(claude)})`);
+  await review.waitFor(`document.querySelector('.pd-approval-command')?.textContent.startsWith('pnpm test')`);
+  await review.screenshot('claude-command-approval');
+  await review.assert(`document.querySelector('.pd-agent-approval-options [data-kind="allow_always"]').title === '允许，之后同类操作不再询问'`, 'Each option explains its lasting effect in the interface language');
   await review.click('.pd-agent-approval-options .is-primary');
-  await review.assert(`window.__modelReview.calls.some(call => call.name === 'respondExtensionDialog' && call.args[0] === 'agy-command' && call.args[1].optionId === 'persist')`, 'The native ACP option keeps its original ID');
+  await review.assert(`window.__modelReview.calls.some(call => call.name === 'respondExtensionDialog' && call.args[0] === 'claude-command' && call.args[1].optionId === 'allow')`, 'The primary button allows once');
   await review.viewport(600, 560);
   await review.evaluate(`window.__emptyChatReview.ask(${q({ ...approval, id: 'agy-remember', approval: { ...approval.approval, command: 'npm test\n'.repeat(30) } })})`);
   await review.waitFor('document.querySelector(".pd-approval-command")?.textContent.length > 200');
@@ -82,6 +95,6 @@ export default async function extensionInlineScenarios(review) {
   await review.assert(`window.__modelReview.calls.some(call => call.name === 'respondExtensionDialog' && call.args[0] === 'agy-remember' && call.args[1].approved && call.args[1].scope === 'workspace')`, 'Remembering a command is a separate user action');
   await review.evaluate(`window.__emptyChatReview.ask(${q({ ...approval, id: 'agy-decline' })})`);
   await review.waitFor(`document.querySelector('.pd-approval-command')?.textContent === 'npm test'`);
-  await review.clickText('.pd-agent-approval-options button', '拒绝');
+  await review.clickText('.pd-agent-approval-options button', 'Deny');
   await review.assert(`window.__modelReview.calls.some(call => call.name === 'respondExtensionDialog' && call.args[0] === 'agy-decline' && call.args[1].optionId === 'no')`, 'Decline answers with the agent reject option, not a cancelled turn');
 }
