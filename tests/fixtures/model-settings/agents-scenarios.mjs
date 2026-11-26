@@ -62,18 +62,24 @@ export default async function agentsScenarios(review) {
   await review.screenshot('agents-menu-locked');
   await review.key('Escape');
 
-  // Agent session settings: reasoning effort on its own control, the rest in one menu.
-  await review.assert('document.querySelector(".pd-composer-agent-effort-trigger")?.textContent.includes("Medium") && Boolean(document.querySelector(".pd-composer-agent-options-trigger"))', 'Reasoning effort and the options menu appear for an agent that exposes them');
+  // Agent session settings: one panel holds the model (left) and reasoning effort (right); the rest share one menu.
+  await review.assert('!document.querySelector(".pd-composer-agent-effort-trigger") && document.querySelector(".pd-composer-model-trigger .pd-composer-model-effort")?.textContent === "Medium" && Boolean(document.querySelector(".pd-composer-agent-options-trigger"))', 'The model button shows the reasoning effort; there is no separate effort button, and the options menu appears');
   await review.click('.pd-composer-model-trigger');
-  await review.waitFor('document.querySelectorAll(".pd-composer-config-popover.is-agentModel [role=menuitemradio]").length === 2');
-  await review.assert('document.querySelector(".pd-composer-config-popover.is-agentModel").textContent.includes("Most capable model")', 'Model choices carry the agent descriptions');
-  await review.key('Escape');
-  await review.click('.pd-composer-agent-effort-trigger');
-  await review.waitFor('document.querySelectorAll(".pd-composer-config-popover.is-agentEffort [role=menuitemradio]").length === 3');
-  await review.screenshot('agents-acp-effort');
-  await review.click('.pd-composer-config-popover.is-agentEffort [data-option-value=high]');
-  await review.waitFor('document.querySelector(".pd-composer-agent-effort-trigger")?.textContent.includes("High")');
-  await review.assert('window.__modelReview.calls.some(call => call.name === "setAgentOption" && call.args[0] === "reasoning_effort" && call.args[1] === "high")', 'Choosing an effort changes the agent option');
+  const panel = '.pd-composer-config-popover.is-agentModel.has-effort';
+  await review.waitFor(`document.querySelectorAll(${JSON.stringify(panel + ' [data-picker-column=model] [role=menuitemradio]')}).length === 2 && document.querySelectorAll(${JSON.stringify(panel + ' [data-picker-column=effort] [role=menuitemradio]')}).length === 3`);
+  await review.assert(`(() => { const popup = document.querySelector(${JSON.stringify(panel)}); const models = popup.querySelector('[data-picker-column=model]').getBoundingClientRect(); const effort = popup.querySelector('[data-picker-column=effort]').getBoundingClientRect(); return popup.textContent.includes('Most capable model') && models.right <= effort.left + 1 && Math.abs(models.top - effort.top) <= 1 && popup.querySelector('[data-picker-column=effort] .pd-composer-provider-heading').textContent === '推理强度'; })()`, 'Models sit on the left and reasoning effort on the right of one panel, with the agent descriptions');
+  await review.assert('document.activeElement?.closest("[data-picker-column=model]") && document.activeElement.getAttribute("aria-checked") === "true"', 'The current model has focus when the panel opens');
+  await review.key('ArrowRight');
+  await review.assert('document.activeElement?.closest("[data-picker-column=effort]") && document.activeElement.dataset.optionValue === "medium"', 'Arrow right moves to the current effort');
+  await review.key('ArrowLeft');
+  await review.assert('Boolean(document.activeElement?.closest("[data-picker-column=model]"))', 'Arrow left returns to the models');
+  await review.screenshot('agents-acp-models-effort');
+  await review.click(panel + ' [data-model-id=opus]');
+  await review.waitFor('window.__modelReview.calls.some(call => call.name === "setModel" && call.args[1] === "opus")');
+  await review.assert(`Boolean(document.querySelector(${JSON.stringify(panel)}))`, 'Choosing a model keeps the panel open for the effort');
+  await review.click(panel + ' [data-picker-column=effort] [data-option-value=high]');
+  await review.waitFor('!document.querySelector(".pd-composer-config-popover") && document.querySelector(".pd-composer-model-trigger .pd-composer-model-effort")?.textContent === "High"');
+  await review.assert('window.__modelReview.calls.some(call => call.name === "setAgentOption" && call.args[0] === "reasoning_effort" && call.args[1] === "high")', 'Choosing an effort changes the agent option and closes the panel');
   await review.click('.pd-composer-agent-options-trigger');
   await review.waitFor('document.querySelectorAll(".pd-composer-config-popover.is-agentOptions [role=group]").length === 3');
   // The desktop's approval setting follows the app language, not the label the host sent.

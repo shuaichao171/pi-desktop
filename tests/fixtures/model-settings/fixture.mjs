@@ -163,6 +163,14 @@ export function installModelSettingsFixture(options = {}) {
     listProviderAuth: () => state.providers.map(({ provider, configured }) => ({ provider, configured, supportsApiKey: true, ...(configured ? { source: 'stored' } : {}) })),
     discoverProviderModels: () => clone(state.discovery),
     setModel: (provider, id) => {
+      // External agents report their own models (`acp:<agent>`).
+      const agentModel = provider.startsWith('acp:') ? state.snapshot.agent?.models?.find((item) => item.id === id) : null;
+      if (agentModel) {
+        const agent = { ...state.snapshot.agent, currentModelId: id };
+        Object.assign(state.snapshot, { agent, modelProvider: provider, model: id, modelName: agentModel.name });
+        state.emitAgent({ type: 'model', agent, modelProvider: provider, model: id, modelName: agentModel.name, thinkingLevel: state.snapshot.thinkingLevel, availableThinkingLevels: state.snapshot.availableThinkingLevels, contextUsage: null });
+        return;
+      }
       const entry = state.providers.find((item) => item.provider === provider)?.models.find((item) => item.id === id);
       if (!entry) throw new Error('Fixture model missing');
       Object.assign(state.snapshot, { modelProvider: provider, model: id, modelName: entry.name });
