@@ -93,7 +93,7 @@ import type {
 	UiSessionPeek,
 } from '@pidesktop/shared';
 import { createAgentError, normalizeAgentError } from '../../shared/src/agentErrors.ts';
-import { ACP_AGENT_CAPABILITIES, PI_AGENT_ID, piAgentDescriptor, type UiAgentConfig, type UiAgentDescriptor, type UiAgentModel, type UiAgentOption, type UiAgentQuota, type UiAgentSaveRequest, type UiAgentStatus } from '../../shared/src/agentRuntimes.ts';
+import { ACP_AGENT_CAPABILITIES, AGENT_APPROVAL_DEFAULT, AGENT_APPROVAL_OPTION, PI_AGENT_ID, piAgentDescriptor, type UiAgentApprovalMode, type UiAgentConfig, type UiAgentDescriptor, type UiAgentModel, type UiAgentOption, type UiAgentQuota, type UiAgentSaveRequest, type UiAgentStatus } from '../../shared/src/agentRuntimes.ts';
 import { AgentRegistry } from './acp/agentRegistry.ts';
 import { AgentQuotaService } from './acp/agentQuota.ts';
 import { requireApprovalDetails, requireDialogResponse, type UiApprovalDetails, type UiApprovalScope } from '../../shared/src/approval.ts';
@@ -565,6 +565,8 @@ class SingleAgentService {
 	private acpModels: UiAgentModel[] = [];
 	/** Session settings the agent exposes besides its model (reasoning effort, mode, ...). */
 	private acpOptions: UiAgentOption[] = [];
+	/** This conversation's approval setting (`AGENT_APPROVAL_OPTION`); read from its session record when bound. */
+	private acpApproval: UiAgentApprovalMode = AGENT_APPROVAL_DEFAULT;
 	private acpModelId: string | null = null;
 	private readonly acpToolChanges = new Map<string, Promise<void>>();
 	/** Latest plan the agent reported this turn; saved as a notice when the turn ends. */
@@ -1805,8 +1807,20 @@ class SingleAgentService {
 			capabilities: (this.acp?.supportsSteering ?? binding.config?.steer) ? { ...ACP_AGENT_CAPABILITIES, steer: true } : ACP_AGENT_CAPABILITIES,
 			...(this.acpModels.length ? { models: this.acpModels.map((model) => ({ ...model })) } : {}),
 			currentModelId: this.acpModelId,
-			...(this.acpOptions.length ? { options: this.acpOptions.map((option) => ({ ...option, values: option.values.map((value) => ({ ...value })) })) } : {}),
+			// The desktop's approval setting leads the menu, available before the agent has started.
+			options: [this.approvalOption(), ...this.acpOptions.map((option) => ({ ...option, values: option.values.map((value) => ({ ...value })) }))],
 			...(binding.config?.quota ? { quota: true } : {}),
+		};
+	}
+
+	/** The desktop's own approval setting, listed with the agent's options; the renderer localizes it by id. */
+	private approvalOption(): UiAgentOption {
+		return {
+			id: AGENT_APPROVAL_OPTION, name: '权限审批', category: 'approval', currentValue: this.acpApproval,
+			values: [
+				{ value: 'bypass', name: 'Bypass', description: '自动通过 Agent 的所有权限请求' },
+				{ value: 'agent', name: 'Agent 默认', description: '按 Agent 自己的模式，需要时请你审批' },
+			],
 		};
 	}
 
@@ -1851,6 +1865,8 @@ class SingleAgentService {
 		if (!binding || binding.agentId === PI_AGENT_ID) return;
 		this.agentBinding = { agentId: binding.agentId, config: this.agents.get(binding.agentId) ?? null, nativeSessionId: binding.nativeSessionId ?? null };
 		this.acpModelId = this.agentSettingsFor(session, binding.agentId).model ?? null;
+		// Only the conversation's own record: the approval setting is never carried over from another one.
+		this.acpApproval = readAgentSettings(entries)?.options[AGENT_APPROVAL_OPTION] === 'agent' ? 'agent' : AGENT_APPROVAL_DEFAULT;
 	}
 
 	/**
@@ -1885,6 +1901,7 @@ class SingleAgentService {
 		this.acpModels = [];
 		this.acpModelId = null;
 		this.acpOptions = [];
+		this.acpApproval = AGENT_APPROVAL_DEFAULT;
 		this.acpPlan = null;
 		this.acpToolChanges.clear();
 		this.acpConfigStale = false;
@@ -2008,6 +2025,7 @@ class SingleAgentService {
 				return renderHandoffContext(last >= 0 ? branch.filter((_, index) => index !== last) : branch, config.displayName);
 			},
 			savedSettings: () => owned() ? this.agentSettingsFor(session, config.id) : null,
+			bypassApprovals: () => owned() && this.acpApproval === 'bypass',
 		});
 		this.acp = conversation;
 		return conversation;
@@ -2120,6 +2138,15 @@ class SingleAgentService {
 		const session = this.runtime?.session;
 		if (!session || this.lifecycleOperation) throw new Error('会话正在切换，请稍后再试');
 		if (!this.agentBinding) throw new Error('此会话由 Pi 处理，没有 Agent 选项');
+		if (optionId === AGENT_APPROVAL_OPTION) {
+			if (value !== 'bypass' && value !== 'agent') throw new Error('选项值不可用：' + value);
+			if (this.acpApproval === value) return;
+			// Applies to the next request, also in a running turn; kept with this conversation only.
+			this.acpApproval = value;
+			this.saveAgentSettings(session, { option: [optionId, value] }, false);
+			this.fire({ type: 'model', ...this.selection(session) });
+			return;
+		}
 		const option = this.acpOptions.find((item) => item.id === optionId);
 		if (!option) throw new Error('Agent 选项不存在：' + optionId);
 		if (!option.values.some((item) => item.value === value)) throw new Error('选项值不可用：' + value);

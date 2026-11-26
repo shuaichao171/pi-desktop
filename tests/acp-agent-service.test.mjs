@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 
 const FAKE_AGENT = fileURLToPath(new URL('./fixtures/acp/fake-agent.mjs', import.meta.url));
+const { AGENT_APPROVAL_OPTION } = await import('../packages/shared/src/agentRuntimes.ts');
 
 async function until(check, message, timeout = 15000) {
 	const started = Date.now();
@@ -32,7 +33,9 @@ test('Antigravity command approvals survive restart and stay scoped to the exact
 	t.after(async () => {
 		await service?.dispose();
 		for (const [name, value] of environment) { if (value === undefined) delete process.env[name]; else process.env[name] = value; }
-		rmSync(root, { recursive: true, force: true, maxRetries: 50, retryDelay: 100 });
+		// Windows releases a killed process's working directory slightly after exit.
+		try { rmSync(root, { recursive: true, force: true, maxRetries: 50, retryDelay: 100 }); }
+		catch (error) { console.warn('temp cleanup skipped:', error.message); }
 	});
 	const { AgentService } = await import('../packages/agent/src/index.ts');
 	const cards = [];
@@ -43,6 +46,8 @@ test('Antigravity command approvals survive restart and stay scoped to the exact
 	async function open(cwd) {
 		await service.init({ cwd, fresh: true });
 		await service.setSessionAgent('antigravity');
+		// Approval cards only appear in the agent's own mode; conversations start in bypass.
+		await service.setAgentOption(AGENT_APPROVAL_OPTION, 'agent');
 	}
 	async function run(prompt, selected) {
 		const count = service.getSnapshot().messages.filter((message) => message.text === `Selected: ${selected}`).length;
@@ -144,6 +149,7 @@ test('an ACP conversation runs through AgentService: binding, transcript, lock, 
 		assert.equal(service.getSnapshot().messages.filter((message) => message.role === 'user').length, 0);
 		assert.equal(service.getSnapshot().agent.kind, 'pi');
 		await service.setSessionAgent('fake-agent');
+		await service.setAgentOption(AGENT_APPROVAL_OPTION, 'agent');
 		let snapshot = service.getSnapshot();
 		assert.equal(snapshot.agent.kind, 'acp');
 		assert.equal(snapshot.agent.capabilities.thinkingLevels, false);
@@ -218,6 +224,7 @@ test('an ACP conversation runs through AgentService: binding, transcript, lock, 
 		await service.handoffToAgent('fake-two');
 		const continuation = service.getSnapshot().sessionPath;
 		assert.equal(service.getSnapshot().agent.id, 'fake-two');
+		await service.setAgentOption(AGENT_APPROVAL_OPTION, 'agent');
 		// A first prompt that fails at the agent keeps the context pending for the retry.
 		await service.prompt('auth');
 		await until(() => service.getSnapshot().status === 'idle' && service.getSnapshot().runs.at(-1)?.status === 'failed', 'failed first prompt settles');
@@ -278,12 +285,18 @@ test('agent session settings reach the renderer descriptor and change through Ag
 	let reopened;
 	try {
 		const { AgentService } = await import('../packages/agent/src/index.ts');
-		service = new AgentService(undefined, async () => true);
+		const asked = [];
+		service = new AgentService(undefined, async (request) => { asked.push(request); return true; });
 		await service.saveAgent({ displayName: 'Option Agent', command: process.execPath, args: [FAKE_AGENT], env: { FAKE_ACP_SETTINGS: 'options', FAKE_ACP_LOAD: '1' }, enabled: true });
 		await service.init({ cwd: workspace, fresh: true });
 		await service.setSessionAgent('option-agent');
-		await until(() => service.getSnapshot().agent.options?.length === 2, 'options reach the descriptor');
+		// The desktop's approval setting is listed (in bypass) before the agent reports its own options.
+		const approvalOf = (snapshot) => snapshot.agent.options?.find((option) => option.id === AGENT_APPROVAL_OPTION)?.currentValue;
+		assert.equal(approvalOf(service.getSnapshot()), 'bypass');
+		await until(() => service.getSnapshot().agent.options?.length === 3, 'options reach the descriptor');
 		const agent = service.getSnapshot().agent;
+		assert.equal(agent.options[0].id, AGENT_APPROVAL_OPTION, 'the approval setting leads the menu');
+		assert.deepEqual(agent.options[0].values.map((item) => item.value), ['bypass', 'agent']);
 		assert.deepEqual(agent.models.map((model) => model.id), ['fake-large', 'fake-small', 'fake-old'], 'one entry per model, not per model and effort');
 		assert.equal(service.getSnapshot().model, 'fake-large');
 		await service.setAgentOption('effort', 'low');
@@ -295,6 +308,13 @@ test('agent session settings reach the renderer descriptor and change through Ag
 		await service.setAgentOption('mode', 'auto');
 		await service.prompt('please run');
 		await until(() => service.getSnapshot().status === 'idle' && service.getSnapshot().messages.some((message) => message.text === 'Done.'), 'turn settles');
+		assert.equal(asked.length, 0, 'bypass approves the tool without a card');
+		await assert.rejects(service.setAgentOption(AGENT_APPROVAL_OPTION, 'always'), /选项值不可用/);
+		await service.setAgentOption(AGENT_APPROVAL_OPTION, 'agent');
+		assert.equal(approvalOf(service.getSnapshot()), 'agent');
+		await service.prompt('please run');
+		await until(() => service.getSnapshot().status === 'idle' && service.getSnapshot().messages.filter((message) => message.text === 'Done.').length === 2, 'second turn settles');
+		assert.equal(asked.length, 1, 'the agent\'s own mode shows the approval card');
 		const path = service.getSnapshot().sessionPath;
 
 		// The agent loads its session with default settings; the user's choices come back.
@@ -311,8 +331,8 @@ test('agent session settings reach the renderer descriptor and change through Ag
 		}, 'model catalog and saved settings are restored without a prompt');
 		const resumed = reopened.getSnapshot();
 		assert.equal(resumed.modelName, 'Fake Small');
-		assert.deepEqual(resumed.agent.options.map((option) => [option.id, option.currentValue]), [['effort', 'low'], ['mode', 'auto']]);
-		assert.deepEqual(resumed.messages.filter((message) => message.role === 'user').map((message) => message.text), ['please run']);
+		assert.deepEqual(resumed.agent.options.map((option) => [option.id, option.currentValue]), [[AGENT_APPROVAL_OPTION, 'agent'], ['effort', 'low'], ['mode', 'auto']]);
+		assert.deepEqual(resumed.messages.filter((message) => message.role === 'user').map((message) => message.text), ['please run', 'please run']);
 
 		// A new conversation with the same agent starts from the model and effort chosen last
 		// time, but never inherits a permission mode from another conversation.
@@ -328,6 +348,7 @@ test('agent session settings reach the renderer descriptor and change through Ag
 			return snapshot.model === 'fake-small' && snapshot.agent.options?.some((option) => option.id === 'effort' && option.currentValue === 'low');
 		}, 'a new conversation starts with the agent\'s last model and effort');
 		assert.notEqual(reopened.getSnapshot().agent.options.find((option) => option.id === 'mode').currentValue, 'auto');
+		assert.equal(approvalOf(reopened.getSnapshot()), 'bypass', 'a new conversation starts in bypass again');
 	} finally {
 		await service?.dispose().catch(() => {});
 		await reopened?.dispose().catch(() => {});

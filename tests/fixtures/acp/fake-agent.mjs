@@ -4,8 +4,10 @@
 //   "auth"   fails with the ACP auth-required error
 //   "crash"  exits the process mid-turn
 //   "question" asks an ACP form question ("withdraw question" cancels the request)
+//   "mcp tool" asks to approve an MCP tool call with a form, like Codex
 //   other    thinks, replies, runs one tool behind a permission request
-//            ("always-only": the request offers no allow_once option)
+//            ("always-only": the request offers no allow_once option;
+//             "exit plan": the tool leaves plan mode, kind `switch_mode`)
 // FAKE_ACP_STEER=1: a prompt sent while "slow" runs ends that turn (end_turn) and is
 // handled next, like Antigravity.
 import { createInterface } from 'node:readline';
@@ -79,6 +81,16 @@ async function prompt(id, params) {
 		}
 		return;
 	}
+	if (text.includes('mcp tool')) {
+		const reply = await ask('elicitation/create', {
+			sessionId, mode: 'form', message: 'Allow the docs server to run search?',
+			requestedSchema: { type: 'object', properties: { decision: { type: 'string', oneOf: [{ const: 'once', title: 'Allow' }, { const: 'never', title: 'Deny' }] } }, required: ['decision'] },
+			_meta: { codex_approval_kind: 'mcp_tool_call' },
+		});
+		update(sessionId, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: `MCP: ${JSON.stringify(reply)}` } });
+		send({ id, result: { stopReason: 'end_turn' } });
+		return;
+	}
 	if (text.includes('slow')) {
 		update(sessionId, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'working' } });
 		const stopReason = await new Promise((resolve) => { cancelled = resolve; });
@@ -90,7 +102,7 @@ async function prompt(id, params) {
 	update(sessionId, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: `blocks=${blocks.length} ` } });
 	update(sessionId, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'Hello' } });
 	update(sessionId, { sessionUpdate: 'plan', entries: [{ content: 'Run tests', status: 'in_progress', priority: 'high' }] });
-	const toolCall = { toolCallId: 'call-1', title: 'Run tests', kind: 'execute', rawInput: antigravityCommands ? {
+	const toolCall = { toolCallId: 'call-1', title: 'Run tests', kind: text.includes('exit plan') ? 'switch_mode' : 'execute', rawInput: antigravityCommands ? {
 		CommandLine: text.includes('different-command') ? 'npm test -- --watch' : 'npm test',
 		Cwd: text.includes('different-directory') ? join(cwd, 'subdirectory') : text.includes('outside-directory') ? join(cwd, '..') : cwd,
 		WaitMsBeforeAsync: 5000,

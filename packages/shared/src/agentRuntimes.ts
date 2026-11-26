@@ -45,6 +45,16 @@ export interface UiAgentOption {
 	values: { value: string; name: string; description?: string }[];
 }
 
+/**
+ * The desktop's own setting in every external-agent conversation, listed with the
+ * agent's options. `bypass` (the default) answers the agent's permission requests
+ * with its allow choice; `agent` leaves approvals to the agent's own mode and shows
+ * every request it sends. Kept per conversation, never carried to new ones.
+ */
+export const AGENT_APPROVAL_OPTION = '__desktop_approval';
+export type UiAgentApprovalMode = 'bypass' | 'agent';
+export const AGENT_APPROVAL_DEFAULT: UiAgentApprovalMode = 'bypass';
+
 export interface UiAgentDescriptor {
 	id: string;
 	kind: UiAgentKind;

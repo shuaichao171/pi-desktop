@@ -44,6 +44,8 @@ export default async function agentsScenarios(review) {
         { id: 'mode', name: 'Mode', category: 'mode', currentValue: 'agent', values: [{ value: 'read-only', name: 'Read-only', description: 'Requires approval to edit files' }, { value: 'agent', name: 'Auto review', description: 'Only ask for actions detected as potentially unsafe' }] },
         { id: 'fast-mode', name: 'Fast mode', category: 'speed', currentValue: 'off', values: [{ value: 'off', name: 'Off' }, { value: 'on', name: 'On', description: '1.5x speed, increased usage' }] },
       ] };
+    // The host lists its approval setting first.
+    agent.options.unshift({ id: '__desktop_approval', name: 'approval (host label)', category: 'approval', currentValue: 'bypass', values: [{ value: 'bypass', name: 'bypass (host label)' }, { value: 'agent', name: 'agent (host label)' }] });
     Object.assign(state.snapshot, { agent, model: 'sonnet', modelName: 'Sonnet', modelProvider: 'acp:claude-code', thinkingLevel: 'off', availableThinkingLevels: ['off'], historyTotal: 3, messages: [
       { id: 'handoff-1', order: 0, role: 'system', systemKind: 'handoff', text: '上下文交接：Pi → Claude Code', status: 'done', handoff: { direction: 'from', sessionPath: 'C:\\\\renderer-review\\\\earlier.jsonl', fromAgent: 'Pi', toAgent: 'Claude Code' } },
       { id: 'user-1', order: 1, role: 'user', text: '接着把设置页做完', status: 'done' },
@@ -73,10 +75,18 @@ export default async function agentsScenarios(review) {
   await review.waitFor('document.querySelector(".pd-composer-agent-effort-trigger")?.textContent.includes("High")');
   await review.assert('window.__modelReview.calls.some(call => call.name === "setAgentOption" && call.args[0] === "reasoning_effort" && call.args[1] === "high")', 'Choosing an effort changes the agent option');
   await review.click('.pd-composer-agent-options-trigger');
-  await review.waitFor('document.querySelectorAll(".pd-composer-config-popover.is-agentOptions [role=group]").length === 2');
+  await review.waitFor('document.querySelectorAll(".pd-composer-config-popover.is-agentOptions [role=group]").length === 3');
+  // The desktop's approval setting follows the app language, not the label the host sent.
+  const approval = '.pd-composer-config-popover.is-agentOptions [data-option-id=__desktop_approval]';
+  await review.assert(`(() => { const group = document.querySelector(${JSON.stringify(approval)}); return group.getAttribute('aria-label') === '权限审批' && group.querySelector('[data-option-value=bypass]').getAttribute('aria-checked') === 'true' && group.querySelector('[data-option-value=bypass]').textContent.includes('自动通过 Agent 的所有权限请求') && group.querySelector('[data-option-value=agent]').textContent.includes('Agent 默认') && !group.textContent.includes('host label'); })()`, 'The approval setting is listed in the app language with bypass chosen');
   await review.screenshot('agents-acp-options');
   await review.click('.pd-composer-config-popover.is-agentOptions [data-option-id=mode] [data-option-value=read-only]');
   await review.waitFor('window.__modelReview.calls.some(call => call.name === "setAgentOption" && call.args[0] === "mode" && call.args[1] === "read-only")');
+  await review.key('Escape');
+  await review.click('.pd-composer-agent-options-trigger');
+  await review.waitFor(`Boolean(document.querySelector(${JSON.stringify(approval + ' [data-option-value=agent]')}))`);
+  await review.click(approval + ' [data-option-value=agent]');
+  await review.waitFor('window.__modelReview.calls.some(call => call.name === "setAgentOption" && call.args[0] === "__desktop_approval" && call.args[1] === "agent")');
   await review.key('Escape');
 
   await review.viewport(680, 520);

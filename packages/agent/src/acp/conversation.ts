@@ -6,7 +6,7 @@ import { parseElicitationForm, type AcpElicitationResponse, type AcpFormRequest 
 import {
 	ACP_AUTH_REQUIRED, ACP_PROTOCOL_VERSION, AcpRequestError,
 	type AcpAvailableCommand, type AcpConfigOption, type AcpContentBlock, type AcpInitializeResult, type AcpNewSessionResult, type AcpPlanEntry,
-	type AcpPromptResult, type AcpRequestPermissionOutcome, type AcpRequestPermissionParams, type AcpSessionNotification, type AcpSteeringResult, type AcpStopReason,
+	type AcpPromptResult, type AcpRequestPermissionOutcome, type AcpRequestPermissionParams, type AcpSessionNotification, type AcpSteeringResult, type AcpStopReason, type AcpToolCall,
 } from './protocol.ts';
 import { AcpTurnAssembler, type PiImageContent, type PiMessage, type PiShapedEvent } from './turnAssembler.ts';
 
@@ -29,6 +29,8 @@ export interface AcpConversationHooks {
 	historyContext(): string | null;
 	/** Settings the user chose earlier, applied again to a resumed session (agents reset them). */
 	savedSettings?(): { model?: string; options: Record<string, string> } | null;
+	/** Answer permission requests with the agent's allow choice instead of asking (bypass). Read per request. */
+	bypassApprovals?(): boolean;
 }
 
 export interface AcpTurnInput {
@@ -415,22 +417,16 @@ export class AcpConversation {
 	 * Apply the user's earlier choices to a new or resumed session: agents start a
 	 * loaded session with their defaults. The model goes first, since changing it
 	 * can reset other settings. A choice the agent no longer offers is skipped.
-	 * Without a choice, the permission mode starts at "accept edits" where offered,
-	 * unless the agent already starts in a mode that asks less (Claude Code `auto`).
+	 * Without a choice, the agent keeps its own default mode.
 	 */
 	private async restoreSettings(): Promise<void> {
-		const saved = this.hooks.savedSettings?.() ?? { options: {} };
+		const saved = this.hooks.savedSettings?.();
+		if (!saved) return;
 		const model = saved.model;
 		if (model && model !== this.currentModel && this.models.some((item) => item.id === model)) {
 			await this.writeModel(model).catch(() => {});
 		}
-		const wanted = new Map(Object.entries(saved.options));
-		for (const option of this.options) {
-			if (option.category !== 'mode' || wanted.has(option.id) || PERMISSIVE_MODE.test(option.currentValue)) continue;
-			const acceptEdits = option.values.find((item) => ACCEPT_EDITS_MODE.test(item.value));
-			if (acceptEdits) wanted.set(option.id, acceptEdits.value);
-		}
-		for (const [id, value] of wanted) {
+		for (const [id, value] of Object.entries(saved.options)) {
 			const option = this.options.find((item) => item.id === id);
 			if (!option || option.currentValue === value || !option.values.some((item) => item.value === value)) continue;
 			await this.writeConfigOption(id, value).catch(() => {});
@@ -497,11 +493,17 @@ export class AcpConversation {
 			if (request.sessionId !== this.sessionId || this.replaying || this.disposed) return { outcome: { outcome: 'cancelled' } };
 			const signal = this.permissionAbort ? AbortSignal.any([this.permissionAbort.signal, requestSignal]) : AbortSignal.abort();
 			if (signal.aborted) return { outcome: { outcome: 'cancelled' } };
+			const bypass = this.hooks.bypassApprovals?.() ? bypassOption(request, this.assembler.toolForPermission(request.toolCall)) : null;
+			if (bypass) return { outcome: { outcome: 'selected', optionId: bypass } };
 			const permission = this.config.id === 'antigravity' ? { ...request, toolCall: this.assembler.toolForPermission(request.toolCall) } : request;
 			const outcome = await this.hooks.requestPermission(permission, signal).catch((): AcpRequestPermissionOutcome => ({ outcome: 'cancelled' }));
 			return { outcome };
 		}
 		if (method === 'elicitation/create') {
+			// Codex asks to approve an MCP tool call with a form; bypass accepts it like any permission request.
+			const toolApproval = params as { sessionId?: unknown; mode?: unknown; _meta?: { codex_approval_kind?: unknown } } | null;
+			if (toolApproval?.mode === 'form' && toolApproval._meta?.codex_approval_kind === 'mcp_tool_call' && toolApproval.sessionId === this.sessionId
+				&& !this.replaying && !this.disposed && this.hooks.bypassApprovals?.()) return { action: 'accept', content: {} };
 			const request = parseElicitationForm(params);
 			if (request.sessionId !== this.sessionId || this.replaying || this.disposed) return { action: 'cancel' };
 			// Codex's async questions belong to the session, even after the prompt ends.
@@ -516,10 +518,16 @@ export class AcpConversation {
 /** Option id for agents that expose only the older `modes` list. */
 export const LEGACY_MODE_OPTION = '__acp_mode';
 
-/** The mode new sessions start in when the agent offers it (Antigravity `accept-edits`, Claude Code `acceptEdits`). */
-const ACCEPT_EDITS_MODE = /^accept[-_ ]?edits$/i;
-/** Modes that already ask less than "accept edits"; the default never steps down from them. */
-const PERMISSIVE_MODE = /^(auto|bypass[-_ ]?permissions|yolo|full[-_ ]?access)$/i;
+/**
+ * The option bypass answers with: allow once where offered (an "always" grant can
+ * outlive the conversation), else allow always. Leaving plan mode (`switch_mode`) is
+ * a plan review rather than a permission, so it still goes to the user.
+ */
+function bypassOption(request: AcpRequestPermissionParams, call: AcpToolCall): string | null {
+	if (call.kind === 'switch_mode') return null;
+	const valid = (kind: string) => request.options.find((option) => option?.kind === kind && typeof option.optionId === 'string' && option.optionId.length > 0);
+	return (valid('allow_once') ?? valid('allow_always'))?.optionId ?? null;
+}
 
 function text(value: unknown, max: number): string | null {
 	return typeof value === 'string' && value.trim() ? value.slice(0, max) : null;

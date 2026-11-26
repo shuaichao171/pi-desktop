@@ -147,6 +147,35 @@ test('conversation forwards a rejected permission and cancels a running turn', a
 	}
 });
 
+test('bypass answers permission requests with allow once (else allow always) and accepts Codex MCP tool approvals; plan exits still ask', async () => {
+	let bypass = true;
+	const forms = [];
+	const r = recorder({ bypassApprovals: () => bypass, requestElicitation: async (request) => { forms.push(request); return { action: 'decline' }; } });
+	const conversation = new AcpConversation(fakeConfig(), process.cwd(), null, r.hooks);
+	const lastText = (role) => r.persisted.filter((message) => message.role === role).at(-1).content.find((part) => part.type === 'text')?.text;
+	try {
+		await conversation.prompt({ text: 'please run' });
+		assert.equal(r.permissions.length, 0, 'no question reaches the user');
+		assert.equal(lastText('assistant'), 'Done.');
+		await conversation.prompt({ text: 'please run always-only' });
+		assert.equal(r.permissions.length, 0);
+		assert.equal(lastText('toolResult'), 'Selected: always', 'allow always when the agent offers no allow once');
+		await conversation.prompt({ text: 'mcp tool' });
+		assert.equal(forms.length, 0);
+		assert.equal(lastText('assistant'), 'MCP: {"action":"accept","content":{}}');
+		await conversation.prompt({ text: 'exit plan' });
+		assert.equal(r.permissions.length, 1, 'leaving plan mode is a plan review, not a permission');
+		bypass = false;
+		await conversation.prompt({ text: 'please run' });
+		assert.equal(r.permissions.length, 2, 'the setting is read per request');
+		await conversation.prompt({ text: 'mcp tool' });
+		assert.equal(forms.length, 1);
+		assert.equal(lastText('assistant'), 'MCP: {"action":"decline"}');
+	} finally {
+		await conversation.dispose();
+	}
+});
+
 test('ACP form withdrawal closes the question, and an async form can be answered after its turn', async (t) => {
 	const requests = [];
 	const r = recorder({ requestElicitation: (request, signal) => new Promise((resolve) => {
@@ -495,44 +524,26 @@ test('agents without steer support never steer: input queues behind the running 
 	}
 });
 
-test('new sessions start in "accept edits" where the agent offers it; a saved choice wins', async () => {
+test('new sessions keep the agent\'s own default mode, even when it offers "accept edits"; a saved choice wins', async () => {
 	for (const settings of ['options', 'modes']) {
 		const modeOf = (r) => r.state.options.find((option) => option.category === 'mode')?.currentValue;
-		const fresh = recorder();
-		const conversation = new AcpConversation(fakeConfig({ FAKE_ACP_SETTINGS: settings, FAKE_ACP_ACCEPT_EDITS: '1' }), process.cwd(), null, fresh.hooks);
-		try {
-			await conversation.warmup();
-			assert.equal(modeOf(fresh), 'acceptEdits', `${settings}: default mode`);
-		} finally {
-			await conversation.dispose();
+		for (const start of ['ask', 'auto']) {
+			const fresh = recorder();
+			const conversation = new AcpConversation(fakeConfig({ FAKE_ACP_SETTINGS: settings, FAKE_ACP_ACCEPT_EDITS: '1', FAKE_ACP_START_MODE: start }), process.cwd(), null, fresh.hooks);
+			try {
+				await conversation.warmup();
+				assert.equal(modeOf(fresh), start, `${settings}: the agent's default ${start} is kept`);
+			} finally {
+				await conversation.dispose();
+			}
 		}
-		const chosen = recorder({ savedSettings: () => ({ options: { [settings === 'options' ? 'mode' : LEGACY_MODE_OPTION]: 'ask' } }) });
+		const chosen = recorder({ savedSettings: () => ({ options: { [settings === 'options' ? 'mode' : LEGACY_MODE_OPTION]: 'acceptEdits' } }) });
 		const again = new AcpConversation(fakeConfig({ FAKE_ACP_SETTINGS: settings, FAKE_ACP_ACCEPT_EDITS: '1' }), process.cwd(), null, chosen.hooks);
 		try {
 			await again.warmup();
-			assert.equal(modeOf(chosen), 'ask', `${settings}: the user's choice is kept`);
+			assert.equal(modeOf(chosen), 'acceptEdits', `${settings}: the user's choice is kept`);
 		} finally {
 			await again.dispose();
 		}
-	}
-	// An agent that already starts in a mode asking less (Claude Code `auto`) is not stepped down.
-	for (const settings of ['options', 'modes']) {
-		const auto = recorder();
-		const conversation = new AcpConversation(fakeConfig({ FAKE_ACP_SETTINGS: settings, FAKE_ACP_ACCEPT_EDITS: '1', FAKE_ACP_START_MODE: 'auto' }), process.cwd(), null, auto.hooks);
-		try {
-			await conversation.warmup();
-			assert.equal(auto.state.options.find((option) => option.category === 'mode')?.currentValue, 'auto', `${settings}: auto is kept`);
-		} finally {
-			await conversation.dispose();
-		}
-	}
-	// Agents without such a mode keep their own default.
-	const plain = recorder();
-	const conversation = new AcpConversation(fakeConfig({ FAKE_ACP_SETTINGS: 'options' }), process.cwd(), null, plain.hooks);
-	try {
-		await conversation.warmup();
-		assert.equal(plain.state.options.find((option) => option.id === 'mode').currentValue, 'ask');
-	} finally {
-		await conversation.dispose();
 	}
 });

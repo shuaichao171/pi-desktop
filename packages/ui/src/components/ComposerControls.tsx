@@ -2,7 +2,7 @@ import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSP
 import { ExitPresence } from './ExitPresence';
 import { createPortal } from 'react-dom';
 import type { UiAgentStatus, UiModelProvider, UiModelSummary, UiProviderAuthStatus, UiThinkingLevel } from '@pidesktop/shared';
-import { PI_AGENT_ID, agentCapabilities } from '@pidesktop/shared';
+import { AGENT_APPROVAL_OPTION, PI_AGENT_ID, agentCapabilities } from '@pidesktop/shared';
 import { useChatStore } from '../store';
 import { useT } from '../i18n';
 import { groupModelsByProvider, selectModelProvider } from '../modelPicker';
@@ -109,7 +109,13 @@ export function ComposerControls({ onOpenModelManagement, hasImages = false }: {
 	const modelLabel = external ? agentModels.find((item) => item.id === model)?.name || model || agent.displayName : model ? modelName?.trim() || model : t('composer.selectModel');
 	// Agent session settings: reasoning effort gets its own control (like Pi's thinking
 	// level); everything else (mode, speed, ...) shares one menu.
-	const agentOptions = external ? agent.options ?? [] : [];
+	// The desktop's approval setting arrives with the agent's options; its labels follow the app language.
+	const agentOptions = external ? (agent.options ?? []).map((option) => option.id !== AGENT_APPROVAL_OPTION ? option : {
+		...option,
+		name: t('composer.agentApproval'),
+		values: option.values.map((item) => item.value === 'bypass' || item.value === 'agent'
+			? { ...item, name: t(`composer.agentApproval.${item.value}`), description: t(`composer.agentApproval.${item.value}Description`) } : item),
+	}) : [];
 	const effortOption = agentOptions.find((option) => option.category === 'thought_level') ?? null;
 	const otherOptions = agentOptions.filter((option) => option !== effortOption);
 	const effortLabel = effortOption ? effortOption.values.find((item) => item.value === effortOption.currentValue)?.name ?? effortOption.currentValue : '';
