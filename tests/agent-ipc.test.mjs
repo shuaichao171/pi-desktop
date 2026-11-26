@@ -949,6 +949,39 @@ test('standalone conversations get independent folders and retain discoverable h
   assert.throws(() => call(IPC_CHANNELS.windowClosePromptResponse, { id: sentClosePrompts[0].id, action: 'invalid' }), /关闭确认操作无效/);
   call(IPC_CHANNELS.windowClosePromptResponse, { id: sentClosePrompts[0].id, action: 'tray', remember: true });
   assert.deepEqual(await promptPromise, { action: 'tray', remember: true });
+
+  // A renderer that confirms the prompt keeps the dialog open past the receipt window.
+  const ackedPromise = ipc.requestWindowClosePrompt(main, { closeBehavior: 'quit', allowRemember: true, stopIdleAgentsOnTrayHide: true }, 30);
+  const ackedId = sentClosePrompts.at(-1).id;
+  assert.throws(() => call(IPC_CHANNELS.windowClosePromptAck, 7), /关闭确认标识无效/);
+  call(IPC_CHANNELS.windowClosePromptAck, 'stale-id');
+  call(IPC_CHANNELS.windowClosePromptAck, ackedId);
+  await new Promise((resolve) => setTimeout(resolve, 60));
+  call(IPC_CHANNELS.windowClosePromptResponse, { id: ackedId, action: 'quit' });
+  assert.deepEqual(await ackedPromise, { action: 'quit', remember: false });
+
+  // No receipt in time (renderer not listening / hung): report unavailable so the caller asks natively.
+  assert.deepEqual(await ipc.requestWindowClosePrompt(main, { closeBehavior: 'tray', allowRemember: true, stopIdleAgentsOnTrayHide: false }, 20), { action: 'unavailable' });
+  call(IPC_CHANNELS.windowClosePromptResponse, { id: sentClosePrompts.at(-1).id, action: 'quit' }); // late answers are ignored
+
+  // A crashed renderer is unavailable too; a replaced prompt settles as cancel instead of hanging forever.
+  const contents = main.webContents;
+  const emitter = new EventEmitter();
+  main.webContents = Object.assign(emitter, contents);
+  try {
+    const crashed = ipc.requestWindowClosePrompt(main, { closeBehavior: 'tray', allowRemember: true, stopIdleAgentsOnTrayHide: false }, 10_000);
+    main.webContents.emit('render-process-gone');
+    assert.deepEqual(await crashed, { action: 'unavailable' });
+    const first = ipc.requestWindowClosePrompt(main, { closeBehavior: 'tray', allowRemember: true, stopIdleAgentsOnTrayHide: false }, 10_000);
+    const second = ipc.requestWindowClosePrompt(main, { closeBehavior: 'tray', allowRemember: true, stopIdleAgentsOnTrayHide: false }, 10_000);
+    assert.deepEqual(await first, { action: 'cancel' });
+    assert.equal(main.webContents.listenerCount('render-process-gone'), 1, 'the replaced prompt removed its listeners');
+    main.webContents.emit('render-process-gone');
+    assert.deepEqual(await second, { action: 'unavailable' });
+    assert.equal(main.webContents.listenerCount('render-process-gone'), 0);
+  } finally {
+    main.webContents = contents;
+  }
   main.webContents.send = originalSend;
   // The debug API owns its own settings entry: a save that does not touch it must
   // not drop it. The handler used to write a fixed 7-field object over the whole

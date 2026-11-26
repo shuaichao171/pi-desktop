@@ -50,7 +50,11 @@ const onWindowChromeStateChanged: AgentBridge['onWindowChromeStateChanged'] = (l
 };
 
 const onWindowClosePrompt: NonNullable<AgentBridge['onWindowClosePrompt']> = (listener) => {
-	const wrapped = (_e: Electron.IpcRendererEvent, prompt: UiWindowClosePrompt): void => listener(prompt);
+	const wrapped = (_e: Electron.IpcRendererEvent, prompt: UiWindowClosePrompt): void => {
+		listener(prompt);
+		// Receipt: tells the main process the in-app dialog is actually up, so it does not fall back to the native one.
+		void invoke(IPC_CHANNELS.windowClosePromptAck, prompt.id).catch(() => {});
+	};
 	ipcRenderer.on(IPC_CHANNELS.windowClosePrompt, wrapped);
 	return () => {
 		ipcRenderer.removeListener(IPC_CHANNELS.windowClosePrompt, wrapped);

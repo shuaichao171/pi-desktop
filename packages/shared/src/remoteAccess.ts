@@ -102,6 +102,22 @@ export interface RemoteEnvironmentDescriptor {
   readonly directEndpoints: readonly RemoteAdvertisedEndpoint[];
 }
 
+/**
+ * Unauthenticated probe answer (`GET /.well-known/pidesktop/environment`). It may be
+ * reachable from the public internet through a tunnel, so it only proves "this is Pi
+ * Desktop environment X speaking protocol N": machine label, app version, platform and
+ * LAN/tailnet addresses are revealed only to authenticated sessions.
+ */
+export type RemotePublicEnvironmentDescriptor = Pick<RemoteEnvironmentDescriptor, 'environmentId' | 'protocolVersion' | 'capabilities'>;
+
+export function toPublicEnvironmentDescriptor(descriptor: RemoteEnvironmentDescriptor): RemotePublicEnvironmentDescriptor {
+  return {
+    environmentId: descriptor.environmentId,
+    protocolVersion: descriptor.protocolVersion,
+    capabilities: descriptor.capabilities,
+  };
+}
+
 /* ------------------------------------------------------------------ */
 /* Pairing & Sessions                                                 */
 /* ------------------------------------------------------------------ */

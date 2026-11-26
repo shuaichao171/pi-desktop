@@ -558,6 +558,27 @@ test('Windows close cancels cleanly without hiding, quitting, or remembering', {
   assert.equal(harness.calls.stopIdleAgents.length, 0);
 });
 
+test('Windows close falls back to the native dialog when the in-app prompt is unavailable', { skip: process.platform !== 'win32' }, async (t) => {
+  // closeChoice 0 = "Minimize to tray" in the native busy-close dialog.
+  const harness = await createStartupHarness(t, { closeBehavior: 'tray', busy: true, closeChoice: 0, closePromptReply: { action: 'unavailable' } });
+  const main = await harness.start();
+  main.load.resolve();
+  main.emit('ready-to-show');
+  harness.initialization.resolve();
+  await harness.rendererReady(main);
+  main.emit('close', { preventDefault() {} });
+  await settle();
+  assert.equal(harness.calls.closePrompts.length, 1, 'the in-app dialog is tried first');
+  assert.equal(harness.calls.messageBoxes.length, 1, 'a renderer that never confirmed the prompt gets the native dialog');
+  assert.equal(main.isVisible(), false, 'the native choice is applied');
+  assert.equal(harness.calls.quit, 0);
+  // The close button keeps working afterwards: the next close asks again instead of being stuck.
+  main.show();
+  main.emit('close', { preventDefault() {} });
+  await settle();
+  assert.equal(harness.calls.closePrompts.length, 2);
+});
+
 test('Windows close to tray respects stopIdleAgentsOnTrayHide = false', { skip: process.platform !== 'win32' }, async (t) => {
   const harness = await createStartupHarness(t, { closeBehavior: 'tray', stopIdleAgentsOnTrayHide: false, busy: false });
   const main = await harness.start();

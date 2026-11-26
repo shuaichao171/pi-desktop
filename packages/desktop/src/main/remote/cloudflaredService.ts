@@ -12,6 +12,7 @@
  */
 
 import { execFile, spawn, type ChildProcess } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { chmod, mkdir, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
@@ -37,27 +38,53 @@ export interface ResolvedCloudflaredBinary {
   readonly version: string | null;
 }
 
+/**
+ * SHA-256 of every pinned release asset we may download, taken from the GitHub
+ * release asset digests of cloudflare/cloudflared@2026.2.0 (the darwin tgz values in
+ * that release's notes are stale; the asset digests match the bytes actually served).
+ * Bumping CLOUDFLARED_PINNED_VERSION requires refreshing this table.
+ */
+export const CLOUDFLARED_ASSET_SHA256: Readonly<Record<string, string>> = {
+  'cloudflared-windows-amd64.exe': 'b3279f2186a1c3c438ad5865e802bbbec26090c5d3fdb4ac1113f1143a94837a',
+  'cloudflared-darwin-arm64.tgz': 'ba99c6f87320236b9f842c3ba4b9526f687560125b7b43a581201579543ca4ff',
+  'cloudflared-darwin-amd64.tgz': '685688a260c324eb8d9c9434ca22f0ce4f504fd6acd0706787c4833de8d6eb17',
+  'cloudflared-linux-amd64': '176746db3be7dc7bd48f3dd287c8930a4645ebb6e6700f883fddda5a4c307c16',
+  'cloudflared-linux-arm64': '03c5d58e283f521d752dc4436014eb341092edf076eb1095953ab82debe54a8e',
+};
+
 export function cloudflaredDownloadAsset(
   platform: NodeJS.Platform = process.platform,
   arch: string = process.arch,
-): { readonly url: string; readonly archive: 'none' | 'tgz'; readonly binaryName: string } | null {
+): { readonly url: string; readonly archive: 'none' | 'tgz'; readonly binaryName: string; readonly sha256: string } | null {
   const base = `https://github.com/cloudflare/cloudflared/releases/download/${CLOUDFLARED_PINNED_VERSION}`;
+  const asset = (name: string, archive: 'none' | 'tgz', binaryName: string) => {
+    const sha256 = CLOUDFLARED_ASSET_SHA256[name];
+    return sha256 ? { url: `${base}/${name}`, archive, binaryName, sha256 } : null;
+  };
   if (platform === 'win32') {
-    if (arch === 'x64') return { url: `${base}/cloudflared-windows-amd64.exe`, archive: 'none', binaryName: 'cloudflared.exe' };
-    if (arch === 'arm64') return { url: `${base}/cloudflared-windows-arm64.exe`, archive: 'none', binaryName: 'cloudflared.exe' };
+    // Cloudflare publishes no native Windows arm64 build; Windows on Arm runs the x64 build under emulation.
+    if (arch === 'x64' || arch === 'arm64') return asset('cloudflared-windows-amd64.exe', 'none', 'cloudflared.exe');
     return null;
   }
   if (platform === 'darwin') {
-    if (arch === 'arm64') return { url: `${base}/cloudflared-darwin-arm64.tgz`, archive: 'tgz', binaryName: 'cloudflared' };
-    if (arch === 'x64') return { url: `${base}/cloudflared-darwin-amd64.tgz`, archive: 'tgz', binaryName: 'cloudflared' };
+    if (arch === 'arm64') return asset('cloudflared-darwin-arm64.tgz', 'tgz', 'cloudflared');
+    if (arch === 'x64') return asset('cloudflared-darwin-amd64.tgz', 'tgz', 'cloudflared');
     return null;
   }
   if (platform === 'linux') {
-    if (arch === 'x64') return { url: `${base}/cloudflared-linux-amd64`, archive: 'none', binaryName: 'cloudflared' };
-    if (arch === 'arm64') return { url: `${base}/cloudflared-linux-arm64`, archive: 'none', binaryName: 'cloudflared' };
+    if (arch === 'x64') return asset('cloudflared-linux-amd64', 'none', 'cloudflared');
+    if (arch === 'arm64') return asset('cloudflared-linux-arm64', 'none', 'cloudflared');
     return null;
   }
   return null;
+}
+
+/** Throws unless `bytes` hash to the pinned SHA-256; runs before anything is written or executed. */
+export function verifyCloudflaredDownload(bytes: Uint8Array, expectedSha256: string): void {
+  const actual = createHash('sha256').update(bytes).digest('hex');
+  if (actual !== expectedSha256.toLowerCase()) {
+    throw new Error(`cloudflared 下载校验失败（SHA-256 不匹配）/ Downloaded cloudflared failed SHA-256 verification (expected ${expectedSha256}, got ${actual})`);
+  }
 }
 
 export function parseCloudflaredLine(line: string): {
@@ -157,6 +184,7 @@ export async function installCloudflaredBinary(
     throw new Error(`Failed to download cloudflared (${response.status})`);
   }
   const bytes = Buffer.from(await response.arrayBuffer());
+  verifyCloudflaredDownload(bytes, asset.sha256);
 
   try {
     if (asset.archive === 'tgz') {

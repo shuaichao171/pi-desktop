@@ -361,25 +361,31 @@ export function RemoteAccessPanel() {
 
 				{state?.running && state.endpoints.length > 0 && (
 					<SettingsRow title={t('settings.remote.endpoints')} stacked>
-						<div className="pd-remote-endpoints">
-							{state.endpoints.map((ep) => (
-								<div key={ep.id} className="pd-remote-endpoint-item">
-									<div className="pd-remote-endpoint-info">
-										<div className="pd-remote-endpoint-title">
-											<span>{ep.label}</span>
-											{ep.isHttps && <span className="pd-remote-badge is-https">HTTPS</span>}
+						<div className="pd-remote-endpoints-block">
+							<div className="pd-remote-endpoints">
+								{state.endpoints.map((ep) => (
+									<div key={ep.id} className="pd-remote-endpoint-item">
+										<div className="pd-remote-endpoint-info">
+											<div className="pd-remote-endpoint-title">
+												<span>{ep.label}</span>
+												{ep.isHttps && <span className="pd-remote-badge is-https">HTTPS</span>}
+												{!ep.isHttps && ep.kind !== 'loopback' && <span className="pd-remote-badge is-plaintext">{t('settings.remote.plaintextBadge')}</span>}
+											</div>
+											<span className="pd-remote-endpoint-url">{ep.httpBaseUrl}</span>
 										</div>
-										<span className="pd-remote-endpoint-url">{ep.httpBaseUrl}</span>
+										<button
+											type="button"
+											className="pd-btn"
+											onClick={() => void copyText(ep.id, ep.httpBaseUrl)}
+										>
+											{copiedKey === ep.id ? t('settings.remote.copied') : t('settings.remote.copy')}
+										</button>
 									</div>
-									<button
-										type="button"
-										className="pd-btn"
-										onClick={() => void copyText(ep.id, ep.httpBaseUrl)}
-									>
-										{copiedKey === ep.id ? t('settings.remote.copied') : t('settings.remote.copy')}
-									</button>
-								</div>
-							))}
+								))}
+							</div>
+							{state.endpoints.some((ep) => !ep.isHttps && ep.kind !== 'loopback') && (
+								<p className="pd-remote-plaintext-note" role="note" data-role="plaintext-note">{t('settings.remote.plaintextNote')}</p>
+							)}
 						</div>
 					</SettingsRow>
 				)}

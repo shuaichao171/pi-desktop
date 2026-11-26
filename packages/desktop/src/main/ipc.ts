@@ -74,11 +74,25 @@ type PendingDialog = {
 	cleanup: () => void;
 };
 
+/**
+ * Outcome of the in-app busy-close dialog. `unavailable` means the renderer never
+ * confirmed showing it (no receipt in time, crashed or navigated away); the caller
+ * then falls back to the native dialog so the close button can never go dead.
+ */
+export type WindowClosePromptOutcome =
+	| Omit<UiWindowClosePromptResponse, 'id'>
+	| { action: 'unavailable'; remember?: undefined };
+
 type PendingClosePrompt = {
 	id: string;
-	resolve: (response: Omit<UiWindowClosePromptResponse, 'id'>) => void;
+	acknowledged: boolean;
+	resolve: (response: WindowClosePromptOutcome) => void;
+	acknowledge: () => void;
 	cleanup: () => void;
 };
+
+/** How long the renderer has to confirm it is showing the in-app close dialog. */
+export const WINDOW_CLOSE_PROMPT_ACK_TIMEOUT_MS = 2_500;
 
 const pendingDialogs = new Map<string, PendingDialog>();
 const pendingClosePrompts = new Map<WebContents, PendingClosePrompt>();
@@ -700,37 +714,53 @@ export async function stopIdleAgentsForWindow(win: BrowserWindow): Promise<numbe
 export function requestWindowClosePrompt(
 	win: BrowserWindow,
 	options: Omit<UiWindowClosePrompt, 'id'>,
-): Promise<Omit<UiWindowClosePromptResponse, 'id'>> {
+	ackTimeoutMs: number = WINDOW_CLOSE_PROMPT_ACK_TIMEOUT_MS,
+): Promise<WindowClosePromptOutcome> {
 	if (disposingServices || win.isDestroyed() || win.webContents.isDestroyed()) {
 		return Promise.resolve({ action: 'cancel' });
 	}
 	const sender = win.webContents;
 	const existing = pendingClosePrompts.get(sender);
-	if (existing) {
-		pendingClosePrompts.delete(sender);
-		existing.cleanup();
-		existing.resolve({ action: 'cancel' });
-	}
+	// finish() removes the entry and its listeners itself; deleting first would make it a no-op and strand the old promise.
+	existing?.resolve({ action: 'cancel' });
 	const id = randomUUID();
 	return new Promise((resolve) => {
-		const finish = (response: Omit<UiWindowClosePromptResponse, 'id'>): void => {
+		let ackTimer: ReturnType<typeof setTimeout> | null = null;
+		const finish = (response: WindowClosePromptOutcome): void => {
 			if (pendingClosePrompts.get(sender)?.id !== id) return;
 			pendingClosePrompts.delete(sender);
 			cleanup();
 			resolve(response);
 		};
+		// The window itself is gone: nothing left to close or ask about.
 		const onCancel = (): void => finish({ action: 'cancel' });
+		// The page is gone but the window remains: let the caller ask natively instead.
+		const onUnavailable = (): void => finish({ action: 'unavailable' });
 		const cleanup = (): void => {
+			if (ackTimer) clearTimeout(ackTimer);
+			ackTimer = null;
 			win.removeListener?.('closed', onCancel);
 			sender.removeListener?.('destroyed', onCancel);
-			sender.removeListener?.('render-process-gone', onCancel);
-			sender.removeListener?.('did-start-navigation', onCancel);
+			sender.removeListener?.('render-process-gone', onUnavailable);
+			sender.removeListener?.('did-start-navigation', onUnavailable);
 		};
-		pendingClosePrompts.set(sender, { id, resolve: finish, cleanup });
+		const entry: PendingClosePrompt = {
+			id,
+			acknowledged: false,
+			resolve: finish,
+			acknowledge: () => {
+				entry.acknowledged = true;
+				if (ackTimer) clearTimeout(ackTimer);
+				ackTimer = null;
+			},
+			cleanup,
+		};
+		pendingClosePrompts.set(sender, entry);
 		win.once?.('closed', onCancel);
 		sender.once?.('destroyed', onCancel);
-		sender.once?.('render-process-gone', onCancel);
-		sender.once?.('did-start-navigation', onCancel);
+		sender.once?.('render-process-gone', onUnavailable);
+		sender.once?.('did-start-navigation', onUnavailable);
+		ackTimer = setTimeout(() => { if (!entry.acknowledged) onUnavailable(); }, ackTimeoutMs);
 		sender.send(IPC_CHANNELS.windowClosePrompt, { id, ...options } satisfies UiWindowClosePrompt);
 	});
 }
@@ -1397,7 +1427,7 @@ const mainOnlyChannels = new Set<string>([
 	IPC_CHANNELS.agentListSessions, IPC_CHANNELS.agentListSessionsPage, IPC_CHANNELS.agentSearchSessions, IPC_CHANNELS.agentSwitchSession, IPC_CHANNELS.agentPeekSession,
 	IPC_CHANNELS.sessionRevealFile, IPC_CHANNELS.sessionFork, IPC_CHANNELS.sessionOpenWindow, IPC_CHANNELS.sessionDelete, IPC_CHANNELS.sessionMoveToWorkspace,
 	IPC_CHANNELS.agentUpdateSessionMeta, IPC_CHANNELS.agentUpdateSessionOrders, IPC_CHANNELS.agentListSessionGroups, IPC_CHANNELS.agentUpdateSessionGroups,
-	IPC_CHANNELS.appRelaunch, IPC_CHANNELS.windowClosePromptResponse,
+	IPC_CHANNELS.appRelaunch, IPC_CHANNELS.windowClosePromptResponse, IPC_CHANNELS.windowClosePromptAck,
 	IPC_CHANNELS.splitPaneOpen, IPC_CHANNELS.splitPaneSetBounds, IPC_CHANNELS.splitPaneList, IPC_CHANNELS.splitPaneDescribe,
 	IPC_CHANNELS.agentLoadSession, IPC_CHANNELS.agentUnloadSession,
 	IPC_CHANNELS.workspacePick, IPC_CHANNELS.workspaceProjectsDirectory, IPC_CHANNELS.workspaceCreateProject, IPC_CHANNELS.workspaceAddDropped, IPC_CHANNELS.workspaceResolveProjectCandidate,
@@ -1644,7 +1674,13 @@ export function registerIpc(options: {
 		'agent.listAgents': () => agentService.listAgents(),
 		'agent.getInputQueue': (params) => agentService.getInputQueue(requireInputQueueScope(params?.scope)),
 		'agent.getPendingExtensionDialogs': () => [...pendingDialogs.values()].map(({ request }) => request),
-		'agent.getFileChangeDiffs': (params) => agentService.getFileChangeDiffs(params.scope),
+		'agent.getFileChangeDiffs': (params) => {
+			const scope = isRecord(params) && isRecord(params.scope) ? params.scope : null;
+			if (!scope || (scope.kind !== 'conversation' && !(scope.kind === 'turn' && typeof scope.runId === 'string' && scope.runId && scope.runId.length <= 512))) {
+				throw new Error('文件改动范围参数无效');
+			}
+			return agentService.getFileChangeDiffs(scope.kind === 'turn' ? { kind: 'turn', runId: scope.runId as string } : { kind: 'conversation' });
+		},
 		'agent.getSessionStats': () => agentService.getSessionStats(),
 		'agent.getMessageAttachment': (params) => {
 			if (typeof params?.sessionPath !== 'string' || !params.sessionPath || typeof params.messageId !== 'string' || !params.messageId || !Number.isInteger(params.index) || params.index < 0) {
@@ -2108,6 +2144,11 @@ export function registerIpc(options: {
 		const pending = pendingClosePrompts.get(event.sender);
 		if (!pending || pending.id !== payload.id) return;
 		pending.resolve({ action: payload.action, remember: payload.remember === true });
+	});
+	handleRendererInvoke(IPC_CHANNELS.windowClosePromptAck, (event, id: unknown) => {
+		if (typeof id !== 'string' || !id) throw new Error('关闭确认标识无效');
+		const pending = pendingClosePrompts.get(event.sender);
+		if (pending && pending.id === id) pending.acknowledge();
 	});
 
 	handleRendererInvoke(IPC_CHANNELS.workspaceProjectsDirectory, () => getProjectsDirectory());

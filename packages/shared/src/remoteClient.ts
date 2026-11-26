@@ -22,6 +22,7 @@ import {
   type RemoteClientSession,
   type RemoteEndpointKind,
   type RemoteEnvironmentDescriptor,
+  type RemotePublicEnvironmentDescriptor,
   type RemotePairExchangeResponse,
   type RemoteRpcErrorPayload,
   type RemoteRpcMethod,
@@ -223,7 +224,7 @@ export async function fetchEnvironmentDescriptor(
   transport: Pick<RemoteClientTransport, 'fetch'>,
   httpBaseUrl: string,
   timeoutMs = 3_000,
-): Promise<RemoteEnvironmentDescriptor> {
+): Promise<RemotePublicEnvironmentDescriptor> {
   const origin = normalizeOrigin(httpBaseUrl);
   const response = await fetchWithTimeout(
     transport.fetch,
@@ -234,7 +235,7 @@ export async function fetchEnvironmentDescriptor(
   if (!response.ok) {
     throw new Error(`Environment probe failed (${response.status})`);
   }
-  const payload = (await response.json()) as RemoteEnvironmentDescriptor;
+  const payload = (await response.json()) as RemotePublicEnvironmentDescriptor;
   if (!payload || typeof payload.environmentId !== 'string' || !payload.environmentId) {
     throw new Error('Invalid environment descriptor');
   }
@@ -299,7 +300,7 @@ export async function pairWithDesktop(input: {
   };
   const baseEnv: SavedRemoteEnvironment = {
     environmentId: exchanged.environmentId,
-    label: exchanged.label || descriptor.label,
+    label: exchanged.label || exchanged.descriptor.label,
     accessToken: exchanged.accessToken,
     sessionId: exchanged.sessionId,
     role: exchanged.role,
@@ -508,7 +509,7 @@ export class RemoteConnectionClient {
 
   private async resolveReachableRoute(
     env: SavedRemoteEnvironment,
-  ): Promise<{ route: SavedRemoteRoute; descriptor: RemoteEnvironmentDescriptor }> {
+  ): Promise<{ route: SavedRemoteRoute; descriptor: RemotePublicEnvironmentDescriptor }> {
     const routes = sortRemoteRoutes(env.routes);
     let lastError: Error | null = null;
     for (const route of routes) {

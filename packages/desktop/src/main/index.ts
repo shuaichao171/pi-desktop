@@ -383,15 +383,21 @@ function createWindow(options: CreateMainWindowOptions): BrowserWindow {
 					if (choice.action === 'quit') {
 						if (choice.remember && launch.windowMode === 'full') await ipc.saveCloseChoice('quit');
 						app.quit();
-					} else if (choice.action === 'tray' && launch.windowMode === 'full') {
+						return;
+					}
+					if (choice.action === 'tray' && launch.windowMode === 'full') {
 						if (choice.remember) await ipc.saveCloseChoice('tray');
 						hideToTray();
+						return;
 					}
-					return;
+					// The renderer never confirmed the in-app dialog (crashed, reloading, or not
+					// listening): ask with the native dialog below so closing can never get stuck.
+					if (choice.action !== 'unavailable') return;
+					if (win.isDestroyed()) return;
 				}
 				const english = getAppLocale() === 'en-US';
-				// Only the full window can change the close behavior again, so multi keeps asking instead of
-				// offering a memory it could never undo.
+				// Only the full window can change the close behavior again, so the multi and pai
+				// windows keep asking instead of offering a memory they could never undo.
 				const rememberChoice = launch.windowMode === 'full' ? { checkboxLabel: english ? 'Remember my choice' : '记住我的选择' } : {};
 				if (closeBehavior === 'quit') {
 					const choice = await dialog.showMessageBox(win, {

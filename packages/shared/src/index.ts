@@ -218,6 +218,8 @@ export const IPC_CHANNELS = {
   windowClose: 'window:close',
   windowClosePrompt: 'window:close-prompt',
   windowClosePromptResponse: 'window:close-prompt-response',
+  /** Renderer receipt for windowClosePrompt; without it the main process falls back to the native dialog. */
+  windowClosePromptAck: 'window:close-prompt-ack',
   /** Push channel: main → renderer event stream. */
   agentEvent: 'agent:event',
 } as const;

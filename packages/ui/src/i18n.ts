@@ -2317,6 +2317,8 @@ export const translations: Record<string, { 'zh-CN': string; 'en-US': string }> 
   'settings.remote.exposureLan': { 'zh-CN': '局域网 (0.0.0.0)', 'en-US': 'LAN (0.0.0.0)' },
   'settings.remote.exposureLocal': { 'zh-CN': '仅本机 (127.0.0.1)', 'en-US': 'Loopback only' },
   'settings.remote.endpoints': { 'zh-CN': '当前可达地址', 'en-US': 'Reachable endpoints' },
+  'settings.remote.plaintextBadge': { 'zh-CN': '未加密', 'en-US': 'Unencrypted' },
+  'settings.remote.plaintextNote': { 'zh-CN': '局域网地址使用明文 HTTP：同一网络中的其他设备可能窥探配对码与访问令牌。请只在可信的 Wi-Fi 下配对；在公共网络或外出时，优先使用 Tailscale HTTPS 或 Cloudflare Tunnel 的 HTTPS 地址。', 'en-US': 'LAN addresses use plain HTTP: other devices on the same network could observe the pairing code and access token. Pair only on a trusted Wi-Fi; on public networks or away from home, prefer the HTTPS address from Tailscale or Cloudflare Tunnel.' },
   'settings.remote.copy': { 'zh-CN': '复制', 'en-US': 'Copy' },
   'settings.remote.copied': { 'zh-CN': '已复制', 'en-US': 'Copied' },
   'settings.remote.groupTunnels': { 'zh-CN': '私网与公网穿透', 'en-US': 'Tunnels & private network' },

@@ -136,6 +136,28 @@ test('cloudflaredService parses Quick Tunnel URLs, metrics, QUIC stalls, and nev
   assert.equal(cloudflaredDownloadAsset('linux', 'x64')?.binaryName, 'cloudflared');
 });
 
+test('cloudflared managed install pins a SHA-256 for every downloadable asset and rejects tampered bytes', async () => {
+  const { createHash } = await import('node:crypto');
+  const { cloudflaredDownloadAsset, verifyCloudflaredDownload, CLOUDFLARED_ASSET_SHA256 } = await import(
+    '../packages/desktop/src/main/remote/cloudflaredService.ts'
+  );
+  for (const [platform, arch] of [['win32', 'x64'], ['win32', 'arm64'], ['darwin', 'arm64'], ['darwin', 'x64'], ['linux', 'x64'], ['linux', 'arm64']]) {
+    const asset = cloudflaredDownloadAsset(platform, arch);
+    assert.ok(asset, `${platform}-${arch} has a managed download`);
+    assert.match(asset.sha256, /^[0-9a-f]{64}$/);
+    assert.equal(asset.sha256, CLOUDFLARED_ASSET_SHA256[asset.url.split('/').at(-1)]);
+  }
+  // Cloudflare ships no native Windows arm64 build: Windows on Arm uses the x64 build (emulated) instead of a 404 URL.
+  assert.match(cloudflaredDownloadAsset('win32', 'arm64').url, /cloudflared-windows-amd64\.exe$/);
+  assert.equal(cloudflaredDownloadAsset('win32', 'ia32'), null);
+
+  const bytes = Buffer.from('pretend cloudflared binary');
+  const good = createHash('sha256').update(bytes).digest('hex');
+  assert.doesNotThrow(() => verifyCloudflaredDownload(bytes, good));
+  assert.doesNotThrow(() => verifyCloudflaredDownload(bytes, good.toUpperCase()));
+  assert.throws(() => verifyCloudflaredDownload(Buffer.from('tampered'), good), /SHA-256/);
+});
+
 test('mergeLearnedRemoteRoutes promotes LAN on HTTP pairing but refuses HTTPS->HTTP token downgrade', async () => {
   const { mergeLearnedRemoteRoutes } = await import('../packages/shared/src/remoteClient.ts');
 

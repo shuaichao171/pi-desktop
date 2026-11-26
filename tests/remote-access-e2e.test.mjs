@@ -190,6 +190,14 @@ test('End-to-end mobile remote control over live HTTP + WebSocket (pairing, stre
     createWebSocket: (url) => new globalThis.WebSocket(url),
   };
 
+  // 0. The unauthenticated probe may be reachable through a public tunnel: it proves the
+  //    environment id + protocol only, never the machine label, version, platform or LAN routes.
+  const probe = await (await globalThis.fetch(`${baseUrl}/.well-known/pidesktop/environment`)).json();
+  assert.deepEqual(Object.keys(probe).sort(), ['capabilities', 'environmentId', 'protocolVersion']);
+  assert.equal(probe.environmentId, authStore.environmentId);
+  assert.equal(JSON.stringify(probe).includes('Test Desktop'), false);
+  assert.equal(JSON.stringify(probe).includes('tailnet'), false);
+
   // 1. Pair a full-control mobile client via QR pairing URL
   const fullGrant = await authStore.createPairingGrant({ label: 'Full Phone', role: 'full' });
   const fullPairingUrl = buildRemotePairingUrl({

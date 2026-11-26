@@ -305,8 +305,9 @@ export function installModelSettingsFixture(options = {}) {
     listSplitPanes: () => [],
     describeSplitPanes: () => [],
     takeInterruptedRuns: () => [],
+    respondWindowClosePrompt: () => undefined,
   };
-  const subscriptions = ['onAgentEvent', 'onUpdateStateChanged', 'onAppCommand', 'onWindowChromeStateChanged', 'onExtensionDialog', 'onExtensionDialogClosed', 'onWorkspaceCommandEvent', 'onAutomationChanged', 'onWorkspaceChanged', 'onGoalChanged', 'onCloudSyncChanged', 'onRemoteAccessChanged', 'onWorkspaceTerminalEvent', 'onSplitPaneChanged', 'onSplitPaneClosed', 'onSideQuestionsChanged', 'onAgentInstallEvent'];
+  const subscriptions = ['onAgentEvent', 'onUpdateStateChanged', 'onAppCommand', 'onWindowChromeStateChanged', 'onExtensionDialog', 'onExtensionDialogClosed', 'onWorkspaceCommandEvent', 'onAutomationChanged', 'onWorkspaceChanged', 'onGoalChanged', 'onCloudSyncChanged', 'onRemoteAccessChanged', 'onWorkspaceTerminalEvent', 'onSplitPaneChanged', 'onSplitPaneClosed', 'onSideQuestionsChanged', 'onAgentInstallEvent', 'onWindowClosePrompt'];
   const bridge = {};
   for (const name of subscriptions) bridge[name] = (listener) => {
     if (!listeners.has(name)) listeners.set(name, new Set());

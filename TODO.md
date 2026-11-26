@@ -10,6 +10,17 @@
 
 ## 已完成
 
+- [x] 手机远程访问及审查后加固（2026-11-27 完成）
+  - 功能：主进程内置 HTTP + WebSocket 远程服务（`packages/desktop/src/main/remote/`），一次性配对码（SHA-256 落盘、10 分钟）换 30 天滑动过期 Bearer 会话，建 WebSocket 前换 60 秒一次性 wsTicket；`full` / `read-only` 两档角色按 RPC 逐个校验权限；支持局域网、Tailscale Serve、Cloudflare 快速/命名隧道；设置 → 远程访问可生成二维码、吊销配对码与设备；移动端为 Expo 应用 `apps/mobile`（独立于 pnpm 工作区）。
+  - 加固：
+    - cloudflared 托管下载内置固定版本 2026.2.0 各平台资产的 SHA-256（取 GitHub 资产摘要；该版本发布说明里两个 darwin tgz 的值已过时），校验通过前不写盘、不执行；Windows on Arm 改用 x64 包（官方没有 windows-arm64，原地址会 404）。
+    - 未鉴权的 `/.well-known/pidesktop/environment` 只返回 environmentId / protocolVersion / capabilities，主机名、版本、平台与局域网/tailnet 地址仅对已鉴权会话可见（该接口可能经公网隧道暴露）。
+    - 设置页给明文 HTTP 的局域网地址加「未加密」标记和可信网络提示，建议外出用 HTTPS 隧道。
+    - 应用内关闭确认增加渲染端回执：2.5 s 内没收到回执、渲染进程崩溃或页面跳走时退回原生对话框，关闭按钮不再可能失效；顺带修复替换旧提示时旧 Promise 永不 resolve 的问题。
+    - 远程 RPC `agent.getFileChangeDiffs` 补参数校验。
+    - 截图夹具补 `onWindowClosePrompt` / `respondWindowClosePrompt` 桩（缺失时所有渲染器截图场景在挂载时崩溃）；常规设置场景同步「高级」分组新增的「远程访问」。
+  - 验证：`tests/remote-access-tunnels.test.mjs`（校验表、Windows on Arm、篡改字节拒绝）、`tests/remote-access-e2e.test.mjs`（公开探测字段）、`tests/agent-ipc.test.mjs`（回执、超时、崩溃、替换）、`tests/startup.test.mjs`（原生回退）；新增截图场景 `tests/fixtures/remote-access/scenarios.mjs`（深浅主题、1440/680 宽），`background-tasks`、`general-settings` 场景回归 passed。
+
 - [x] 对话回复结束后显示仍在运行的后台任务：本会话的后台任务仍在运行时，在对话界面显示任务名称和运行状态，并在任务结束时更新提示（2026-11-26 提出并完成）
   - 现状：`run_in_background` 启动的后台任务独立于对话轮次存活，回复结束后界面恢复空闲，用户看不到当前会话还有哪些后台任务仍在运行，也无法直观感知任务何时完成或失败。
   - 落地：

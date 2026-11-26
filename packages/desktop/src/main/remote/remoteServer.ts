@@ -2,7 +2,7 @@
  * HTTP + WebSocket remote control server for Pi Desktop.
  *
  * Endpoints:
- * - GET  /.well-known/pidesktop/environment   Unauthenticated environment descriptor + direct endpoints
+ * - GET  /.well-known/pidesktop/environment   Unauthenticated minimal probe (environment id + protocol only)
  * - POST /api/auth/pair                       Exchange single-use pairing code -> Bearer session
  * - GET  /api/auth/session                    Verify Bearer session + return descriptor
  * - POST /api/auth/websocket-ticket           Mint 60s single-use wsTicket over authenticated HTTP
@@ -14,6 +14,7 @@ import type { Duplex } from 'node:stream';
 import {
   REMOTE_PROTOCOL_VERSION,
   REMOTE_RPC_REQUIRED_SCOPE,
+  toPublicEnvironmentDescriptor,
   type RemoteEnvironmentDescriptor,
   type RemotePairExchangeRequest,
   type RemotePairExchangeResponse,
@@ -130,7 +131,8 @@ export async function createRemoteServer(
     }
 
     if (method === 'GET' && url.pathname === '/.well-known/pidesktop/environment') {
-      sendJson(response, 200, deps.getDescriptor());
+      // Unauthenticated (possibly via a public tunnel): never leak label, version or LAN addresses here.
+      sendJson(response, 200, toPublicEnvironmentDescriptor(deps.getDescriptor()));
       return;
     }
 
