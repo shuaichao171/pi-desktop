@@ -13,8 +13,8 @@ export interface AcpConnectionOptions {
 	args: string[];
 	cwd: string;
 	env?: Record<string, string>;
-	/** Hand the system proxy down as HTTP(S)_PROXY (`UiAgentConfig.systemProxy`). */
-	systemProxy?: boolean;
+	/** Resolved system proxy to pass as HTTP(S)_PROXY. */
+	proxy?: string | null;
 	/** Notifications from the agent (e.g. `session/update`). */
 	onNotification(method: string, params: unknown): void;
 	/** Requests from the agent; the resolved value is the JSON-RPC result. */
@@ -80,7 +80,7 @@ export class AcpConnection {
 	/** Resolve and start the agent; throws when the executable cannot be found. */
 	static start(options: AcpConnectionOptions): AcpConnection {
 		const base = withAgentSearchPath({ ...process.env, ...options.env });
-		const env = options.systemProxy ? withSystemProxy(base) : base;
+		const env = withSystemProxy(base, options.proxy);
 		const resolved = resolveCommand(options.command, env);
 		if (!resolved) throw new Error(`找不到 Agent 命令：${options.command}`);
 		const child = spawnResolved(resolved, options.args, {

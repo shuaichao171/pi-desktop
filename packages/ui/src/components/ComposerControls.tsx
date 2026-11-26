@@ -297,9 +297,16 @@ export function ComposerControls({ onOpenModelManagement, hasImages = false }: {
 			const chrome = document.querySelector('.pd-window-controls')?.getBoundingClientRect();
 			const topInset = chrome && chrome.width > 0 && chrome.height > 0 && left < chrome.right && left + box.width > chrome.left
 				? Math.max(8, chrome.bottom + 8) : 8;
-			// Every picker rises from its own button; the model picker gets more height.
+			// Leave enough room for the Agent menu controls when the composer is near the top.
 			const limit = open === 'model' ? 600 : 440;
-			updatePosition({ left, bottom: window.innerHeight - rect.top + 6, maxHeight: Math.max(0, Math.min(limit, rect.top - 6 - topInset)), transformOrigin: open === 'model' ? 'right bottom' : 'center bottom' });
+			const above = rect.top - 6 - topInset;
+			const below = window.innerHeight - rect.bottom - 14;
+			const agentPicker = open === 'agent' || open === 'agentModel' || open === 'agentEffort' || open === 'agentOptions';
+			if (agentPicker && above < 180 && below > above) {
+				updatePosition({ left, top: rect.bottom + 6, maxHeight: Math.max(0, Math.min(limit, below)), transformOrigin: 'center top' });
+			} else {
+				updatePosition({ left, bottom: window.innerHeight - rect.top + 6, maxHeight: Math.max(0, Math.min(limit, above)), transformOrigin: open === 'model' ? 'right bottom' : 'center bottom' });
+			}
 		};
 		place();
 		// Panel transitions can move the button without resizing it. Track only
@@ -437,7 +444,7 @@ export function ComposerControls({ onOpenModelManagement, hasImages = false }: {
 					<button type="button" disabled={pending} onClick={() => openManagement({ kind: 'add-provider' })}><Icon name="plus" width="15" height="15" /><span>{t('settings.providerAdd')}</span></button>
 					<button type="button" disabled={pending} onClick={() => openManagement({ kind: 'manage' })}><Icon name="settings" width="15" height="15" /><span>{t('settings.modelManagement')}</span></button>
 				</div>
-			</> : open === 'agent' ? <div className="pd-composer-thinking-options pd-composer-agent-options">
+			</> : open === 'agent' ? <><div className="pd-composer-thinking-options pd-composer-agent-options">
 				{agentLocked && <p className="pd-composer-agent-note">{t('composer.agentLocked')}</p>}
 				{[{ id: PI_AGENT_ID, displayName: 'Pi', accentColor: null, readiness: 'ready' as const }, ...agentChoices].map((item) => {
 					const current = item.id === (agent?.id ?? PI_AGENT_ID);
@@ -446,8 +453,7 @@ export function ComposerControls({ onOpenModelManagement, hasImages = false }: {
 						<span className="pd-composer-agent-option">{agentMark(item.displayName, item.accentColor, item.id === PI_AGENT_ID)}<span>{item.displayName}</span>{'community' in item && item.community && <small>{t('composer.agentCommunity')}</small>}{status && <small>{status}</small>}{!current && agentLocked && item.readiness === 'ready' && <small className="is-handoff">{t('composer.agentHandoff')}</small>}</span>{current && <span aria-hidden="true">✓</span>}
 					</button>;
 				})}
-				<div className="pd-composer-model-actions"><button type="button" disabled={pending} onClick={() => openManagement({ kind: 'agents' })}><Icon name="settings" width="15" height="15" /><span>{t('composer.agentManage')}</span></button></div>
-			</div> : open === 'agentModel' ? <div className="pd-composer-thinking-options">
+			</div><div className="pd-composer-model-actions"><button type="button" disabled={pending} onClick={() => openManagement({ kind: 'agents' })}><Icon name="settings" width="15" height="15" /><span>{t('composer.agentManage')}</span></button></div></> : open === 'agentModel' ? <div className="pd-composer-thinking-options">
 				{agentModels.length ? agentModels.map((item) => <button key={item.id} data-picker-option type="button" role="menuitemradio" aria-checked={item.id === model} disabled={!canChange} onClick={() => void choose(() => setModel(`acp:${agent!.id}`, item.id))}>{agentChoiceText(item.name, item.description)}{item.id === model && <span aria-hidden="true">✓</span>}</button>)
 					: <p className="pd-composer-agent-note">{t('composer.agentModelsPending')}</p>}
 			</div> : open === 'agentEffort' && effortOption ? <div className="pd-composer-thinking-options">

@@ -1,5 +1,5 @@
 import type { UiAgentConfig, UiAgentModel, UiAgentOption } from '@pidesktop/shared';
-import { refreshAgentSystemProxy } from './agentProxy.ts';
+import { agentProxyProbeUrl, resolveAgentSystemProxy } from './agentProxy.ts';
 import { AcpConnection } from './connection.ts';
 import { parseElicitationForm, type AcpElicitationResponse, type AcpFormRequest } from './elicitation.ts';
 import {
@@ -51,10 +51,9 @@ export interface AcpTurnResult {
 }
 
 /**
- * One desktop conversation driven by an ACP agent. Starts the agent lazily
- * on the first turn, resumes its native session when the agent supports
- * `session/load`, and serializes turns. Some agents can also take input while
- * a turn runs (see `steer`).
+ * One desktop conversation driven by an ACP agent. Starts on demand, resumes
+ * its native session when the agent supports `session/load`, and serializes turns.
+ * Some agents can also take input while a turn runs (see `steer`).
  */
 export class AcpConversation {
 	readonly config: UiAgentConfig;
@@ -260,11 +259,16 @@ export class AcpConversation {
 		const turn = { superseded: false };
 		const permission = new AbortController();
 		try {
+			const sessionId = this.sessionId!;
 			const prefix = [withHistory && this.contextLost ? this.hooks.historyContext() : null, input.contextPrefix].filter(Boolean).join('\n\n');
 			this.running = turn;
 			this.permissionAbort = permission;
-			const result = await this.connection!.request<AcpPromptResult>('session/prompt', { sessionId: this.sessionId, prompt: this.promptBlocks(input, prefix) });
-			this.contextLost = false;
+			const result = await this.connection!.request<AcpPromptResult>('session/prompt', { sessionId, prompt: this.promptBlocks(input, prefix) });
+			if (withHistory && this.contextLost) {
+				this.contextLost = false;
+				this.nativeSessionId = sessionId;
+				this.hooks.onNativeSession(sessionId);
+			}
 			input.onDelivered?.();
 			// Input sent into this turn took over: that turn reports the outcome.
 			if (turn.superseded) return { stopReason: result?.stopReason ?? 'end_turn', superseded: true };
@@ -316,26 +320,24 @@ export class AcpConversation {
 	}
 
 	private ensureSession(): Promise<void> {
+		if (this.starting) return this.starting;
 		if (this.connection?.alive && this.sessionId) return Promise.resolve();
-		if (!this.starting) {
-			this.starting = this.startSession().finally(() => { this.starting = null; });
-		}
+		this.starting = this.startSession().finally(() => { this.starting = null; });
 		return this.starting;
 	}
 
 	private async startSession(): Promise<void> {
 		if (this.disposed) throw new Error('会话已关闭');
-		if (this.config.systemProxy) {
-			// The user may have switched the system proxy since the last start.
-			await refreshAgentSystemProxy();
-			if (this.disposed) throw new Error('会话已关闭');
-		}
+		// The user may have switched the system proxy since the last start.
+		const probe = agentProxyProbeUrl(this.config);
+		const proxy = probe ? await resolveAgentSystemProxy(probe) : null;
+		if (this.disposed) throw new Error('会话已关闭');
 		const connection = AcpConnection.start({
 			command: this.config.command,
 			args: this.config.args,
 			cwd: this.cwd,
 			env: { ...this.config.env, PI_DESKTOP_AGENT: this.config.id },
-			systemProxy: this.config.systemProxy,
+			proxy,
 			onNotification: (method, params) => this.onNotification(method, params),
 			onRequest: (method, params, signal) => this.onRequest(method, params, signal),
 			onExit: ({ expected, code, stderr }) => {
@@ -358,14 +360,15 @@ export class AcpConversation {
 					session = { ...(session ?? {}), sessionId: this.nativeSessionId } as AcpNewSessionResult;
 				} catch { session = null; } finally { this.replaying = false; }
 			}
+			this.contextLost = this.nativeSessionId !== null && !session;
 			if (!session) {
-				// A conversation that existed before cannot be resumed natively: the next
-				// prompt carries the transcript instead.
-				if (this.nativeSessionId) this.contextLost = true;
 				session = await connection.request<AcpNewSessionResult>('session/new', { cwd: this.cwd, mcpServers: [] });
 				if (!session || typeof session.sessionId !== 'string') throw new Error(`${this.config.displayName} 没有返回会话 ID`);
-				this.nativeSessionId = session.sessionId;
-				this.hooks.onNativeSession(session.sessionId);
+				// Keep the old binding until a prompt has delivered its history to the replacement.
+				if (!this.contextLost) {
+					this.nativeSessionId = session.sessionId;
+					this.hooks.onNativeSession(session.sessionId);
+				}
 			}
 			this.sessionId = session.sessionId;
 			this.applySessionSettings(session);
@@ -487,9 +490,11 @@ export class AcpConversation {
 		if (method === 'session/request_permission') {
 			const request = params as AcpRequestPermissionParams;
 			if (!request || !Array.isArray(request.options) || !request.toolCall) throw new AcpRequestError({ code: -32602, message: 'Invalid params' });
+			if (request.sessionId !== this.sessionId || this.replaying || this.disposed) return { outcome: { outcome: 'cancelled' } };
 			const signal = this.permissionAbort ? AbortSignal.any([this.permissionAbort.signal, requestSignal]) : AbortSignal.abort();
 			if (signal.aborted) return { outcome: { outcome: 'cancelled' } };
-			const outcome = await this.hooks.requestPermission(request, signal).catch((): AcpRequestPermissionOutcome => ({ outcome: 'cancelled' }));
+			const permission = this.config.id === 'antigravity' ? { ...request, toolCall: this.assembler.toolForPermission(request.toolCall) } : request;
+			const outcome = await this.hooks.requestPermission(permission, signal).catch((): AcpRequestPermissionOutcome => ({ outcome: 'cancelled' }));
 			return { outcome };
 		}
 		if (method === 'elicitation/create') {

@@ -14,6 +14,7 @@ function installEmptyChatFixture() {
     ask: request => fixture.emit('onExtensionDialog', request),
     answer: (id, value) => { fixture.calls.push({ name: 'respondExtensionDialog', args: [id, value] }); fixture.emit('onExtensionDialogClosed', id); },
   };
+  bridge.respondExtensionDialog = async (id, value) => window.__emptyChatReview.answer(id, value);
   fixture.emitAgent({ ...clone(fixture.snapshot), type: 'ready' });
 }
 
@@ -54,4 +55,33 @@ export default async function extensionInlineScenarios(review) {
   const live = await review.evaluate(cardBox);
   check(live.centerY > 600 && live.bottom <= 988, `active-conversation card stays docked at the bottom (centerY=${live?.centerY}, bottom=${live?.bottom})`);
   await review.screenshot('extension-active-docked');
+
+  const approval = {
+    id: 'agy-command', kind: 'confirm', title: 'Antigravity 请求权限', message: '运行项目测试',
+    approval: { source: 'Antigravity', cwd: 'C:\\review\\project', command: 'npm test', scopes: ['once', 'session', 'workspace'], agentOptions: [
+      { id: 'once', label: 'Allow once', kind: 'allow_once' },
+      { id: 'persist', label: 'Persist to settings', kind: 'allow_always' },
+      { id: 'no', label: 'Deny', kind: 'reject_once' },
+    ] },
+  };
+  await review.evaluate(`window.__emptyChatReview.answer('probe2', false)`);
+  await review.evaluate(`window.__emptyChatReview.ask(${q(approval)})`);
+  await review.waitFor(`document.querySelector('.pd-approval-command')?.textContent === 'npm test'`);
+  await review.screenshot('antigravity-command-approval');
+  await review.assert(`document.querySelector('.pd-agent-approval-options select').value === 'once'`, 'Allow once starts selected, so the common answer is one click');
+  await review.fill('.pd-agent-approval-options select', 'persist');
+  await review.click('.pd-agent-approval-options .is-primary');
+  await review.assert(`window.__modelReview.calls.some(call => call.name === 'respondExtensionDialog' && call.args[0] === 'agy-command' && call.args[1].optionId === 'persist')`, 'The native ACP option keeps its original ID');
+  await review.viewport(600, 560);
+  await review.evaluate(`window.__emptyChatReview.ask(${q({ ...approval, id: 'agy-remember', approval: { ...approval.approval, command: 'npm test\n'.repeat(30) } })})`);
+  await review.waitFor('document.querySelector(".pd-approval-command")?.textContent.length > 200');
+  await review.assert(`(() => { const command = document.querySelector('.pd-approval-command'); const rect = command.getBoundingClientRect(); return command.contains(document.elementFromPoint(rect.left + 12, rect.top + 20)); })()`, 'The top of the command preview is visible when the card opens');
+  await review.assert(`(() => { const actions = document.querySelector('.pd-agent-approval-options'); const body = actions.closest('.pd-extension-request-body'); return body.scrollHeight > body.clientHeight && actions.getBoundingClientRect().bottom <= body.getBoundingClientRect().bottom + 1; })()`, 'The approval actions remain inside the viewport when the command preview scrolls');
+  await review.screenshot('antigravity-command-approval-narrow');
+  await review.clickText('.pd-agent-approval-options button', '在此工作区记住这条命令');
+  await review.assert(`window.__modelReview.calls.some(call => call.name === 'respondExtensionDialog' && call.args[0] === 'agy-remember' && call.args[1].approved && call.args[1].scope === 'workspace')`, 'Remembering a command is a separate user action');
+  await review.evaluate(`window.__emptyChatReview.ask(${q({ ...approval, id: 'agy-decline' })})`);
+  await review.waitFor(`document.querySelector('.pd-approval-command')?.textContent === 'npm test'`);
+  await review.clickText('.pd-agent-approval-options button', '拒绝');
+  await review.assert(`window.__modelReview.calls.some(call => call.name === 'respondExtensionDialog' && call.args[0] === 'agy-decline' && call.args[1].optionId === 'no')`, 'Decline answers with the agent reject option, not a cancelled turn');
 }

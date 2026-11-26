@@ -62,7 +62,7 @@ const resolveSystemProxy = async (url: string): Promise<string> => {
 };
 configureProviderNetwork(resolveSystemProxy);
 // Agent processes (agy, codex, ...) read only proxy variables, not the system setting.
-void configureAgentSystemProxy(resolveSystemProxy);
+configureAgentSystemProxy(resolveSystemProxy);
 
 const agent = new AgentService(
 	(cwd): Promise<ProjectTrustDecision> => askMain({ kind: 'project-trust', cwd }),

@@ -124,7 +124,7 @@ test('sign-in opens only for catalog agents', async () => {
 	await assert.rejects(service.openLogin('missing'), /内置 Agent/);
 });
 
-const { proxyUrlFromResolution, withSystemProxy, configureAgentSystemProxy, refreshAgentSystemProxy } = await import('../packages/agent/src/acp/agentProxy.ts');
+const { proxyUrlFromResolution, withSystemProxy, configureAgentSystemProxy, resolveAgentSystemProxy, agentProxyProbeUrl } = await import('../packages/agent/src/acp/agentProxy.ts');
 
 test('system proxy resolutions become proxy URLs; direct, SOCKS and junk do not', () => {
 	assert.equal(proxyUrlFromResolution('PROXY 127.0.0.1:10808; DIRECT'), 'http://127.0.0.1:10808');
@@ -148,20 +148,52 @@ test('agents get the system proxy as variables unless the user set one', () => {
 	assert.deepEqual(withSystemProxy({ A: '1' }, null, 'win32'), { A: '1' });
 });
 
-test('only agents marked systemProxy (Antigravity) get the system proxy, and a failing resolver keeps the last setting', async () => {
-	assert.deepEqual(BUILTIN_AGENTS.filter((agent) => agent.systemProxy).map((agent) => agent.id), ['antigravity']);
-	const base = Object.fromEntries(Object.entries(process.env).filter(([key]) => !/^(HTTPS?|ALL|NO)_PROXY$/i.test(key)));
-	await configureAgentSystemProxy(async () => 'PROXY 127.0.0.1:10808');
-	assert.equal(withSystemProxy(base).HTTPS_PROXY, 'http://127.0.0.1:10808');
-	assert.equal(withAgentSearchPath(base).HTTPS_PROXY, undefined, 'other agents are left alone');
-	await configureAgentSystemProxy(async () => { throw new Error('boom'); });
-	assert.equal(withSystemProxy(base).HTTPS_PROXY, 'http://127.0.0.1:10808', 'keeps the last known setting');
-	await configureAgentSystemProxy(async () => 'DIRECT');
-	assert.equal(withSystemProxy(base).HTTPS_PROXY, undefined);
-	// A resolver that throws synchronously must not leave later refreshes stuck on a settled promise.
-	let calls = 0;
-	await configureAgentSystemProxy(() => { calls += 1; if (calls === 1) throw new Error('sync boom'); return Promise.resolve('PROXY 127.0.0.1:7890'); });
-	await refreshAgentSystemProxy();
-	assert.equal(calls, 2);
-	assert.equal(withSystemProxy(base).HTTPS_PROXY, 'http://127.0.0.1:7890');
+test('Claude Code and Antigravity resolve system proxy rules for their respective service URLs', async () => {
+	const urls = Object.fromEntries(BUILTIN_AGENTS.filter((agent) => agent.systemProxy).map((agent) => [agent.id, agent.systemProxy]));
+	assert.deepEqual(urls, { 'claude-code': 'https://api.anthropic.com/', antigravity: 'https://www.google.com/' });
+	const lookups = [];
+	configureAgentSystemProxy(async (url) => {
+		lookups.push(url);
+		return url === urls['claude-code'] ? 'PROXY 127.0.0.1:10808' : 'DIRECT';
+	});
+	const [claude, agy, codex, concurrentClaude] = await Promise.all([
+		resolveAgentSystemProxy(urls['claude-code']),
+		resolveAgentSystemProxy(urls.antigravity),
+		resolveAgentSystemProxy(urls.codex),
+		resolveAgentSystemProxy(urls['claude-code']),
+	]);
+	assert.equal(claude, 'http://127.0.0.1:10808');
+	assert.equal(concurrentClaude, claude);
+	assert.equal(agy, null);
+	assert.equal(codex, null);
+	assert.deepEqual(lookups, [urls['claude-code'], urls.antigravity]);
+
+	let resolution;
+	configureAgentSystemProxy((url) => {
+		if (resolution === undefined) throw new Error('proxy lookup failed');
+		return Promise.resolve(resolution);
+	});
+	assert.equal(await resolveAgentSystemProxy(urls['claude-code']), claude);
+	assert.equal(await resolveAgentSystemProxy(urls.antigravity), null, 'the last known proxy is scoped to the URL');
+	resolution = 'PROXY 127.0.0.1:7890';
+	assert.equal(await resolveAgentSystemProxy(urls['claude-code']), 'http://127.0.0.1:7890');
+	resolution = 'DIRECT';
+	assert.equal(await resolveAgentSystemProxy(urls['claude-code']), null);
+});
+
+test('the proxy is resolved for the endpoint the agent really calls (an API relay wins over the vendor URL)', () => {
+	const claude = BUILTIN_AGENTS.find((agent) => agent.id === 'claude-code');
+	const agy = BUILTIN_AGENTS.find((agent) => agent.id === 'antigravity');
+	const codex = BUILTIN_AGENTS.find((agent) => agent.id === 'codex');
+	const none = () => ({});
+	assert.equal(agentProxyProbeUrl(claude, {}, none), 'https://api.anthropic.com/');
+	assert.equal(agentProxyProbeUrl(codex, {}, none), undefined, 'agents without systemProxy get none');
+	// Precedence: Claude Code settings.json env, then the agent env, then ours.
+	assert.equal(agentProxyProbeUrl(claude, { ANTHROPIC_BASE_URL: 'https://ours.example/v1' }, none), 'https://ours.example/');
+	assert.equal(agentProxyProbeUrl({ ...claude, env: { ANTHROPIC_BASE_URL: 'http://agent.example:8080/api' } }, { ANTHROPIC_BASE_URL: 'https://ours.example' }, none), 'http://agent.example:8080/');
+	assert.equal(agentProxyProbeUrl({ ...claude, env: { ANTHROPIC_BASE_URL: 'https://agent.example' } }, {}, () => ({ ANTHROPIC_BASE_URL: 'https://relay.example/x' })), 'https://relay.example/');
+	// Junk or non-HTTP values fall through to the next source.
+	assert.equal(agentProxyProbeUrl(claude, { ANTHROPIC_BASE_URL: 'ftp://x' }, () => ({ ANTHROPIC_BASE_URL: 42 })), 'https://api.anthropic.com/');
+	// Only Claude Code reads ANTHROPIC_BASE_URL.
+	assert.equal(agentProxyProbeUrl(agy, { ANTHROPIC_BASE_URL: 'https://relay.example' }, none), 'https://www.google.com/');
 });

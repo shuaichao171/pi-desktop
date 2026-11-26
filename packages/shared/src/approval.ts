@@ -2,15 +2,19 @@ import { requireElicitationResponse, type UiElicitationForm, type UiElicitationR
 
 /** Display metadata supplied by an extension; it never grants permission by itself. */
 export type UiApprovalScope = 'once' | 'session' | 'workspace';
+/** A native ACP permission option; `kind` lets the card preselect "allow once" and offer a one-click decline. */
+export interface UiAgentApprovalOption { id: string; label: string; kind?: 'allow_once' | 'allow_always' | 'reject_once' | 'reject_always' }
 export interface UiApprovalDetails {
   command?: string;
   cwd?: string;
   files?: Array<{ path: string; diff?: string }>;
   source?: string;
   scopes?: UiApprovalScope[];
+  agentOptions?: UiAgentApprovalOption[];
 }
 export interface UiApprovalDecision { approved: boolean; scope: UiApprovalScope; feedback?: string }
-export type UiExtensionDialogResponse = string | boolean | null | UiApprovalDecision | UiElicitationResponse;
+export interface UiAgentApprovalDecision { optionId: string }
+export type UiExtensionDialogResponse = string | boolean | null | UiApprovalDecision | UiAgentApprovalDecision | UiElicitationResponse;
 
 const SCOPES: UiApprovalScope[] = ['once', 'session', 'workspace'];
 const text = (value: unknown, max: number): value is string => typeof value === 'string' && value.length <= max;
@@ -52,6 +56,10 @@ export function requireDialogResponse(request: { kind: string; options?: string[
     if (typeof value === 'boolean') return { approved: value, scope: 'once' };
     if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('审批结果无效');
     const item = value as Record<string, unknown>;
+    if ('optionId' in item) {
+      if (typeof item.optionId !== 'string' || !request.approval.agentOptions?.some(option => option.id === item.optionId)) throw new Error('审批选项无效');
+      return { optionId: item.optionId };
+    }
     const scopes = request.approval.scopes ?? ['once'];
     if (typeof item.approved !== 'boolean' || !SCOPES.includes(item.scope as UiApprovalScope)
       || (item.approved ? !scopes.includes(item.scope as UiApprovalScope) : item.scope !== 'once')

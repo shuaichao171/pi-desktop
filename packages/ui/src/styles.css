@@ -1087,13 +1087,11 @@ html:has(dialog[open]) .pd-app-shell.is-frameless .pd-settings-overlay::before {
 .pd-agent-mark { display: inline-grid; flex: 0 0 auto; place-items: center; width: 16px; height: 16px; border-radius: 5px; background: var(--pd-brand); color: #fff; font-size: 10px; font-weight: var(--pd-weight-semibold); line-height: 1; }
 /* Same optical lift as .pd-assistant-mark, tuned for the 12px glyph in a 16px box. */
 .pd-agent-mark.is-pi { border: 1px solid var(--pd-mark-border); background: var(--pd-assistant-mark-bg); color: var(--pd-brand); font: 12px Georgia, serif; padding-bottom: 2.5px; align-content: center; }
-.pd-composer-agent-options { min-width: 240px; max-width: 320px; }
 .pd-composer-agent-option { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .pd-composer-agent-option > span:not(.pd-agent-mark) { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pd-composer-agent-option small { flex: 0 0 auto; padding: 1px 6px; border-radius: var(--pd-radius-pill); background: var(--pd-surface-muted, var(--pd-selected)); color: var(--pd-text-subtle); font-size: var(--pd-font-xs); }
 .pd-composer-agent-option small.is-handoff { color: var(--pd-brand); }
 .pd-composer-agent-note { margin: 0 2px 6px; color: var(--pd-text-subtle); font-size: var(--pd-font-xs); line-height: 1.5; }
-.pd-composer-agent-options .pd-composer-model-actions { margin-top: 4px; }
 .pd-composer-model-trigger > span { min-width: 0; padding-block: 1px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pd-model-trigger-icon { display: none; }
 .pd-context-trigger { width: 28px; padding: 0; }
@@ -1113,11 +1111,18 @@ html:has(dialog[open]) .pd-app-shell.is-frameless .pd-settings-overlay::before {
 .pd-composer-config-popover { position: fixed; z-index: var(--pd-z-popover); width: min(360px, calc(100vw - 16px)); max-height: min(440px, calc(100vh - 16px)); overflow-y: auto; padding: 12px; border: 1px solid var(--pd-border); border-radius: var(--pd-radius-lg); background: var(--pd-surface-raised); color: var(--pd-text); box-shadow: var(--pd-shadow-popover); -webkit-app-region: no-drag; }
 .pd-composer-config-popover.is-thinking { width: min(190px, calc(100vw - 16px)); }
 .pd-composer-config-popover.is-agentModel, .pd-composer-config-popover.is-agentEffort, .pd-composer-config-popover.is-agentOptions { width: min(320px, calc(100vw - 16px)); }
+.pd-composer-config-popover:is(.is-agent, .is-agentModel, .is-agentEffort, .is-agentOptions) { display: flex; flex-direction: column; overflow: hidden; }
+.pd-composer-config-popover:is(.is-agent, .is-agentModel, .is-agentEffort, .is-agentOptions) > .pd-composer-picker-head { flex: none; }
+.pd-composer-config-popover:is(.is-agent, .is-agentModel, .is-agentEffort, .is-agentOptions) > .pd-composer-thinking-options { min-height: 0; overflow: hidden auto; overscroll-behavior: contain; scrollbar-width: thin; }
+.pd-composer-config-popover:is(.is-agent, .is-agentModel, .is-agentEffort, .is-agentOptions) .pd-composer-thinking-options button { flex: 0 0 auto; }
 .pd-composer-agent-choice { display: flex; flex-direction: column; gap: 1px; min-width: 0; padding-block: 5px; }
+.pd-composer-agent-choice > :is(strong, small) { overflow-wrap: anywhere; }
 .pd-composer-agent-choice > small { color: var(--pd-text-subtle); font-size: var(--pd-font-xs); line-height: 1.35; white-space: normal; }
 .pd-composer-agent-setting { display: flex; flex-direction: column; gap: 2px; }
 .pd-composer-agent-setting + .pd-composer-agent-setting { margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--pd-border); }
-.pd-composer-agent-setting > .pd-composer-provider-heading { padding: 2px 9px 4px; }
+.pd-composer-agent-setting > .pd-composer-provider-heading { flex: 0 0 auto; min-height: 24px; padding: 2px 9px 4px; }
+.pd-composer-agent-effort-trigger { flex: 0 1 auto; min-width: 42px; max-width: 132px; }
+.pd-composer-agent-effort-trigger > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .pd-composer-agent-options-trigger { padding-inline: 7px; }
 .pd-composer-config-popover.is-model { display: flex; flex-direction: column; width: min(560px, calc(100vw - 16px)); max-height: min(600px, calc(100vh - 16px)); }
 .pd-composer-config-popover.is-model > .pd-composer-picker-head,
@@ -1201,6 +1206,8 @@ html:has(dialog[open]) .pd-app-shell.is-frameless .pd-settings-overlay::before {
   .pd-composer-toolbar { gap: 5px; }
   .pd-composer-model-trigger { max-width: 110px; }
   .pd-composer-control { padding-inline: 4px; }
+  .pd-composer-agent-effort-trigger { min-width: 28px; }
+  .pd-composer-agent-effort-trigger > :is(span, svg:last-child) { display: none; }
   .pd-composer-actions { gap: 3px; }
 }
 

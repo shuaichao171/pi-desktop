@@ -223,9 +223,14 @@ test('a resumed conversation loads the native session when supported, otherwise 
 	const lost = recorder();
 	const fresh = new AcpConversation(fakeConfig(), process.cwd(), 'old-session', lost.hooks);
 	try {
+		await fresh.warmup();
+		assert.equal(lost.state.models.current, 'fake-large');
+		assert.deepEqual(lost.state.native, [], 'warming up a replacement keeps the original binding');
+		assert.equal((await fresh.prompt({ text: 'auth' })).stopReason, 'error');
+		assert.deepEqual(lost.state.native, [], 'a failed prompt leaves the original binding intact');
 		await fresh.prompt({ text: 'next' });
 		assert.deepEqual(lost.state.native, ['fake-session']);
-		const reply = lost.persisted.find((message) => message.role === 'assistant');
+		const reply = lost.persisted.findLast((message) => message.role === 'assistant' && message.content.some((part) => part.type === 'text' && part.text.startsWith('blocks=')));
 		assert.match(reply.content.find((part) => part.type === 'text').text, /^blocks=2 /, 'the transcript travels ahead of the prompt');
 	} finally { await fresh.dispose(); }
 });

@@ -71,6 +71,35 @@ export default async function agentsScenarios(review) {
   await review.waitFor('window.__modelReview.calls.some(call => call.name === "setAgentOption" && call.args[0] === "mode" && call.args[1] === "read-only")');
   await review.key('Escape');
 
+  await review.viewport(680, 520);
+  await review.evaluate(`(() => {
+    const state = window.__modelReview, s = state.snapshot;
+    s.agent = { ...s.agent, options: s.agent.options.map(option => ({ ...option, values: option.values.map(value => ({ ...value, name: option.category === 'thought_level' ? value.name.repeat(28) : value.name })) })).concat(
+      Array.from({length: 9}, (_, index) => ({ id: 'extra-' + index, name: 'Extra option ' + index, currentValue: 'off', values: [{ value: 'off', name: 'Off' }, { value: 'on', name: 'Enable ' + 'LongValue'.repeat(18) }] }))) };
+    state.emitAgent({ type: 'model', agent: s.agent, model: s.model, modelName: s.modelName, modelProvider: s.modelProvider, thinkingLevel: s.thinkingLevel, availableThinkingLevels: s.availableThinkingLevels, contextUsage: null });
+  })()`);
+  await review.click('.pd-composer-agent-options-trigger');
+  await review.waitFor('Boolean(document.querySelector(".is-agentOptions [data-option-id=extra-8]"))');
+  await review.assert(`(() => { const gear = document.querySelector('.pd-composer-agent-options-trigger').getBoundingClientRect(); const send = document.querySelector('.pd-send-button').getBoundingClientRect(); return gear.right <= send.left && send.right <= innerWidth; })()`, 'A long reasoning label leaves the Agent options and send controls visible');
+  await review.evaluate(`(() => { const list = document.querySelector('.is-agentOptions .pd-composer-thinking-options'); list.scrollTop = list.scrollHeight; })()`);
+  await review.assert(`(() => { const popup = document.querySelector('.is-agentOptions'); const list = popup.querySelector('.pd-composer-thinking-options'); const close = popup.querySelector('.pd-composer-picker-head button'); const rect = close.getBoundingClientRect(); return list.scrollTop > 0 && close.contains(document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2)); })()`, 'The close button stays clickable when the Agent options list scrolls');
+  await review.screenshot('agents-acp-options-narrow');
+  await review.click('.is-agentOptions [data-option-id=extra-8] [data-option-value=on]');
+  await review.waitFor('window.__modelReview.calls.some(call => call.name === "setAgentOption" && call.args[0] === "extra-8" && call.args[1] === "on")');
+  const agentCount = await review.evaluate(`(() => {
+    const agents = window.__modelReview.agents, count = agents.length;
+    const template = agents.find(agent => agent.id === 'review-agent');
+    for (let index = 0; index < 12; index += 1) agents.push({ ...template, id: 'extra-agent-' + index, displayName: 'Extra Agent ' + index });
+    return count;
+  })()`);
+  await review.click(trigger);
+  await review.waitFor('Boolean(document.querySelector(".is-agent [data-agent-id=extra-agent-11]"))');
+  await review.evaluate(`(() => { const list = document.querySelector('.is-agent .pd-composer-agent-options'); list.scrollTop = list.scrollHeight; })()`);
+  await review.assert(`(() => { const list = document.querySelector('.is-agent .pd-composer-agent-options'); const manage = document.querySelector('.is-agent .pd-composer-model-actions button'); const rect = manage.getBoundingClientRect(); return list.scrollTop > 0 && manage.contains(document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2)); })()`, 'Manage Agents stays visible when the Agent list scrolls');
+  await review.key('Escape');
+  await review.evaluate(`window.__modelReview.agents.splice(${agentCount})`);
+  await review.viewport(1440, 1000);
+
   // While an external agent replies, the composer keeps the draft instead of queueing it.
   await review.evaluate('window.__modelReview.snapshot.status = "busy"; window.__modelReview.emitAgent({type:"status",status:"busy"})');
   await review.waitFor('document.querySelector(".pd-composer-shell textarea")?.placeholder.includes("Claude Code 回复中")');
@@ -105,6 +134,8 @@ export default async function agentsScenarios(review) {
   await review.assert('document.querySelector("[data-agent-quota=antigravity]").textContent.includes("Gemini Models · 5 小时额度") && document.querySelector("[data-agent-quota=antigravity]").textContent.includes("Claude and GPT models · 每周额度")', 'Agents with several limit groups name the group of each window');
   await review.evaluate('document.querySelector("[data-agent-quota=antigravity]").scrollIntoView({ block: "center" })');
   await review.screenshot('agents-settings-antigravity-quota');
+  await review.clickText('[data-settings-page=agents] footer button', '清除已记住的命令');
+  await review.waitFor('window.__modelReview.calls.some(call => call.name === "clearAntigravityCommandApprovals") && [...document.querySelectorAll("[data-settings-page=agents] [role=status]")].some(status => status.textContent.includes("已清除"))');
   await review.evaluate('document.querySelector("[data-settings-page=agents] .pd-mcp-server").scrollIntoView({ block: "start" })');
   await review.click('[data-agent-quota=claude-code] button');
   await review.waitFor('window.__modelReview.calls.some(call => call.name === "readAgentQuota" && call.args[0] === "claude-code" && call.args[1] === true)');

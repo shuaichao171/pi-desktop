@@ -9,9 +9,12 @@
 // FAKE_ACP_STEER=1: a prompt sent while "slow" runs ends that turn (end_turn) and is
 // handled next, like Antigravity.
 import { createInterface } from 'node:readline';
+import { join } from 'node:path';
 
 const loadSupported = process.env.FAKE_ACP_LOAD === '1';
 const steerSupported = process.env.FAKE_ACP_STEER === '1';
+const antigravityCommands = process.env.FAKE_ACP_AGY_COMMANDS === '1';
+let cwd = process.cwd();
 const codexVersion = process.env.FAKE_ACP_CODEX_VERSION;
 // FAKE_ACP_ACCEPT_EDITS=1: the mode lists also offer an "accept edits" mode.
 const acceptEdits = process.env.FAKE_ACP_ACCEPT_EDITS === '1' ? [{ value: 'acceptEdits', name: 'Accept edits' }] : [];
@@ -86,21 +89,27 @@ async function prompt(id, params) {
 	update(sessionId, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: `blocks=${blocks.length} ` } });
 	update(sessionId, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'Hello' } });
 	update(sessionId, { sessionUpdate: 'plan', entries: [{ content: 'Run tests', status: 'in_progress', priority: 'high' }] });
-	update(sessionId, { sessionUpdate: 'tool_call', toolCallId: 'call-1', title: 'Run tests', kind: 'execute', status: 'pending', rawInput: { command: 'npm test' } });
+	const toolCall = { toolCallId: 'call-1', title: 'Run tests', kind: 'execute', rawInput: antigravityCommands ? {
+		CommandLine: text.includes('different-command') ? 'npm test -- --watch' : 'npm test',
+		Cwd: text.includes('different-directory') ? join(cwd, 'subdirectory') : text.includes('outside-directory') ? join(cwd, '..') : cwd,
+		WaitMsBeforeAsync: 5000,
+	} : { command: 'npm test' } };
+	update(sessionId, { sessionUpdate: 'tool_call', ...toolCall, status: 'pending' });
 	const answer = await ask('session/request_permission', {
 		sessionId,
-		toolCall: { toolCallId: 'call-1', title: 'Run tests', kind: 'execute', rawInput: { command: 'npm test' } },
+		toolCall: antigravityCommands ? { toolCallId: toolCall.toolCallId } : toolCall,
 		options: [
 			...(text.includes('always-only') ? [] : [{ optionId: 'yes', name: 'Allow', kind: 'allow_once' }]),
 			{ optionId: 'always', name: 'Always allow', kind: 'allow_always' },
+			...(antigravityCommands || text.includes('always-only') ? [{ optionId: 'persist', name: 'Persist to settings', kind: 'allow_always' }] : []),
 			{ optionId: 'no', name: 'Reject', kind: 'reject_once' },
 		],
 	});
 	const allowed = answer?.outcome?.outcome === 'selected' && answer.outcome.optionId !== 'no';
 	update(sessionId, allowed
-		? { sessionUpdate: 'tool_call_update', toolCallId: 'call-1', status: 'completed', content: [{ type: 'content', content: { type: 'text', text: 'all tests passed' } }] }
+		? { sessionUpdate: 'tool_call_update', toolCallId: 'call-1', status: 'completed', content: [{ type: 'content', content: { type: 'text', text: text.includes('always-only') ? `Selected: ${answer.outcome.optionId}` : 'all tests passed' } }] }
 		: { sessionUpdate: 'tool_call_update', toolCallId: 'call-1', status: 'failed', content: [{ type: 'content', content: { type: 'text', text: 'rejected by user' } }] });
-	update(sessionId, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: allowed ? 'Done.' : 'Skipped.' } });
+	update(sessionId, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: antigravityCommands ? `Selected: ${answer?.outcome?.optionId ?? 'cancelled'}` : allowed ? 'Done.' : 'Skipped.' } });
 	send({ id, result: { stopReason: 'end_turn' } });
 }
 
@@ -116,6 +125,7 @@ createInterface({ input: process.stdin }).on('line', (line) => {
 			} });
 			return;
 		case 'session/new':
+			cwd = message.params.cwd;
 			send({ id: message.id, result: { sessionId: 'fake-session', ...sessionSettings() } });
 			update('fake-session', { sessionUpdate: 'available_commands_update', availableCommands: [{ name: 'review', description: 'Review changes', input: { hint: 'scope' } }] });
 			return;

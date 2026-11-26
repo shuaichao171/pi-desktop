@@ -62,7 +62,7 @@ export interface CuaScopeStorage {
 }
 
 /** Scope keys never come from conversation text. Each file is independently atomic. */
-export class CuaScopeStore implements CuaScopeStorage {
+export class LocalScopeStore implements CuaScopeStorage {
 	private readonly root: string;
 	constructor(root: string) {
 		this.root = root;
@@ -81,3 +81,5 @@ export class CuaScopeStore implements CuaScopeStorage {
 		for (const file of files) if (/^[a-f0-9]{64}\.json$/.test(file)) rmSync(join(this.root, file), { force: true });
 	}
 }
+
+export { LocalScopeStore as CuaScopeStore };

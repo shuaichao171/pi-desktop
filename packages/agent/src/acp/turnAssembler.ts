@@ -134,7 +134,7 @@ export function toolCommand(rawInput: unknown): string | undefined {
 	return undefined;
 }
 
-interface OpenTool { name: string; args: Record<string, unknown> }
+interface OpenTool { name: string; args: Record<string, unknown>; call: AcpToolCall }
 
 export class AcpTurnAssembler {
 	private readonly cwd: string;
@@ -150,6 +150,7 @@ export class AcpTurnAssembler {
 	}
 
 	get hasOpenTools(): boolean { return this.tools.size > 0; }
+	toolForPermission(call: AcpToolCall): AcpToolCall { return { ...this.tools.get(call.toolCallId)?.call, ...call }; }
 
 	userMessage(text: string, images: PiImageContent[] = []): AssemblerOutput {
 		const message: PiUserMessage = {
@@ -269,7 +270,7 @@ export class AcpTurnAssembler {
 		const message = this.ensureAssistant(out);
 		message.content.push({ type: 'toolCall', id: call.toolCallId, name, arguments: args });
 		this.closeAssistant(out, 'toolUse');
-		this.tools.set(call.toolCallId, { name, args });
+		this.tools.set(call.toolCallId, { name, args, call });
 		out.events.push({ type: 'tool_execution_start', toolCallId: call.toolCallId, toolName: name, args });
 		if (call.status === 'completed' || call.status === 'failed') this.updateTool(out, call);
 	}
@@ -289,6 +290,7 @@ export class AcpTurnAssembler {
 			this.tools.delete(call.toolCallId);
 			return;
 		}
+		tool.call = { ...tool.call, ...call };
 		if (text) out.events.push({ type: 'tool_execution_update', toolCallId: call.toolCallId, toolName: tool.name, args: tool.args, partialResult: { content: [{ type: 'text', text }] } });
 	}
 

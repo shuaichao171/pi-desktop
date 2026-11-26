@@ -107,10 +107,9 @@ export interface UiAgentConfig {
 	 */
 	steer?: boolean;
 	/**
-	 * The agent reads its proxy only from HTTP(S)_PROXY, not the system setting, so
-	 * the app hands the system proxy down as variables (built-in agents only).
+	 * URL used to resolve the system proxy to pass as HTTP(S)_PROXY (built-in agents only).
 	 */
-	systemProxy?: boolean;
+	systemProxy?: string;
 	/** A community-maintained ACP adapter rather than the agent vendor's own (shown as such). */
 	community?: boolean;
 	/** Requirements or caveats shown on the agent's settings card. */
@@ -215,6 +214,7 @@ export interface AgentRuntimeFeaturesBridge {
 	probeAgents(): Promise<UiAgentStatus[]>;
 	saveAgent(request: UiAgentSaveRequest): Promise<UiAgentStatus[]>;
 	removeAgent(id: string): Promise<UiAgentStatus[]>;
+	clearAntigravityCommandApprovals(): Promise<void>;
 	/** Choose the agent of the open conversation; allowed only before its first message. */
 	setSessionAgent(agentId: string): Promise<void>;
 	/** Continue the open conversation in another agent: opens a new conversation carrying its context. */
@@ -243,6 +243,7 @@ export const AGENT_RUNTIME_CHANNELS = {
 	probeAgents: 'agents:probe',
 	saveAgent: 'agents:save',
 	removeAgent: 'agents:remove',
+	clearAntigravityCommandApprovals: 'agents:clear-antigravity-command-approvals',
 	setSessionAgent: 'agents:set-session-agent',
 	handoffToAgent: 'agents:handoff',
 	setAgentOption: 'agents:set-option',

@@ -25,6 +25,7 @@ export const BUILTIN_AGENTS: readonly UiAgentConfig[] = [
 	builtin({ id: 'claude-code', displayName: 'Claude Code', command: 'claude-agent-acp', args: [], accentColor: '#D97757',
 		installer: { kind: 'npm', package: '@agentclientprotocol/claude-agent-acp' },
 		login: { command: 'claude-agent-acp', args: ['--cli'] }, loginHint: '在 设置 → Agents 中点击“在终端中登录”，在打开的 Claude Code 里输入 /login 完成登录',
+		systemProxy: 'https://api.anthropic.com/',
 		quota: 'claude',
 		homepage: 'https://github.com/agentclientprotocol/claude-agent-acp' }),
 	builtin({ id: 'codex', displayName: 'Codex', command: 'codex-acp', args: [], accentColor: '#10A37F',
@@ -39,7 +40,7 @@ export const BUILTIN_AGENTS: readonly UiAgentConfig[] = [
 		// Verified with agy 1.5.17: a prompt sent mid-turn ends the running one and continues.
 		steer: true,
 		// A Go binary: it uses HTTP(S)_PROXY only, so without TUN it cannot reach Google.
-		systemProxy: true,
+		systemProxy: 'https://www.google.com/',
 		quota: 'antigravity',
 		homepage: 'https://antigravity.google/docs/ide/extensions/acp/' }),
 	builtin({ id: 'gemini', displayName: 'Gemini CLI', command: 'gemini', args: ['--experimental-acp'], accentColor: '#4285F4',

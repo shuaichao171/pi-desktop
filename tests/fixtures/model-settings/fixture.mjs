@@ -126,6 +126,7 @@ export function installModelSettingsFixture(options = {}) {
       return { agentId, ok: true, queriedAt: now, windows: [] };
     },
     removeAgent: (id) => { state.agents = state.agents.filter((agent) => agent.id !== id || agent.builtin); return clone(state.agents); },
+    clearAntigravityCommandApprovals: () => undefined,
     setSessionAgent: (agentId) => {
       const config = state.agents.find((agent) => agent.id === agentId);
       const agent = agentId === 'pi'

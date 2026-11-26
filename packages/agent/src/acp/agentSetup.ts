@@ -3,7 +3,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { UiAgentConfig, UiAgentInstaller } from '@pidesktop/shared';
-import { refreshAgentSystemProxy, withSystemProxy } from './agentProxy.ts';
+import { agentProxyProbeUrl, resolveAgentSystemProxy, withSystemProxy } from './agentProxy.ts';
 import { BUILTIN_AGENTS, installerCommandLine } from './agentRegistry.ts';
 import { resolveCommand, spawnResolved, withAgentSearchPath } from './command.ts';
 
@@ -106,12 +106,9 @@ export async function openAgentLoginTerminal(agent: UiAgentConfig, platform: Nod
 	const login = agent.login;
 	if (!login) throw new Error(`${agent.displayName} 没有可在终端中运行的登录命令`);
 	if (![login.command, ...login.args].every((token) => SAFE_TOKEN.test(token))) throw new Error('登录命令无效');
-	let env = withAgentSearchPath({ ...process.env, ...agent.env });
-	if (agent.systemProxy) {
-		// Sign-in pages and token exchanges go through the same proxy as the sessions.
-		await refreshAgentSystemProxy();
-		env = withSystemProxy(env);
-	}
+	const proxy = await resolveAgentSystemProxy(agentProxyProbeUrl(agent));
+	const base = withAgentSearchPath({ ...process.env, ...agent.env });
+	const env = withSystemProxy(base, proxy, platform);
 	const resolved = resolveCommand(login.command, env);
 	if (!resolved) throw new Error(`未找到命令 ${login.command}，请先安装 ${agent.displayName}`);
 
@@ -143,7 +140,11 @@ export async function openAgentLoginTerminal(agent: UiAgentConfig, platform: Nod
 		return;
 	}
 
-	const line = `${[resolved, ...login.args].map(shellQuote).join(' ')}; echo; echo 'Sign-in command finished. Return to Pi Desktop and check again.'`;
+	// A terminal opened by an existing GUI process may not inherit our environment.
+	// Carry only the automatic proxy assignments into the shell command.
+	const proxyVars = Object.entries(env).filter(([name, value]) => base[name] !== value);
+	const command = proxyVars.length ? ['/usr/bin/env', ...proxyVars.map(([name, value]) => `${name}=${value}`), resolved, ...login.args] : [resolved, ...login.args];
+	const line = `${command.map(shellQuote).join(' ')}; echo; echo 'Sign-in command finished. Return to Pi Desktop and check again.'`;
 	if (platform === 'darwin') {
 		await waitForSpawn(spawn('osascript', [
 			'-e', 'on run argv', '-e', 'tell application "Terminal" to do script (item 1 of argv)', '-e', 'tell application "Terminal" to activate', '-e', 'end run',

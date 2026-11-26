@@ -1413,6 +1413,7 @@ export function registerIpc(options: {
 		return agentFor(event).readAgentQuota(id, refresh === true);
 	});
 	handleRendererInvoke(AGENT_RUNTIME_CHANNELS.saveAgent, (event, request: unknown) => agentFor(event).saveAgent(requireAgentSaveRequest(request)));
+	handleRendererInvoke(AGENT_RUNTIME_CHANNELS.clearAntigravityCommandApprovals, (event) => agentFor(event).clearAntigravityCommandApprovals());
 	handleRendererInvoke(AGENT_RUNTIME_CHANNELS.removeAgent, (event, id: unknown) => {
 		if (!isValidAgentId(id)) throw new Error('Agent 参数无效');
 		return agentFor(event).removeAgent(id);
@@ -1429,7 +1430,7 @@ export function registerIpc(options: {
 	// app-wide, outlive a workspace switch, and take only a built-in agent id.
 	// Sign-in terminals of agents marked `systemProxy` get the system proxy as variables.
 	// Loaded lazily like agentClient's resolve-proxy; a failed lookup keeps the last known setting.
-	void configureAgentSystemProxy(async (url) => (await import('electron')).session.defaultSession.resolveProxy(url));
+	configureAgentSystemProxy(async (url) => (await import('electron')).session.defaultSession.resolveProxy(url));
 	const installs = agentInstalls ??= new AgentInstallService((state) => broadcastToRenderers(AGENT_RUNTIME_CHANNELS.agentInstallEvent, state, (win) => !isPaiWindow(win)));
 	const requireAgentId = (id: unknown): string => { if (!isValidAgentId(id)) throw new Error('Agent 参数无效'); return id; };
 	handleRendererInvoke(AGENT_RUNTIME_CHANNELS.installAgent, (_event, id: unknown) => installs.start(requireAgentId(id)));

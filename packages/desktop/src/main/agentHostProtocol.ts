@@ -22,6 +22,7 @@ export const AGENT_HOST_METHODS = [
  'searchSessionsPage', 'searchProjectFiles', 'rebuildSearchIndex', 'cancelDataSearch', 'getProjectSearchRules', 'setProjectSearchRules',
  'testProviderModel', 'cancelProviderModelTest', 'getProjectDefaults', 'saveProjectDefaults', 'queryProviderUsage', 'saveProviderUsageQuery', 'resetProvider',
 	'listAgents', 'probeAgents', 'saveAgent', 'removeAgent', 'setSessionAgent', 'handoffToAgent', 'setAgentOption', 'readAgentQuota',
+	'clearAntigravityCommandApprovals',
 	'getPersonalization',
 	'saveInstruction',
 	'init',

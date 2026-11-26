@@ -8,7 +8,7 @@ await scenarios({
   waitFor: async (expression) => { compile(expression); },
   assert: async (expression) => { compile(expression); },
   record: async (_name, expression) => { compile(expression); },
-  click: async () => {}, clickText: async () => {}, fill: async () => {},
+  click: async () => {}, clickText: async () => {}, fill: async () => {}, mouseMove: async () => {},
   screenshot: async () => {}, viewport: async () => {}, settle: async () => {},
 });
 new Function(`(${installModelSettingsFixture.toString()})({});`);

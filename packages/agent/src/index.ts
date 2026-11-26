@@ -130,7 +130,8 @@ import { ModelTestService } from './modelTest.ts';
 import { ProjectDefaultsService } from './projectDefaults.ts';
 import { McpManager } from './mcpManager.ts';
 import { CuaSessionState, cuaExtension } from './cua/index.ts';
-import { CuaPermissionStore, CuaScopeStore } from './cua/permissions.ts';
+import { CuaPermissionStore, CuaScopeStore, LocalScopeStore } from './cua/permissions.ts';
+import { antigravityCommandApproval, ANTIGRAVITY_COMMAND_APPROVALS } from './acp/commandApproval.ts';
 import { createInterruptibleShellTools, shellRunRegistry } from './shellInterrupt.ts';
 import { backgroundTaskManager, createBackgroundTaskTool } from './backgroundTasks.ts';
 import type { UiMcpSaveRequest, UiMcpTarget } from '../../shared/src/mcpFeatures.ts';
@@ -173,6 +174,17 @@ const READY_HISTORY_LIMIT = 400;
 export const HISTORY_ATTACHMENT_BUDGET = 8 * 1024 * 1024;
 const HISTORY_PAGE_MAX = 500;
 const MAX_LOADED_CONTEXTS = 12;
+/**
+ * How long a conversation must stay on screen before its external agent starts.
+ * Starting one runs `session/load`, which replays the whole history, so flicking
+ * through old agent conversations must not start one process per conversation.
+ */
+const AGENT_WARMUP_DELAY_MS = 800;
+
+/** Remembered Antigravity command approvals; the one store both granting and clearing use. */
+function antigravityCommandGrants(): LocalScopeStore {
+	return new LocalScopeStore(join(getAgentDir(), ANTIGRAVITY_COMMAND_APPROVALS));
+}
 const TEXT_ATTACHMENT_MARKER = '\n\n<!-- pi-desktop:attachments-v1 -->\n';
 /** Custom-entry type carrying plugin ui.notify notices as inline system rows. */
 export const EXTENSION_NOTICE_CUSTOM_TYPE = 'extension-notice';
@@ -1834,9 +1846,24 @@ class SingleAgentService {
 		if (!session || this.agentBindingSession === session) return;
 		await this.releaseAgent();
 		this.agentBindingSession = session;
-		const binding = readAgentBinding(session.sessionManager.getEntries());
+		const entries = session.sessionManager.getEntries();
+		const binding = readAgentBinding(entries);
 		if (!binding || binding.agentId === PI_AGENT_ID) return;
 		this.agentBinding = { agentId: binding.agentId, config: this.agents.get(binding.agentId) ?? null, nativeSessionId: binding.nativeSessionId ?? null };
+		this.acpModelId = readAgentSettings(entries)?.model ?? null;
+		if (this.acpModelId) return;
+		// Older sessions may only have a model ID on their ACP replies.
+		const provider = `acp:${binding.agentId}`;
+		const agentName = this.agentName();
+		const branch = session.sessionManager.getBranch();
+		for (let index = branch.length - 1; index >= 0; index -= 1) {
+			const entry = branch[index]!;
+			if (entry.type !== 'message' || entry.message.role !== 'assistant' || entry.message.provider !== provider) continue;
+			const model = entry.message.model;
+			if (typeof model !== 'string' || !model || model === agentName) continue;
+			this.acpModelId = model;
+			break;
+		}
 	}
 
 	private async releaseAgent(): Promise<void> {
@@ -1879,8 +1906,7 @@ class SingleAgentService {
 		await conversation?.dispose().catch(() => {});
 		if (!this.agentBinding || !this.runtime || this.acp || this.lifecycleOperation) return;
 		this.fireReady(true);
-		const config = this.agents.get(this.agentBinding.agentId);
-		if (config?.enabled) this.warmupAgent();
+		this.warmupAgent();
 	}
 
 	/** Choose the conversation's agent before its first message; afterwards it is locked. */
@@ -1901,18 +1927,24 @@ class SingleAgentService {
 		this.agentBindingSession = null;
 		await this.bindAgent();
 		this.fireReady();
+		// An explicit choice: start right away so a missing install or sign-in surfaces now.
 		this.warmupAgent();
 	}
 
 	/**
-	 * Start the bound external agent ahead of the first prompt: its models and commands
-	 * appear right away, and a missing install or sign-in surfaces immediately.
+	 * Start the visible conversation's external agent so its live models and commands
+	 * arrive without holding up conversation navigation.
 	 */
 	warmupAgent(): void {
 		const session = this.runtime?.session;
-		if (!session || !this.agentBinding) return;
-		try { void this.ensureAcp(session).warmup().catch((error: unknown) => this.fireError(error)); }
-		catch (error) { this.fireError(error); }
+		const binding = this.agentBinding;
+		if (!session || !binding || this.acp || this.closing || !this.agents.get(binding.agentId)?.enabled) return;
+		try {
+			const conversation = this.ensureAcp(session);
+			void conversation.warmup().catch((error: unknown) => {
+				if (this.runtime?.session === session && this.acp === conversation) this.fireError(error);
+			});
+		} catch (error) { this.fireError(error); }
 	}
 
 	private ensureAcp(session: PiRuntime['session']): AcpConversation {
@@ -1987,12 +2019,21 @@ class SingleAgentService {
 
 	/** ACP permission options shown on the desktop approval card. */
 	private async requestAgentPermission(config: UiAgentConfig, params: AcpRequestPermissionParams, signal: AbortSignal): Promise<AcpRequestPermissionOutcome> {
-		const options = params.options.filter((option) => option && typeof option.optionId === 'string');
+		if (signal.aborted) return { outcome: 'cancelled' };
+		const options = params.options.filter((option) => option && typeof option.optionId === 'string' && option.optionId.length > 0
+			&& ['allow_once', 'allow_always', 'reject_once', 'reject_always'].includes(option.kind));
+		if (new Set(options.map((option) => option.optionId)).size !== options.length) return { outcome: 'cancelled' };
 		const allowOnce = options.find((option) => option.kind === 'allow_once');
 		const allowAlways = options.find((option) => option.kind === 'allow_always');
 		const reject = options.find((option) => option.kind === 'reject_once') ?? options.find((option) => option.kind === 'reject_always');
 		const call = params.toolCall ?? { toolCallId: '' };
-		const command = toolCommand(call.rawInput);
+		const remembered = allowOnce && antigravityCommandApproval(config, this.cwd, call);
+		const grants = remembered ? antigravityCommandGrants() : null;
+		if (remembered && grants && allowOnce) {
+			try { if (grants.isAllowed(remembered.key)) return { outcome: 'selected', optionId: allowOnce.optionId }; }
+			catch { /* An unreadable grant does not authorize a command. */ }
+		}
+		const command = remembered?.command ?? toolCommand(call.rawInput);
 		const files = (Array.isArray(call.content) ? call.content : [])
 			.filter((item): item is { type: 'diff'; path: string; oldText?: string | null; newText: string } => !!item && item.type === 'diff' && typeof (item as { path?: unknown }).path === 'string')
 			.slice(0, 20)
@@ -2001,16 +2042,29 @@ class SingleAgentService {
 		// "once" choice that would have to be answered with a permanent grant.
 		const scopes: UiApprovalScope[] = [...(allowOnce ? ['once' as const] : []), ...(allowAlways ? ['session' as const] : [])];
 		if (!scopes.length) scopes.push('once');
+		if (remembered) scopes.push('workspace');
+		const agentOptions = options.map((option) => ({ id: option.optionId,
+			label: typeof option.name === 'string' && option.name.trim() ? option.name : option.optionId,
+			kind: option.kind,
+		}));
 		let approval: UiApprovalDetails;
 		try {
-			approval = { ...requireApprovalDetails({ source: config.displayName, cwd: this.cwd, ...(command ? { command: command.slice(0, 32000) } : {}), ...(files.length ? { files } : {}) }), scopes };
+			approval = { ...requireApprovalDetails({ source: config.displayName, cwd: remembered?.cwd ?? this.cwd, ...(command ? { command: command.slice(0, 32000) } : {}), ...(files.length ? { files } : {}) }), scopes, agentOptions };
 		} catch {
-			approval = { source: config.displayName, scopes };
+			approval = { source: config.displayName, scopes: scopes.filter((scope) => scope !== 'workspace'), agentOptions };
 		}
 		const dialog: UiExtensionDialogRequest = { id: randomUUID(), kind: 'confirm', title: config.displayName + ' 请求权限', message: call.title || '执行操作', approval };
 		const response = requireDialogResponse(dialog, await this.requestExtensionDialog(dialog, signal));
-		if (response === null) return { outcome: 'cancelled' };
+		if (response === null || signal.aborted) return { outcome: 'cancelled' };
+		if (typeof response === 'object' && 'optionId' in response) return { outcome: 'selected', optionId: response.optionId };
 		const decision = typeof response === 'object' && 'approved' in response ? response : { approved: response === true, scope: 'once' as const };
+		if (decision.approved && decision.scope === 'workspace' && remembered && grants && allowOnce) {
+			try { grants.allow(remembered.key); }
+			catch {
+				void this.requestExtensionDialog({ id: randomUUID(), kind: 'notify', title: '无法保存命令授权，本次仍会执行', notificationType: 'warning' }).catch(() => {});
+			}
+			return { outcome: 'selected', optionId: allowOnce.optionId };
+		}
 		const option = decision.approved
 			? (decision.scope === 'once' ? allowOnce : allowAlways)
 			: reject;
@@ -3060,6 +3114,7 @@ export class AgentService {
 	private readonly providerResync = new Set<string>();
 	private providerResyncRun: Promise<void> | null = null;
 	private providerResyncTimer: ReturnType<typeof setTimeout> | null = null;
+	private agentWarmupTimer: ReturnType<typeof setTimeout> | null = null;
 	private readonly providerResyncWaiters = new Set<{ provider: string; resolve: () => void; reject: (error: Error) => void }>();
 	/** Save counter; a running pass compares it to know whether its file snapshot is stale. */
 	private providerResyncRevision = 0;
@@ -3865,6 +3920,8 @@ export class AgentService {
 		this.pluginReloadTimer = null;
 		if (this.providerResyncTimer) clearTimeout(this.providerResyncTimer);
 		this.providerResyncTimer = null;
+		if (this.agentWarmupTimer) clearTimeout(this.agentWarmupTimer);
+		this.agentWarmupTimer = null;
 		this.failProviderResyncWaiters(new Error('应用正在退出'));
 		await Promise.allSettled([...this.contexts.values()].map((service) => service.dispose()));
 		await this.mcp.dispose();
@@ -3877,6 +3934,7 @@ export class AgentService {
 
 	listAgents(): Promise<UiAgentStatus[]> { return this.agents.statuses(); }
 	probeAgents(): Promise<UiAgentStatus[]> { return this.agents.statuses(true); }
+	clearAntigravityCommandApprovals(): void { antigravityCommandGrants().clear(); }
 	readAgentQuota(agentId: string, refresh = false): Promise<UiAgentQuota> {
 		const agent = this.agents.get(agentId);
 		if (!agent) return Promise.reject(new Error('Agent 不存在'));
@@ -3925,6 +3983,7 @@ export class AgentService {
 			await this.openContext({ cwd, fresh: true, agentId, handoff: { sessionPath: origin.sessionPath, fromAgent: origin.agentName, toAgent, context: origin.context } });
 		}, { supersede: true });
 		const continuation = this.active;
+		// An explicit handoff: start the target agent right away.
 		continuation?.warmupAgent();
 		const targetPath = continuation?.getSnapshot().sessionPath;
 		if (continuation && targetPath) {
@@ -4309,6 +4368,7 @@ export class AgentService {
 			}
 			if (this.active === service) {
 				this.fire(event);
+				if (event.type === 'ready' && !event.resync) this.scheduleAgentWarmup(service);
 				// Pi writes a new conversation's transcript only once its first input
 				// lands, after the `sessions-changed` of its creation. The host caches
 				// listings until this event, so a foreground turn must announce accepted
@@ -4398,6 +4458,17 @@ export class AgentService {
 		// re-emits on change: replay it (or its absence) for the conversation now shown.
 		if (snapshot.sessionId) this.fire({ type: 'subagent-fleet', fleet: snapshot.subagentFleet ?? null, sessionPath: snapshot.sessionPath });
 		if (snapshot.error) this.fire({ type: 'error', message: snapshot.error, error: snapshot.errorInfo ?? undefined });
+		this.scheduleAgentWarmup(service);
+	}
+
+	/** Start the shown conversation's agent only once the user stays on it (see AGENT_WARMUP_DELAY_MS). */
+	private scheduleAgentWarmup(service: SingleAgentService): void {
+		if (this.agentWarmupTimer) clearTimeout(this.agentWarmupTimer);
+		this.agentWarmupTimer = setTimeout(() => {
+			this.agentWarmupTimer = null;
+			if (this.active === service && !this.closing) service.warmupAgent();
+		}, AGENT_WARMUP_DELAY_MS);
+		this.agentWarmupTimer.unref?.();
 	}
 
 	private fire(event: AgentUiEvent): void { this.emit({ sequence: ++this.sequence, event }); }

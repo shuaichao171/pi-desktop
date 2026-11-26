@@ -19,6 +19,69 @@ function entriesOf(path) {
 	return readFileSync(path, 'utf8').trim().split('\n').map((line) => JSON.parse(line));
 }
 
+test('Antigravity command approvals survive restart and stay scoped to the exact command and workspace', async (t) => {
+	const root = mkdtempSync(join(tmpdir(), 'pi-acp-command-approval-'));
+	const workspace = join(root, 'workspace');
+	const otherWorkspace = join(root, 'other');
+	mkdirSync(join(workspace, 'subdirectory'), { recursive: true });
+	mkdirSync(otherWorkspace);
+	const environment = new Map(['PI_CODING_AGENT_DIR', 'PI_OFFLINE'].map((name) => [name, process.env[name]]));
+	process.env.PI_CODING_AGENT_DIR = join(root, 'agent');
+	process.env.PI_OFFLINE = '1';
+	let service;
+	t.after(async () => {
+		await service?.dispose();
+		for (const [name, value] of environment) { if (value === undefined) delete process.env[name]; else process.env[name] = value; }
+		rmSync(root, { recursive: true, force: true, maxRetries: 50, retryDelay: 100 });
+	});
+	const { AgentService } = await import('../packages/agent/src/index.ts');
+	const cards = [];
+	let decision = { approved: true, scope: 'workspace' };
+	const respond = async (card) => { cards.push(card); return decision; };
+	service = new AgentService(undefined, respond);
+	await service.saveAgent({ id: 'antigravity', displayName: 'Antigravity', command: process.execPath, args: [FAKE_AGENT], env: { FAKE_ACP_AGY_COMMANDS: '1' }, enabled: true });
+	async function open(cwd) {
+		await service.init({ cwd, fresh: true });
+		await service.setSessionAgent('antigravity');
+	}
+	async function run(prompt, selected) {
+		const count = service.getSnapshot().messages.filter((message) => message.text === `Selected: ${selected}`).length;
+		await service.prompt(prompt);
+		await until(() => service.getSnapshot().status === 'idle' && service.getSnapshot().messages.filter((message) => message.text === `Selected: ${selected}`).length === count + 1, `permission ${selected} for ${prompt}`);
+	}
+	await open(workspace);
+	await run('run', 'yes');
+	assert.equal(cards[0].approval.command, 'npm test');
+	assert.ok(cards[0].approval.scopes.includes('workspace'));
+	assert.deepEqual(cards[0].approval.agentOptions.map(({ id, label }) => [id, label]), [['yes', 'Allow'], ['always', 'Always allow'], ['persist', 'Persist to settings'], ['no', 'Reject']]);
+	// The card preselects allow once and declines with the reject option, so it needs the kinds.
+	assert.deepEqual(cards[0].approval.agentOptions.map(({ kind }) => kind), ['allow_once', 'allow_always', 'allow_always', 'reject_once']);
+
+	await service.dispose();
+	service = new AgentService(undefined, respond);
+	await open(workspace);
+	await run('run again', 'yes');
+	assert.equal(cards.length, 1, 'new desktop process loads the exact grant');
+	decision = { optionId: 'yes' };
+	await run('different-command', 'yes');
+	await run('different-directory', 'yes');
+	await run('outside-directory', 'yes');
+	assert.equal(cards.length, 4);
+	assert.ok(!cards.at(-1).approval.scopes.includes('workspace'));
+	decision = { optionId: 'persist' };
+	await run('always-only', 'persist');
+	assert.ok(!cards.at(-1).approval.scopes.includes('workspace'), 'a native durable grant cannot substitute for allow once');
+
+	await open(otherWorkspace);
+	decision = { optionId: 'yes' };
+	await run('run there', 'yes');
+	assert.equal(cards.length, 6);
+	await open(workspace);
+	service.clearAntigravityCommandApprovals();
+	await run('run after clearing', 'yes');
+	assert.equal(cards.length, 7, 'revocation takes effect without an agent restart');
+});
+
 test('an external agent question uses the scoped desktop dialog and receives the structured reply', async (t) => {
 	const root = mkdtempSync(join(tmpdir(), 'pi-acp-elicitation-'));
 	const workspace = join(root, 'workspace');
@@ -61,7 +124,11 @@ test('an ACP conversation runs through AgentService: binding, transcript, lock, 
 	const services = [];
 	try {
 		const { AgentService } = await import('../packages/agent/src/index.ts');
-		const approve = async (request) => { dialogs.push(request); return request.approval ? { approved: true, scope: 'session' } : true; };
+		const approve = async (request) => {
+			dialogs.push(request);
+			if (request.approval?.agentOptions?.some((option) => option.id === 'persist')) return { optionId: 'persist' };
+			return request.approval ? { approved: true, scope: 'session' } : true;
+		};
 		const service = new AgentService(undefined, approve);
 		services.push(service);
 		const events = [];
@@ -154,13 +221,15 @@ test('an ACP conversation runs through AgentService: binding, transcript, lock, 
 		// A first prompt that fails at the agent keeps the context pending for the retry.
 		await service.prompt('auth');
 		await until(() => service.getSnapshot().status === 'idle' && service.getSnapshot().runs.at(-1)?.status === 'failed', 'failed first prompt settles');
-		// The agent offers only a permanent grant: the card offers no "once" for it.
+		// Two choices share allow_always, but the selected native option ID must survive.
 		const before = dialogs.length;
 		await service.prompt('please run always-only');
 		await until(() => service.getSnapshot().status === 'idle' && service.getSnapshot().messages.some((message) => message.text === 'Done.'), 'continuation turn settles');
 		assert.ok(service.getSnapshot().messages.some((message) => message.text === 'blocks=2 Hello'), 'the handoff context travels with the first prompt the agent accepts');
 		assert.equal(dialogs.length, before + 1);
 		assert.deepEqual(dialogs.at(-1).approval.scopes, ['session']);
+		assert.deepEqual(dialogs.at(-1).approval.agentOptions.map(option => option.id), ['always', 'persist', 'no']);
+		assert.ok(entriesOf(continuation).some((entry) => entry.type === 'message' && entry.message.role === 'toolResult' && entry.message.content.some(part => part.text === 'Selected: persist')));
 		assert.ok(entriesOf(continuation).some((entry) => entry.type === 'custom' && entry.customType === 'pi-desktop-handoff-delivered'));
 		await service.prompt('please run');
 		await until(() => service.getSnapshot().status === 'idle' && service.getSnapshot().messages.filter((message) => message.text === 'Done.').length === 2, 'second continuation turn settles');
@@ -175,9 +244,11 @@ test('an ACP conversation runs through AgentService: binding, transcript, lock, 
 		await service.dispose();
 		const reopened = new AgentService(undefined, approve);
 		services.push(reopened);
-		await reopened.init({ cwd: workspace, sessionPath: path });
+		await reopened.init({ cwd: workspace, fresh: true });
+		await reopened.switchSession(path);
 		assert.equal(reopened.getSnapshot().agent.id, 'fake-agent');
 		assert.ok(reopened.getSnapshot().messages.some((message) => message.text === 'Done.'));
+		await until(() => reopened.getSnapshot().agent.models?.length === 2 && reopened.getSnapshot().model === 'fake-small', 'cold switch restores models before another prompt');
 		await reopened.prompt('continue');
 		await until(() => reopened.getSnapshot().status === 'idle' && reopened.getSnapshot().messages.filter((message) => message.role === 'user').length === 4, 'resumed turn settles');
 		const last = reopened.getSnapshot().messages.filter((message) => message.role === 'assistant').at(-1);
@@ -229,12 +300,19 @@ test('agent session settings reach the renderer descriptor and change through Ag
 		// The agent loads its session with default settings; the user's choices come back.
 		await service.dispose();
 		reopened = new AgentService(undefined, async () => true);
+		const events = [];
+		reopened.onEvent(({ event }) => events.push(event));
 		await reopened.init({ cwd: workspace, sessionPath: path });
-		await reopened.prompt('continue');
-		await until(() => reopened.getSnapshot().status === 'idle' && reopened.getSnapshot().messages.filter((message) => message.text === 'Done.').length === 2, 'resumed turn settles');
+		assert.equal(events.find((event) => event.type === 'ready' && event.sessionPath === path).model, 'fake-small', 'saved model is available on the first ready event');
+		await until(() => {
+			const snapshot = reopened.getSnapshot();
+			return snapshot.model === 'fake-small' && snapshot.agent.models?.length === 3
+				&& snapshot.agent.options?.some((option) => option.id === 'mode' && option.currentValue === 'auto');
+		}, 'model catalog and saved settings are restored without a prompt');
 		const resumed = reopened.getSnapshot();
-		assert.equal(resumed.model, 'fake-small');
+		assert.equal(resumed.modelName, 'Fake Small');
 		assert.deepEqual(resumed.agent.options.map((option) => [option.id, option.currentValue]), [['effort', 'low'], ['mode', 'auto']]);
+		assert.deepEqual(resumed.messages.filter((message) => message.role === 'user').map((message) => message.text), ['please run']);
 	} finally {
 		await service?.dispose().catch(() => {});
 		await reopened?.dispose().catch(() => {});
@@ -260,7 +338,7 @@ test('steering through AgentService: Antigravity takes a message while it replie
 		service = new AgentService(undefined, async () => true);
 		// The built-in entry (marked steer) pointed at the fake agent.
 		const builtin = (await service.listAgents()).find((agent) => agent.id === 'antigravity');
-		await service.saveAgent({ id: 'antigravity', displayName: builtin.displayName, command: process.execPath, args: [FAKE_AGENT], env: { FAKE_ACP_STEER: '1' }, enabled: true, accentColor: builtin.accentColor });
+		await service.saveAgent({ id: 'antigravity', displayName: builtin.displayName, command: process.execPath, args: [FAKE_AGENT], env: { FAKE_ACP_STEER: '1', FAKE_ACP_LOAD: '1', FAKE_ACP_SETTINGS: 'modes' }, enabled: true, accentColor: builtin.accentColor });
 		await service.init({ cwd: workspace, fresh: true });
 		await service.setSessionAgent('antigravity');
 		assert.equal(service.getSnapshot().agent.capabilities.steer, true);
@@ -274,6 +352,18 @@ test('steering through AgentService: Antigravity takes a message while it replie
 		assert.ok(order.indexOf('working') < order.indexOf('please run') && order.indexOf('please run') < order.indexOf('Done.'), 'the reply so far comes before the steered message');
 		assert.equal(snapshot.runs.length, 1, 'the steered message joins the running run');
 		assert.equal(snapshot.runs[0].status, 'completed');
+
+		await service.dispose();
+		service = new AgentService();
+		await service.init({ cwd: workspace, fresh: true });
+		await service.loadSession(workspace, snapshot.sessionPath);
+		const preloaded = service.getResidentSessionSnapshot({ cwd: workspace, sessionId: snapshot.sessionId, sessionPath: snapshot.sessionPath });
+		assert.equal(preloaded.model, 'fake-large', 'legacy sessions recover the last ACP reply model');
+		assert.equal(preloaded.agent.models, undefined, 'background preload does not start Antigravity');
+		await service.switchSession(snapshot.sessionPath);
+		await until(() => service.getSnapshot().agent.models?.length === 2, 'activating the old Antigravity session loads its models');
+		assert.equal(service.getSnapshot().modelName, 'Fake Large');
+		assert.deepEqual(service.getSnapshot().messages.filter((message) => message.role === 'user').map((message) => message.text), ['slow please', 'please run']);
 	} finally {
 		await service?.dispose().catch(() => {});
 		try { rmSync(root, { recursive: true, force: true, maxRetries: 50, retryDelay: 100 }); }

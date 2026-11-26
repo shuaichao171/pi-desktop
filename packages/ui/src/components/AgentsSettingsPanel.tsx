@@ -90,6 +90,7 @@ export function AgentsSettingsPanel() {
 	const [installs, setInstalls] = useState<Record<string, UiAgentInstallState>>({});
 	const [dismissed, setDismissed] = useState<Record<string, number>>({});
 	const [loginError, setLoginError] = useState<Record<string, string>>({});
+	const [approvalsCleared, setApprovalsCleared] = useState(false);
 	const editorDialog = useRef<HTMLDialogElement>(null), removeDialog = useRef<HTMLDialogElement>(null), installDialog = useRef<HTMLDialogElement>(null), busyRef = useRef(false);
 	const supported = typeof bridge?.listAgents === 'function';
 	const installSupported = typeof bridge?.installAgent === 'function';
@@ -221,12 +222,18 @@ export function AgentsSettingsPanel() {
 			{installPanel(agent)}
 			{loginError[agent.id] && <p className="pd-mcp-callout pd-mcp-error" role="alert">{loginError[agent.id]}</p>}
 			{agent.quota && agent.readiness === 'ready' && typeof bridge?.readAgentQuota === 'function' && <AgentQuotaSection key={`${agent.id}:${agent.command}`} agentId={agent.id} />}
+			{agent.id === 'antigravity' && approvalsCleared && <p className="pd-mcp-callout" role="status">{t('agents.commandApprovalsCleared')}</p>}
 			<footer>
 				{agent.readiness === 'install' && agent.installer && installSupported && installs[agent.id]?.phase !== 'running'
 					&& <button type="button" className="pd-btn pd-mcp-button is-primary" disabled={busy || installRunning} onClick={() => setConfirmInstall(agent)}><Icon name="update" width="14" height="14" />{t('agents.install')}</button>}
 				{agent.readiness === 'ready' && agent.login && installSupported
 					&& <HoverTooltip title={t('agents.loginTooltip', { command: [agent.login.command, ...agent.login.args].join(' ') })}><button type="button" className="pd-btn pd-mcp-button" onClick={() => void openLogin(agent)}><Icon name="terminal" width="14" height="14" />{t('agents.loginInTerminal')}</button></HoverTooltip>}
 				{agent.homepage && <a className="pd-btn pd-mcp-button" href={agent.homepage} target="_blank" rel="noreferrer">{t('agents.homepage')}</a>}
+				{agent.id === 'antigravity' && typeof bridge?.clearAntigravityCommandApprovals === 'function' && <button type="button" className="pd-btn pd-mcp-button" disabled={busy} onClick={() => void run(async () => {
+					setApprovalsCleared(false);
+					await bridge.clearAntigravityCommandApprovals();
+					setApprovalsCleared(true);
+				})}>{t('agents.clearCommandApprovals')}</button>}
 				<span className="pd-mcp-footer-spacer" />
 				<HoverTooltip title={t('agents.edit')} align="end">
 					<button type="button" className="pd-mcp-icon-button is-ghost" disabled={busy} onClick={() => edit(agent)}><Icon name="pencil" width="15" height="15" /><span className="pd-mcp-sr-only">{t('agents.edit')}</span></button>

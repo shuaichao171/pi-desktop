@@ -97,6 +97,7 @@ const bridge: AgentBridge = {
 	probeAgents: (...args) => invoke(AGENT_RUNTIME_CHANNELS.probeAgents, ...args),
 	saveAgent: (...args) => invoke(AGENT_RUNTIME_CHANNELS.saveAgent, ...args),
 	removeAgent: (...args) => invoke(AGENT_RUNTIME_CHANNELS.removeAgent, ...args),
+	clearAntigravityCommandApprovals: () => invoke(AGENT_RUNTIME_CHANNELS.clearAntigravityCommandApprovals),
 	setSessionAgent: (...args) => invoke(AGENT_RUNTIME_CHANNELS.setSessionAgent, ...args),
 	setAgentOption: (...args) => invoke(AGENT_RUNTIME_CHANNELS.setAgentOption, ...args),
 	handoffToAgent: (...args) => invoke(AGENT_RUNTIME_CHANNELS.handoffToAgent, ...args),
