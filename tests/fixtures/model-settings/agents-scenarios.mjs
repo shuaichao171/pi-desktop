@@ -18,8 +18,16 @@ export default async function agentsScenarios(review) {
   await review.waitFor(`document.querySelector(${JSON.stringify(trigger)})?.textContent.includes('Claude Code')`);
   await review.assert('window.__modelReview.calls.some(call => call.name === "setSessionAgent" && call.args[0] === "claude-code")', 'Choosing an agent before the first message binds the conversation');
   await review.assert('!document.querySelector(".pd-composer-thinking-trigger") && !document.querySelector(".pd-context-trigger") && document.querySelector(".pd-composer-model-trigger").textContent.includes("Sonnet")', 'An ACP conversation hides thinking and context controls and shows the agent model');
-  await review.waitFor('document.querySelector(".pd-metric-quota")?.textContent.includes("5h 37%")');
-  await review.assert('document.querySelector(".pd-metric-quota").textContent.includes("周 86%") && Boolean(document.querySelector(".pd-metric-quota-window.is-warning")) && document.querySelector(".pd-metric-quota").title.includes("套餐：max") && document.querySelector(".pd-metric-quota").title.includes("Opus")', 'An agent conversation shows the 5-hour and weekly limits under the composer, warning near the limit');
+  await review.waitFor('document.querySelector(".pd-composer-quota [data-kind=five_hour]")?.textContent.includes("已用 37%")');
+  await review.assert(`(() => {
+    const quota = document.querySelector(".pd-composer-quota");
+    const rows = [...quota.querySelectorAll(".pd-agent-quota-row")];
+    const weekly = quota.querySelector("[data-kind=weekly]");
+    return rows.length === 2 && rows[0].querySelector(".pd-agent-quota-label").textContent === "5 小时额度" && rows[0].querySelector(".pd-agent-quota-reset").textContent.endsWith("重置")
+      && weekly.classList.contains("is-warning") && weekly.querySelector(".pd-agent-quota-bar > span").style.width === "86%" && weekly.textContent.includes("已用 86%")
+      && quota.title.includes("套餐：max") && quota.title.includes("Opus") && !quota.closest(".pd-conversation-metrics");
+  })()`, 'An agent conversation shows the 5-hour and weekly limits under the composer as labelled bars with usage and reset time, warning near the limit');
+  await review.assert('document.querySelector(".pd-composer-quota").getBoundingClientRect().top >= document.querySelector(".pd-composer-shell").getBoundingClientRect().bottom', 'The limits sit below the composer');
   await review.screenshot('agents-acp-composer');
 
   await review.click('.pd-composer-model-trigger');

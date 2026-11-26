@@ -6,7 +6,8 @@ import { useFocusAwarePoll } from '../focusStore';
 import { useConversationMetricsPreferences } from '../conversationMetricsPreferences';
 import { conversationMetricsAt, formatMetricDuration, formatMetricTokens } from '../conversationMetrics';
 import { formatUsageBalance, usageBalanceTooltip } from '../usageDisplay';
-import { agentQuotaLevel, agentQuotaTooltip, agentQuotaWindowLabel, formatAgentQuotaPercent, mainAgentQuotaWindows } from '../agentQuotaDisplay';
+import { agentQuotaTooltip, mainAgentQuotaWindows } from '../agentQuotaDisplay';
+import { AgentQuotaBars } from './AgentQuotaBars';
 import { Icon } from './Icons';
 import './conversationMetrics.css';
 
@@ -68,15 +69,20 @@ export function ConversationMetrics() {
 	const showSpeed = preferences.speed && speed !== null;
 	const showTokens = preferences.tokens && (stats?.tokens.total ?? 0) > 0;
 	const showDuration = preferences.duration && (metrics.durationMs ?? 0) > 0;
+	const providerBalance = balanceEnabled || balancePending;
+	// The agent's plan limits get their own rows of bars under the stats line.
+	const quota = quotaAgentId ? <AgentQuotaMetric key={quotaAgentId} agentId={quotaAgentId} /> : null;
 	// With nothing measured yet the row stays mounted but blank, so the composer dock never jumps.
-	if (!showSpeed && !showTokens && !showDuration && !balanceVisible) return <div className="pd-conversation-metrics is-empty" aria-hidden="true" />;
-	return <div className="pd-conversation-metrics" role="group" aria-label={t('settings.conversationMetrics')}>
-		{showSpeed && <span className="pd-metric-group pd-metric-speed" aria-label={`${t('settings.metrics.speed')}: ${speed?.toFixed(1)} t/s`}>{speed?.toLocaleString(locale, { maximumFractionDigits: 1 })} t/s</span>}
-		{showTokens && <span className="pd-metric-group" aria-label={t('metrics.tokensDescription', { input: exact(stats?.tokens.input), output: exact(stats?.tokens.output), total: exact(stats?.tokens.total) })}><span className="pd-metric-input">↑{tokens(stats?.tokens.input)}</span><span className="pd-metric-output">↓{tokens(stats?.tokens.output)}</span><span>Σ {tokens(stats?.tokens.total)}</span></span>}
-		{showDuration && <span className="pd-metric-group pd-metric-duration" aria-label={`${t('settings.metrics.duration')}: ${formatMetricDuration(metrics.durationMs)}`}><Icon name="clock" width="12" height="12" />{formatMetricDuration(metrics.durationMs)}</span>}
-		{(balanceEnabled || balancePending) && <ProviderBalance pending={balancePending} />}
-		{quotaAgentId && <AgentQuotaMetric key={quotaAgentId} agentId={quotaAgentId} />}
-	</div>;
+	if (!showSpeed && !showTokens && !showDuration && !providerBalance) return quota ?? <div className="pd-conversation-metrics is-empty" aria-hidden="true" />;
+	return <>
+		<div className="pd-conversation-metrics" role="group" aria-label={t('settings.conversationMetrics')}>
+			{showSpeed && <span className="pd-metric-group pd-metric-speed" aria-label={`${t('settings.metrics.speed')}: ${speed?.toFixed(1)} t/s`}>{speed?.toLocaleString(locale, { maximumFractionDigits: 1 })} t/s</span>}
+			{showTokens && <span className="pd-metric-group" aria-label={t('metrics.tokensDescription', { input: exact(stats?.tokens.input), output: exact(stats?.tokens.output), total: exact(stats?.tokens.total) })}><span className="pd-metric-input">↑{tokens(stats?.tokens.input)}</span><span className="pd-metric-output">↓{tokens(stats?.tokens.output)}</span><span>Σ {tokens(stats?.tokens.total)}</span></span>}
+			{showDuration && <span className="pd-metric-group pd-metric-duration" aria-label={`${t('settings.metrics.duration')}: ${formatMetricDuration(metrics.durationMs)}`}><Icon name="clock" width="12" height="12" />{formatMetricDuration(metrics.durationMs)}</span>}
+			{providerBalance && <ProviderBalance pending={balancePending} />}
+		</div>
+		{quota}
+	</>;
 }
 
 /** Balance segment for the current model's provider; auto refreshes only while that provider is in use. */
@@ -160,12 +166,12 @@ function AgentQuotaMetric({ agentId }: { agentId: string }) {
 	const refresh = () => setRequest((current) => ({ tick: current.tick + 1, refresh: true }));
 	const windows = mainAgentQuotaWindows(quota);
 	const tooltip = agentQuotaTooltip(quota, t, locale);
-	const className = `pd-metric-group pd-metric-balance pd-metric-quota${quota && !quota.ok ? ' is-error' : ''}`;
-	if (!quota) return <button type="button" className={className} data-action="refresh-agent-quota" title={tooltip} aria-label={tooltip} onClick={refresh}>{busy ? t('usage.refreshing') : '—'}</button>;
+	const className = `pd-composer-quota${quota && !quota.ok ? ' is-error' : ''}`;
+	if (!quota) return <button type="button" className={`${className} is-pending`} data-action="refresh-agent-quota" title={tooltip} aria-label={tooltip} onClick={refresh}>{busy ? t('agentQuota.loading') : '—'}</button>;
 	// The account has no plan limits (an API key): nothing to show.
 	if (quota.ok && !windows.length) return null;
-	if (!windows.length) return <button type="button" className={className} data-action="refresh-agent-quota" title={tooltip} aria-label={tooltip} onClick={refresh}>{busy ? t('usage.refreshing') : t('agentQuota.failedShort')}</button>;
+	if (!windows.length) return <button type="button" className={`${className} is-pending`} data-action="refresh-agent-quota" title={tooltip} aria-label={tooltip} onClick={refresh}>{busy ? t('usage.refreshing') : t('agentQuota.failedShort')}</button>;
 	return <button type="button" className={className} data-action="refresh-agent-quota" title={tooltip} aria-label={tooltip} onClick={refresh} aria-busy={busy || undefined}>
-		{windows.map((window) => <span key={window.kind} className={`pd-metric-quota-window is-${agentQuotaLevel(window)}`}>{agentQuotaWindowLabel(window, t, true)} {formatAgentQuotaPercent(window.usedPercent)}</span>)}
+		<AgentQuotaBars windows={windows} />
 	</button>;
 }

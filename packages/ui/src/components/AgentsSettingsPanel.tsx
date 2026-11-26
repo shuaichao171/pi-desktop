@@ -3,7 +3,7 @@ import type { UiAgentInstallState, UiAgentQuota, UiAgentSaveRequest, UiAgentStat
 import { useChatStore } from '../store';
 import { useT } from '../i18n';
 import { technicalInputAttributes } from '../technicalInputAttributes';
-import { agentQuotaLevel, agentQuotaWindowLabel, formatAgentQuotaPercent, formatAgentQuotaReset } from '../agentQuotaDisplay';
+import { AgentQuotaBars } from './AgentQuotaBars';
 import { HoverTooltip } from './HoverTooltip';
 import { Icon } from './Icons';
 import './mcpSettingsPanel.css';
@@ -39,7 +39,7 @@ const envText = (value?: Record<string, string>) => Object.entries(value ?? {}).
 /** The account's plan limits (5-hour and weekly windows), read when the card shows. */
 function AgentQuotaSection({ agentId }: { agentId: string }) {
 	const bridge = useChatStore((state) => state.bridge);
-	const { t, locale } = useT();
+	const { t } = useT();
 	const [quota, setQuota] = useState<UiAgentQuota | null>(null);
 	const [loading, setLoading] = useState(true);
 	const [request, setRequest] = useState({ tick: 0, refresh: false });
@@ -62,12 +62,7 @@ function AgentQuotaSection({ agentId }: { agentId: string }) {
 			</HoverTooltip>
 		</header>
 		{!quota && loading && <p className="pd-agent-quota-muted" role="status">{t('agentQuota.loading')}</p>}
-		{quota && quota.windows.length > 0 && <ul>{quota.windows.map((window, index) => <li key={`${window.kind}-${window.label ?? ''}-${index}`} className={`is-${agentQuotaLevel(window)}`}>
-			<span className="pd-agent-quota-label">{agentQuotaWindowLabel(window, t)}</span>
-			<span className="pd-agent-quota-bar" role="meter" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(window.usedPercent)} aria-label={agentQuotaWindowLabel(window, t)}><span style={{ width: `${Math.min(100, Math.max(0, window.usedPercent))}%` }} /></span>
-			<span className="pd-agent-quota-value">{t('agentQuota.used', { percent: formatAgentQuotaPercent(window.usedPercent) })}</span>
-			<span className="pd-agent-quota-reset">{window.resetsAt ? t('agentQuota.resets', { time: formatAgentQuotaReset(window.resetsAt, locale) }) : ''}</span>
-		</li>)}</ul>}
+		{quota && quota.windows.length > 0 && <AgentQuotaBars windows={quota.windows} />}
 		{quota?.ok && !quota.windows.length && <p className="pd-agent-quota-muted">{t('agentQuota.none')}</p>}
 		{quota && !quota.ok && <p className="pd-agent-quota-error" role="alert">{t('agentQuota.failed', { error: quota.error ?? '' })}{quota.windows.length ? ` ${t('agentQuota.stale')}` : ''}</p>}
 		<p className="pd-agent-quota-muted">{t('agentQuota.hint')}</p>
