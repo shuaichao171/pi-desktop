@@ -131,7 +131,7 @@ export default async function sidebarFolderDropScenarios(review) {
   await review.assert(`JSON.stringify([...document.querySelectorAll('.pd-sidebar-region[data-region-id]')].map(region => region.dataset.regionId)) === '["project-groups","ungrouped-projects","unassigned-sessions"]'`, 'Unassigned conversations sit in the last region below the project regions');
   await review.assert(noMetadata, 'Project-grouped saved conversation rows omit timestamp and project subtitle');
 
-  await review.click('.pd-activity-new-session');
+  await review.click('.pd-sidebar-new-session');
   await review.waitFor(`${state}.newSessions === 1 && ${snapshot}.cwd === ${state}.conversationWorkspaces[0]`);
   await review.assert(`${snapshot}.cwd !== ${state}.paths.home && !${state}.navigation.at(-1).options?.cwd && ${projectOrder}.length === 2`, 'Global New conversation creates a separate directory without adding an explicit project');
   await review.assert('!document.querySelector(".pd-session-item.is-unsaved")', 'An empty new conversation stays out of the sidebar until its first message');

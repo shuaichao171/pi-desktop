@@ -21,6 +21,19 @@
 .pd-session-delete-dialog footer { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-top: 22px; }
 .pd-session-delete-dialog button { display: inline-flex; align-items: center; justify-content: center; min-height: 34px; padding: 6px 12px; border: 1px solid var(--pd-border); border-radius: var(--pd-radius-sm); background: var(--pd-surface); color: var(--pd-text); }
 .pd-session-delete-dialog button.is-danger { color: var(--pd-danger); border-color: var(--pd-danger-border); background: var(--pd-danger-surface); }
+/* Sidebar head, one row: the "项目" title on the left; on the right the new-conversation
+   button (the pane's primary action, a compact raised chip) and then the view options. */
+.pd-sidebar-organize-toolbar:not(.is-archive) { min-height: 36px; padding-block: 4px; }
+.pd-sidebar-new-session { display: inline-flex; flex: 0 0 auto; align-items: center; gap: 5px; height: 26px; padding: 0 9px 0 7px; border: 1px solid var(--pd-border); border-radius: var(--pd-radius-md); background: var(--pd-surface); color: var(--pd-text); font-size: var(--pd-font-caption); font-weight: var(--pd-weight-medium); white-space: nowrap; transition: background var(--pd-motion-fast), border-color var(--pd-motion-fast); }
+.pd-sidebar-new-session > svg { flex: 0 0 auto; color: var(--pd-text-subtle); }
+.pd-sidebar-new-session:hover:not(:disabled) { border-color: color-mix(in srgb, var(--pd-text) 22%, var(--pd-border)); background: var(--pd-surface-hover); }
+.pd-sidebar-new-session:hover:not(:disabled) > svg { color: var(--pd-text); }
+.pd-sidebar-new-session:focus-visible { outline: 2px solid var(--pd-focus-border); outline-offset: 1px; }
+.pd-sidebar-new-session:disabled { cursor: not-allowed; opacity: .55; }
+/* The archive header is busier (back, title, count): the button keeps only its icon there. */
+.pd-sidebar-organize-toolbar.is-archive .pd-sidebar-new-session { width: 26px; padding: 0; justify-content: center; }
+.pd-sidebar-organize-toolbar.is-archive .pd-sidebar-new-session > span { display: none; }
+.pd-sidebar-organize-actions > .pd-sidebar-new-session, .pd-sidebar-organize-actions > :has(> .pd-sidebar-new-session) { margin-right: 2px; }
 /* One row: an equal-width view switch, then "new" and the view-options menu. */
 .pd-sidebar-organize-toolbar { display: flex; flex: 0 0 auto; align-items: center; gap: 6px; min-height: 24px; padding: 0 9px 0 12px; }
 .pd-sidebar-mode { display: flex; flex: 1 1 auto; gap: 2px; max-width: 168px; min-width: 0; padding: 2px; border-radius: var(--pd-radius-md); background: var(--pd-sidebar-surface); }

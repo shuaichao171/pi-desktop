@@ -78,7 +78,7 @@ export default async function notificationScenarios(review) {
   await review.assert(`${noHints} && document.querySelector('.pd-send-button').disabled && document.querySelector('.pd-composer-add-attachment').disabled`, 'Restoring a draft is quiet and retains send/attachment safeguards');
   await review.evaluate(`${state}.resolveDrafts()`);
   await review.waitFor('!document.querySelector(".pd-send-button").disabled');
-  await review.click('.pd-activity-new-session');
+  await review.click('.pd-sidebar-new-session');
   await review.waitFor(`${state}.created === 1`);
   await review.assert(noHints, 'Creating a conversation does not show a pending New session notification');
   await review.evaluate(`${state}.finishNew()`);

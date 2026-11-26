@@ -769,6 +769,7 @@ export const translations: Record<string, { 'zh-CN': string; 'en-US': string }> 
   'sidebar.collapse': { 'zh-CN': '收起侧栏', 'en-US': 'Collapse sidebar' },
   'sidebar.expand': { 'zh-CN': '展开侧栏', 'en-US': 'Expand sidebar' },
   'sidebar.newSession': { 'zh-CN': '新会话', 'en-US': 'New session' },
+  'sidebar.newConversation': { 'zh-CN': '新建对话', 'en-US': 'New conversation' },
   'sidebar.newSessionFailed': { 'zh-CN': '新建对话失败', 'en-US': 'Could not create conversation' },
   // ActivityBar
   'activity.barLabel': { 'zh-CN': '活动栏', 'en-US': 'Activity bar' },

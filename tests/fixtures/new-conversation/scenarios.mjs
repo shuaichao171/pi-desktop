@@ -164,7 +164,7 @@ export default async function newConversationScenarios(review) {
   await review.reloadWithFixture(`(${installNewConversationFixture.toString()})()`);
   await review.waitFor(`${editor}?.value === '旧对话尚未发送的草稿' && document.querySelector('.pd-message-list')?.textContent.includes('旧对话的历史消息')`);
 
-  await review.click('.pd-activity-new-session');
+  await review.click('.pd-sidebar-new-session');
   await assertDraft('Ordinary New conversation immediately opens and focuses an empty editable draft while its RPC remains pending');
   await review.assert(`${state}.creations.length === 1 && ${state}.submissions.length === 0 && !${state}.creations[0].options?.cwd`, 'The ordinary entry starts exactly one independent conversation preparation');
   await review.fill(input, '后台准备期间可以立即输入并发送');
@@ -185,7 +185,7 @@ export default async function newConversationScenarios(review) {
 
   await review.click('.pd-activity-automations');
   await review.waitFor(`!(${chatVisible})`);
-  await review.click('.pd-activity-new-session');
+  await review.click('.pd-sidebar-new-session');
   await assertDraft('New conversation from Automations switches to chat before preparation completes');
   await review.fill(input, '失败以后仍然保留这段新草稿');
   await review.evaluate(`${state}.fail()`);
@@ -231,7 +231,7 @@ export default async function newConversationScenarios(review) {
   const oldConversation = '.pd-session-item[data-session-path="C:/new-conversation/project/old.jsonl"] .pd-session-row';
   for (const queued of [false, true]) {
     const text = queued ? '排队首发取消后仍应属于刚创建的新会话' : '准备期间输入并切走也不会丢失的新草稿';
-    await review.click('.pd-activity-new-session');
+    await review.click('.pd-sidebar-new-session');
     await assertDraft(queued ? 'The queued-input navigation regression starts with a fresh editable draft' : 'The typed-draft navigation regression starts with a fresh editable draft');
     await review.fill(input, text);
     if (queued) {
@@ -260,7 +260,7 @@ export default async function newConversationScenarios(review) {
   }
   await review.screenshot('new-conversation-background-draft-recovered');
 
-  await review.click('.pd-activity-new-session');
+  await review.click('.pd-sidebar-new-session');
   await assertDraft('The attachment handoff regression starts before session preparation finishes');
   await review.fill(input, '图片读取完成后仍属于这个新会话');
   await review.evaluate(`${state}.pasteDelayedImage()`);

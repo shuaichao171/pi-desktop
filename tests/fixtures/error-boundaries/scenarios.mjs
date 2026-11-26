@@ -1,7 +1,7 @@
 // Render failures stay inside the failing surface instead of blanking the window.
 // Each surface gets a malformed bridge response that breaks it while rendering.
 // node tests/fixtures/model-settings/run.mjs --run --scenario=../error-boundaries/scenarios.mjs
-const alive = 'Boolean(document.querySelector(".pd-activity-bar")) && Boolean(document.querySelector(".pd-activity-new-session"))';
+const alive = 'Boolean(document.querySelector(".pd-activity-bar")) && Boolean(document.querySelector(".pd-sidebar-new-session"))';
 
 export default async function errorBoundaryScenarios(review) {
   await review.waitFor(`window.__modelReview?.ready === true && ${alive}`);
@@ -15,7 +15,7 @@ export default async function errorBoundaryScenarios(review) {
   await review.waitFor('Boolean(document.querySelector(".pd-main-view > .pd-scoped-error"))');
   await review.assert(alive, 'A plugins page failure keeps the sidebar and window usable');
   await review.screenshot('error-boundary-plugins');
-  await review.click('.pd-activity-new-session');
+  await review.click('.pd-sidebar-new-session');
   await review.waitFor('!document.querySelector(".pd-main-view > .pd-scoped-error") && Boolean(document.querySelector(".pd-composer-shell"))');
 
   // A malformed search response breaks the dialog while it renders.

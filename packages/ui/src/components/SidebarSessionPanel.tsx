@@ -107,7 +107,7 @@ function useRecentlyViewedSessions(viewing: readonly string[]): ReadonlySet<stri
 	return new Set([...viewing, ...committed.current, ...lingering.keys()]);
 }
 
-export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alternateViewOpen = false, onNavigate, onError, onOpenTerminal }: { visible: boolean; projectRevealRequest?: number; alternateViewOpen?: boolean; onNavigate(): void; onError(value: string | null): void; onOpenTerminal?: () => void }) {
+export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alternateViewOpen = false, newSessionAction, onNavigate, onError, onOpenTerminal }: { visible: boolean; projectRevealRequest?: number; alternateViewOpen?: boolean; /** New-conversation button placed in the heading row, before the view options. */ newSessionAction?: ReactNode; onNavigate(): void; onError(value: string | null): void; onOpenTerminal?: () => void }) {
 	const { t, locale } = useT();
 	const copy = managementCopy(locale);
 	const bridge = useChatStore((s) => s.bridge);
@@ -1344,10 +1344,11 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 		{archived ? <div className="pd-sidebar-organize-toolbar is-archive">
 			{iconButton(t('sidebar.closeArchive'), 'arrowLeft', () => { setArchived(false); setPopup(null); })}
 			<strong className="pd-sidebar-archive-title">{t('sidebar.archived')}</strong><span className="pd-sidebar-archive-count">{sessions.length}</span>
-			<div className="pd-sidebar-organize-actions">{iconButton(t('sidebar.viewOptions'), 'more', (anchor) => setPopup(popup?.kind === 'filter' ? null : { kind: 'filter', anchor }), { dot: filtered, expanded: popup?.kind === 'filter' })}</div>
+			<div className="pd-sidebar-organize-actions">{newSessionAction}{iconButton(t('sidebar.viewOptions'), 'more', (anchor) => setPopup(popup?.kind === 'filter' ? null : { kind: 'filter', anchor }), { dot: filtered, expanded: popup?.kind === 'filter' })}</div>
 		</div> : <div className="pd-sidebar-organize-toolbar">
 			<strong className="pd-sidebar-archive-title">{t('sidebar.projects')}</strong>
 			<div className="pd-sidebar-organize-actions">
+				{newSessionAction}
 				{iconButton(t('sidebar.viewOptions'), 'more', (anchor) => setPopup(popup?.kind === 'filter' ? null : { kind: 'filter', anchor }), { dot: filtered, expanded: popup?.kind === 'filter' })}
 			</div>
 		</div>}

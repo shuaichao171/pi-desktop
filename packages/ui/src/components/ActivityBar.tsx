@@ -58,9 +58,10 @@ export function ActivityBar({ mainView, onOpenView, onNewSession, onOpenSettings
 				<HoverTooltip title={t(sidebarOpen ? 'sidebar.collapse' : 'sidebar.expand')} shortcut={platform === 'darwin' ? '⌘B' : 'Ctrl+B'}>
 					<button type="button" className={`pd-activity-item pd-activity-sessions${sidebarOpen ? ' is-active' : ''}`} aria-label={t('activity.sessionsView')} aria-current={sidebarOpen ? 'page' : undefined} onClick={onToggleSidebar}><Icon name="message" width="20" height="20" /></button>
 				</HoverTooltip>
-				<HoverTooltip title={t('sidebar.newSession')}>
-					<button type="button" className="pd-activity-item pd-activity-new-session" disabled={navigationPending} aria-label={t('sidebar.newSession')} onClick={() => void onNewSession()}><Icon name="plus" width="20" height="20" /></button>
-				</HoverTooltip>
+				{/* New conversation lives at the top of the sidebar; the rail offers it only while the sidebar is collapsed. */}
+				{!sidebarOpen && <HoverTooltip title={t('sidebar.newConversation')}>
+					<button type="button" className="pd-activity-item pd-activity-new-session" disabled={navigationPending} aria-label={t('sidebar.newConversation')} onClick={() => void onNewSession()}><Icon name="plus" width="20" height="20" /></button>
+				</HoverTooltip>}
 				<HoverTooltip title={t('sidebar.automation')}>
 					<button type="button" className={`pd-activity-item pd-activity-automations${mainView === 'automations' ? ' is-active' : ''}`} aria-label={t('sidebar.automation')} aria-current={mainView === 'automations' ? 'page' : undefined} onClick={() => onOpenView('automations')}><Icon name="automation" width="20" height="20" /></button>
 				</HoverTooltip>

@@ -450,6 +450,8 @@ export function AppShell() {
 		setSettingsOpen(true);
 	}
 	const navigationPending = useChatStore((state) => state.navigationPending || state.sessionLoading);
+	/** New conversation from the sidebar (or the rail while the sidebar is collapsed). */
+	const startNewSession = () => { setMainView('chat'); if (narrow) setSidebarOpen(false); void useChatStore.getState().newSession().catch(() => { /* Navigation errors are shown by the store. */ }); };
 	const conversationCwd = useChatStore((state) => state.cwd);
 	const conversationId = useChatStore((state) => state.sessionId);
 	const conversationPath = useChatStore((state) => state.sessionPath);
@@ -511,7 +513,7 @@ export function AppShell() {
 			<ActivityBar
 				mainView={mainView}
 				onOpenView={(view: 'automations' | 'plugins') => { openActivityView(view); setSidebarOpen(true); }}
-				onNewSession={() => { setMainView('chat'); if (narrow) setSidebarOpen(false); return useChatStore.getState().newSession().catch(() => { /* Navigation errors are shown by the store. */ }); }}
+				onNewSession={startNewSession}
 				onOpenSettings={() => { if (narrow) setSidebarOpen(false); setSettingsInitialPage('general'); setSettingsOpen(true); }}
 				onOpenUpdates={() => { if (narrow) setSidebarOpen(false); setSettingsInitialPage('updates'); setSettingsOpen(true); }}
 				navigationPending={navigationPending}
@@ -523,6 +525,7 @@ export function AppShell() {
 					open={sidebarOpen}
 					narrow={narrow}
 					onNavigate={() => { setMainView('chat'); if (narrow) setSidebarOpen(false); }}
+					onNewSession={startNewSession}
 					sessionsActive={mainView === 'chat'}
 					onOpenTerminal={() => { setMainView('chat'); setWorkbenchOpen(true); setTerminalRequest(value => value + 1); }}
 				/>
