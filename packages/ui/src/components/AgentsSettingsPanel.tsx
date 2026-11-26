@@ -193,51 +193,64 @@ export function AgentsSettingsPanel() {
 		{loading && !agents.length && <p className="pd-mcp-loading" role="status">{t('agents.loading')}</p>}
 		{!supported && <p className="pd-mcp-callout">{t('agents.unsupported')}</p>}
 
-		<div className="pd-mcp-servers">{agents.map((agent) => <article key={agent.id} className={`pd-mcp-server is-${statusClass(agent)}${agent.enabled ? '' : ' is-disabled'}`}>
-			<header>
-				<span className="pd-mcp-server-icon"><span className="pd-agent-mark" style={agent.accentColor ? { background: agent.accentColor } : undefined} aria-hidden="true">{agent.displayName.slice(0, 1).toUpperCase()}</span></span>
-				<div className="pd-mcp-server-title">
-					<h3>{agent.displayName}</h3>
-					<p>
-						<span className="pd-mcp-chip">{agent.builtin ? t('agents.builtin') : t('agents.custom')}</span>
-						<span className="pd-mcp-chip">{agent.community ? t('agents.communityAcp') : 'ACP'}</span>
-						{agent.version && <span className="pd-mcp-chip" title={agent.resolvedCommand ?? undefined}>{agent.version}</span>}
-					</p>
-				</div>
-				<span className={`pd-mcp-status is-${statusClass(agent)}`}>{status(agent)}</span>
-				<HoverTooltip title={agent.enabled ? t('agents.disable') : t('agents.enable')} align="end">
-					<button type="button" role="switch" aria-checked={agent.enabled} className="pd-mcp-switch" disabled={busy} onClick={() => void run(() => saveAgent(request(agent, { enabled: !agent.enabled })))}>
-						<span className="pd-mcp-sr-only">{agent.enabled ? t('agents.disable') : t('agents.enable')}</span>
-					</button>
-				</HoverTooltip>
-			</header>
-			<code className="pd-mcp-command" title={agent.resolvedCommand ?? commandLine(agent)}>{commandLine(agent)}</code>
-			{(agent.community || agent.note) && <p className="pd-mcp-callout pd-agent-note">{[agent.community ? t('agents.communityNote') : '', agent.note ?? ''].filter(Boolean).join(' ')}</p>}
-			{agent.readiness === 'install' && agent.installHint && <p className="pd-mcp-callout is-warning">{t('agents.installHint')}<code>{agent.installHint}</code></p>}
-			{installPanel(agent)}
-			{loginError[agent.id] && <p className="pd-mcp-callout pd-mcp-error" role="alert">{loginError[agent.id]}</p>}
-			{agent.quota && agent.readiness === 'ready' && typeof bridge?.readAgentQuota === 'function' && <AgentQuotaSection key={`${agent.id}:${agent.command}`} agentId={agent.id} />}
-			{agent.id === 'antigravity' && approvalsCleared && <p className="pd-mcp-callout" role="status">{t('agents.commandApprovalsCleared')}</p>}
-			<footer>
-				{agent.readiness === 'install' && agent.installer && installSupported && installs[agent.id]?.phase !== 'running'
-					&& <button type="button" className="pd-btn pd-mcp-button is-primary" disabled={busy || installRunning} onClick={() => setConfirmInstall(agent)}><Icon name="update" width="14" height="14" />{t('agents.install')}</button>}
-				{agent.readiness === 'ready' && agent.login && installSupported
-					&& <HoverTooltip title={t('agents.loginTooltip', { command: [agent.login.command, ...agent.login.args].join(' ') })}><button type="button" className="pd-btn pd-mcp-button" onClick={() => void openLogin(agent)}><Icon name="terminal" width="14" height="14" />{t('agents.loginInTerminal')}</button></HoverTooltip>}
-				{agent.homepage && <a className="pd-btn pd-mcp-button" href={agent.homepage} target="_blank" rel="noreferrer">{t('agents.homepage')}</a>}
-				{agent.id === 'antigravity' && typeof bridge?.clearAntigravityCommandApprovals === 'function' && <button type="button" className="pd-btn pd-mcp-button" disabled={busy} onClick={() => void run(async () => {
+		<div className="pd-mcp-servers">{agents.map((agent) => {
+			const installButton = agent.readiness === 'install' && agent.installer && installSupported && installs[agent.id]?.phase !== 'running'
+				? <button type="button" className="pd-btn pd-mcp-button is-primary" disabled={busy || installRunning} onClick={() => setConfirmInstall(agent)}><Icon name="update" width="14" height="14" />{t('agents.install')}</button> : null;
+			const installHint = agent.readiness === 'install' && agent.installHint ? agent.installHint : null;
+			const loginButton = agent.readiness === 'ready' && agent.login && installSupported
+				? <HoverTooltip title={t('agents.loginTooltip', { command: [agent.login.command, ...agent.login.args].join(' ') })}><button type="button" className="pd-btn pd-mcp-button" onClick={() => void openLogin(agent)}><Icon name="terminal" width="14" height="14" />{t('agents.loginInTerminal')}</button></HoverTooltip> : null;
+			const homepage = agent.homepage ? <a className="pd-btn pd-mcp-button" href={agent.homepage} target="_blank" rel="noreferrer">{t('agents.homepage')}</a> : null;
+			const clearApprovals = agent.id === 'antigravity' && typeof bridge?.clearAntigravityCommandApprovals === 'function'
+				? <button type="button" className="pd-btn pd-mcp-button" disabled={busy} onClick={() => void run(async () => {
 					setApprovalsCleared(false);
 					await bridge.clearAntigravityCommandApprovals();
 					setApprovalsCleared(true);
-				})}>{t('agents.clearCommandApprovals')}</button>}
-				<span className="pd-mcp-footer-spacer" />
-				<HoverTooltip title={t('agents.edit')} align="end">
-					<button type="button" className="pd-mcp-icon-button is-ghost" disabled={busy} onClick={() => edit(agent)}><Icon name="pencil" width="15" height="15" /><span className="pd-mcp-sr-only">{t('agents.edit')}</span></button>
-				</HoverTooltip>
-				<HoverTooltip title={agent.builtin ? t('agents.reset') : t('agents.remove')} align="end">
-					<button type="button" className="pd-mcp-icon-button is-ghost is-danger" disabled={busy} onClick={() => setRemoving(agent)}><Icon name={agent.builtin ? 'rotateCcw' : 'trash'} width="15" height="15" /><span className="pd-mcp-sr-only">{agent.builtin ? t('agents.reset') : t('agents.remove')}</span></button>
-				</HoverTooltip>
-			</footer>
-		</article>)}</div>
+				})}>{t('agents.clearCommandApprovals')}</button> : null;
+			// The install button joins its hint; without a hint it falls back to the footer.
+			const footerInstall = installHint ? null : installButton;
+			// Status is a pill by the name and the command sits in the meta line, so the
+			// card frame stays neutral; edit and reset move up beside the switch.
+			return <article key={agent.id} className={`pd-mcp-server pd-agent-card is-${statusClass(agent)}${agent.enabled ? '' : ' is-disabled'}`}>
+				<header>
+					<span className="pd-mcp-server-icon"><span className="pd-agent-mark" style={agent.accentColor ? { background: agent.accentColor } : undefined} aria-hidden="true">{agent.displayName.slice(0, 1).toUpperCase()}</span></span>
+					<div className="pd-mcp-server-title">
+						<div className="pd-agent-card-name">
+							<h3>{agent.displayName}</h3>
+							<span className={`pd-mcp-status pd-agent-status is-${agent.readiness}`}>{status(agent)}</span>
+						</div>
+						<p className="pd-agent-card-meta">
+							<span>{agent.builtin ? t('agents.builtin') : t('agents.custom')}</span>
+							<span>{agent.community ? t('agents.communityAcp') : 'ACP'}</span>
+							{agent.version && <span title={agent.resolvedCommand ?? undefined}>{agent.version}</span>}
+							<span className="pd-agent-card-command"><code title={agent.resolvedCommand ?? commandLine(agent)}>{commandLine(agent)}</code></span>
+						</p>
+					</div>
+					<div className="pd-agent-card-actions">
+						<HoverTooltip title={t('agents.edit')} align="end">
+							<button type="button" className="pd-mcp-icon-button is-ghost" disabled={busy} onClick={() => edit(agent)}><Icon name="pencil" width="15" height="15" /><span className="pd-mcp-sr-only">{t('agents.edit')}</span></button>
+						</HoverTooltip>
+						<HoverTooltip title={agent.builtin ? t('agents.reset') : t('agents.remove')} align="end">
+							<button type="button" className="pd-mcp-icon-button is-ghost is-danger" disabled={busy} onClick={() => setRemoving(agent)}><Icon name={agent.builtin ? 'rotateCcw' : 'trash'} width="15" height="15" /><span className="pd-mcp-sr-only">{agent.builtin ? t('agents.reset') : t('agents.remove')}</span></button>
+						</HoverTooltip>
+					</div>
+					<HoverTooltip title={agent.enabled ? t('agents.disable') : t('agents.enable')} align="end">
+						<button type="button" role="switch" aria-checked={agent.enabled} className="pd-mcp-switch" disabled={busy} onClick={() => void run(() => saveAgent(request(agent, { enabled: !agent.enabled })))}>
+							<span className="pd-mcp-sr-only">{agent.enabled ? t('agents.disable') : t('agents.enable')}</span>
+						</button>
+					</HoverTooltip>
+				</header>
+				{(agent.community || agent.note) && <p className="pd-mcp-callout pd-agent-note">{[agent.community ? t('agents.communityNote') : '', agent.note ?? ''].filter(Boolean).join(' ')}</p>}
+				{installHint && <div className="pd-mcp-callout is-warning pd-agent-install-hint">
+					<div><span>{t('agents.installHint')}</span><code>{installHint}</code></div>
+					{installButton}
+				</div>}
+				{installPanel(agent)}
+				{loginError[agent.id] && <p className="pd-mcp-callout pd-mcp-error" role="alert">{loginError[agent.id]}</p>}
+				{agent.quota && agent.readiness === 'ready' && typeof bridge?.readAgentQuota === 'function' && <AgentQuotaSection key={`${agent.id}:${agent.command}`} agentId={agent.id} />}
+				{agent.id === 'antigravity' && approvalsCleared && <p className="pd-mcp-callout" role="status">{t('agents.commandApprovalsCleared')}</p>}
+				{(footerInstall || loginButton || homepage || clearApprovals) && <footer>{footerInstall}{loginButton}{homepage}{clearApprovals}</footer>}
+			</article>;
+		})}</div>
 
 		<dialog ref={editorDialog} className="pd-mcp-editor" aria-labelledby="pd-agent-editor-title" onCancel={(event) => { event.preventDefault(); if (!busy) setEditing(null); }}>
 			{editing && <form className="pd-mcp-form" onSubmit={(event) => { event.preventDefault(); void run(async () => {

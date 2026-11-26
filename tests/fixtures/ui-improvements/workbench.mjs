@@ -102,6 +102,8 @@ export default async function workbenchScenario(review) {
   await review.key('Escape');
   await review.viewport(1440,1000);
   await review.click('.pd-sidebar-search-trigger');
+  // The search dialog is a lazily loaded surface: type once it has mounted.
+  await review.waitFor('Boolean(document.querySelector(".pd-search-input"))');
   await review.fill('.pd-search-input','needle');
   await review.waitFor('document.querySelectorAll(".pd-search-result").length===2');
   await review.key('ArrowDown');

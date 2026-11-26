@@ -142,3 +142,35 @@
 .pd-agent-quota-muted { color: var(--pd-text-subtle); }
 .pd-agent-quota-muted, .pd-agent-quota-error { margin: 0; line-height: 1.55; }
 .pd-agent-quota-error { color: var(--pd-danger, #d05454); }
+
+/* Agents page cards. Readiness lives in a pill beside the name, so the frame stays
+   neutral instead of turning red or green; the command joins the meta line and edit /
+   reset sit beside the switch. Scoped to .pd-agent-card so MCP server cards keep their look. */
+.pd-mcp-server.pd-agent-card { gap: 10px; padding: 12px 14px; }
+.pd-mcp-server.pd-agent-card.is-connected, .pd-mcp-server.pd-agent-card.is-error { border-color: var(--pd-border); }
+.pd-agent-card .pd-mcp-server-icon, .pd-mcp-server.pd-agent-card.is-connected .pd-mcp-server-icon { width: 32px; height: 32px; background: none; }
+.pd-agent-card .pd-mcp-server-icon .pd-agent-mark { width: 32px; height: 32px; border-radius: var(--pd-radius-md); font-size: var(--pd-font-base); }
+.pd-agent-card.is-disabled .pd-mcp-server-icon { filter: grayscale(1); }
+.pd-agent-card .pd-mcp-server-title { gap: 2px; }
+.pd-agent-card-name { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.pd-agent-card-name h3 { min-width: 0; margin: 0; }
+.pd-mcp-status.pd-agent-status { height: 20px; padding: 0 8px 0 7px; border-radius: var(--pd-radius-pill, 999px); font-size: var(--pd-font-xs); font-weight: var(--pd-weight-medium); gap: 5px; }
+.pd-mcp-status.pd-agent-status::before { width: 6px; height: 6px; opacity: 1; }
+.pd-agent-status.is-ready { color: var(--pd-success); background: color-mix(in srgb, var(--pd-success) 13%, transparent); }
+.pd-agent-status.is-install, .pd-agent-status.is-attention { color: var(--pd-warning); background: color-mix(in srgb, var(--pd-warning) 14%, transparent); }
+.pd-agent-status.is-disabled { color: var(--pd-text-weak); background: color-mix(in srgb, var(--pd-text) 8%, transparent); }
+.pd-mcp-server-title p.pd-agent-card-meta { flex-wrap: nowrap; align-items: center; gap: 0; min-width: 0; color: var(--pd-text-weak); font-size: var(--pd-font-xs); line-height: 20px; }
+.pd-agent-card-meta > span { flex: 0 0 auto; white-space: nowrap; }
+.pd-agent-card-meta > span + span::before { margin: 0 6px; content: '·'; opacity: .7; }
+.pd-agent-card-meta > .pd-agent-card-command { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.pd-agent-card-command code { padding: 1px 5px; border-radius: var(--pd-radius-xs); background: color-mix(in srgb, var(--pd-text) 7%, transparent); color: var(--pd-text-subtle); font: var(--pd-font-xs)/1.5 var(--pd-font-mono, ui-monospace, Consolas, monospace); }
+.pd-agent-card-actions { display: flex; flex: 0 0 auto; align-items: center; gap: 2px; opacity: .6; transition: opacity var(--pd-motion-fast, 120ms) ease; }
+.pd-agent-card:hover .pd-agent-card-actions, .pd-agent-card-actions:focus-within { opacity: 1; }
+/* Body blocks line up with the name, under the 32px mark. */
+.pd-agent-card > :not(header) { margin-left: 44px; }
+.pd-mcp-callout.pd-agent-install-hint { align-items: center; gap: 12px; }
+.pd-agent-install-hint > div { flex: 1; min-width: 0; }
+.pd-agent-install-hint code { display: block; margin-top: 3px; color: var(--pd-text); font: var(--pd-font-xs)/1.5 var(--pd-font-mono, ui-monospace, Consolas, monospace); overflow-wrap: anywhere; }
+.pd-agent-install-hint > .pd-btn { flex: 0 0 auto; }
+.pd-agent-card .pd-agent-quota { border-color: var(--pd-border-soft); background: color-mix(in srgb, var(--pd-text) 3%, transparent); }
+@media (max-width: 720px) { .pd-agent-card > :not(header) { margin-left: 0; } }

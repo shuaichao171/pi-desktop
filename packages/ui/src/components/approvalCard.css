@@ -1,19 +1,28 @@
 .pd-approval-card { display: grid; gap: 10px; min-width: 0; font-size: var(--pd-font-sm); }
 .pd-approval-card p { margin: 0; overflow-wrap: anywhere; }
 .pd-approval-source { color: var(--pd-text-subtle); }
+.pd-approval-label { display: block; margin-bottom: 5px; color: var(--pd-text-weak); font-size: var(--pd-font-xs); font-weight: var(--pd-weight-medium); }
 .pd-approval-command, .pd-approval-diff { overflow: auto; max-height: 240px; margin: 6px 0 0; padding: 10px; border: 1px solid var(--pd-border); border-radius: var(--pd-radius-sm); background: var(--pd-bg); font: var(--pd-font-sm)/1.6 var(--pd-font-mono); white-space: pre; }
+.pd-approval-command-block .pd-approval-command { margin-top: 0; border-color: var(--pd-border-soft); background: var(--pd-code-surface); color: var(--pd-code-text); }
+/* Working directory: one quiet line of context under the command. */
+.pd-approval-cwd { display: flex; align-items: center; gap: 6px; min-width: 0; color: var(--pd-text-weak); font-size: var(--pd-font-xs); }
+.pd-approval-cwd > svg { flex: 0 0 auto; }
+.pd-approval-cwd > span { flex: 0 0 auto; }
+.pd-approval-cwd code { min-width: 0; overflow-wrap: anywhere; color: var(--pd-text-subtle); font-family: var(--pd-font-mono); }
+.pd-approval-note { color: var(--pd-text-weak); font-size: var(--pd-font-xs); line-height: 1.55; }
 .pd-approval-diff .is-addition { color: var(--pd-success, #65ba82); }
 .pd-approval-diff .is-deletion { color: var(--pd-danger); }
 .pd-approval-file summary { cursor: pointer; overflow-wrap: anywhere; }
 .pd-approval-scope, .pd-approval-feedback { display: grid; gap: 6px; }
 .pd-approval-scope select { padding: 5px 8px; background: var(--pd-bg); color: var(--pd-text); border: 1px solid var(--pd-border); border-radius: var(--pd-radius-xs); }
 .pd-approval-feedback textarea { width: 100%; resize: vertical; }
-/* Native agent options: one button per answer, kept in view while a long command scrolls. */
-.pd-agent-approval-options { position: sticky; bottom: 0; z-index: 1; flex-wrap: wrap; margin-top: 0; padding-top: 5px; background: var(--pd-surface); }
+/* Native agent options: one button per answer, kept in view while a long command scrolls.
+   Weight runs left to right: a quiet decline, outlined lasting grants, the filled "allow once". */
+.pd-agent-approval-options { position: sticky; bottom: 0; z-index: 1; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 0; padding-top: 9px; border-top: 1px solid var(--pd-border-soft); background: var(--pd-surface); }
 .pd-agent-approval-options .pd-btn { max-width: 100%; height: auto; padding-block: 4px; white-space: normal; overflow-wrap: anywhere; text-align: left; line-height: 1.4; }
 /* Declines sit apart on the left, away from the allow answers. */
 .pd-agent-approval-options .is-last-decline { margin-right: auto; }
-.pd-agent-approval-options .pd-agent-approval-decline:hover:not(:disabled) { border-color: var(--pd-danger-border); color: var(--pd-danger); }
+.pd-agent-approval-options .pd-agent-approval-decline:hover:not(:disabled) { border-color: transparent; background: var(--pd-danger-surface); color: var(--pd-danger); }
 @media (max-width: 720px) {
   .pd-approval-command, .pd-approval-diff { max-height: 160px; }
 }

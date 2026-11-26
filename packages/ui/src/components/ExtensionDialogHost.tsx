@@ -341,10 +341,12 @@ export function ExtensionDialogHost({ children, chatVisible, notificationTarget,
 		void respond(active.id, active.kind === 'confirm' ? false : null);
 	}
 
-	const card = active ? <section ref={cardRef} className={`pd-extension-request${active.kind === 'form' ? ' has-form' : ''}${collapsed ? ' is-collapsed' : ''}`} role="region" aria-labelledby={titleId} aria-describedby={!collapsed && active.message ? messageId : undefined} aria-busy={pending} onKeyDown={onCardKeyDown}>
+	// A permission request looks like one (shield, amber edge), apart from ordinary extension questions.
+	const isApproval = active?.kind === 'confirm' && Boolean(active.approval);
+	const card = active ? <section ref={cardRef} className={`pd-extension-request${active.kind === 'form' ? ' has-form' : ''}${isApproval ? ' is-approval' : ''}${collapsed ? ' is-collapsed' : ''}`} role="region" aria-labelledby={titleId} aria-describedby={!collapsed && active.message ? messageId : undefined} aria-busy={pending} onKeyDown={onCardKeyDown}>
 		<header className="pd-extension-request-head">
-			<Icon name="message" width="16" height="16" />
-			<div className="pd-extension-request-heading"><span>{t('extension.request')}</span><h2 id={titleId}>{active.title}</h2></div>
+			<Icon name={isApproval ? 'shield' : 'message'} width="16" height="16" />
+			<div className="pd-extension-request-heading"><span>{t(isApproval ? 'extension.approvalRequest' : 'extension.request')}</span><h2 id={titleId}>{active.title}</h2></div>
 			{queuedCount > 0 && <span className="pd-extension-request-count">{t('extension.queued', { count: queuedCount })}</span>}
 			{autoCancelRemaining !== null && <span className="pd-extension-request-count" data-auto-cancel="question" title={t('extension.autoCancelTitle')}>{t('extension.autoCancelIn', { time: formatQuestionCountdown(autoCancelRemaining) })}</span>}
 			<button type="button" className="pd-extension-request-toggle" aria-label={t(collapsed ? 'extension.expand' : 'extension.collapse')} aria-expanded={!collapsed} aria-controls={bodyId} onClick={() => setCollapsed((current) => !current)}><Icon name={collapsed ? 'chevronDown' : 'chevronUp'} width="16" height="16" /></button>

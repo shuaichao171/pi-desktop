@@ -202,6 +202,9 @@ export function ChatView({ onOpenModelManagement, searchTarget, historyControls,
 	// bar — belongs to a settled new conversation. A pending switch keeps the
 	// bottom composer layout and shows only the loading placeholder.
 	const settledEmpty = isEmpty && !sessionLoading;
+	// The project bar stays on a new conversation that shows an error, so a failed
+	// project change can be retried from the composer.
+	const showProjectBar = isNewConversation && !sessionLoading;
 	const awaitingResponse = !layoutPending && agentStatus === 'busy' && !runs.some(run => run.status === 'running') && !error && !messages.some((message) => message.status === 'streaming') && !activities.some((activity) => activity.status === 'running');
 	const [revealMessage, setRevealMessage] = useState<{ id: string; request: number; scope: string } | null>(null);
 	const bodyRef = useRef<HTMLDivElement>(null);
@@ -860,7 +863,7 @@ export function ChatView({ onOpenModelManagement, searchTarget, historyControls,
 				<GoalBeacon />
 				<FleetCard />
 				<ProjectOfferBar />
-				<Composer header={settledEmpty ? <ComposerContextBar /> : undefined} onOpenModelManagement={onOpenModelManagement} changesSlotRef={setChangesDock} />
+				<Composer header={showProjectBar ? <ComposerContextBar /> : undefined} onOpenModelManagement={onOpenModelManagement} changesSlotRef={setChangesDock} />
 			</div>
 			</SubagentWorkspace>
 			{changesReview !== null && reviewItems.length > 0 && <ChangesDialog

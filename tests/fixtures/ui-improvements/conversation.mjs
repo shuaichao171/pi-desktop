@@ -38,6 +38,8 @@ export default async function conversationScenarios(review) {
     for (let i = 19; i >= 0; i--) leaf = { id: 'tree' + i, label: 'Path node ' + i, kind: 'user', active: true, childCount: 1, children: [leaf] };
     state.tree = [leaf, { id: 'other', label: 'Other branch summary', kind: 'assistant', active: false, childCount: 0, children: [] }];
     bridge.getSessionTree = async () => structuredClone(state.tree);
+    // A confirmed switch records the viewed branch leaf (branch memory); accept the write.
+    bridge.setSessionBranchSelection = async () => {};
     bridge.switchSessionBranch = async id => { state.switches.push(id); if (state.failTreeSwitch) { state.failTreeSwitch = false; throw new Error('Branch temporarily unavailable'); } const visit = nodes => nodes.forEach(node => { node.active = node.id === id; visit(node.children); }); visit(state.tree); };
   })()`);
   await review.waitFor('document.querySelector("[data-message-id=a29]") !== null');
@@ -137,8 +139,9 @@ export default async function conversationScenarios(review) {
   await review.key('Escape');
 
   // Global search locates beyond the latest 400 entries through existing pages.
+  // The search dialog is lazily loaded: each open waits for its input before typing.
   await review.evaluate(`(() => { const s=window.__conversationReview; s.history=Array.from({length:460},(_,i)=>({id:i===0?'old-target':'long-'+i,order:i,role:i%2?'assistant':'user',text:i===0?'Ancient result':'History row '+i,status:'done'})); s.searchLatest=s.history.slice(-400); })()`);
-  await review.key('k', { ctrl: true }); await review.fill('.pd-search-input', '# Ancient result');
+  await review.key('k', { ctrl: true }); await review.waitFor('Boolean(document.querySelector(".pd-search-input"))'); await review.fill('.pd-search-input', '# Ancient result');
   await review.waitFor('document.querySelector(".pd-search-result") !== null');
   await review.key('Enter');
   await review.waitFor('document.querySelector("[data-message-id=old-target].is-search-match") !== null');
@@ -147,7 +150,7 @@ export default async function conversationScenarios(review) {
 
   // Cancel a deferred page by changing session; its late result must not pull back.
   await review.evaluate('window.__conversationReview.deferPage = true');
-  await review.key('k', { ctrl: true }); await review.fill('.pd-search-input', '# Ancient result');
+  await review.key('k', { ctrl: true }); await review.waitFor('Boolean(document.querySelector(".pd-search-input"))'); await review.fill('.pd-search-input', '# Ancient result');
   await review.waitFor('document.querySelector(".pd-search-result") !== null'); await review.key('Enter');
   await review.waitFor('Boolean(window.__conversationReview.releasePage)');
   await review.evaluate('window.__conversationReview.ready("cancel-destination", [{id:"destination",order:0,role:"user",text:"Keep this session",status:"done"}]); window.__conversationReview.releasePage({offset:0,limit:60,total:460,messages:window.__conversationReview.history.slice(0,60),activities:[]})');

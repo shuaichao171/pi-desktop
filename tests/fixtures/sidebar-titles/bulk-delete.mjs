@@ -86,8 +86,8 @@ export default async function bulkDeleteScenarios(review) {
   await review.click('.pd-session-bulk-trash-dialog footer .is-danger');
   await review.waitFor(`!${present('arch-a')}`);
   await review.waitFor('document.querySelectorAll(".pd-session-bulk-trash-list li").length === 1');
-  await review.waitFor('Boolean(document.querySelector(".pd-session-trash-skip"))');
-  await review.assert(`(() => { const skip = document.querySelector('.pd-session-trash-skip'); const failures = document.querySelectorAll('.pd-session-trash-error'); return skip && skip.textContent.includes('已跳过') && failures.length === 0 && document.querySelector(".pd-session-bulk-trash-dialog").open === true; })()`, 'A stale selection item is skipped with a note while the dialog stays open for review');
+  await review.waitFor('Boolean(document.querySelector(".pd-session-delete-skip"))');
+  await review.assert(`(() => { const skip = document.querySelector('.pd-session-delete-skip'); const failures = document.querySelectorAll('.pd-session-delete-error'); return skip && skip.textContent.includes('已跳过') && failures.length === 0 && document.querySelector(".pd-session-bulk-trash-dialog").open === true; })()`, 'A stale selection item is skipped with a note while the dialog stays open for review');
   await review.assert(`${state}.deletes.length === 1 && ${state}.deletes[0].endsWith('arch-a.jsonl') && ${state}.writes.length === 0 && ${present('arch-c')} && ${state}.listCalls - ${baseline} === 2`, 'The batch deletes only the still-archived path with one pre-flight plus one refresh refetch');
   await review.screenshot('bulk-delete-skipped');
 

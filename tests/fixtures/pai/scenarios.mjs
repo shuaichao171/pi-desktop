@@ -62,6 +62,8 @@ export default async function paiScenarios(review) {
   await review.key('k', { ctrl: true });
   await review.assert("!document.querySelector('.pd-sidebar') && !document.querySelector('.pd-search-dialog')", 'Main-window sidebar and command-palette shortcuts do not expose hidden panels in pai');
   await review.click('.pd-pai-settings');
+  // The metric switches live on Settings → Conversation (docs/PAI.md).
+  await review.clickText('.pd-settings-nav button', '对话');
   await review.waitFor("document.querySelectorAll('.pd-metrics-setting[role=\"switch\"]').length === 4");
   await review.key('f', { ctrl: true });
   await review.assert("!document.querySelector('.pd-transcript-find') && document.querySelector('.pd-settings-dialog').contains(document.activeElement)", 'Conversation shortcuts cannot open a background finder or take focus from settings');
@@ -74,6 +76,7 @@ export default async function paiScenarios(review) {
   await review.waitFor(`Boolean(document.querySelector('${metrics}'))`);
   await review.assert("!document.querySelector('.pd-metric-speed')", 'Metric preferences survive reloading the window');
   await review.click('.pd-pai-settings');
+  await review.clickText('.pd-settings-nav button', '对话');
   for (const key of keys.slice(1)) await review.click(`[data-setting="metrics-${key}"]`);
   await review.key('Escape');
   await review.assert(`!document.querySelector('${metrics}')`, 'Turning off every metric removes the footer entirely');
@@ -86,6 +89,7 @@ export default async function paiScenarios(review) {
   // The agent echoes the sent message back, so the conversation is no longer empty and shows its stats line.
   await review.evaluate("(() => { const fixture = window.__modelReview; Object.assign(fixture.snapshot, { messages: [{ id: 'pai-sent-1', order: 0, role: 'user', text: '在这个文件夹继续聊天。', status: 'done' }], historyTotal: 1 }); fixture.emitAgent({ ...structuredClone(fixture.snapshot), type: 'ready' }); })()");
   await review.click('.pd-pai-settings');
+  await review.clickText('.pd-settings-nav button', '对话');
   for (const key of keys) await review.click(`[data-setting="metrics-${key}"]`);
   await review.key('Escape');
   await review.viewport(680, 720);

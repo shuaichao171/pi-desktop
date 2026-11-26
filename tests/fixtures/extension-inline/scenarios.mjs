@@ -68,8 +68,10 @@ export default async function extensionInlineScenarios(review) {
   await review.evaluate(`window.__emptyChatReview.ask(${q(approval)})`);
   await review.waitFor(`document.querySelector('.pd-approval-command')?.textContent === 'npm test'`);
   await review.screenshot('antigravity-command-approval');
-  await review.assert(`(() => { const buttons = [...document.querySelectorAll('.pd-agent-approval-options button')]; return !document.querySelector('.pd-agent-approval-options select') && buttons.at(-1).dataset.kind === 'allow_once' && buttons.at(-1).classList.contains('is-primary') && buttons[0].dataset.kind === 'reject_once' && buttons.filter(button => button.textContent === '拒绝').length === 0; })()`, 'Every native option is its own button: allow once is the primary action, the decline sits apart, and no extra decline button duplicates it');
-  await review.clickText('.pd-agent-approval-options button', 'Persist to settings');
+  await review.assert(`(() => { const buttons = [...document.querySelectorAll('.pd-agent-approval-options button')]; return !document.querySelector('.pd-agent-approval-options select') && buttons.at(-1).dataset.kind === 'allow_once' && buttons.at(-1).classList.contains('is-primary') && buttons[0].dataset.kind === 'reject_once' && buttons.filter(button => button.classList.contains('pd-agent-approval-decline')).length === 1; })()`, 'Every native option is its own button: allow once is the primary action, the decline sits apart, and no extra decline button duplicates it');
+  await review.assert(`(() => { const text = [...document.querySelectorAll('.pd-agent-approval-options button')].map(button => button.textContent); return JSON.stringify(text) === JSON.stringify(['拒绝', '始终允许', '记住此命令', '允许一次']) && document.querySelector('.pd-agent-approval-options [data-kind="allow_always"]').title.includes('Antigravity 原文：Persist to settings'); })()`, 'Buttons use the interface language by option kind and keep the agent wording in the tooltip');
+  await review.assert(`document.querySelector('.pd-extension-request.is-approval .pd-extension-request-heading > span')?.textContent === '权限请求'`, 'A permission request is labelled as one, apart from ordinary questions');
+  await review.clickText('.pd-agent-approval-options button', '始终允许');
   await review.assert(`window.__modelReview.calls.some(call => call.name === 'respondExtensionDialog' && call.args[0] === 'agy-command' && call.args[1].optionId === 'persist')`, 'The native ACP option keeps its original ID and answers in one click');
   const claude = {
     id: 'claude-command', kind: 'confirm', title: 'Claude Code 请求权限', message: 'Run the test suite',
@@ -82,7 +84,7 @@ export default async function extensionInlineScenarios(review) {
   await review.evaluate(`window.__emptyChatReview.ask(${q(claude)})`);
   await review.waitFor(`document.querySelector('.pd-approval-command')?.textContent.startsWith('pnpm test')`);
   await review.screenshot('claude-command-approval');
-  await review.assert(`document.querySelector('.pd-agent-approval-options [data-kind="allow_always"]').title === '允许，之后同类操作不再询问'`, 'Each option explains its lasting effect in the interface language');
+  await review.assert(`(() => { const button = document.querySelector('.pd-agent-approval-options [data-kind="allow_always"]'); return button.textContent === '始终允许' && button.title.startsWith('允许，之后同类操作不再询问') && button.title.includes("Claude Code 原文：Yes, and don't ask again for pnpm test:* commands"); })()`, 'Each option explains its lasting effect in the interface language and keeps the agent scope in its tooltip');
   await review.click('.pd-agent-approval-options .is-primary');
   await review.assert(`window.__modelReview.calls.some(call => call.name === 'respondExtensionDialog' && call.args[0] === 'claude-command' && call.args[1].optionId === 'allow')`, 'The primary button allows once');
   await review.viewport(600, 560);
@@ -91,10 +93,10 @@ export default async function extensionInlineScenarios(review) {
   await review.assert(`(() => { const command = document.querySelector('.pd-approval-command'); const rect = command.getBoundingClientRect(); return command.contains(document.elementFromPoint(rect.left + 12, rect.top + 20)); })()`, 'The top of the command preview is visible when the card opens');
   await review.assert(`(() => { const actions = document.querySelector('.pd-agent-approval-options'); const body = actions.closest('.pd-extension-request-body'); return body.scrollHeight > body.clientHeight && actions.getBoundingClientRect().bottom <= body.getBoundingClientRect().bottom + 1; })()`, 'The approval actions remain inside the viewport when the command preview scrolls');
   await review.screenshot('antigravity-command-approval-narrow');
-  await review.clickText('.pd-agent-approval-options button', '在此工作区记住这条命令');
+  await review.clickText('.pd-agent-approval-options button', '记住此命令');
   await review.assert(`window.__modelReview.calls.some(call => call.name === 'respondExtensionDialog' && call.args[0] === 'agy-remember' && call.args[1].approved && call.args[1].scope === 'workspace')`, 'Remembering a command is a separate user action');
   await review.evaluate(`window.__emptyChatReview.ask(${q({ ...approval, id: 'agy-decline' })})`);
   await review.waitFor(`document.querySelector('.pd-approval-command')?.textContent === 'npm test'`);
-  await review.clickText('.pd-agent-approval-options button', 'Deny');
+  await review.clickText('.pd-agent-approval-options button', '拒绝');
   await review.assert(`window.__modelReview.calls.some(call => call.name === 'respondExtensionDialog' && call.args[0] === 'agy-decline' && call.args[1].optionId === 'no')`, 'Decline answers with the agent reject option, not a cancelled turn');
 }

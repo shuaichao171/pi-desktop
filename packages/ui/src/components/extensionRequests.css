@@ -2,6 +2,10 @@
 .pd-extension-request { display: flex; flex-direction: column; min-width: 0; max-height: min(320px, 36vh); overflow: hidden; padding: 12px; border: 1px solid var(--pd-border-strong); border-radius: var(--pd-radius-lg); background: var(--pd-surface); color: var(--pd-text); box-shadow: var(--pd-shadow-low); font-size: var(--pd-font-caption); }
 .pd-extension-request-head { display: flex; flex: 0 0 auto; align-items: center; gap: 9px; min-width: 0; }
 .pd-extension-request-head > svg { flex-shrink: 0; color: var(--pd-text-subtle); }
+/* Permission requests: an amber edge and a shield badge set them apart from plain questions. */
+.pd-extension-request.is-approval { border-color: color-mix(in srgb, var(--pd-warning) 40%, var(--pd-border-strong)); }
+.pd-extension-request.is-approval .pd-extension-request-head > svg { box-sizing: content-box; padding: 6px; border-radius: var(--pd-radius-md); background: color-mix(in srgb, var(--pd-warning) 13%, transparent); color: var(--pd-warning); }
+.pd-extension-request.is-approval .pd-extension-request-heading > span { color: var(--pd-warning); }
 .pd-extension-request-heading { flex: 1; min-width: 0; }
 .pd-extension-request-heading > span { display: block; margin-bottom: 3px; color: var(--pd-text-subtle); font-size: var(--pd-font-xs); line-height: 1.3; }
 .pd-extension-request-heading h2 { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; margin: 0; font-size: var(--pd-font-caption); font-weight: var(--pd-weight-semibold); line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }

@@ -1357,6 +1357,11 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 			<button type="button" aria-label={t('sidebar.cancel')} onClick={() => { setCreatingProjectGroup(false); setGroupDraft(''); }}><Icon name="close" width="14" height="14" /></button>
 		</form>}
 		{filtered && <button type="button" className="pd-sidebar-filter-chip" aria-label={`${t(preferences.filter === 'unread' ? 'sidebar.onlyUnread' : 'sidebar.onlyPinned')} · ${t('sidebar.clearFilter')}`} onClick={() => preference({ filter: 'all' })}>{t(preferences.filter === 'unread' ? 'sidebar.onlyUnread' : 'sidebar.onlyPinned')}<Icon name="close" width="11" height="11" /></button>}
+		{archived && <div className="pd-archive-selection-toolbar">
+			<label><input ref={archiveSelectAllRef} type="checkbox" aria-label={t('sidebar.selectAllArchived')} checked={allArchiveSelected} disabled={!sessions.length} onChange={event => setArchiveSelection(new Set(event.currentTarget.checked ? sessions.map(session => session.path) : []))} />{t('sidebar.selectAll')}</label>
+			<span role="status">{t('sidebar.archiveSelectionCount', { count: selectedArchiveSessions.length })}</span>
+			<button type="button" data-action="delete-selected-archived" disabled={!selectedArchiveSessions.length || !bridge || navigating || workspaceNavigationPending} onClick={() => { setPopup(null); setBulkTrashTarget(selectedArchiveSessions.map(session => ({ path: session.path, title: titleOf(session) }))); }}>{t('sidebar.deleteSelected')}</button>
+		</div>}
 		{archived ? <div className="pd-project-list pd-organized-list" ref={scrollRef} tabIndex={-1} aria-label={t('sidebar.sessions')} style={scrollMaskStyle}>
 			{dates.map(date => section(`archive:${date.id}`, t(`sidebar.${date.id}`), date.sessions.slice(0, limitOf(`archive:${date.id}`)).map(session => renderSession(session, null)), { icon: 'clock' }))}
 			{!dates.length && <div className="pd-session-empty">{t(loadingSessions ? 'sidebar.loading' : 'sidebar.noArchived')}</div>}

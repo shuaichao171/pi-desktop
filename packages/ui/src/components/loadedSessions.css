@@ -10,7 +10,9 @@
 /* Fit the rows instead of inheriting the shared region's 80px content minimum.
    Scope both classes so this stays compact regardless of stylesheet order. */
 .pd-loaded-sessions .pd-loaded-sessions-list { flex: 0 1 auto; min-height: 0; padding: 2px 0 4px 5px; }
-.pd-loaded-sessions .pd-loaded-sessions-empty { margin-bottom: 0; }
+/* The empty state is a drop target: a dashed slot says "drag here" without looking like a row. */
+.pd-loaded-sessions .pd-loaded-sessions-empty { margin: 0 8px 0 0; padding: 0 9px; border: 1px dashed var(--pd-border); border-radius: var(--pd-radius-sm); line-height: 20px; }
+.pd-loaded-sessions.is-drop-hover .pd-loaded-sessions-empty { border-color: var(--pd-brand); color: var(--pd-text); }
 .pd-loaded-session { display: flex; align-items: center; gap: 2px; border-radius: var(--pd-radius-sm); }
 .pd-loaded-session:hover { background: var(--pd-sidebar-hover); }
 .pd-loaded-session.is-active { background: var(--pd-sidebar-selected); }

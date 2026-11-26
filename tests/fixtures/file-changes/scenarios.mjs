@@ -93,8 +93,9 @@ export default async function fileChangesScenarios(review) {
   await review.assert('window.__changesReview.visible(document.activeElement) && !document.activeElement.closest("[inert]")', 'Closing a review opened from a removed popover row restores usable focus to the running summary');
   await review.click('.pd-composer-changes-toggle');
   await review.evaluate('document.querySelector(".pd-changes-live-popover .pd-composer-changes-file").focus(); window.__changesReview.status("idle")');
-  await review.waitFor('Boolean(document.querySelector(".pd-conversation-turn .pd-conversation-changes")) && !document.querySelector(".pd-composer-changes.is-running") && (document.activeElement?.matches(".pd-changes-card-main,.pd-composer-shell textarea") ?? false)');
-  await review.assert('window.__changesReview.visible(document.activeElement) && !document.activeElement.closest("[inert]") && !document.querySelector(".pd-changes-dialog")', 'Completing the run while a popover file has keyboard focus restores focus to the settled turn card or composer');
+  // The live capsule hands focus to the session capsule in the same spot first, then the turn card, then the composer.
+  await review.waitFor('Boolean(document.querySelector(".pd-conversation-turn .pd-conversation-changes")) && !document.querySelector(".pd-composer-changes.is-running") && (document.activeElement?.matches(".pd-composer-changes.is-session .pd-changes-live-main,.pd-changes-card-main,.pd-composer-shell textarea") ?? false)');
+  await review.assert('window.__changesReview.visible(document.activeElement) && !document.activeElement.closest("[inert]") && !document.querySelector(".pd-changes-dialog")', 'Completing the run while a popover file has keyboard focus restores focus to the session capsule, settled turn card or composer');
   await review.evaluate('window.__changesReview.ready(window.__changesReview.path,window.__changesReview.items.slice(0,2),"busy")');
   await review.waitFor('Boolean(document.querySelector(".pd-composer-changes.is-running"))');
   await review.click('.pd-composer-changes.is-running .pd-composer-changes-review');

@@ -391,7 +391,7 @@ export function ComposerControls({ onOpenModelManagement, hasImages = false }: {
 	</span>;
 
 	return <div className="pd-composer-config">
-		{showAgentPicker && <HoverTooltip title={t('composer.agent')} description={agentLocked ? t('composer.agentLockedShort') : t('composer.agentDescription')} disabled={open !== null}>
+		{showAgentPicker && <HoverTooltip title={t('composer.agentSwitch')} description={agentLocked ? t('composer.agentLockedShort') : t('composer.agentDescription')} disabled={open !== null}>
 			<button ref={agentRef} type="button" className="pd-composer-control pd-composer-agent-trigger" onClick={() => toggle('agent')} aria-label={`${t('composer.agent')}: ${agent?.displayName ?? 'Pi'}`} aria-haspopup="menu" aria-expanded={open === 'agent'} aria-controls={open === 'agent' ? 'pd-composer-agent-picker' : undefined}>
 				{agentMark(agent?.displayName ?? 'Pi', agent?.accentColor, !external)}<span>{agent?.displayName ?? 'Pi'}</span><Icon name="chevronDown" width="12" height="12" />
 			</button>

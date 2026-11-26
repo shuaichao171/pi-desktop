@@ -164,7 +164,8 @@ export default async function agentsScenarios(review) {
 
   // One-click install: confirm first, then live output, then a re-check and the sign-in step.
   const codexCard = '[data-settings-page=agents] .pd-mcp-server:nth-child(2)';
-  await review.clickText(`${codexCard} footer button`, '安装');
+  await review.assert(`(() => { const card = document.querySelector('${codexCard}'); const hint = card.querySelector('.pd-agent-install-hint'); return getComputedStyle(card).borderTopColor === getComputedStyle(document.querySelector('[data-settings-page=agents] .pd-mcp-server.is-connected')).borderTopColor && card.querySelector('.pd-agent-status.is-install') && [...hint.querySelectorAll('button')].some(button => button.textContent.trim() === '安装'); })()`, 'An agent to install keeps a neutral frame, shows its state in a pill, and offers install inside its hint');
+  await review.clickText(`${codexCard} .pd-agent-install-hint button`, '安装');
   await review.waitFor('document.querySelector(".pd-agent-install-confirm")?.open === true');
   await review.assert('document.querySelector(".pd-agent-install-confirm").textContent.includes("npm install -g @agentclientprotocol/codex-acp") && !window.__modelReview.calls.some(call => call.name === "installAgent")', 'Install asks for confirmation with the exact command before running anything');
   await review.screenshot('agents-install-confirm');
@@ -186,7 +187,7 @@ export default async function agentsScenarios(review) {
   await review.screenshot('agents-install-done');
   await review.clickText(`${codexCard} footer button`, '在终端中登录');
   await review.waitFor('window.__modelReview.calls.some(call => call.name === "openAgentLogin" && call.args[0] === "codex")');
-  await review.assert('![...document.querySelectorAll("[data-settings-page=agents] .pd-mcp-server:nth-child(6) footer button")].some(button => button.textContent === "在终端中登录" || button.textContent === "安装")', 'Custom agents offer neither install nor terminal sign-in');
+  await review.assert('![...document.querySelectorAll("[data-settings-page=agents] .pd-mcp-server:nth-child(6) button")].some(button => button.textContent === "在终端中登录" || button.textContent === "安装")', 'Custom agents offer neither install nor terminal sign-in');
   await review.viewport(600, 800);
   await review.assert('document.documentElement.scrollWidth <= innerWidth', 'The Agents page fits a narrow window');
   await review.screenshot('agents-settings-narrow');

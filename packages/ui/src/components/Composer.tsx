@@ -30,6 +30,8 @@ import { PromptHistoryCursor, promptHistoryDirection, readPromptHistory, savePro
 
 /** Per-item attachment read state (attachments task): 'reading' blocks send, 'failed' offers retry or dismiss. */
 type PendingAttachmentJob = { id: string; name: string; kind: 'file' | 'context'; state: 'reading' | 'failed'; error?: string };
+/** The user cancelled this read: its job is dropped, not kept as a failure that blocks sending. */
+class AttachmentCancelledError extends Error {}
 
 /** Plain text beyond this size pastes as a dated .txt attachment instead of flooding the editor (zcode LONG_PASTE_THRESHOLD). */
 const LONG_PASTE_THRESHOLD = 15 * 1024;
@@ -122,6 +124,7 @@ export function Composer({ header, onOpenModelManagement, changesSlotRef }: { he
 	const hydrationScopes = useRef(new Map<string, UiInputScope>());
 	const missingByKey = useRef(new Map<string, UiStoredAttachment[]>());
 	const pdfJobs = useRef(new Set<string>());
+	const cancelledPdfJobs = useRef(new Set<string>());
 	const sendRequest = useRef<{ key: string; scope: { cwd: string; sessionPath: string | null }; text: string; attachments: UiAttachment[]; id: string; behavior?: BusyBehavior; preparationRequestId?: number } | null>(null);
 	const handledDraftTransfers = useRef(new Set<number>());
 	const attachmentTargets = useRef(new Set<{ key: string }>());
@@ -503,8 +506,13 @@ export function Composer({ header, onOpenModelManagement, changesSlotRef }: { he
 			attachmentJobsRef.current.delete(job.id);
 			attachmentJobRetry.current.delete(job.id);
 		} catch (error) {
-			attachmentJobsRef.current.set(job.id, { ...job, state: 'failed', error: error instanceof Error ? error.message : String(error) });
-			attachmentJobRetry.current.set(job.id, () => runAttachmentJob(job, perform));
+			if (error instanceof AttachmentCancelledError) {
+				attachmentJobsRef.current.delete(job.id);
+				attachmentJobRetry.current.delete(job.id);
+			} else {
+				attachmentJobsRef.current.set(job.id, { ...job, state: 'failed', error: error instanceof Error ? error.message : String(error) });
+				attachmentJobRetry.current.set(job.id, () => runAttachmentJob(job, perform));
+			}
 		}
 		setAttachmentJobs([...attachmentJobsRef.current.values()]);
 	}
@@ -521,7 +529,8 @@ export function Composer({ header, onOpenModelManagement, changesSlotRef }: { he
 			const data = await new Promise<string>((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result).split(',')[1] ?? ''); reader.onerror = () => reject(reader.error); reader.readAsDataURL(pdf); });
 			const requestId = crypto.randomUUID(); pdfJobs.current.add(requestId); setPdfCount(pdfJobs.current.size);
 			try { const result = await inputBridge.processPdfInput({ requestId, name: pdf.name.toLowerCase().endsWith('.pdf') ? pdf.name.slice(-200) : `${pdf.name.slice(0, 196)}.pdf`, data }); return result.attachment; }
-			finally { pdfJobs.current.delete(requestId); setPdfCount(pdfJobs.current.size); }
+			catch (error) { throw cancelledPdfJobs.current.has(requestId) ? new AttachmentCancelledError(error instanceof Error ? error.message : String(error)) : error; }
+			finally { cancelledPdfJobs.current.delete(requestId); pdfJobs.current.delete(requestId); setPdfCount(pdfJobs.current.size); }
 		};
 		let limitReported = false;
 		const worker = async () => {
@@ -750,7 +759,7 @@ export function Composer({ header, onOpenModelManagement, changesSlotRef }: { he
 				</div>
 				<ExitPresence show={Boolean(contextPicker && !contextUnavailable && shellRef.current)} surface="pd-context-picker">{contextPicker && !contextUnavailable && shellRef.current && <ComposerContextPicker ref={pickerRef} anchor={shellRef.current} trigger={contextButtonRef.current} mode={contextPicker.mode} query={contextPicker.mode === 'mention' ? contextPicker.mention.query : ''} workspace={cwd} sessionPath={sessionPath} onSelect={(request) => void selectContext(request)} onUpload={() => { closeContext(); fileInputRef.current?.click(); }} onClose={closeContext} />}</ExitPresence>
 				<ExitPresence show={Boolean(slashTrigger && !contextUnavailable && shellRef.current)} surface="pd-slash-picker">{slashTrigger && !contextUnavailable && shellRef.current && <ComposerSlashPicker ref={slashPickerRef} anchor={shellRef.current} query={slashTrigger.query} commands={slashCatalog.key === slashCatalogKey ? slashCatalog.commands : []} loading={slashCatalog.key !== slashCatalogKey || slashCatalog.loading} error={slashCatalog.key === slashCatalogKey ? slashCatalog.error : null} busy={busy} onSelect={selectSlash} onClose={closeSlash} onRetry={() => setSlashRetry((value) => value + 1)} />}</ExitPresence>
-				{attaching && <p className="pd-composer-attachment-hint" role="status">{t('composer.readingAttachments')}{pdfCount > 0 && <button type="button" onClick={() => { for (const id of pdfJobs.current) void inputBridge?.cancelPdfInput?.(id); }}>{t('composer.cancelPdf')}</button>}</p>}
+				{attaching && <p className="pd-composer-attachment-hint" role="status">{t('composer.readingAttachments')}{pdfCount > 0 && <button type="button" onClick={() => { for (const id of pdfJobs.current) { cancelledPdfJobs.current.add(id); void inputBridge?.cancelPdfInput?.(id); } }}>{t('composer.cancelPdf')}</button>}</p>}
 				{historyIndex !== null && <p className="pd-composer-attachment-hint" role="status">{t('composer.historyBrowsing')}</p>}
 				{!queueEditing && attachments.length > 0 && <p className="pd-composer-attachment-hint">{inputBridge?.getInputDraft ? (t('composer.attachmentHint')) : t('composer.attachmentPersistence')}</p>}
 				{imagePreview && <ImagePreviewDialog images={attachments.flatMap((attachment, index) => attachment.kind === 'image' ? [{ id: `pending:${index}`, name: attachment.name, attachment }] : [])} initialIndex={imagePreview.index} returnFocus={imagePreview.trigger} onClose={() => setImagePreview(null)} />}

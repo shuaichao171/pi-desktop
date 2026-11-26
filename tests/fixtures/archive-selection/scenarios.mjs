@@ -83,10 +83,13 @@ export default async function archiveSelectionScenarios(review) {
 
   await openArchive();
   await review.assert(`!document.querySelector(${q(row(data.active.path))}) && document.querySelector(${q(remove)}).disabled && !document.querySelector(${q(all)}).checked`, 'The archive starts unselected and excludes the active non-archived conversation');
-  // Hovering a conversation row must not open the right-side hover tooltip.
+  // Hovering an archived row shows its preview card (B5) without opening the conversation.
   await hover(row(data.entries[0].path));
-  await review.assert(`document.querySelector('.pd-hover-tooltip') === null`, 'Hovering a conversation row no longer opens the right-side tooltip');
-  await review.screenshot('archive-selection-row-hover-no-tooltip');
+  await review.waitFor(`document.querySelector('.pd-hover-tooltip')?.textContent.includes(${q(data.entries[0].name)}) === true`);
+  await review.assert(`${state}.navigation.length === 0`, 'Hovering an archived row previews it without opening the conversation');
+  await review.screenshot('archive-selection-row-hover-preview');
+  await review.mouseMove(1100, 500);
+  await review.waitFor(`!document.querySelector('.pd-hover-tooltip')`);
   await review.click(checkbox(data.entries[0].path));
   await review.assert(`${selected} === 1 && document.querySelector(${q(all)}).indeterminate && ${state}.navigation.length === 0 && !document.querySelector(${q(remove)}).disabled`, 'Selecting a single archive entry sets the partial checkbox state without opening the conversation');
   await review.click(remove);

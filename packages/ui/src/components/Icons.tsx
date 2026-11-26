@@ -61,6 +61,7 @@ export type IconName =
 	| 'eyeOff'
 	| 'globe'
 	| 'alert'
+	| 'shield'
 	| 'play'
 	| 'keyboard'
 	| 'palette'
@@ -108,6 +109,7 @@ const paths: Record<IconName, ReactNode> = {
 	spark: <><path d="m12 3 1.9 6.1L20 11l-6.1 1.9L12 19l-1.9-6.1L4 11l6.1-1.9Z" /><path d="m19 17 .5 1.5L21 19l-1.5.5L19 21l-.5-1.5L17 19l1.5-.5Z" /></>,
 	play: <><path d="M7 4.5v15l12-7.5z" /></>,
 	alert: <><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z" /><path d="M12 9v4M12 17h.01" /></>,
+	shield: <><path d="M12 3 5 6v5.5c0 4.3 2.9 8 7 9.5 4.1-1.5 7-5.2 7-9.5V6Z" /><path d="M12 8.5V13M12 16h.01" /></>,
 	lightbulb: <><path d="M9 18h6M10 21h4" /><path d="M12 3a6 6 0 0 0-3.6 10.8c.6.5 1.1 1.3 1.1 2.2h5c0-.9.5-1.7 1.1-2.2A6 6 0 0 0 12 3Z" /></>,
 	brain: <><path d="M12 18V5a3 3 0 0 0-5.8-1A4 4 0 0 0 3 10a4 4 0 0 0 .5 7A4 4 0 0 0 12 18ZM12 5a3 3 0 0 1 5.8-1A4 4 0 0 1 21 10a4 4 0 0 1-.5 7A4 4 0 0 1 12 18" /><path d="M8 8a3 3 0 0 1-2 3M16 8a3 3 0 0 0 2 3M8 16a3 3 0 0 0-2-2M16 16a3 3 0 0 1 2-2" /></>,
 	clock: <><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></>,

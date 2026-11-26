@@ -86,7 +86,15 @@ export function installModelSettingsFixture(options = {}) {
     listConversationWorkspaces: async () => [await window.piDesktop.getDefaultWorkspace()],
     getDefaultWorkspace: () => state.snapshot.cwd,
     listSessions: () => [],
-    listSessionsPage: () => ({ sessions: [], total: 0, hasMore: false, revision: 0 }),
+    // Scenarios that only mock listSessions still load their rows: page over that listing.
+    listSessionsPage: async (cwd, offset = 0, limit = Infinity) => {
+      const sessions = await window.piDesktop.listSessions(cwd);
+      return { sessions: sessions.slice(offset, offset + limit), total: sessions.length, hasMore: offset + limit < sessions.length, revision: 0 };
+    },
+    // Hovering a conversation row asks for its summary; no summary keeps the title-only preview.
+    sessionPreview: () => null,
+    // No conversation is hosted in another pane, so activating a row switches the main view.
+    focusHostedSession: () => false,
     listSideQuestions: () => [],
     // No remembered branch: the renderer keeps the branch Pi itself loaded.
     getSessionBranchSelection: () => null,
@@ -234,6 +242,11 @@ export function installModelSettingsFixture(options = {}) {
     getSessionTree: () => [],
     getProjectsDirectory: () => 'C:\\Users\\review\\Projects',
     listWorkspaceEntries: (relativePath = '') => clone(state.workspaceEntries[relativePath] ?? []),
+    // Scenarios that only mock listWorkspaceEntries still list their rows: one page over that listing.
+    listWorkspaceEntriesPage: async (relativePath = '', offset = 0) => {
+      const entries = await window.piDesktop.listWorkspaceEntries(relativePath);
+      return { entries: entries.slice(offset), nextOffset: null, total: entries.length };
+    },
     searchWorkspaceFiles: () => ({ files: [], truncated: false }),
     readWorkspaceFile: (relativePath) => state.workspaceFiles[relativePath] ?? '',
     getWorkspaceGitLog: () => clone(state.gitLog),

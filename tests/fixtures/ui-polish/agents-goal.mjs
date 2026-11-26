@@ -79,6 +79,6 @@ export default async function agentsGoalScenarios(review) {
   await review.click('.pd-goal-strip');
 
   await review.click('.pd-fleet-strip');
-  await review.waitFor('Boolean(document.querySelector(".pd-fleet-panel .pd-fleet-node"))');
+  await review.waitFor('Boolean(document.querySelector(".pd-fleet-sidepanel .pd-fleet-node"))');
   await review.screenshot(`agents-03-fleet-open-${theme}`);
 }

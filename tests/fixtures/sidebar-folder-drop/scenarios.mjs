@@ -128,7 +128,7 @@ export default async function sidebarFolderDropScenarios(review) {
   await review.waitFor(`Boolean(document.querySelector(${q(unassigned)}))`);
   await review.assert(`JSON.stringify(${projectOrder}) === JSON.stringify([${state}.paths.Bravo, ${state}.paths.Alpha])`, 'The project list excludes the default workspace and retains the pinned project partition');
   await review.assert(`JSON.stringify([...document.querySelectorAll(${q(unassigned + ' .pd-session-title-text')})].map(node => node.textContent)) === JSON.stringify(['没有项目的置顶对话', '没有项目的已有对话']) && ${uniqueRows}`, 'Unassigned saved conversations appear once below projects with the pinned one first');
-  await review.assert(`JSON.stringify([...document.querySelectorAll('.pd-sidebar-region')].map(region => region.dataset.regionId)) === '["project-groups","ungrouped-projects","unassigned-sessions"]'`, 'Unassigned conversations sit in the last region below the project regions');
+  await review.assert(`JSON.stringify([...document.querySelectorAll('.pd-sidebar-region[data-region-id]')].map(region => region.dataset.regionId)) === '["project-groups","ungrouped-projects","unassigned-sessions"]'`, 'Unassigned conversations sit in the last region below the project regions');
   await review.assert(noMetadata, 'Project-grouped saved conversation rows omit timestamp and project subtitle');
 
   await review.click('.pd-activity-new-session');

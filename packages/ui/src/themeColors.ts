@@ -63,7 +63,7 @@ const LEGACY_DEFAULT_GENERATIONS: Array<Record<ColorMode, ThemeColors>> = [
 // inline overrides, while these values also support an accurate default preview.
 const DEFAULT_TOKENS: Record<ColorMode, Record<string, string>> = {
 	dark: {
-		'--pd-bg': '#161616', '--pd-sidebar': '#2b2b2b', '--pd-sidebar-hover': '#404040', '--pd-sidebar-selected': '#4a4a4a', '--pd-sidebar-surface': '#363636', '--pd-sidebar-tab': '#161616', '--pd-header': '#161616', '--pd-surface': '#222222',
+		'--pd-bg': '#161616', '--pd-sidebar': '#1c1c1c', '--pd-sidebar-hover': '#2e2e2e', '--pd-sidebar-selected': '#383838', '--pd-sidebar-surface': '#262626', '--pd-sidebar-tab': '#161616', '--pd-header': '#161616', '--pd-surface': '#222222',
 		'--pd-surface-hover': '#2d2d2d', '--pd-selected': '#2d2d2d', '--pd-border': '#363636', '--pd-border-soft': '#2c2c2c',
 		'--pd-text': '#e5e5e5', '--pd-text-subtle': '#b8b8b8', '--pd-text-weak': '#999999',
 		'--pd-brand': '#8aa4f8', '--pd-brand-hover': '#a6bafa', '--pd-brand-ink': '#000000',
