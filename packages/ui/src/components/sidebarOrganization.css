@@ -198,9 +198,9 @@ body.pd-sidebar-dragging * { cursor: grabbing !important; }
 .pd-sidebar-region { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
 .pd-sidebar-region + .pd-sidebar-region { border-top: 1px solid var(--pd-sidebar-surface); }
 .pd-sidebar-region-heading { display: flex; flex: 1 1 auto; min-width: 0; align-items: center; gap: 6px; padding: 0 6px; border: 0; background: transparent; color: var(--pd-text-weak); font-size: var(--pd-font-sm); font-weight: var(--pd-weight-semibold); letter-spacing: .02em; text-align: left; }
-/* Region titles are quiet labels, not filled bars: the rows under them carry the weight. */
-.pd-sidebar-region-heading-row { display: flex; flex: 0 0 24px; align-items: center; padding: 0 8px; background: transparent; }
-.pd-sidebar-region-heading-row:hover, .pd-sidebar-region-heading-row:focus-within { background: color-mix(in srgb, var(--pd-sidebar-hover) 55%, transparent); }
+/* Region titles are filled bars, so each collapsible region stays distinct from the rows under it. */
+.pd-sidebar-region-heading-row { display: flex; flex: 0 0 24px; align-items: center; padding: 0 8px; background: var(--pd-sidebar-surface); }
+.pd-sidebar-region-heading-row:hover, .pd-sidebar-region-heading-row:focus-within { background: var(--pd-sidebar-hover); }
 .pd-sidebar-region-heading-row:hover .pd-sidebar-region-heading, .pd-sidebar-region-heading-row:focus-within .pd-sidebar-region-heading { color: var(--pd-text); }
 .pd-sidebar-region-heading-actions { display: flex; flex: 0 0 auto; align-items: center; }
 .pd-sidebar-region-heading-actions .pd-icon-button { width: 20px; height: 20px; opacity: 0.7; }
