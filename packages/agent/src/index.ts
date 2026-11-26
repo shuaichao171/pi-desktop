@@ -102,7 +102,7 @@ import { AcpConversation } from './acp/conversation.ts';
 import type { AcpElicitationResponse, AcpFormRequest } from './acp/elicitation.ts';
 import { planText, toolCommand, type PiImageContent, type PiShapedEvent } from './acp/turnAssembler.ts';
 import type { AcpRequestPermissionOutcome, AcpRequestPermissionParams } from './acp/protocol.ts';
-import { AGENT_BINDING_CUSTOM_TYPE, AGENT_SETTINGS_CUSTOM_TYPE, HANDOFF_CUSTOM_TYPE, HANDOFF_DELIVERED_CUSTOM_TYPE, hasConversation, pendingIncomingHandoff, readAgentBinding, readAgentSettings, renderHandoffContext, type HandoffRecord } from './acp/handoff.ts';
+import { AGENT_BINDING_CUSTOM_TYPE, AGENT_SETTINGS_CUSTOM_TYPE, HANDOFF_CUSTOM_TYPE, HANDOFF_DELIVERED_CUSTOM_TYPE, hasConversation, pendingIncomingHandoff, readAgentBinding, readAgentSettings, renderHandoffContext, type AgentSettingsRecord, type HandoffRecord } from './acp/handoff.ts';
 export { AgentRegistry } from './acp/agentRegistry.ts';
 import { BUILTIN_SLASH_COMMANDS, expandSlashPrompt, validateSlashCommandRequest, validSlashCommandName } from './slashCommands.ts';
 import { CUSTOM_PROVIDER_APIS, assertWritableDocument, commitProviderDocument, connectionReadOnlyReason, getBuiltinProviderIds, getCachedDisabledModels, literalApiKey, loadModelPrefs, loadModelPrefsFile, loadUsageQueryPrefs, mergeProvider, mergeProviderModels, mergeProviderUsageQuery, parseProviderDocumentText, readProviderDocument, restoreProviderBackupFiles, safeProviderUrl, setModelDisabled, setUsageQueryPref, validateDiscoveryRequest, validateProviderId, validateProviderModelsRequest, validateProviderRequest, validateProviderWithSdk, type ProviderBackupFiles, type ProviderDocument, type ProviderModelsChange } from './customProviders.ts';
@@ -1850,20 +1850,30 @@ class SingleAgentService {
 		const binding = readAgentBinding(entries);
 		if (!binding || binding.agentId === PI_AGENT_ID) return;
 		this.agentBinding = { agentId: binding.agentId, config: this.agents.get(binding.agentId) ?? null, nativeSessionId: binding.nativeSessionId ?? null };
-		this.acpModelId = readAgentSettings(entries)?.model ?? null;
-		if (this.acpModelId) return;
-		// Older sessions may only have a model ID on their ACP replies.
-		const provider = `acp:${binding.agentId}`;
-		const agentName = this.agentName();
+		this.acpModelId = this.agentSettingsFor(session, binding.agentId).model ?? null;
+	}
+
+	/**
+	 * The settings a conversation starts its agent with: its own record, else the
+	 * agent's last choice from any conversation (so a new conversation keeps the
+	 * model picked last time). An older conversation without a record keeps the
+	 * model its replies came from.
+	 */
+	private agentSettingsFor(session: PiRuntime['session'], agentId: string): AgentSettingsRecord {
+		const own = readAgentSettings(session.sessionManager.getEntries());
+		if (own) return own;
+		const preferred = this.agents.preferences.get(agentId) ?? { options: {} };
+		const provider = `acp:${agentId}`;
+		const agentName = this.agents.get(agentId)?.displayName ?? agentId;
 		const branch = session.sessionManager.getBranch();
 		for (let index = branch.length - 1; index >= 0; index -= 1) {
 			const entry = branch[index]!;
 			if (entry.type !== 'message' || entry.message.role !== 'assistant' || entry.message.provider !== provider) continue;
 			const model = entry.message.model;
 			if (typeof model !== 'string' || !model || model === agentName) continue;
-			this.acpModelId = model;
-			break;
+			return { ...preferred, model };
 		}
+		return preferred;
 	}
 
 	private async releaseAgent(): Promise<void> {
@@ -1997,7 +2007,7 @@ class SingleAgentService {
 				}
 				return renderHandoffContext(last >= 0 ? branch.filter((_, index) => index !== last) : branch, config.displayName);
 			},
-			savedSettings: () => owned() ? readAgentSettings(manager.getEntries()) : null,
+			savedSettings: () => owned() ? this.agentSettingsFor(session, config.id) : null,
 		});
 		this.acp = conversation;
 		return conversation;
@@ -2090,13 +2100,19 @@ class SingleAgentService {
 		this.fire({ type: 'model', ...this.selection(session) });
 	}
 
-	/** Remember the user's choice so a resumed session gets it back. */
-	private saveAgentSettings(session: PiRuntime['session'], change: { model?: string; option?: [string, string] }): void {
+	/**
+	 * Remember the user's choice so a resumed session gets it back, and (unless it is a
+	 * permission mode) as the agent's default for the next new conversation.
+	 */
+	private saveAgentSettings(session: PiRuntime['session'], change: { model?: string; option?: [string, string] }, rememberForAgent = true): void {
 		const manager = session.sessionManager;
-		const previous = readAgentSettings(manager.getEntries()) ?? { options: {} };
+		const agentId = this.agentBinding?.agentId;
+		// The conversation may have started from the agent's last choice: keep it in its record.
+		const previous = agentId ? this.agentSettingsFor(session, agentId) : readAgentSettings(manager.getEntries()) ?? { options: {} };
 		const model = change.model ?? previous.model;
 		const options = change.option ? { ...previous.options, [change.option[0]]: change.option[1] } : previous.options;
 		try { manager.appendCustomEntry(AGENT_SETTINGS_CUSTOM_TYPE, { ...(model ? { model } : {}), options }); } catch { /* the choice still applies now */ }
+		if (agentId && rememberForAgent) this.agents.preferences.remember(agentId, change);
 	}
 
 	/** Change one of the external agent's session settings (reasoning effort, mode, ...). */
@@ -2109,7 +2125,10 @@ class SingleAgentService {
 		if (!option.values.some((item) => item.value === value)) throw new Error('选项值不可用：' + value);
 		if (option.currentValue === value) return;
 		await this.ensureAcp(session).setConfigOption(optionId, value);
-		this.saveAgentSettings(session, { option: [optionId, value] });
+		// A permission mode stays with this conversation; it never becomes the default for new ones.
+		// Agents do not always tag it, so anything that looks like one is left out too.
+		const permissionLike = option.category === 'mode' || /mode|permission|approval|sandbox|yolo/i.test(option.id);
+		this.saveAgentSettings(session, { option: [optionId, value] }, !permissionLike);
 	}
 
 	/** One user turn for an external agent; resolves once the input is in the transcript. */

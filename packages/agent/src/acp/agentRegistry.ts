@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { dirname, join } from 'node:path';
+import { AgentPreferences } from './agentPreferences.ts';
 import { isValidAgentId, PI_AGENT_ID, requireAgentSaveRequest, type UiAgentConfig, type UiAgentInstaller, type UiAgentSaveRequest, type UiAgentStatus } from '@pidesktop/shared';
 import { refreshStoredSearchPath, resolveCommand, spawnResolved, withAgentSearchPath } from './command.ts';
 
@@ -101,9 +102,13 @@ export class AgentRegistry {
 	private searchPathLoaded = false;
 	private readonly probes = new Map<string, { command: string; resolved: string | null; version: string | null }>();
 
+	/** Last model and settings per agent, kept beside the agent list. */
+	readonly preferences: AgentPreferences;
+
 	constructor(file: string) {
 		this.file = file;
 		this.stored = this.read();
+		this.preferences = new AgentPreferences(join(dirname(file), 'desktop-agent-preferences.json'));
 	}
 
 	list(): UiAgentConfig[] {

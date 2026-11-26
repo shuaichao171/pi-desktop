@@ -313,6 +313,21 @@ test('agent session settings reach the renderer descriptor and change through Ag
 		assert.equal(resumed.modelName, 'Fake Small');
 		assert.deepEqual(resumed.agent.options.map((option) => [option.id, option.currentValue]), [['effort', 'low'], ['mode', 'auto']]);
 		assert.deepEqual(resumed.messages.filter((message) => message.role === 'user').map((message) => message.text), ['please run']);
+
+		// A new conversation with the same agent starts from the model and effort chosen last
+		// time, but never inherits a permission mode from another conversation.
+		const remembered = JSON.parse(readFileSync(join(root, 'agent', 'desktop-agent-preferences.json'), 'utf8'));
+		assert.deepEqual(remembered.agents['option-agent'], { model: 'fake-small', options: { effort: 'low' } });
+		await reopened.init({ cwd: workspace, fresh: true });
+		await reopened.setSessionAgent('option-agent');
+		const fresh = reopened.getSnapshot().sessionPath;
+		assert.notEqual(fresh, path);
+		assert.equal(reopened.getSnapshot().model, 'fake-small', 'the remembered model shows before the agent has started');
+		await until(() => {
+			const snapshot = reopened.getSnapshot();
+			return snapshot.model === 'fake-small' && snapshot.agent.options?.some((option) => option.id === 'effort' && option.currentValue === 'low');
+		}, 'a new conversation starts with the agent\'s last model and effort');
+		assert.notEqual(reopened.getSnapshot().agent.options.find((option) => option.id === 'mode').currentValue, 'auto');
 	} finally {
 		await service?.dispose().catch(() => {});
 		await reopened?.dispose().catch(() => {});

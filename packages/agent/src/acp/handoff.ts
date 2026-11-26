@@ -115,18 +115,23 @@ export const AGENT_SETTINGS_CUSTOM_TYPE = 'pi-desktop-agent-settings';
 const SETTINGS_MAX_OPTIONS = 20;
 const SETTINGS_MAX_TEXT = 500;
 
+/** A stored settings record with anything malformed or oversized dropped. */
+export function parseAgentSettings(value: unknown): AgentSettingsRecord {
+	const data = value && typeof value === 'object' && !Array.isArray(value) ? value as { model?: unknown; options?: unknown } : undefined;
+	const valid = (item: unknown): item is string => typeof item === 'string' && item.length > 0 && item.length <= SETTINGS_MAX_TEXT;
+	const options: Record<string, string> = {};
+	if (data?.options && typeof data.options === 'object' && !Array.isArray(data.options)) {
+		for (const [id, option] of Object.entries(data.options).slice(0, SETTINGS_MAX_OPTIONS)) if (valid(id) && valid(option)) options[id] = option;
+	}
+	return { ...(valid(data?.model) ? { model: data.model } : {}), options };
+}
+
 /** Latest settings record; agents reset to their defaults when a session is loaded again. */
 export function readAgentSettings(entries: readonly EntryLike[]): AgentSettingsRecord | null {
 	for (let index = entries.length - 1; index >= 0; index -= 1) {
 		const entry = entries[index]!;
 		if (entry.type !== 'custom' || entry.customType !== AGENT_SETTINGS_CUSTOM_TYPE) continue;
-		const data = entry.data as { model?: unknown; options?: unknown } | undefined;
-		const valid = (value: unknown): value is string => typeof value === 'string' && value.length > 0 && value.length <= SETTINGS_MAX_TEXT;
-		const options: Record<string, string> = {};
-		if (data?.options && typeof data.options === 'object' && !Array.isArray(data.options)) {
-			for (const [id, value] of Object.entries(data.options).slice(0, SETTINGS_MAX_OPTIONS)) if (valid(id) && valid(value)) options[id] = value;
-		}
-		return { ...(valid(data?.model) ? { model: data.model } : {}), options };
+		return parseAgentSettings(entry.data);
 	}
 	return null;
 }
