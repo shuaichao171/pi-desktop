@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join, resolve, sep } from 'node:path';
+import { dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 
@@ -10,6 +10,8 @@ const { AcpConversation, parseConfigOption, LEGACY_MODE_OPTION } = await import(
 const { renderHandoffContext, readAgentBinding, readAgentSettings, readIncomingHandoff, hasConversation, AGENT_BINDING_CUSTOM_TYPE, AGENT_SETTINGS_CUSTOM_TYPE, HANDOFF_CUSTOM_TYPE } = await import('../packages/agent/src/acp/handoff.ts');
 const { AgentRegistry, BUILTIN_AGENTS } = await import('../packages/agent/src/acp/agentRegistry.ts');
 const { resolveCommand, spawnResolved, withAgentSearchPath } = await import('../packages/agent/src/acp/command.ts');
+const { claudeExecutableError, withClaudeCodeExecutable } = await import('../packages/agent/src/acp/claudeExecutable.ts');
+const { AcpRequestError } = await import('../packages/agent/src/acp/protocol.ts');
 
 const FAKE_AGENT = fileURLToPath(new URL('./fixtures/acp/fake-agent.mjs', import.meta.url));
 const fakeConfig = (env = {}) => ({ id: 'fake', displayName: 'Fake Agent', command: process.execPath, args: [FAKE_AGENT], env, enabled: true, builtin: false });
@@ -318,6 +320,46 @@ test('Windows npm shims receive cmd metacharacters intact, global and node_modul
 	} finally {
 		await rm(root, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
 	}
+});
+
+test('a Windows Claude npm adapter falls back to the standalone executable after an update moves its own', { skip: process.platform !== 'win32' }, async (t) => {
+	const temp = resolve(tmpdir());
+	const root = await mkdtemp(join(temp, 'pi-claude-executable-'));
+	t.after(async () => {
+		assert.equal(dirname(root), temp);
+		await rm(root, { recursive: true, force: true });
+	});
+	const shim = join(root, 'claude-agent-acp.cmd');
+	const adapter = join(root, 'node_modules', '@agentclientprotocol', 'claude-agent-acp');
+	const sdk = join(adapter, 'node_modules', '@anthropic-ai', 'claude-agent-sdk');
+	const nativePackage = '@anthropic-ai/claude-agent-sdk-win32-' + process.arch;
+	const bundled = join(adapter, 'node_modules', nativePackage, 'claude.exe');
+	const standalone = join(root, 'node_modules', '@anthropic-ai', 'claude-code', 'bin', 'claude.exe');
+	await mkdir(sdk, { recursive: true });
+	await mkdir(dirname(bundled), { recursive: true });
+	await mkdir(dirname(standalone), { recursive: true });
+	await writeFile(shim, 'node "%~dp0\\node_modules\\@agentclientprotocol\\claude-agent-acp\\dist\\index.js" %*');
+	await writeFile(join(adapter, 'package.json'), '{}');
+	await writeFile(join(sdk, 'package.json'), JSON.stringify({ main: 'sdk.mjs', optionalDependencies: { [nativePackage]: '0.3.331' } }));
+	await writeFile(join(sdk, 'sdk.mjs'), '');
+	await writeFile(bundled, '');
+	await writeFile(standalone, '');
+
+	const env = { Path: root };
+	assert.equal(withClaudeCodeExecutable(shim, env), env);
+	await rm(bundled);
+	assert.deepEqual(withClaudeCodeExecutable(shim, env), { ...env, CLAUDE_CODE_EXECUTABLE: standalone });
+	const explicit = { ...env, claude_code_executable: 'chosen.exe' };
+	assert.equal(withClaudeCodeExecutable(shim, explicit), explicit);
+	await writeFile(bundled, '');
+	assert.equal(withClaudeCodeExecutable(shim, env), env);
+});
+
+test('Claude ACP missing executable errors give recovery steps without leaking raw details', () => {
+	const missing = new AcpRequestError({ code: -32603, message: 'Internal error', data: { details: 'Claude native binary not found for win32-x64. Private details.' } });
+	assert.match(claudeExecutableError(missing)?.message, /安装独立的 Claude Code|重新安装 Claude ACP/);
+	assert.doesNotMatch(claudeExecutableError(missing)?.message, /Private details/);
+	assert.equal(claudeExecutableError(new AcpRequestError({ code: -32603, message: 'Internal error' })), null);
 });
 
 test('config options replace the flat model list: model menu, reasoning effort and other settings', async () => {

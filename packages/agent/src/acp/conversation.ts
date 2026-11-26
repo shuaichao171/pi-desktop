@@ -1,5 +1,6 @@
 import type { UiAgentConfig, UiAgentModel, UiAgentOption } from '@pidesktop/shared';
 import { agentProxyProbeUrl, resolveAgentSystemProxy } from './agentProxy.ts';
+import { claudeExecutableError } from './claudeExecutable.ts';
 import { AcpConnection } from './connection.ts';
 import { parseElicitationForm, type AcpElicitationResponse, type AcpFormRequest } from './elicitation.ts';
 import {
@@ -311,6 +312,8 @@ export class AcpConversation {
 	}
 
 	private describeError(error: unknown): Error {
+		const missingExecutable = claudeExecutableError(error);
+		if (missingExecutable) return missingExecutable;
 		if (error instanceof AcpRequestError && error.code === ACP_AUTH_REQUIRED) {
 			const methods = (this.initialize?.authMethods ?? []).map((method) => method.name).filter(Boolean);
 			const how = this.config.loginHint ? `：${this.config.loginHint}` : `。请先在终端用它自己的命令完成登录${methods.length ? `（可用方式：${methods.join('、')}）` : ''}`;

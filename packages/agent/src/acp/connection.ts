@@ -2,6 +2,7 @@ import type { ChildProcess } from 'node:child_process';
 import { AsyncResource } from 'node:async_hooks';
 import { killProcessTree } from '../shellInterrupt.ts';
 import { withSystemProxy } from './agentProxy.ts';
+import { withClaudeCodeExecutable } from './claudeExecutable.ts';
 import { resolveCommand, spawnResolved, withAgentSearchPath } from './command.ts';
 import { AcpRequestError, type JsonRpcError, type JsonRpcMessage } from './protocol.ts';
 
@@ -85,7 +86,7 @@ export class AcpConnection {
 		if (!resolved) throw new Error(`找不到 Agent 命令：${options.command}`);
 		const child = spawnResolved(resolved, options.args, {
 			cwd: options.cwd,
-			env,
+			env: withClaudeCodeExecutable(resolved, env),
 			stdio: ['pipe', 'pipe', 'pipe'],
 			windowsHide: true,
 			// POSIX: own process group so close() can signal the whole tree.

@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import type { UiAgentConfig, UiAgentInstaller } from '@pidesktop/shared';
 import { agentProxyProbeUrl, resolveAgentSystemProxy, withSystemProxy } from './agentProxy.ts';
 import { BUILTIN_AGENTS, installerCommandLine } from './agentRegistry.ts';
+import { withClaudeCodeExecutable } from './claudeExecutable.ts';
 import { resolveCommand, spawnResolved, withAgentSearchPath } from './command.ts';
 
 /**
@@ -108,9 +109,9 @@ export async function openAgentLoginTerminal(agent: UiAgentConfig, platform: Nod
 	if (![login.command, ...login.args].every((token) => SAFE_TOKEN.test(token))) throw new Error('登录命令无效');
 	const proxy = await resolveAgentSystemProxy(agentProxyProbeUrl(agent));
 	const base = withAgentSearchPath({ ...process.env, ...agent.env });
-	const env = withSystemProxy(base, proxy, platform);
-	const resolved = resolveCommand(login.command, env);
+	const resolved = resolveCommand(login.command, base);
 	if (!resolved) throw new Error(`未找到命令 ${login.command}，请先安装 ${agent.displayName}`);
+	const env = withSystemProxy(withClaudeCodeExecutable(resolved, base), proxy, platform);
 
 	if (platform === 'win32') {
 		// cmd quoting cannot carry an arbitrary path safely through `start`, so the
