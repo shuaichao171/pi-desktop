@@ -61,6 +61,35 @@ test('message component renders historical image and text attachments', async ()
     }));
     assert.ok(omittedHtml.includes(translate('message.attachmentsOmitted', { count: '2' })));
 
+    const { WindowCloseDialog } = await server.ssrLoadModule('/src/components/WindowCloseDialog.tsx');
+    const trayHtml = renderToStaticMarkup(createElement(WindowCloseDialog, {
+      prompt: { id: 'p-1', closeBehavior: 'tray', allowRemember: true, stopIdleAgentsOnTrayHide: true },
+      onRespond: () => {},
+    }));
+    assert.ok(trayHtml.includes(translate('closeDialog.title')));
+    assert.ok(trayHtml.includes(translate('closeDialog.descriptionTray')));
+    assert.ok(trayHtml.includes(translate('closeDialog.idleAgentNote')));
+    assert.ok(trayHtml.includes(translate('closeDialog.remember')));
+    assert.ok(trayHtml.includes(translate('closeDialog.minimizeToTray')));
+    assert.ok(trayHtml.includes(translate('closeDialog.quitAnyway')));
+
+    const quitHtml = renderToStaticMarkup(createElement(WindowCloseDialog, {
+      prompt: { id: 'p-2', closeBehavior: 'quit', allowRemember: true, stopIdleAgentsOnTrayHide: false },
+      onRespond: () => {},
+    }));
+    assert.ok(quitHtml.includes(translate('closeDialog.descriptionQuit')));
+    assert.ok(!quitHtml.includes(translate('closeDialog.idleAgentNote')));
+    assert.ok(quitHtml.includes(translate('closeDialog.minimizeToTray')));
+    assert.ok(quitHtml.includes(translate('closeDialog.quit')));
+
+    const multiHtml = renderToStaticMarkup(createElement(WindowCloseDialog, {
+      prompt: { id: 'p-3', closeBehavior: 'quit', allowRemember: false, stopIdleAgentsOnTrayHide: true },
+      onRespond: () => {},
+    }));
+    assert.ok(multiHtml.includes(translate('closeDialog.descriptionMulti')));
+    assert.ok(!multiHtml.includes(translate('closeDialog.remember')));
+    assert.ok(!multiHtml.includes(translate('closeDialog.minimizeToTray')));
+
   } finally {
     await server.close();
   }

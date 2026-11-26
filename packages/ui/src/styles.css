@@ -310,6 +310,9 @@ button:focus-visible, textarea:focus-visible, input:focus-visible { outline: 2px
 .pd-tool-state.is-error { background: var(--pd-danger); }
 .pd-tool-state.is-interrupted { background: var(--pd-warning); }
 
+.pd-chat-view-host { display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0; container: pane / inline-size; }
+.pd-chat-view-host[hidden], .pd-page-host[hidden] { display: none; }
+.pd-page-host { display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0; }
 .pd-main { display: flex; flex: 1; flex-direction: column; min-width: 0; min-height: 0; background: var(--pd-bg); }
 .pd-chat-header { display: flex; flex: 0 0 48px; align-items: center; gap: 10px; min-width: 0; padding: 0 18px; border-bottom: 1px solid var(--pd-border-soft); background: var(--pd-header); }
 .pd-header-sidebar-toggle { display: none; }
@@ -336,7 +339,7 @@ button:focus-visible, textarea:focus-visible, input:focus-visible { outline: 2px
 .pd-conversation-body.is-empty .pd-composer-dock { position: relative; padding: 12px 16px 0; background: transparent; }
 .pd-conversation-body.is-empty .pd-composer-wrap { width: min(100%, 672px); }
 /* Goal/subagent cards align with the conversation column (composer box width). */
-.pd-conversation-body.is-empty .pd-goal-beacon, .pd-conversation-body.is-empty .pd-fleet-card { width: min(calc(100% - 32px), 672px); }
+.pd-conversation-body.is-empty .pd-goal-beacon, .pd-conversation-body.is-empty .pd-fleet-card, .pd-conversation-body.is-empty .pd-bg-tasks { width: min(calc(100% - 32px), 672px); }
 
 /* --- Draft composer context chips (project + branch pickers) --- */
 /* Chips + editor share one card (zcode): the header row pads itself inside the shell. */
@@ -1226,8 +1229,8 @@ html:has(dialog[open]) .pd-app-shell.is-frameless .pd-settings-overlay::before {
 
 /* Chat pane width adaptation. Panes (split view) and small hosts (pai windows)
  * resize independently of the OS window, so tiers are container queries keyed
- * to the .pd-chat-view-host container (named "pane", declared in
- * automationPage.css) — never media queries. Transcript content already
+ * to the .pd-chat-view-host container (named "pane", declared above) — never
+ * media queries. Transcript content already
  * degrades on its own: code blocks and markdown tables scroll horizontally,
  * long tokens wrap (overflow-wrap: anywhere), images cap at 100%. These tiers
  * only cover what content cannot self-handle. */

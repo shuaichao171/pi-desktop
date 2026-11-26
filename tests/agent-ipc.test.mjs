@@ -857,9 +857,11 @@ test('standalone conversations get independent folders and retain discoverable h
     return { canceled: false, filePaths: [pickedRoot] };
   };
   const initialized = [];
+  const calls = {};
   let snapshot = { cwd: project, sessionPath: null };
   globalThis.__ipcAgent = {
     onEvent() {}, onBackgroundActivity() {}, async dispose() {},
+    stopIdleAgents: async () => { calls.stopIdleAgents = (calls.stopIdleAgents ?? 0) + 1; return 2; },
     async init(options) {
       assert.equal(options.fresh, true);
       assert.equal((await stat(options.cwd)).isDirectory(), true);
@@ -926,6 +928,28 @@ test('standalone conversations get independent folders and retain discoverable h
   const reversed = await call(IPC_CHANNELS.desktopSettingsSet, { closeBehavior: 'quit' });
   assert.equal(reversed.confirmBusyClose, true, 'choosing a behavior in Settings restores the confirmation');
   assert.equal(reversed.closeBehavior, 'quit');
+  assert.equal(reversed.stopIdleAgentsOnTrayHide, true, 'stopIdleAgentsOnTrayHide defaults to true');
+  const keepIdle = await call(IPC_CHANNELS.desktopSettingsSet, { stopIdleAgentsOnTrayHide: false });
+  assert.equal(keepIdle.stopIdleAgentsOnTrayHide, false);
+  assert.equal(call(IPC_CHANNELS.desktopSettingsGet).stopIdleAgentsOnTrayHide, false);
+  assert.equal(await ipc.stopIdleAgentsForWindow(main), 2);
+  assert.equal(calls.stopIdleAgents, 1);
+
+  const sentClosePrompts = [];
+  const originalSend = main.webContents.send;
+  main.webContents.send = (channel, payload) => {
+    if (channel === IPC_CHANNELS.windowClosePrompt) sentClosePrompts.push(payload);
+    return originalSend.call(main.webContents, channel, payload);
+  };
+  const promptPromise = ipc.requestWindowClosePrompt(main, { closeBehavior: 'tray', allowRemember: true, stopIdleAgentsOnTrayHide: false });
+  assert.equal(sentClosePrompts.length, 1);
+  assert.equal(sentClosePrompts[0].closeBehavior, 'tray');
+  assert.equal(sentClosePrompts[0].allowRemember, true);
+  assert.equal(sentClosePrompts[0].stopIdleAgentsOnTrayHide, false);
+  assert.throws(() => call(IPC_CHANNELS.windowClosePromptResponse, { id: sentClosePrompts[0].id, action: 'invalid' }), /关闭确认操作无效/);
+  call(IPC_CHANNELS.windowClosePromptResponse, { id: sentClosePrompts[0].id, action: 'tray', remember: true });
+  assert.deepEqual(await promptPromise, { action: 'tray', remember: true });
+  main.webContents.send = originalSend;
   // The debug API owns its own settings entry: a save that does not touch it must
   // not drop it. The handler used to write a fixed 7-field object over the whole
   // settings file, silently disabling a configured debug server on the next save.

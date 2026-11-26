@@ -1,0 +1,40 @@
+{
+  "expo": {
+    "name": "Pi Desktop Remote",
+    "slug": "pi-desktop-remote",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "scheme": "pidesktop",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.pidesktop.remote",
+      "infoPlist": {
+        "NSCameraUsageDescription": "Scan Pi Desktop pairing QR codes to connect to your computer.",
+        "NSLocalNetworkUsageDescription": "Connect directly to Pi Desktop running on your local Wi-Fi network.",
+        "NSAppTransportSecurity": {
+          "NSAllowsArbitraryLoads": true
+        }
+      }
+    },
+    "android": {
+      "package": "com.pidesktop.remote",
+      "permissions": [
+        "android.permission.CAMERA",
+        "android.permission.INTERNET",
+        "android.permission.ACCESS_NETWORK_STATE"
+      ],
+      "usesCleartextTraffic": true
+    },
+    "plugins": [
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Allow Pi Desktop Remote to scan pairing QR codes from your desktop."
+        }
+      ],
+      "expo-secure-store"
+    ]
+  }
+}

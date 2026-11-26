@@ -1,7 +1,7 @@
 import { Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent } from 'react';
 import { ExitPresence } from './ExitPresence';
 import { buildConversationTreeIndex } from '@pidesktop/shared';
-import type { UiAppearanceState, UiSessionSearchResult, WorkspaceEntry } from '@pidesktop/shared';
+import type { UiAppearanceState, UiSessionSearchResult, UiWindowClosePrompt, UiWindowClosePromptResponse, WorkspaceEntry } from '@pidesktop/shared';
 import { ChatView, type SearchMessageTarget } from './ChatView';
 import { ConversationHeader } from './ConversationHeader';
 import { useSplitPaneRegions } from './splitPaneRegions';
@@ -20,6 +20,7 @@ import { UpdateNotice } from './UpdateNotice';
 import { OperationFeedback } from './OperationFeedback';
 import { FolderProjectDropZone } from './FolderProjectDropZone';
 import { ResultFilePreviewDialogRoot } from './ResultFilePreviewDialog';
+import { WindowCloseDialog } from './WindowCloseDialog';
 import { installResultFilePressRescue } from '../resultFilePressRescue';
 import { installInputModality } from '../inputModality';
 import { clampWorkbenchWidth } from '../workbenchReading';
@@ -100,8 +101,15 @@ export function AppShell() {
 	const [colorSaveFailed, setColorSaveFailed] = useState(false);
 	const [settingsOpen, setSettingsOpen] = useState(false);
 	const [searchOpen, setSearchOpen] = useState(false);
+	const [windowClosePrompt, setWindowClosePrompt] = useState<UiWindowClosePrompt | null>(null);
 	const searchButtonRef = useRef<HTMLButtonElement>(null);
 	const [mainView, setMainView] = useState<'chat' | 'automations' | 'plugins'>('chat');
+	const [automationsMounted, setAutomationsMounted] = useState(false);
+	const [pluginsMounted, setPluginsMounted] = useState(false);
+	useLayoutEffect(() => {
+		if (mainView === 'automations') setAutomationsMounted(true);
+		else if (mainView === 'plugins') setPluginsMounted(true);
+	}, [mainView]);
 	// Activity bar: clicking a builtin view icon switches the sidebar/main area; clicking
 	// the already-active icon returns to the session list ('chat'). The rail itself never
 	// collapses — Ctrl+B toggles only the sidebar pane to its right.
@@ -237,6 +245,17 @@ export function AppShell() {
 	}
 
 	// Tray menu / notification-click commands from the main process (4.1).
+	useEffect(() => {
+		const bridge = commandBridge;
+		if (!bridge?.onWindowClosePrompt || paneMode || paiMode) return;
+		return bridge.onWindowClosePrompt((prompt) => setWindowClosePrompt(prompt));
+	}, [commandBridge, paiMode, paneMode]);
+
+	function respondWindowClose(response: UiWindowClosePromptResponse) {
+		setWindowClosePrompt(null);
+		void commandBridge?.respondWindowClosePrompt?.(response).catch(() => {});
+	}
+
 	useEffect(() => {
 		const bridge = commandBridge;
 		if (!bridge?.onAppCommand) return;
@@ -463,7 +482,7 @@ export function AppShell() {
 	// Split panes are native views stacked above this page: they show only while
 	// the chat is the visible page and nothing of the main window overlays them.
 	const { paneIds, hostRef: splitPaneHostRef } = useSplitPaneRegions(!paneMode && !paiMode,
-		mainView === 'chat' && !settingsOpen && !commitOpen && !(narrow && sidebarOpen) && !(workbenchOverlay && workbenchOpen));
+		mainView === 'chat' && !settingsOpen && !commitOpen && !windowClosePrompt && !(narrow && sidebarOpen) && !(workbenchOverlay && workbenchOpen));
 	const sessions = useChatStore((state) => state.sessions ?? []);
 	const messages = useChatStore((state) => state.messages ?? []);
 	const activeSession = sessions.find((session) => session.path === conversationPath);
@@ -512,7 +531,7 @@ export function AppShell() {
 			<button type="button" className={`pd-sidebar-scrim${narrow && sidebarOpen ? ' is-open' : ''}`} aria-label={t('app.closeSidebar')} aria-hidden={!narrow || !sidebarOpen} inert={!narrow || !sidebarOpen} tabIndex={-1} onClick={() => setSidebarOpen(false)} />
 			<ActivityBar
 				mainView={mainView}
-				onOpenView={(view: 'automations' | 'plugins') => { openActivityView(view); setSidebarOpen(true); }}
+				onOpenView={(view: 'automations' | 'plugins') => { openActivityView(view); if (narrow) setSidebarOpen(false); }}
 				onNewSession={startNewSession}
 				onOpenSettings={() => { if (narrow) setSidebarOpen(false); setSettingsInitialPage('general'); setSettingsOpen(true); }}
 				onOpenUpdates={() => { if (narrow) setSidebarOpen(false); setSettingsInitialPage('updates'); setSettingsOpen(true); }}
@@ -545,8 +564,8 @@ export function AppShell() {
 					<div key={paneId} data-pane-id={paneId} className="pd-split-pane-region" />,
 				])}
 			</div>}
-			{mainView === 'automations' && <ScopedErrorBoundary scope="automation"><Suspense fallback={null}><AutomationPage onOpenSession={async (cwd, path) => { const selected = await useChatStore.getState().selectSession(cwd, path); if (selected) { setSearchMessageTarget(null); setMainView('chat'); if (narrow) setSidebarOpen(false); } return selected; }} /></Suspense></ScopedErrorBoundary>}
-			{mainView === 'plugins' && <ScopedErrorBoundary scope="plugins"><Suspense fallback={null}><PluginsPage /></Suspense></ScopedErrorBoundary>}
+			{automationsMounted && <div className="pd-page-host" hidden={mainView !== 'automations'} inert={mainView !== 'automations'}><ScopedErrorBoundary scope="automation"><Suspense fallback={null}><AutomationPage active={mainView === 'automations'} onOpenSession={async (cwd, path) => { const selected = await useChatStore.getState().selectSession(cwd, path); if (selected) { setSearchMessageTarget(null); setMainView('chat'); if (narrow) setSidebarOpen(false); } return selected; }} /></Suspense></ScopedErrorBoundary></div>}
+			{pluginsMounted && <div className="pd-page-host" hidden={mainView !== 'plugins'} inert={mainView !== 'plugins'}><ScopedErrorBoundary scope="plugins"><Suspense fallback={null}><PluginsPage active={mainView === 'plugins'} /></Suspense></ScopedErrorBoundary></div>}
 			{/* Pages without a composer keep notices at the top of the view. */}
 			<div className="pd-notification-center">{mainView !== 'chat' && <><OperationFeedback /><UpdateNotice /></>}<div ref={setNotificationTarget} className="pd-extension-notification-slot" /></div>
 			</div>
@@ -558,6 +577,7 @@ export function AppShell() {
 			<ExitPresence show={searchOpen} surface="pd-search-widget">{searchOpen && <div className="pd-search-error-host"><ScopedErrorBoundary scope="search" onReset={() => setSearchOpen(false)}><Suspense fallback={null}><SearchDialog anchor={searchButtonRef.current} commands={searchCommands} onClose={() => setSearchOpen(false)} onSelectSession={selectSearchSession} onSelectFile={selectSearchFile} /></Suspense></ScopedErrorBoundary></div>}</ExitPresence>
 			<FolderProjectDropZone onAdded={revealAddedProjects} />
 			<ResultFilePreviewDialogRoot />
+			{windowClosePrompt && <WindowCloseDialog key={windowClosePrompt.id} prompt={windowClosePrompt} onRespond={respondWindowClose} />}
 		</div>
 		</ExtensionDialogHost>
 	);

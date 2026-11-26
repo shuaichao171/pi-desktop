@@ -17,7 +17,7 @@ const stubs = {
   `,
   './ipc': `
     const env = globalThis.__startupTest;
-    export const { agentService, updateService, registerIpc, defaultWorkspaceAsync, disposeServices, readCurrentDesktopSettings, isAgentWorkActive, saveCloseChoice, sendAppCommand, openPaiWindow } = env;
+    export const { agentService, updateService, registerIpc, defaultWorkspaceAsync, disposeServices, readCurrentDesktopSettings, isAgentWorkActive, saveCloseChoice, sendAppCommand, openPaiWindow, stopIdleAgentsForWindow, requestWindowClosePrompt } = env;
   `,
   './appLocale': `export const getAppLocale = () => 'en-US';`,
   './tray': `export const appIconPath = () => ''; export const createAppTray = (options) => { globalThis.__startupTest.calls.trays += 1; globalThis.__startupTest.calls.trayOptions = options; }; export const destroyAppTray = () => {};`,
@@ -81,11 +81,11 @@ async function waitFor(condition, label) {
   }
 }
 
-async function createStartupHarness(t, { workspaceError, workspace, initialization = deferred(), shutdown = async () => {}, closeBehavior = 'quit', confirmBusyClose = true, busy = false, closeChoice = 1, checkboxChecked = false, launchArgs, userData = 'test-user-data', startupLog, prefersDark = true, expectedSplashBackground } = {}) {
+async function createStartupHarness(t, { workspaceError, workspace, initialization = deferred(), shutdown = async () => {}, closeBehavior = 'quit', stopIdleAgentsOnTrayHide = true, confirmBusyClose = true, busy = false, closeChoice = 1, checkboxChecked = false, closePromptReply, useNativeCloseDialog = false, launchArgs, userData = 'test-user-data', startupLog, prefersDark = true, expectedSplashBackground } = {}) {
   t.mock.timers.enable({ apis: ['setTimeout'] });
   const windows = [];
-  const calls = { init: [], startUpdates: 0, dispose: 0, quit: 0, errors: [], logs: [], consoleLogs: [], diagnostics: [], registered: 0, trays: 0, trayOptions: null, appCommands: [], singleInstanceLocks: 0, paths: {}, windowMode: null, messageBoxes: [], closeChoices: [], paiWindows: [], pipeStarts: 0, workspaces: 0 };
-  const desktopSettingsState = { notificationsEnabled: true, closeBehavior, confirmBusyClose };
+  const calls = { init: [], startUpdates: 0, dispose: 0, quit: 0, errors: [], logs: [], consoleLogs: [], diagnostics: [], registered: 0, trays: 0, trayOptions: null, appCommands: [], singleInstanceLocks: 0, paths: {}, windowMode: null, messageBoxes: [], closePrompts: [], closeChoices: [], stopIdleAgents: [], paiWindows: [], pipeStarts: 0, workspaces: 0 };
+  const desktopSettingsState = { notificationsEnabled: true, closeBehavior, stopIdleAgentsOnTrayHide, confirmBusyClose };
   t.mock.method(console, 'error', (...args) => calls.logs.push(args));
   t.mock.method(console, 'log', (...args) => calls.consoleLogs.push(args));
   let rendererReady;
@@ -178,6 +178,17 @@ async function createStartupHarness(t, { workspaceError, workspace, initializati
     isAgentWorkActive: async () => busy,
     // Mirrors ipc.saveCloseChoice: the behavior remembered in the dialog is what Settings then shows.
     saveCloseChoice: async (behavior) => { calls.closeChoices.push(behavior); Object.assign(desktopSettingsState, { closeBehavior: behavior, confirmBusyClose: false }); },
+    stopIdleAgentsForWindow: async (win) => { calls.stopIdleAgents.push(win); return 0; },
+    ...(useNativeCloseDialog ? {} : {
+      requestWindowClosePrompt: async (win, options) => {
+        calls.closePrompts.push([win, options]);
+        if (closePromptReply) return typeof closePromptReply === 'function' ? closePromptReply(options) : closePromptReply;
+        const action = options.closeBehavior === 'quit'
+          ? (closeChoice === 1 ? 'quit' : 'cancel')
+          : (closeChoice === 1 ? 'quit' : 'tray');
+        return { action, remember: checkboxChecked };
+      },
+    }),
     sendAppCommand: (command) => calls.appCommands.push(command),
     openPaiWindow: (request) => { calls.paiWindows.push(request); },
     agentService: { init: (...args) => { calls.init.push(args); return initialization.promise; } },
@@ -514,16 +525,50 @@ test('Windows close remembers the busy-close choice and stops asking', { skip: p
   await harness.rendererReady(main);
   main.emit('close', { preventDefault() {} });
   await settle();
-  assert.equal(harness.calls.messageBoxes.length, 1, 'the first busy close asks');
-  assert.equal(harness.calls.messageBoxes[0][1].checkboxLabel, 'Remember my choice', 'the full window offers to remember the choice');
+  assert.equal(harness.calls.messageBoxes.length, 0, 'revealed main window uses the custom in-app modal instead of native dialog');
+  assert.equal(harness.calls.closePrompts.length, 1, 'the first busy close asks');
+  assert.equal(harness.calls.closePrompts[0][1].allowRemember, true, 'the full window offers to remember the choice');
+  assert.equal(harness.calls.closePrompts[0][1].stopIdleAgentsOnTrayHide, true);
   assert.deepEqual(harness.calls.closeChoices, ['tray'], 'the remembered behavior matches what the dialog offered');
   assert.equal(main.isVisible(), false, 'minimize to tray hides the window');
+  assert.equal(harness.calls.stopIdleAgents.length, 1, 'hiding to tray stops idle agents when enabled');
   // Second close: the remembered choice applies without a dialog.
   main.show();
   main.emit('close', { preventDefault() {} });
   await settle();
-  assert.equal(harness.calls.messageBoxes.length, 1, 'a remembered choice is not asked again');
+  assert.equal(harness.calls.closePrompts.length, 1, 'a remembered choice is not asked again');
   assert.equal(main.isVisible(), false);
+  assert.equal(harness.calls.stopIdleAgents.length, 2, 'each tray hide stops idle agents when enabled');
+  assert.equal(harness.calls.quit, 0);
+});
+
+test('Windows close cancels cleanly without hiding, quitting, or remembering', { skip: process.platform !== 'win32' }, async (t) => {
+  const harness = await createStartupHarness(t, { closeBehavior: 'tray', busy: true, closePromptReply: { action: 'cancel', remember: true } });
+  const main = await harness.start();
+  main.load.resolve();
+  main.emit('ready-to-show');
+  harness.initialization.resolve();
+  await harness.rendererReady(main);
+  main.emit('close', { preventDefault() {} });
+  await settle();
+  assert.equal(harness.calls.closePrompts.length, 1);
+  assert.equal(main.isVisible(), true);
+  assert.equal(harness.calls.quit, 0);
+  assert.deepEqual(harness.calls.closeChoices, []);
+  assert.equal(harness.calls.stopIdleAgents.length, 0);
+});
+
+test('Windows close to tray respects stopIdleAgentsOnTrayHide = false', { skip: process.platform !== 'win32' }, async (t) => {
+  const harness = await createStartupHarness(t, { closeBehavior: 'tray', stopIdleAgentsOnTrayHide: false, busy: false });
+  const main = await harness.start();
+  main.load.resolve();
+  main.emit('ready-to-show');
+  harness.initialization.resolve();
+  await harness.rendererReady(main);
+  main.emit('close', { preventDefault() {} });
+  await settle();
+  assert.equal(main.isVisible(), false);
+  assert.equal(harness.calls.stopIdleAgents.length, 0, 'idle agents stay alive when the setting is turned off');
   assert.equal(harness.calls.quit, 0);
 });
 
@@ -537,6 +582,7 @@ test('Windows close remembers quitting so later busy closes stop asking', { skip
   main.emit('close', { preventDefault() {} });
   await settle();
   assert.deepEqual(harness.calls.closeChoices, ['quit'], 'quitting from the dialog is remembered as the Settings behavior');
+  assert.equal(harness.calls.stopIdleAgents.length, 0, 'quitting does not take the tray-hide idle-stop path');
   assert.equal(harness.calls.quit, 1);
 });
 
@@ -549,7 +595,8 @@ test('Windows close stops asking once the busy-close prompt was dismissed', { sk
   await harness.rendererReady(main);
   main.emit('close', { preventDefault() {} });
   await settle();
-  assert.equal(harness.calls.messageBoxes.length, 0, 'a dismissed prompt quits straight away');
+  assert.equal(harness.calls.closePrompts.length, 0, 'a dismissed prompt quits straight away');
+  assert.equal(harness.calls.messageBoxes.length, 0);
   assert.equal(harness.calls.quit, 1);
 });
 

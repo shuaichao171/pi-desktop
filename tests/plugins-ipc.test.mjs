@@ -10,7 +10,7 @@ const stubs = {
     export const app = { getPath: () => globalThis.__pluginRoot };
     export const nativeTheme = { shouldUseDarkColors: false };
     export const powerSaveBlocker = { start: () => 1, stop: () => {} };
-    export const shell = { showItemInFolder: () => {} };
+    export const shell = { showItemInFolder: (target) => { (globalThis.__revealedPaths ??= []).push(target); } };
     export const BrowserWindow = { getAllWindows: () => [], fromWebContents: (sender) => globalThis.__reviewWindow?.webContents === sender ? globalThis.__reviewWindow : null };
     export const Menu = { buildFromTemplate: () => ({}) };
     export const nativeImage = { createFromPath: () => ({ isEmpty: () => true }) };
@@ -86,7 +86,7 @@ test('settings, input and plugin IPC authenticate senders; plugin mutations coor
   const reload = { cwd, action: 'reload' };
   let release;
   try {
-    for (const channel of [ch.personalizationRead, ch.personalizationSave, ch.agentDiscoverProviderModels, ch.pluginCatalog, ch.pluginMutate, ch.pluginPreview, ch.pluginDiscover, ch.pluginPickDirectory, ch.agentSetExtensionEnabled, inputChannels.getInputQueue, inputChannels.mutateInputQueue]) {
+    for (const channel of [ch.personalizationRead, ch.personalizationSave, ch.agentDiscoverProviderModels, ch.pluginCatalog, ch.pluginMutate, ch.pluginPreview, ch.pluginRevealPath, ch.pluginDiscover, ch.pluginPickDirectory, ch.agentSetExtensionEnabled, inputChannels.getInputQueue, inputChannels.mutateInputQueue]) {
       const handler = globalThis.__pluginHandlers.get(channel);
       await assert.rejects(async () => handler({ sender: {}, senderFrame: event.senderFrame }), /Invalid (plugin|renderer) sender|no longer available/);
       await assert.rejects(async () => handler({ sender: event.sender, senderFrame: {} }), /Invalid (plugin|renderer) sender|no longer available/);
@@ -94,6 +94,16 @@ test('settings, input and plugin IPC authenticate senders; plugin mutations coor
     for (const [channel, input] of [[ch.pluginCatalog, root], [ch.pluginMutate, { ...reload, cwd: root }], [ch.pluginPreview, { cwd: root }]]) {
       assert.throws(() => call(channel, input), /项目已切换/);
     }
+    await assert.rejects(() => call(ch.pluginRevealPath, { cwd: root, path: cwd }), /项目已切换/);
+    await assert.rejects(() => call(ch.pluginRevealPath, { cwd, path: 'relative/path' }), /插件路径参数无效/);
+    await assert.rejects(() => call(ch.pluginRevealPath, { cwd, path: root }), /未找到对应的插件路径/);
+    const pluginDir = join(root, 'installed-plugin');
+    await mkdir(pluginDir);
+    catalog.packages.push({ source: 'npm:demo@1.0.0', scope: 'user', name: 'demo', description: '', version: '1.0.0', installed: true, path: pluginDir });
+    globalThis.__revealedPaths = [];
+    await call(ch.pluginRevealPath, { cwd, path: pluginDir });
+    assert.deepEqual(globalThis.__revealedPaths, [pluginDir]);
+    catalog.packages.length = 0;
     assert.deepEqual(await call(ch.pluginCatalog, cwd), catalog);
     assert.deepEqual(await call(ch.personalizationRead), instructions);
     assert.deepEqual(await call(ch.agentDiscoverProviderModels, { provider: 'custom-test' }), { models: [{ id: 'remote-model' }], warnings: [] });

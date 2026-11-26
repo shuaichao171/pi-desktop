@@ -1,0 +1,336 @@
+/* Per-session background tasks strip above the composer.
+   Visible while tasks run after a reply finishes and updates in place on completion. */
+
+.pd-bg-tasks {
+	--pd-bg-task-tone: var(--pd-brand);
+	flex: 0 0 auto;
+	width: min(calc(100% - 44px), 780px);
+	margin: 0 auto 6px;
+	border: 1px solid color-mix(in srgb, var(--pd-bg-task-tone) 30%, var(--pd-border));
+	border-radius: var(--pd-radius-lg);
+	background: color-mix(in srgb, var(--pd-bg-task-tone) 5%, var(--pd-surface));
+	color: var(--pd-text);
+	overflow: hidden;
+	transition: border-color var(--pd-motion-fast), background var(--pd-motion-fast);
+}
+
+.pd-bg-tasks[data-bg-state='running'],
+.pd-bg-task-row[data-bg-state='running'],
+.pd-bg-task-glyph[data-bg-state='running'],
+.pd-bg-task-pill[data-bg-state='running'] {
+	--pd-bg-task-tone: var(--pd-brand);
+}
+
+.pd-bg-tasks[data-bg-state='completed'],
+.pd-bg-task-row[data-bg-state='completed'],
+.pd-bg-task-glyph[data-bg-state='completed'],
+.pd-bg-task-pill[data-bg-state='completed'] {
+	--pd-bg-task-tone: var(--pd-success);
+}
+
+.pd-bg-tasks[data-bg-state='failed'],
+.pd-bg-task-row[data-bg-state='failed'],
+.pd-bg-task-glyph[data-bg-state='failed'],
+.pd-bg-task-pill[data-bg-state='failed'] {
+	--pd-bg-task-tone: var(--pd-danger);
+}
+
+.pd-bg-tasks-head {
+	display: flex;
+	align-items: center;
+	min-height: 36px;
+}
+
+.pd-bg-tasks-strip {
+	display: flex;
+	flex: 1 1 auto;
+	align-items: center;
+	gap: 8px;
+	min-width: 0;
+	min-height: 36px;
+	padding: 0 10px 0 12px;
+	border: 0;
+	background: transparent;
+	color: var(--pd-text-subtle);
+	font: inherit;
+	font-size: var(--pd-font-sm);
+	text-align: start;
+	cursor: pointer;
+	transition: background var(--pd-motion-fast);
+}
+
+.pd-bg-tasks-strip:hover {
+	background: var(--pd-surface-hover);
+}
+
+.pd-bg-tasks-strip:focus-visible,
+.pd-bg-task-stop:focus-visible,
+.pd-bg-tasks-dismiss:focus-visible {
+	outline: 2px solid var(--pd-focus-border);
+	outline-offset: -2px;
+}
+
+.pd-bg-task-glyph {
+	display: inline-flex;
+	flex: 0 0 auto;
+	align-items: center;
+	justify-content: center;
+	width: 16px;
+	height: 16px;
+	color: var(--pd-bg-task-tone);
+}
+
+.pd-bg-task-glyph[data-bg-state='running'] > svg {
+	animation: pd-spin 1.1s linear infinite;
+}
+
+.pd-bg-tasks-title {
+	flex: 0 0 auto;
+	color: var(--pd-text);
+	font-weight: var(--pd-weight-semibold);
+	white-space: nowrap;
+}
+
+.pd-bg-tasks-name {
+	flex: 1 1 auto;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	color: var(--pd-text);
+}
+
+.pd-bg-tasks-name.is-muted {
+	color: var(--pd-text-subtle);
+}
+
+.pd-bg-tasks-hint {
+	flex: 0 1 auto;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	color: var(--pd-text-weak);
+	font-size: var(--pd-font-xs);
+}
+
+.pd-bg-task-pill {
+	flex: 0 0 auto;
+	padding: 0 8px;
+	border-radius: var(--pd-radius-pill);
+	background: color-mix(in srgb, var(--pd-bg-task-tone) 14%, transparent);
+	color: var(--pd-bg-task-tone);
+	font-size: var(--pd-font-xs);
+	font-weight: var(--pd-weight-medium);
+	line-height: 19px;
+	white-space: nowrap;
+}
+
+.pd-bg-task-duration {
+	flex: 0 0 auto;
+	color: var(--pd-text-weak);
+	font-size: var(--pd-font-xs);
+	font-variant-numeric: tabular-nums;
+	white-space: nowrap;
+}
+
+.pd-bg-tasks-chevron {
+	flex: 0 0 auto;
+	color: var(--pd-text-weak);
+}
+
+.pd-bg-tasks-head-actions {
+	display: inline-flex;
+	flex: 0 0 auto;
+	align-items: center;
+	gap: 4px;
+	padding-inline-end: 6px;
+}
+
+.pd-bg-task-stop {
+	display: inline-flex;
+	flex: 0 0 auto;
+	align-items: center;
+	gap: 4px;
+	height: 24px;
+	padding: 0 8px;
+	border: 1px solid var(--pd-border);
+	border-radius: var(--pd-radius-sm);
+	background: var(--pd-surface);
+	color: var(--pd-text-subtle);
+	font: inherit;
+	font-size: var(--pd-font-xs);
+	cursor: pointer;
+	white-space: nowrap;
+	transition: background var(--pd-motion-fast), color var(--pd-motion-fast), border-color var(--pd-motion-fast);
+}
+
+.pd-bg-task-stop:hover:not(:disabled) {
+	border-color: color-mix(in srgb, var(--pd-danger) 45%, var(--pd-border));
+	background: var(--pd-danger-surface);
+	color: var(--pd-danger);
+}
+
+.pd-bg-task-stop:disabled {
+	opacity: 0.5;
+	cursor: default;
+}
+
+.pd-bg-tasks-dismiss {
+	display: inline-grid;
+	flex: 0 0 auto;
+	place-items: center;
+	width: 26px;
+	height: 26px;
+	padding: 0;
+	border: 0;
+	border-radius: var(--pd-radius-sm);
+	background: transparent;
+	color: var(--pd-text-weak);
+	cursor: pointer;
+	transition: background var(--pd-motion-fast), color var(--pd-motion-fast);
+}
+
+.pd-bg-tasks-dismiss:hover {
+	background: var(--pd-surface-hover);
+	color: var(--pd-text);
+}
+
+/* Multi-task compact list */
+.pd-bg-tasks-list {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	margin: 0;
+	padding: 4px 6px 6px;
+	border-top: 1px solid var(--pd-border-soft);
+	list-style: none;
+	max-height: 184px;
+	overflow-y: auto;
+	scrollbar-width: thin;
+}
+
+.pd-bg-task-row {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-height: 30px;
+	padding: 4px 6px;
+	border-radius: var(--pd-radius-sm);
+	font-size: var(--pd-font-xs);
+}
+
+.pd-bg-task-row:hover {
+	background: var(--pd-surface-hover);
+}
+
+.pd-bg-task-copy {
+	display: flex;
+	flex: 1 1 auto;
+	align-items: baseline;
+	gap: 8px;
+	min-width: 0;
+	overflow: hidden;
+}
+
+.pd-bg-task-row-name {
+	flex: 0 1 auto;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	color: var(--pd-text);
+	font-size: var(--pd-font-sm);
+	font-weight: var(--pd-weight-medium);
+}
+
+.pd-bg-task-row-cmd {
+	flex: 0 2 auto;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	color: var(--pd-text-weak);
+	font-family: var(--pd-font-mono);
+	font-size: var(--pd-font-xs);
+}
+
+.pd-bg-task-pending-tag {
+	flex: 0 0 auto;
+	padding: 0 6px;
+	border-radius: var(--pd-radius-xs);
+	background: color-mix(in srgb, var(--pd-warning) 14%, transparent);
+	color: var(--pd-warning);
+	font-size: var(--pd-font-xs);
+	line-height: 18px;
+	white-space: nowrap;
+}
+
+/* Single-task expanded detail drawer */
+.pd-bg-task-detail {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	padding: 8px 12px 10px;
+	border-top: 1px solid var(--pd-border-soft);
+	background: var(--pd-bg);
+	font-size: var(--pd-font-xs);
+}
+
+.pd-bg-task-detail-cmd {
+	margin: 0;
+	padding: 6px 8px;
+	border-radius: var(--pd-radius-sm);
+	background: var(--pd-surface-muted);
+	color: var(--pd-text);
+	font-family: var(--pd-font-mono);
+	font-size: var(--pd-font-xs);
+	line-height: 1.5;
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+	max-height: 120px;
+	overflow-y: auto;
+	user-select: text;
+}
+
+.pd-bg-task-detail-meta {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 4px 12px;
+	color: var(--pd-text-weak);
+	font-variant-numeric: tabular-nums;
+	user-select: text;
+}
+
+.pd-bg-task-detail-meta code {
+	font-family: var(--pd-font-mono);
+	color: var(--pd-text-subtle);
+	overflow-wrap: anywhere;
+}
+
+@container pane (max-width: 600px) {
+	.pd-bg-tasks {
+		width: calc(100% - 28px);
+	}
+	.pd-bg-tasks-hint,
+	.pd-bg-task-row-cmd {
+		display: none;
+	}
+}
+
+@media (max-width: 600px) {
+	.pd-bg-tasks {
+		width: calc(100% - 28px);
+	}
+	.pd-bg-tasks-hint,
+	.pd-bg-task-row-cmd {
+		display: none;
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.pd-bg-task-glyph[data-bg-state='running'] > svg {
+		animation: none;
+	}
+}

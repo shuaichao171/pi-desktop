@@ -10,6 +10,7 @@ const ACTIONS: Record<string, readonly [string, string]> = {
   find: ['查找', 'Find'],
   ls: ['列出', 'List'],
   subagent: ['子代理', 'Subagent'],
+  run_in_background: ['后台运行', 'Background'],
 };
 
 /** Stable, locale-free title line of a tool call: command, raw title or touched files. */

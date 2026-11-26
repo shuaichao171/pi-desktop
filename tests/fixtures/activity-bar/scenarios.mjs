@@ -91,7 +91,9 @@ export default async function activityBarScenarios(review) {
   if (!await review.evaluate(`${sidebar}.classList.contains("is-open")`)) await review.click('.pd-activity-sessions');
   await review.assert(`(() => { const bar=${topBar}.getBoundingClientRect(); const pane=${sidebar}.getBoundingClientRect(); const heading=document.querySelector('.pd-sidebar-organize-toolbar').getBoundingClientRect(); const button=document.querySelector('.pd-sidebar-organize-toolbar .pd-sidebar-new-session').getBoundingClientRect(); return Math.abs(pane.top-bar.bottom)<1 && Math.abs(heading.top-pane.top)<1 && Math.abs(heading.height-36)<1 && button.right <= pane.right - 8; })()`, 'The narrow sidebar begins directly below the top bar with its one-row heading, new conversation included');
   await review.screenshot('activity-bar-compact-narrow');
-  // Switching to automations on a narrow viewport dismisses the sidebar drawer instead of covering the page.
+  // Switching to automations on a narrow viewport keeps the sidebar drawer closed instead of covering the page.
+  await review.key('Escape');
+  await review.waitFor(`!${sidebar}.classList.contains("is-open")`);
   await review.click('.pd-activity-automations');
   await review.waitFor(`document.querySelector(".pd-activity-automations").classList.contains("is-active") && !${sidebar}.classList.contains("is-open")`);
 }

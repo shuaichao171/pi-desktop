@@ -1,10 +1,10 @@
 import type { Translate } from './i18n';
 
-export type SettingsPage = 'general' | 'conversation' | 'notifications' | 'appearance' | 'personalization' | 'model' | 'backup' | 'debug' | 'engine' | 'shortcuts' | 'updates' | 'sessions' | 'mcp' | 'agents';
+export type SettingsPage = 'general' | 'conversation' | 'notifications' | 'appearance' | 'personalization' | 'model' | 'backup' | 'remote' | 'debug' | 'engine' | 'shortcuts' | 'updates' | 'sessions' | 'mcp' | 'agents';
 
 export const SETTINGS_PAGE_LABELS: Record<SettingsPage, string> = {
 	general: 'settings.general', conversation: 'settings.conversation', notifications: 'settings.notificationsPage', appearance: 'settings.appearance', personalization: 'settings.personalization',
-	model: 'settings.modelManagement', backup: 'settings.cloudBackup', debug: 'settings.debugApi',
+	model: 'settings.modelManagement', backup: 'settings.cloudBackup', remote: 'settings.remote.title', debug: 'settings.debugApi',
 	engine: 'settings.engine', shortcuts: 'settings.shortcuts', updates: 'settings.updates', sessions: 'settings.sessions', mcp: 'MCP', agents: 'agents.title',
 };
 
@@ -33,6 +33,7 @@ const SETTINGS_SEARCH_ENTRIES: SearchEntry[] = [
 	{ page: 'notifications', labelKey: 'settings.notificationSound', descriptionKey: 'settings.notificationSoundDescription', selector: '[data-setting="notification-sound"]' },
 	{ page: 'notifications', labelKey: 'settings.operationNoticeTimeout', descriptionKey: 'settings.operationNoticeTimeoutDescription', selector: '[data-setting="operation-notice-timeout"]' },
 	{ page: 'general', labelKey: 'settings.closeBehavior', descriptionKey: 'settings.closeBehaviorDescription', selector: '[data-setting="tray"]', windowsOnly: true, desktopSettings: true },
+	{ page: 'general', labelKey: 'settings.stopIdleAgentsOnTrayHide', descriptionKey: 'settings.stopIdleAgentsOnTrayHideDescription', selector: '[data-setting="stop-idle-agents-on-tray-hide"]', windowsOnly: true, desktopSettings: true },
 	{ page: 'general', labelKey: 'settings.keepAwake', descriptionKey: 'settings.keepAwakeDescription', selector: '[data-setting="keep-awake"]', desktopSettings: true },
 	{ page: 'appearance', labelKey: 'settings.themeLabel', descriptionKey: 'settings.appearanceDescription', selector: '.pd-appearance-options' },
 	{ page: 'appearance', labelKey: 'settings.uiFontSize', descriptionKey: 'settings.uiFontSizeDescription', selector: '[data-setting="font"]' },
@@ -44,6 +45,7 @@ const SETTINGS_SEARCH_ENTRIES: SearchEntry[] = [
 	{ page: 'personalization', labelKey: 'personalization.instructions', descriptionKey: 'personalization.description' },
 	{ page: 'model', labelKey: 'settings.apiKey', descriptionKey: 'settings.modelManagementHint' },
 	{ page: 'backup', labelKey: 'settings.cloudBackup', descriptionKey: 'settings.cloudBackupDescription' },
+	{ page: 'remote', labelKey: 'settings.remote.title', descriptionKey: 'settings.remote.description', selector: '[data-setting="remote-access"]' },
 	{ page: 'debug', labelKey: 'settings.debugApi', descriptionKey: 'settings.debugApiDescription' },
 	{ page: 'engine', labelKey: 'settings.engineMode', descriptionKey: 'settings.engineModeDescription', selector: '[data-setting="engine-mode"]' },
 	{ page: 'engine', labelKey: 'settings.enginePath', descriptionKey: 'settings.enginePathDescription' },

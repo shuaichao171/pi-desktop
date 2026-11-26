@@ -29,7 +29,33 @@ export function npmPackageName(source: string): string | null {
 	return /^(@[^/@]+\/[^@]+|[^@]+)/.exec(source.slice(4))?.[1] ?? null;
 }
 
-export function installedRecommendation(packages: readonly UiPluginPackage[] | undefined, item: PluginRecommendation): UiPluginPackage | undefined {
-	const name = npmPackageName(item.source);
+/** 为 npm 或 HTTPS Git 插件来源生成可安全在外部浏览器打开的主页链接；本地或其它来源返回 null。 */
+export function pluginSourceUrl(source: string): string | null {
+	const trimmed = source.trim();
+	const npmName = npmPackageName(trimmed);
+	if (npmName && /^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/i.test(npmName)) {
+		return `https://www.npmjs.com/package/${npmName}`;
+	}
+	if (/^(?:git:)?https:\/\//.test(trimmed)) {
+		const raw = trimmed.startsWith('git:') ? trimmed.slice(4) : trimmed;
+		try {
+			const parsed = new URL(raw);
+			if (parsed.protocol !== 'https:' || parsed.username || parsed.password || parsed.search || parsed.hash || !parsed.hostname) return null;
+			const repoPath = parsed.pathname.split('@')[0].replace(/\.git$/i, '');
+			if (!/^\/(?:[^/]+\/)+[^/]+$/.test(repoPath) || repoPath.split('/').includes('..')) return null;
+			return `${parsed.origin}${repoPath}`;
+		} catch { return null; }
+	}
+	return null;
+}
+
+/** 按 npm 包名（忽略版本约束）匹配已安装包；供「推荐」与「发现」栏共用。 */
+export function installedNpmPackage(packages: readonly UiPluginPackage[] | undefined, source: string): UiPluginPackage | undefined {
+	const name = npmPackageName(source);
+	if (!name) return undefined;
 	return packages?.find((entry) => entry.installed && npmPackageName(entry.source) === name);
+}
+
+export function installedRecommendation(packages: readonly UiPluginPackage[] | undefined, item: PluginRecommendation): UiPluginPackage | undefined {
+	return installedNpmPackage(packages, item.source);
 }

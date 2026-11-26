@@ -87,7 +87,7 @@ export default async function managementScenarios(review) {
   await review.assert("document.querySelectorAll('.pd-automation-run').length===1 && document.querySelector('.pd-automation-run').dataset.runId==='older-success'", 'History result filter selects the matching run');
   await review.key('Escape');
   await review.click('.pd-automation-intro > button');
-  await review.assert("!document.querySelector('.pd-automation-model-options').open && document.querySelector('.pd-automation-schedule-summary').textContent.includes(Intl.DateTimeFormat().resolvedOptions().timeZone)", 'Default editor hides model details and continuously shows its timezone');
+  await review.assert("!document.querySelector('.pd-automation-model-options').open && !document.querySelector('.pd-automation-advanced-options').open && document.querySelector('.pd-automation-schedule-summary').textContent.includes(Intl.DateTimeFormat().resolvedOptions().timeZone)", 'Default editor hides model and advanced schedule details and continuously shows its timezone');
   await review.fill('.pd-automation-editor-section:first-child input', '默认模型任务');
   await review.fill('.pd-automation-editor-section:first-child textarea', '整理今天的项目变更');
   await review.click('.pd-automation-dialog button[type="submit"]');
@@ -105,8 +105,16 @@ export default async function managementScenarios(review) {
 
   await review.click('.pd-activity-plugins');
   await review.waitFor("Boolean(document.querySelector('.pd-plugin-card-main'))");
+  await review.assert("document.querySelector('.pd-plugin-card.has-error .pd-plugin-health-badge.is-error')?.textContent.includes('1 个错误')", 'Package card highlights resource loading errors at a glance');
   await review.click('.pd-plugin-card-main');
   await review.assert("document.querySelectorAll('.pd-plugin-resource-group').length===4 && document.querySelectorAll('.pd-plugin-resource').length===30 && document.querySelector('.pd-plugin-resource-group.has-error h3 button').getAttribute('aria-expanded')==='true'", 'Thirty resources are grouped with the error group expanded');
+  // Markdown resource preview defaults to rendered markdown and switches cleanly to raw source.
+  await review.click('.pd-plugin-resource[data-kind="skills"] .pd-plugin-resource-actions button');
+  await review.waitFor("document.querySelector('.pd-plugin-preview-markdown h1')?.textContent.includes('Resource preview')");
+  await review.clickText('.pd-plugin-preview-controls button', '源码');
+  await review.waitFor("document.querySelector('.pd-plugin-preview-text')?.textContent.includes('# Resource preview')");
+  await review.key('Escape');
+  await review.waitFor("!document.querySelector('.pd-plugin-preview-dialog')");
   await review.click('.pd-plugin-resource-group:first-child h3 button');
   await review.assert("document.querySelector('.pd-plugin-resource-group:first-child .pd-plugin-resources').hidden", 'Normal capability group can collapse');
   await review.fill('.pd-plugin-detail-search input', 'resource-00');

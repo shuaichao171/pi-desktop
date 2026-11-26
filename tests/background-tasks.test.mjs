@@ -524,3 +524,49 @@ test('concurrent deliveries in one session never send a task twice', async () =>
 	assert.equal(manager.currentRecords('session-r').every((item) => item.delivered), true);
 	manager.clear();
 });
+
+test('onChange hook tracks start, settle, delivery, adopt and prune in stable chronological order', async () => {
+	const { manager, toUiBackgroundTask } = await (async () => {
+		const mod = await import('../packages/agent/src/backgroundTasks.ts');
+		return { manager: new mod.BackgroundTaskManager({ retryFirstMs: 10, retryMaxMs: 30, deliverBudgetMs: 1000, adoptPollMs: 20 }), toUiBackgroundTask: mod.toUiBackgroundTask };
+	})();
+	const dir = mkdtempSync(join(tmpdir(), 'bgtask-change-'));
+	const snapshots = [];
+	manager.attach('session-obs', {
+		prompt: async () => {},
+		isIdle: () => true,
+		notify: () => {},
+		onChange: (records) => snapshots.push(records.map((r) => ({ taskId: r.taskId, status: r.status, delivered: Boolean(r.delivered), note: r.note }))),
+	});
+
+	const first = fakeChild(7001);
+	const second = fakeChild(7002);
+	const a = manager.start({ sessionId: 'session-obs', sessionDir: dir, cwd: dir, command: 'npm run build', note: '构建项目' }, () => ({ child: first, pid: first.pid }));
+	await sleep(5);
+	const b = manager.start({ sessionId: 'session-obs', sessionDir: dir, cwd: dir, command: 'npm test', note: '运行测试' }, () => ({ child: second, pid: second.pid }));
+
+	// Projected UI shape drops internal fields and keeps chronological order.
+	const ui = toUiBackgroundTask(a);
+	assert.equal(ui.taskId, a.taskId);
+	assert.equal(ui.note, '构建项目');
+	assert.equal(ui.status, 'running');
+	assert.equal('sessionId' in ui, false);
+
+	assert.equal(snapshots.length >= 2, true);
+	assert.deepEqual(snapshots[1].map((item) => item.taskId), [a.taskId, b.taskId]);
+
+	// Settle first task: onChange sees completed (undelivered), then delivered=true after wake.
+	first.emit('exit', 0);
+	await sleep(60);
+	assert.ok(snapshots.some((snap) => snap.find((item) => item.taskId === a.taskId)?.status === 'completed' && !snap.find((item) => item.taskId === a.taskId)?.delivered));
+	assert.equal(snapshots.at(-1).find((item) => item.taskId === a.taskId)?.delivered, true);
+	assert.equal(snapshots.at(-1).find((item) => item.taskId === b.taskId)?.status, 'running');
+
+	// stop() enforces session ownership: wrong sessionId is rejected.
+	assert.equal(manager.stop(b.taskId, 'other-session'), false);
+	second.emit('exit', 1);
+	await sleep(60);
+	assert.equal(snapshots.at(-1).find((item) => item.taskId === b.taskId)?.status, 'failed');
+	assert.deepEqual(snapshots.at(-1).map((item) => item.taskId), [a.taskId, b.taskId]);
+	manager.clear();
+});

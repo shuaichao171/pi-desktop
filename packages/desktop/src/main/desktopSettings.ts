@@ -11,6 +11,8 @@ export interface DesktopSettings {
 	notificationsEnabled: boolean;
 	/** What the window close button does on Windows: hide to tray (default) or quit (4.2). */
 	closeBehavior: 'tray' | 'quit';
+	/** Stop idle external ACP agent processes when minimizing to tray. */
+	stopIdleAgentsOnTrayHide: boolean;
 	/**
 	 * Ask before closing the window while a task or automation run is active. The busy-close
 	 * dialog's "remember my choice" checkbox clears this; picking a close behavior in Settings
@@ -58,6 +60,7 @@ export function isValidDesktopSettings(value: unknown): value is DesktopSettings
 	const candidate = value as Partial<DesktopSettings>;
 	return typeof candidate.notificationsEnabled === 'boolean'
 		&& (candidate.closeBehavior === 'tray' || candidate.closeBehavior === 'quit')
+		&& (candidate.stopIdleAgentsOnTrayHide === undefined || typeof candidate.stopIdleAgentsOnTrayHide === 'boolean')
 		&& (candidate.confirmBusyClose === undefined || typeof candidate.confirmBusyClose === 'boolean')
 		&& (candidate.conversationStorageDirectory === undefined || isConversationStorageDirectory(candidate.conversationStorageDirectory))
 		&& (candidate.keepAwakeWhileRunning === undefined || typeof candidate.keepAwakeWhileRunning === 'boolean')
@@ -67,7 +70,7 @@ export function isValidDesktopSettings(value: unknown): value is DesktopSettings
 }
 
 export const DEFAULT_DESKTOP_SETTINGS: DesktopSettings = {
-	notificationsEnabled: true, closeBehavior: 'tray', confirmBusyClose: true,
+	notificationsEnabled: true, closeBehavior: 'tray', stopIdleAgentsOnTrayHide: true, confirmBusyClose: true,
 	conversationStorageDirectory: join(homedir(), 'PiDesktopWorkspace'),
 	keepAwakeWhileRunning: false, autoInstallUpdates: false,
 	piEngine: { mode: 'builtin' },

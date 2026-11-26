@@ -50,6 +50,7 @@ import type {
 	UiToolActivity,
 	UiSubagentFleetSnapshot,
 	UiSubagentInspectReply,
+	UiBackgroundTask,
 	UiSessionTreeNode,
 } from '@pidesktop/shared';
 
@@ -105,6 +106,8 @@ interface ChatState {
 	subagentFleet: UiSubagentFleetSnapshot | null;
 	/** Latest /subagents-inspect-rpc reply; correlated by requestId in FleetCard. */
 	subagentInspect: UiSubagentInspectReply | null;
+	/** Tracked background tasks belonging to the loaded conversation. */
+	backgroundTasks: UiBackgroundTask[];
 	timelineRevision: number;
 	/** Session entry tree of the loaded conversation (branch navigation); null until fetched. */
 	branchTree: UiSessionTreeNode[] | null;
@@ -214,6 +217,8 @@ interface ChatState {
 	updateQueuedMessage(id: string, action: 'edit' | 'remove' | 'steer', text?: string): Promise<void>;
 	/** Kill the conversation's running bash/powershell commands without aborting the turn. Returns how many were interrupted. */
 	interruptShellTools(toolCallId?: string): Promise<number>;
+	/** Terminate one running background task belonging to the active conversation. */
+	stopBackgroundTask(taskId: string): Promise<boolean>;
 	abort(): Promise<void>;
 	newSession(options?: { cwd?: string }): Promise<void>;
 	detachProject(): Promise<void>;
@@ -403,6 +408,7 @@ const store = createStore<ChatState>((set, get) => ({
 		fileChangeActiveRunId: null,
 		subagentFleet: null,
 		subagentInspect: null,
+		backgroundTasks: [],
 	error: null,
 	errorInfo: null,
 	appInfo: null,
@@ -491,6 +497,7 @@ const store = createStore<ChatState>((set, get) => ({
 					status: snapshot.status,
 					sessionRuntimes: Object.fromEntries((snapshot.sessionRuntimes ?? []).map((entry) => [sessionRuntimeKey(entry.cwd, entry.path), entry.runtime])),
 					subagentFleet: snapshot.subagentFleet ?? null,
+					backgroundTasks: snapshot.backgroundTasks ?? [],
 					statusMessage: snapshot.statusMessage,
 					retryAttempt: snapshot.retryAttempt,
 					retryMaxAttempts: snapshot.retryMaxAttempts,
@@ -627,6 +634,7 @@ modelProviders: [...get().modelProviders],
 					loadingOlder: false,
 					branchTree: null,
 					branchSwitchPending: false,
+					backgroundTasks: [],
 					error: null,
 				});
 				return;
@@ -743,7 +751,7 @@ modelProviders: [...get().modelProviders],
 					// Host-side switches (extension navigation) land without an optimistic
 					// switch; a different session's ready must also retire a foreign fleet
 					// and the aside composer anchored on the conversation being left.
-					...(!sameSession ? { subagentFleet: null, subagentInspect: null, sideQuestionTarget: null } : {}),
+					...(!sameSession ? { subagentFleet: null, subagentInspect: null, backgroundTasks: [], sideQuestionTarget: null } : {}),
 					error: null,
 				});
 				// agent_settled resyncs re-send only the newest window; restore pages the user already opened.
@@ -913,6 +921,11 @@ if (!get().modelProviders.length) void get().refreshModelProviders().catch(() =>
 				return;
 			case 'subagent-inspect':
 				set({ subagentInspect: event.reply });
+				return;
+			case 'background-tasks':
+				if (event.sessionPath !== undefined && event.sessionPath !== get().sessionPath) return;
+				if (event.sessionId !== undefined && event.sessionId !== get().sessionId) return;
+				set({ backgroundTasks: event.tasks });
 				return;
 			case 'error':
 				set({ error: event.message, errorInfo: event.error ?? null });
@@ -1761,6 +1774,17 @@ if (!get().modelProviders.length) void get().refreshModelProviders().catch(() =>
 		}
 	},
 
+	async stopBackgroundTask(taskId) {
+		const { bridge, cwd, sessionId, navigationPending, sessionLoading } = get();
+		if (!bridge?.stopBackgroundTask || !taskId || navigationPending || sessionLoading) return false;
+		try {
+			return await bridge.stopBackgroundTask(taskId);
+		} catch (error) {
+			if (get().bridge === bridge && get().cwd === cwd && get().sessionId === sessionId) set({ error: errorMessage(error) });
+			return false;
+		}
+	},
+
 	async abort() {
 		if (get().sessionPreparation && currentPreparedInput()) {
 			cancelPreparedInput();
@@ -1895,7 +1919,7 @@ function prepareConversation(kind: SessionPreparation['kind'], options?: { cwd?:
 	store.setState(state => ({ sessionPreparation: { requestId: request, draftScope }, cwd: options?.cwd ?? '', sessionId: null, sessionPath: null,
 		status: 'idle', statusMessage: undefined, retryAttempt: undefined, retryMaxAttempts: undefined,
 		messages: [], activities: [], runs: [], fileChanges: [], fileChangeTurns: [], fileChangeActiveRunId: null, contextUsage: null,
-		subagentFleet: null, subagentInspect: null,
+		subagentFleet: null, subagentInspect: null, backgroundTasks: [],
 		queuedMessages: [], queuedCount: 0, historyTotal: 0, loadingOlder: false, sessionLoading: false,
 		timelineRevision: state.timelineRevision + 1, historyGeneration: state.historyGeneration + 1 }));
 	return preparing.promise;
@@ -2554,7 +2578,7 @@ function restoreSettledConversation(set: (partial: Partial<ChatState>) => void):
 		fileChangeActiveRunId: settled?.fileChangeActiveRunId ?? null,
 		// Rollback returns to a conversation whose host runtime may be gone; a live-
 		// looking fleet card with dead action buttons would be worse than no card.
-		subagentFleet: null, subagentInspect: null,
+		subagentFleet: null, subagentInspect: null, backgroundTasks: [],
 		historyTotal: settled?.historyTotal ?? 0,
 		loadingOlder: false,
 		timelineRevision: state.timelineRevision + 1,
@@ -2594,7 +2618,7 @@ function beginOptimisticSessionSwitch(set: (partial: Partial<ChatState>) => void
 		// never survive a switch — warm-painted or cold. The open aside composer
 		// anchors on the conversation being left too: closing it here keeps a keep-over
 		// view from submitting an ask into a session it no longer shows.
-		...(identityChanged ? { subagentFleet: null, subagentInspect: null, sideQuestionTarget: null } : {}),
+		...(identityChanged ? { subagentFleet: null, subagentInspect: null, backgroundTasks: [], sideQuestionTarget: null } : {}),
 		...(painted ? {} : {
 			// Cold switch: keep the conversation being left on screen so the wait
 			// never blanks the view. The painted transcript still belongs to the

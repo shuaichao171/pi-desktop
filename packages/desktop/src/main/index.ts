@@ -344,6 +344,15 @@ function createWindow(options: CreateMainWindowOptions): BrowserWindow {
 	// dialog's "remember my choice" checkbox persists the chosen behavior and stops
 	// asking; picking a behavior in Settings brings the confirmation back.
 	let closeDialogOpen = false;
+	const hideToTray = (): void => {
+		win.hide();
+		const currentSettings = ipc ? ipc.readCurrentDesktopSettings() : null;
+		if (currentSettings?.stopIdleAgentsOnTrayHide !== false) {
+			void ipc?.stopIdleAgentsForWindow?.(win).catch((error: unknown) => {
+				console.error('Failed to stop idle agents on tray hide:', error);
+			});
+		}
+	};
 	const requestClose = (): void => {
 		if (closeDialogOpen || win.isDestroyed()) return;
 		closeDialogOpen = true;
@@ -352,17 +361,38 @@ function createWindow(options: CreateMainWindowOptions): BrowserWindow {
 				const settings = ipc ? ipc.readCurrentDesktopSettings() : null;
 				const closeBehavior = launch.windowMode !== 'full' ? 'quit' as const : settings?.closeBehavior ?? 'tray';
 				const confirmBusyClose = settings?.confirmBusyClose !== false;
+				const stopIdleAgentsOnTrayHide = settings?.stopIdleAgentsOnTrayHide !== false;
 				const busy = ipc ? await ipc.isAgentWorkActive() : false;
-				const english = getAppLocale() === 'en-US';
-				// Only the full window can change the close behavior again, so pai keeps asking instead of
-				// offering a memory it could never undo.
-				const rememberChoice = launch.windowMode === 'full' ? { checkboxLabel: english ? 'Remember my choice' : '记住我的选择' } : {};
 				// A remembered choice is applied straight away; only a busy close that has not
 				// been decided yet asks.
 				if (!busy || !confirmBusyClose) {
-					if (closeBehavior === 'quit') app.quit(); else win.hide();
+					if (closeBehavior === 'quit') app.quit(); else hideToTray();
 					return;
 				}
+				// Prefer our custom in-app modal once the renderer is visible; fall back to the
+				// native dialog only when the renderer has not painted yet or is unavailable.
+				if (revealed && !win.webContents.isDestroyed() && typeof ipc?.requestWindowClosePrompt === 'function') {
+					if (win.isMinimized()) win.restore();
+					if (!win.isVisible()) win.show();
+					win.focus();
+					const choice = await ipc.requestWindowClosePrompt(win, {
+						closeBehavior,
+						allowRemember: launch.windowMode === 'full',
+						stopIdleAgentsOnTrayHide,
+					});
+					if (choice.action === 'quit') {
+						if (choice.remember && launch.windowMode === 'full') await ipc.saveCloseChoice('quit');
+						app.quit();
+					} else if (choice.action === 'tray' && launch.windowMode === 'full') {
+						if (choice.remember) await ipc.saveCloseChoice('tray');
+						hideToTray();
+					}
+					return;
+				}
+				const english = getAppLocale() === 'en-US';
+				// Only the full window can change the close behavior again, so multi keeps asking instead of
+				// offering a memory it could never undo.
+				const rememberChoice = launch.windowMode === 'full' ? { checkboxLabel: english ? 'Remember my choice' : '记住我的选择' } : {};
 				if (closeBehavior === 'quit') {
 					const choice = await dialog.showMessageBox(win, {
 						type: 'warning',
@@ -393,7 +423,7 @@ function createWindow(options: CreateMainWindowOptions): BrowserWindow {
 					app.quit();
 				} else {
 					if (choice.checkboxChecked) await ipc?.saveCloseChoice('tray');
-					win.hide();
+					hideToTray();
 				}
 			} catch (error) {
 				console.error('Close handling failed:', error);

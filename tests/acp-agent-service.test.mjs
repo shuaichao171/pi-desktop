@@ -463,3 +463,78 @@ test('Codex takes an additional message during its turn and waits for the origin
 	assert.deepEqual(transcript().filter((message) => message.role === 'user').map((message) => message.text), ['slow please', 'one more question', 'question', 'normal follow-up']);
 	assert.deepEqual(service.getSnapshot().runs.map((run) => run.status), ['completed', 'completed', 'completed']);
 });
+
+test('stopIdleAgents stops idle external ACP processes without disrupting busy turns or waiting dialogs, and resumes on demand', async (t) => {
+	const root = mkdtempSync(join(tmpdir(), 'pi-acp-stop-idle-'));
+	const workspace = join(root, 'workspace');
+	mkdirSync(workspace);
+	const environment = new Map(['PI_CODING_AGENT_DIR', 'PI_OFFLINE'].map((name) => [name, process.env[name]]));
+	process.env.PI_CODING_AGENT_DIR = join(root, 'agent');
+	process.env.PI_OFFLINE = '1';
+	let service, answerForm;
+	t.after(async () => {
+		await service?.dispose();
+		for (const [name, value] of environment) { if (value === undefined) delete process.env[name]; else process.env[name] = value; }
+		try { rmSync(root, { recursive: true, force: true, maxRetries: 50, retryDelay: 100 }); }
+		catch (error) { console.warn('temp cleanup skipped:', error.message); }
+	});
+	const { AgentService } = await import('../packages/agent/src/index.ts');
+	service = new AgentService(undefined, async (request, signal) => {
+		if (request.kind === 'form') {
+			return new Promise((resolve) => {
+				answerForm = resolve;
+				signal.addEventListener('abort', () => resolve(null), { once: true });
+			});
+		}
+		return { optionId: 'yes' };
+	});
+	await service.saveAgent({ displayName: 'Idle Agent', command: process.execPath, args: [FAKE_AGENT], env: { FAKE_ACP_LOAD: '1' }, enabled: true });
+
+	// Session 1: warmed up and idle after a turn.
+	await service.init({ cwd: workspace, fresh: true });
+	await service.setSessionAgent('idle-agent');
+	await until(() => service.getSnapshot().agent.models?.length === 2, 'first session warms up');
+	await service.prompt('hello');
+	await until(() => service.getSnapshot().status === 'idle', 'first turn finishes');
+	const firstPath = service.getSnapshot().sessionPath;
+
+	// Session 2: running a slow turn in the background.
+	await service.newSession();
+	await service.setSessionAgent('idle-agent');
+	await until(() => service.getSnapshot().agent.models?.length === 2, 'second session warms up');
+	await service.prompt('slow please');
+	await until(() => service.getSnapshot().messages.some((message) => message.text === 'working'), 'second session is busy');
+	const busyPath = service.getSnapshot().sessionPath;
+
+	// Switch back to idle Session 1; stopping idle agents should stop Session 1 only, leaving Session 2 running.
+	await service.switchSession(firstPath);
+	const stopped = await service.stopIdleAgents();
+	assert.equal(stopped, 1, 'only the idle ACP process is stopped');
+	assert.equal(await service.stopIdleAgents(), 0, 'calling again while still stopped is a no-op');
+	assert.equal(service.getSnapshot().agent.id, 'idle-agent', 'agent binding remains intact');
+	assert.equal(service.getSnapshot().agent.models?.length, 2, 'cached model list stays intact');
+
+	// Verify Session 2 kept running undisturbed, then abort it and verify it can now be stopped.
+	await service.switchSession(busyPath);
+	assert.equal(service.getSnapshot().status, 'busy', 'busy background ACP session kept running');
+	await service.abort();
+	await until(() => service.getSnapshot().status === 'idle', 'busy session aborts to idle');
+	assert.equal(await service.stopIdleAgents(), 1, 'aborted session is now idle and stopped');
+
+	// Verify Session 1 transparently restarts and resumes via session/load on the next prompt.
+	await service.switchSession(firstPath);
+	const assistantBeforeResume = service.getSnapshot().messages.filter((message) => message.role === 'assistant').length;
+	await service.prompt('follow up');
+	await until(() => service.getSnapshot().status === 'idle' && service.getSnapshot().messages.filter((message) => message.role === 'user').length === 2, 'resumed session completes turn');
+	const resumedAssistantText = service.getSnapshot().messages.filter((message) => message.role === 'assistant').slice(assistantBeforeResume).map((message) => message.text).join('\n');
+	assert.match(resumedAssistantText, /blocks=1/, 'native session resumed via session/load');
+
+	// Verify a session with an async elicitation form waiting after prompt end is NOT killed.
+	answerForm = null;
+	await service.prompt('async question');
+	await until(() => answerForm && service.getSnapshot().status === 'idle', 'async question is waiting while prompt is idle');
+	assert.equal(await service.stopIdleAgents(), 0, 'waiting dialog protects its ACP process');
+	answerForm({ action: 'accept', content: { target: 'prod' } });
+	await until(() => service.listSlashCommands().some((command) => command.name === 'prod'), 'async answer delivered');
+	assert.equal(await service.stopIdleAgents(), 1, 'once answered, idle ACP process stops');
+});

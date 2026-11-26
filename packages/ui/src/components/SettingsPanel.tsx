@@ -29,6 +29,7 @@ import { useMessageStreamShowReasoning } from '../messageStreamShowReasoning';
 import { QUESTION_AUTO_RESOLUTION_MINUTE_OPTIONS, useQuestionAutoResolutionMinutes } from '../extensionQuestionTimeout';
 import { ConversationStorageSettings } from './ConversationStorageSettings';
 import { EngineSettingsPanel } from './EngineSettingsPanel';
+import { RemoteAccessPanel } from './RemoteAccessPanel';
 import { SettingsGroup, SettingsRow, SettingsSwitch } from './SettingsRows';
 import { searchSettings, SETTINGS_PAGE_LABELS, type SettingsPage, type SettingsSearchResult } from '../settingsSearch';
 
@@ -51,7 +52,7 @@ const SETTINGS_NAV: Array<{ id: 'app' | 'models' | 'data' | 'advanced'; pages: A
 		{ page: 'backup', icon: 'cloud' }, { page: 'sessions', icon: 'message', desktopOnly: true }, { page: 'updates', icon: 'update', desktopOnly: true },
 	] },
 	{ id: 'advanced', pages: [
-		{ page: 'engine', icon: 'cpu' }, { page: 'debug', icon: 'code' },
+		{ page: 'remote', icon: 'globe', desktopOnly: true }, { page: 'engine', icon: 'cpu' }, { page: 'debug', icon: 'code' },
 	] },
 ];
 type DraftFocus = { element: HTMLElement; selection?: { start: number; end: number; direction: 'forward' | 'backward' | 'none' } };
@@ -493,6 +494,9 @@ export function SettingsPanel({ initialPage = 'general', modelManagementTarget, 
 											disabled={savingDesktopSettings} onClick={() => { void saveDesktopSettings({ closeBehavior: 'quit' }); }}>{t('settings.closeBehaviorQuit')}</button>
 									</div>
 								</SettingsRow>}
+								{!paiMode && appInfo?.platform === 'win32' && <SettingsRow title={t('settings.stopIdleAgentsOnTrayHide')} description={t('settings.stopIdleAgentsOnTrayHideDescription')}>
+									<SettingsSwitch setting="stop-idle-agents-on-tray-hide" label={t('settings.stopIdleAgentsOnTrayHide')} checked={desktopSettings.stopIdleAgentsOnTrayHide !== false} disabled={savingDesktopSettings} onChange={next => { void saveDesktopSettings({ stopIdleAgentsOnTrayHide: next }); }} />
+								</SettingsRow>}
 								<SettingsRow title={t('settings.keepAwake')} description={t('settings.keepAwakeDescription')}>
 									<SettingsSwitch setting="keep-awake" label={t('settings.keepAwake')} checked={desktopSettings.keepAwakeWhileRunning} disabled={savingDesktopSettings} onChange={next => { void saveDesktopSettings({ keepAwakeWhileRunning: next }); }} />
 								</SettingsRow>
@@ -625,6 +629,7 @@ export function SettingsPanel({ initialPage = 'general', modelManagementTarget, 
 							{debugApiState && <p className="pd-settings-feedback" role="status">{debugApiState.running ? t('settings.debugApiRunning', { url: debugApiState.baseUrl ?? '' }) : t('settings.debugApiStopped')}</p>}
 							{debugApiError && <p className="pd-settings-feedback" role="alert">{debugApiError}</p>}
 						</>}
+						{!paiMode && page === 'remote' && <RemoteAccessPanel />}
 						{page === 'engine' && <EngineSettingsPanel onDraftStateChange={reportDraftState} />}
 						{page === 'shortcuts' && <>
 							<div className="pd-settings-section-head"><h2>{t('settings.shortcuts')}</h2><p>{t('settings.shortcutsDescription')}</p></div>

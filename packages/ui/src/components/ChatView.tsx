@@ -14,6 +14,7 @@ import { useExtensionRequestPending } from './ExtensionDialogHost';
 import { Composer } from './Composer';
 import { GoalBeacon } from './GoalBeacon';
 import { FleetCard, SubagentWorkspace } from './FleetCard';
+import { BackgroundTasksBar } from './BackgroundTasksBar';
 import { ChangesCard, LiveChangesSummary, SessionChangesSummary } from './ComposerChanges';
 import { ChangesDialog } from './ChangesDialog';
 import { useFileChangeDiffs } from '../fileChangeDiffs';
@@ -862,6 +863,7 @@ export function ChatView({ onOpenModelManagement, searchTarget, historyControls,
 				{!isEmpty && !sessionLoading && <ConversationRail messages={messages} getScrollElement={getScrollElement} markedIds={railMarkedIds ?? undefined} onJumpToMessage={jumpToMessage} />}
 				<GoalBeacon />
 				<FleetCard />
+				<BackgroundTasksBar />
 				<ProjectOfferBar />
 				<Composer header={showProjectBar ? <ComposerContextBar /> : undefined} onOpenModelManagement={onOpenModelManagement} changesSlotRef={setChangesDock} />
 			</div>

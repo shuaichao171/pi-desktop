@@ -25,6 +25,7 @@ test('desktop settings default, persist and survive corruption (4.1/4.2)', async
     assert.deepEqual(readDesktopSettings(path), DEFAULT_DESKTOP_SETTINGS);
     assert.equal(DEFAULT_DESKTOP_SETTINGS.notificationsEnabled, true);
     assert.equal(DEFAULT_DESKTOP_SETTINGS.closeBehavior, 'tray');
+    assert.equal(DEFAULT_DESKTOP_SETTINGS.stopIdleAgentsOnTrayHide, true);
     assert.equal(DEFAULT_DESKTOP_SETTINGS.confirmBusyClose, true);
   });
 
@@ -63,13 +64,16 @@ test('desktop settings default, persist and survive corruption (4.1/4.2)', async
     assert.equal(isValidDesktopSettings({ ...base, confirmBusyClose: false }), true);
     assert.equal(isValidDesktopSettings({ ...base, confirmBusyClose: undefined }), true);
     assert.equal(isValidDesktopSettings({ ...base, confirmBusyClose: 'no' }), false);
+    assert.equal(isValidDesktopSettings({ ...base, stopIdleAgentsOnTrayHide: false }), true);
+    assert.equal(isValidDesktopSettings({ ...base, stopIdleAgentsOnTrayHide: undefined }), true);
+    assert.equal(isValidDesktopSettings({ ...base, stopIdleAgentsOnTrayHide: 'no' }), false);
   });
   await t.test('legacy preferences gain the default directory without losing existing choices', () => {
     const configuredDefault = join(temp, 'legacy-default');
     writeFileSync(path, JSON.stringify({ notificationsEnabled: false, closeBehavior: 'quit' }));
     clearDesktopSettingsCacheForTest(); // 外部手改的文件需要重新读盘
     assert.deepEqual(readDesktopSettings(path, configuredDefault), {
-      notificationsEnabled: false, closeBehavior: 'quit', confirmBusyClose: true, conversationStorageDirectory: configuredDefault,
+      notificationsEnabled: false, closeBehavior: 'quit', stopIdleAgentsOnTrayHide: true, confirmBusyClose: true, conversationStorageDirectory: configuredDefault,
       keepAwakeWhileRunning: false, autoInstallUpdates: false,
       piEngine: { mode: 'builtin' }, debugApi: DEFAULT_DESKTOP_SETTINGS.debugApi,
     });

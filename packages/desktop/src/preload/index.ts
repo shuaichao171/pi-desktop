@@ -6,7 +6,7 @@ import { WORKBENCH_FEATURE_CHANNELS } from '@pidesktop/shared/workbenchFeatures'
 import { DATA_FEATURE_CHANNELS } from '@pidesktop/shared/dataFeatures';
 import { INPUT_FEATURE_CHANNELS } from '@pidesktop/shared/inputFeatures';
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
-import { CLOUD_SYNC_FEATURE_CHANNELS, DEBUG_API_CHANNELS, IPC_CHANNELS, SIDE_QUESTION_CHANNELS, type AgentBridge, type AgentEventEnvelope, type UiAppCommand, type UiAutomationSnapshot, type UiCloudSyncState, type UiDebugApiConfig, type UiDebugApiState, type UiExtensionDialogRequest, type UiSideQuestion, type UiSplitPaneState, type UiUpdateState, type WindowChromeState, type WorkspaceChangeEvent, type WorkspaceCommandEvent } from '@pidesktop/shared';
+import { CLOUD_SYNC_FEATURE_CHANNELS, DEBUG_API_CHANNELS, IPC_CHANNELS, REMOTE_ACCESS_CHANNELS, SIDE_QUESTION_CHANNELS, type AgentBridge, type AgentEventEnvelope, type CreateRemotePairingInput, type UiAppCommand, type UiAutomationSnapshot, type UiCloudSyncState, type UiDebugApiConfig, type UiDebugApiState, type UiExtensionDialogRequest, type UiRemoteAccessConfig, type UiRemoteAccessState, type UiSideQuestion, type UiSplitPaneState, type UiUpdateState, type UiWindowClosePrompt, type UiWindowClosePromptResponse, type WindowChromeState, type WorkspaceChangeEvent, type WorkspaceCommandEvent } from '@pidesktop/shared';
 import { unwrapIpcError } from './ipcErrors';
 
 /**
@@ -46,6 +46,14 @@ const onWindowChromeStateChanged: AgentBridge['onWindowChromeStateChanged'] = (l
 	ipcRenderer.on(IPC_CHANNELS.windowChromeStateChanged, wrapped);
 	return () => {
 		ipcRenderer.removeListener(IPC_CHANNELS.windowChromeStateChanged, wrapped);
+	};
+};
+
+const onWindowClosePrompt: NonNullable<AgentBridge['onWindowClosePrompt']> = (listener) => {
+	const wrapped = (_e: Electron.IpcRendererEvent, prompt: UiWindowClosePrompt): void => listener(prompt);
+	ipcRenderer.on(IPC_CHANNELS.windowClosePrompt, wrapped);
+	return () => {
+		ipcRenderer.removeListener(IPC_CHANNELS.windowClosePrompt, wrapped);
 	};
 };
 
@@ -162,6 +170,19 @@ const bridge: AgentBridge = {
 	restoreCloudSyncBackup: () => invoke(CLOUD_SYNC_FEATURE_CHANNELS.restore),
 	getDebugApiState: () => invoke(DEBUG_API_CHANNELS.getState) as Promise<UiDebugApiState>,
 	setDebugApiConfig: (config: UiDebugApiConfig) => invoke(DEBUG_API_CHANNELS.setConfig, config) as Promise<UiDebugApiState>,
+	getRemoteAccessState: () => invoke(REMOTE_ACCESS_CHANNELS.getState) as Promise<UiRemoteAccessState>,
+	setRemoteAccessConfig: (patch: Partial<UiRemoteAccessConfig>) => invoke(REMOTE_ACCESS_CHANNELS.setConfig, patch) as Promise<UiRemoteAccessState>,
+	createRemotePairing: (input: CreateRemotePairingInput) => invoke(REMOTE_ACCESS_CHANNELS.createPairing, input),
+	revokeRemotePairing: (grantId: string) => invoke(REMOTE_ACCESS_CHANNELS.revokePairing, grantId) as Promise<UiRemoteAccessState>,
+	revokeRemoteSession: (sessionId: string) => invoke(REMOTE_ACCESS_CHANNELS.revokeSession, sessionId) as Promise<UiRemoteAccessState>,
+	revokeAllRemoteSessions: () => invoke(REMOTE_ACCESS_CHANNELS.revokeAllSessions) as Promise<UiRemoteAccessState>,
+	installCloudflared: () => invoke(REMOTE_ACCESS_CHANNELS.installCloudflared) as Promise<UiRemoteAccessState>,
+	refreshRemoteNetwork: () => invoke(REMOTE_ACCESS_CHANNELS.refreshNetwork) as Promise<UiRemoteAccessState>,
+	onRemoteAccessChanged: (listener) => {
+		const wrapped = (_event: Electron.IpcRendererEvent, state: UiRemoteAccessState) => listener(state);
+		ipcRenderer.on(REMOTE_ACCESS_CHANNELS.changed, wrapped);
+		return () => ipcRenderer.removeListener(REMOTE_ACCESS_CHANNELS.changed, wrapped);
+	},
 	onCloudSyncChanged: (listener) => {
 		const wrapped = (_event: Electron.IpcRendererEvent, state: UiCloudSyncState) => listener(state);
 		ipcRenderer.on(CLOUD_SYNC_FEATURE_CHANNELS.changed, wrapped);
@@ -173,6 +194,7 @@ const bridge: AgentBridge = {
 	getPluginCatalog: (cwd) => invoke(IPC_CHANNELS.pluginCatalog, cwd),
 	mutatePlugin: (input) => invoke(IPC_CHANNELS.pluginMutate, input),
 	previewPluginResource: (request) => invoke(IPC_CHANNELS.pluginPreview, request),
+	revealPluginPath: (request) => invoke(IPC_CHANNELS.pluginRevealPath, request),
 	pickPluginDirectory: () => invoke(IPC_CHANNELS.pluginPickDirectory),
 	discoverPlugins: (query) => invoke(IPC_CHANNELS.pluginDiscover, query),
 	getAutomationSnapshot: () => invoke(IPC_CHANNELS.automationSnapshot),
@@ -214,6 +236,8 @@ const bridge: AgentBridge = {
 	minimizeWindow: () => invoke(IPC_CHANNELS.windowMinimize),
 	toggleMaximizeWindow: () => invoke(IPC_CHANNELS.windowToggleMaximize),
 	closeWindow: () => invoke(IPC_CHANNELS.windowClose),
+	onWindowClosePrompt,
+	respondWindowClosePrompt: (response: UiWindowClosePromptResponse) => invoke(IPC_CHANNELS.windowClosePromptResponse, response),
 	pickWorkspace: () => invoke(IPC_CHANNELS.workspacePick),
 	pickConversationStorageDirectory: () => invoke(IPC_CHANNELS.conversationStoragePick),
 	getProjectsDirectory: () => invoke(IPC_CHANNELS.workspaceProjectsDirectory),
@@ -332,6 +356,7 @@ const bridge: AgentBridge = {
 		forkAssistantMessage: (entryId) => invoke(IPC_CHANNELS.agentForkMessage, entryId),
 		updateQueuedMessage: (id, action, text) => invoke(IPC_CHANNELS.agentUpdateQueuedMessage, id, action, text),
 		interruptShellTools: (toolCallId) => invoke(IPC_CHANNELS.agentInterruptShellTools, toolCallId),
+		stopBackgroundTask: (taskId) => invoke(IPC_CHANNELS.agentStopBackgroundTask, taskId),
 		generateCommitMessage: (context) => invoke(IPC_CHANNELS.agentGenerateCommitMessage, context),
 		suggestNextInput: (request) => invoke(IPC_CHANNELS.agentSuggestNextInput, request),
 		listSideQuestions: (sessionPath) => invoke(SIDE_QUESTION_CHANNELS.list, sessionPath),

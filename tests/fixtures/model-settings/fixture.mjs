@@ -216,6 +216,41 @@ export function installModelSettingsFixture(options = {}) {
     exportDiagnostics: () => ({ path: '/fixture/diagnostics.zip', entries: 1, skipped: [] }),
     getDebugApiState: () => ({ enabled: false, port: 47899, authEnabled: false, token: '', running: false, baseUrl: null }),
     setDebugApiConfig: request => ({ enabled: request.enabled, port: request.port, authEnabled: request.authEnabled, token: request.token ?? '', running: false, baseUrl: null }),
+    getRemoteAccessState: () => ({
+      config: {
+        enabled: false,
+        port: 47910,
+        exposureMode: 'lan',
+        machineLabel: 'Fixture Desktop',
+        tailscaleServeEnabled: false,
+        tailscaleServePort: 443,
+        cloudflareMode: 'off',
+        hasCloudflareTunnelToken: false,
+        cloudflarePublicHostname: '',
+      },
+      environmentId: 'env-fixture',
+      running: false,
+      bindHost: null,
+      port: null,
+      endpoints: [],
+      tailscale: { available: false, running: false, active: false, magicDnsName: null, tailnetIpv4: null, httpsEnabled: null, url: null, error: null },
+      cloudflare: { mode: 'off', status: 'off', binaryPath: null, binarySource: null, version: null, protocol: null, url: null, error: null },
+      pairingGrants: [],
+      sessions: [],
+      error: null,
+    }),
+    setRemoteAccessConfig: () => bridge.getRemoteAccessState(),
+    createRemotePairing: () => ({
+      grant: { id: 'grant-1', label: 'Mobile', role: 'full', scopes: ['chat:read', 'chat:operate', 'workspace:read'], createdAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 600000).toISOString(), consumedAt: null },
+      code: 'fixture-code',
+      endpointUrl: 'http://127.0.0.1:47910',
+      pairingUrl: 'pidesktop://pair?url=http%3A%2F%2F127.0.0.1%3A47910&code=fixture-code&env=env-fixture',
+    }),
+    revokeRemotePairing: () => bridge.getRemoteAccessState(),
+    revokeRemoteSession: () => bridge.getRemoteAccessState(),
+    revokeAllRemoteSessions: () => bridge.getRemoteAccessState(),
+    installCloudflared: () => bridge.getRemoteAccessState(),
+    refreshRemoteNetwork: () => bridge.getRemoteAccessState(),
     // GoalBeacon subscribes whenever the bridge exposes these two; the fixture keeps
     // the plugin-only surface invisible instead of letting the unknown-call proxy
     // clone a listener function.
@@ -248,6 +283,7 @@ export function installModelSettingsFixture(options = {}) {
     getResidentSessionSnapshot: () => null,
     getHistoryPage: (offset, limit) => ({ offset, limit, total: state.snapshot.historyTotal, messages: [], activities: [], runs: [] }),
     getSessionTree: () => [],
+    stopBackgroundTask: () => false,
     getProjectsDirectory: () => 'C:\\Users\\review\\Projects',
     listWorkspaceEntries: (relativePath = '') => clone(state.workspaceEntries[relativePath] ?? []),
     // Scenarios that only mock listWorkspaceEntries still list their rows: one page over that listing.
@@ -270,7 +306,7 @@ export function installModelSettingsFixture(options = {}) {
     describeSplitPanes: () => [],
     takeInterruptedRuns: () => [],
   };
-  const subscriptions = ['onAgentEvent', 'onUpdateStateChanged', 'onAppCommand', 'onWindowChromeStateChanged', 'onExtensionDialog', 'onExtensionDialogClosed', 'onWorkspaceCommandEvent', 'onAutomationChanged', 'onWorkspaceChanged', 'onGoalChanged', 'onCloudSyncChanged', 'onWorkspaceTerminalEvent', 'onSplitPaneChanged', 'onSplitPaneClosed', 'onSideQuestionsChanged', 'onAgentInstallEvent'];
+  const subscriptions = ['onAgentEvent', 'onUpdateStateChanged', 'onAppCommand', 'onWindowChromeStateChanged', 'onExtensionDialog', 'onExtensionDialogClosed', 'onWorkspaceCommandEvent', 'onAutomationChanged', 'onWorkspaceChanged', 'onGoalChanged', 'onCloudSyncChanged', 'onRemoteAccessChanged', 'onWorkspaceTerminalEvent', 'onSplitPaneChanged', 'onSplitPaneClosed', 'onSideQuestionsChanged', 'onAgentInstallEvent'];
   const bridge = {};
   for (const name of subscriptions) bridge[name] = (listener) => {
     if (!listeners.has(name)) listeners.set(name, new Set());

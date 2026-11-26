@@ -6,10 +6,16 @@
 
 ## 计划中
 
-- [ ] 对话回复结束后显示仍在运行的后台任务：本会话的后台任务仍在运行时，在对话界面显示任务名称和运行状态，并在任务结束时更新提示（2026-11-26 提出）
 - [ ] 支持渲染 LaTeX 公式：会话内容中的 LaTeX（$...$ / $$...$$）渲染为公式（候选方案 KaTeX，注意与现有 markdown 管线的集成与转义冲突）（2026-11-06 提出；2026-11-10 按用户要求暂缓，本批跳过）
 
 ## 已完成
+
+- [x] 对话回复结束后显示仍在运行的后台任务：本会话的后台任务仍在运行时，在对话界面显示任务名称和运行状态，并在任务结束时更新提示（2026-11-26 提出并完成）
+  - 现状：`run_in_background` 启动的后台任务独立于对话轮次存活，回复结束后界面恢复空闲，用户看不到当前会话还有哪些后台任务仍在运行，也无法直观感知任务何时完成或失败。
+  - 落地：
+    - 协议与宿主：`packages/shared/src/backgroundTasks.ts` 定义 `UiBackgroundTask`，`AgentUiEvent` 新增 `background-tasks`（带 `sessionId`/`sessionPath` 归属），`AgentSnapshot` 新增 `backgroundTasks`，`AgentBridge` / `agentHostProtocol` / `ipc` / `preload` 新增 `stopBackgroundTask`；`BackgroundTaskManager` 新增 `onChange` 钩子，在启动、结算、投递、收养、清理时按时间顺序广播，`stop(taskId, sessionId)` 校验会话归属并加速收养任务的结束检测；`SingleAgentService` 与 `AgentService.activate` 在 `ready` 后同步/重放本会话后台任务。
+    - 渲染端：`packages/ui/src/backgroundTasksState.ts` 管理任务显示名（优先 `note`，否则命令首行）、耗时、状态分类与本会话可见集合（仅展示运行中、未投递、以及本次访问期间观察到结束的任务；打开旧会话不展示历史已投递任务）；`store.ts` 接入状态并在切会话/新建/回滚/重置时清理；`BackgroundTasksBar.tsx` 挂载在输入框上方（与 `GoalBeacon` / `FleetCard` 同宽，适配主窗、分屏窗格与 pai 小窗），单任务单行展示任务名、运行状态、耗时、空闲时「完成后自动继续」提示与停止按钮（可展开查看命令/PID/日志路径），多任务默认展开列出每条任务，任务结束时原地切换为已完成/失败（含退出码/信号/待投递标记），全部结束并投递后按用户通知停留时长自动淡出（悬停/聚焦/展开时暂停，可手动关闭）。
+  - 验证：`tests/background-tasks.test.mjs` 新增 `onChange` 与会话归属停止用例；新增 `tests/background-tasks-ui.test.mjs`（纯函数、可见性状态机、热切换重放、store 隔离与 SSR 渲染）；新增渲染器视觉回归 `tests/fixtures/background-tasks/scenarios.mjs`（深浅双主题 + 680px 窄窗覆盖单任务运行/展开/完成、多任务并发/停止/混合失败、历史已投递不显示，`agents-goal.mjs` 回归 passed）；四包 typecheck、`pnpm build` 通过；全量测试 1435 项（1429 通过、2 跳过；加 Git Bash 路径重跑 `shell-interrupt.test.mjs` 10/10 全过，仅余无交互桌面下的 `cua` `GetCursorPos` 1 项环境限制）。
 
 - [x] 新建对话 / 跨项目冷打开提速：扩展模块缓存跨目录共享（2026-11-26 提出并完成）
   - 现象：本机诊断里新建对话 p50 约 2.4 s（就绪前不能发送），期间 agent 宿主同步阻塞约 1–2 s，其他对话的流式输出与 peek 一起卡住。

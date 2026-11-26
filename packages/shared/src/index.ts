@@ -18,6 +18,8 @@ export * from './goalFeatures.ts';
 import type { GoalFeaturesBridge } from './goalFeatures';
 export * from './subagentFeatures.ts';
 import type { UiSubagentFleetSnapshot, UiSubagentInspectReply } from './subagentFeatures';
+export * from './backgroundTasks.ts';
+import type { UiBackgroundTask } from './backgroundTasks';
 export * from './managementFeatures.ts';
 export * from './usageTemplates.ts';
 import type { InputFeatureBridge, UiNewSessionReceipt } from './inputFeatures';
@@ -33,6 +35,10 @@ export * from './dataFeatures.ts';
 export * from './workbenchFeatures.ts';
 export * from './cloudSync.ts';
 export * from './debugApi.ts';
+export * from './remoteAccess.ts';
+export * from './qrMatrix.ts';
+export * from './remoteClient.ts';
+import type { RemoteAccessFeaturesBridge } from './remoteAccess';
 export * from './agentRuntimes.ts';
 import type { AgentRuntimeFeaturesBridge, UiAgentDescriptor, UiHandoffLink } from './agentRuntimes';
 /**
@@ -53,6 +59,7 @@ export const IPC_CHANNELS = {
   pluginCatalog: 'plugins:catalog',
   pluginMutate: 'plugins:mutate',
   pluginPreview: 'plugins:preview',
+  pluginRevealPath: 'plugins:reveal-path',
   pluginPickDirectory: 'plugins:pick-directory',
   pluginDiscover: 'plugins:discover',
   automationSnapshot: 'automation:snapshot',
@@ -89,6 +96,7 @@ export const IPC_CHANNELS = {
   agentForkMessage: 'agent:fork-message',
   agentUpdateQueuedMessage: 'agent:update-queued-message',
   agentInterruptShellTools: 'agent:interrupt-shell-tools',
+  agentStopBackgroundTask: 'agent:stop-background-task',
   agentGenerateCommitMessage: 'agent:generate-commit-message',
   agentSuggestNextInput: 'agent:suggest-next-input',
   agentAbort: 'agent:abort',
@@ -208,6 +216,8 @@ export const IPC_CHANNELS = {
   windowMinimize: 'window:minimize',
   windowToggleMaximize: 'window:toggle-maximize',
   windowClose: 'window:close',
+  windowClosePrompt: 'window:close-prompt',
+  windowClosePromptResponse: 'window:close-prompt-response',
   /** Push channel: main → renderer event stream. */
   agentEvent: 'agent:event',
 } as const;
@@ -727,6 +737,8 @@ export type AgentUiEvent =
   /** `sessionPath` names the conversation the fleet belongs to; renderers drop updates for any other. */
   | { type: 'subagent-fleet'; fleet: UiSubagentFleetSnapshot | null; sessionPath?: string | null }
   | { type: 'subagent-inspect'; reply: UiSubagentInspectReply }
+  /** Live background tasks for the active conversation; scoped by session identity so switches never leak stale tasks. */
+  | { type: 'background-tasks'; tasks: UiBackgroundTask[]; sessionId?: string | null; sessionPath?: string | null }
 
 export interface AgentEventEnvelope {
   sequence: number;
@@ -739,6 +751,8 @@ export interface AgentSnapshot {
   sessionRuntimes?: UiSessionRuntimeSummary[];
   /** Live pi-subagents async fleet snapshot (null when the plugin is absent or idle). */
   subagentFleet?: UiSubagentFleetSnapshot | null;
+  /** Tracked background tasks belonging to the active conversation. */
+  backgroundTasks?: UiBackgroundTask[];
   /** Runtime that owns the loaded conversation; absent means Pi. */
   agent?: UiAgentDescriptor;
   status: AgentStatus;
@@ -1128,6 +1142,8 @@ export interface UiSaveInstructionResult {
 export interface UiDesktopSettings {
   notificationsEnabled: boolean;
   closeBehavior: 'tray' | 'quit';
+  /** Stop idle external ACP agent processes when the window hides to the tray. */
+  stopIdleAgentsOnTrayHide: boolean;
   /** Keep the OS awake (powerSaveBlocker) while a task or automation run is active. */
   keepAwakeWhileRunning: boolean;
   /** Periodic update checks download and install automatically (updates page toggle). */
@@ -1176,14 +1192,31 @@ export interface UiSplitPaneState { paneId: number; cwd: string; sessionPath: st
 
 export interface UiInterruptedRun { cwd: string; path: string }
 
+/** Request from the main process to render the in-app busy-close confirmation dialog. */
+export interface UiWindowClosePrompt {
+  id: string;
+  closeBehavior: 'tray' | 'quit';
+  allowRemember: boolean;
+  stopIdleAgentsOnTrayHide: boolean;
+}
+
+/** User choice returned from the in-app busy-close confirmation dialog. */
+export interface UiWindowClosePromptResponse {
+  id: string;
+  action: 'cancel' | 'tray' | 'quit';
+  remember?: boolean;
+}
+
 export type UiAppCommand = { type: 'new-session' } | { type: 'switch-session'; path: string; cwd?: string } | { type: 'open-settings' } | { type: 'appearance-changed'; appearance: UiAppearanceState } | { type: 'cycle-loaded-session'; direction: 1 | -1 };
 
-export interface AgentBridge extends AgentRuntimeFeaturesBridge, InputFeatureBridge, DataFeaturesBridge, WorkbenchFeaturesBridge, ManagementFeaturesBridge, PluginUpdatesBridge, McpFeaturesBridge, ResultFilesBridge, CloudSyncFeaturesBridge, GoalFeaturesBridge, SideQuestionFeatureBridge {
+export interface AgentBridge extends AgentRuntimeFeaturesBridge, InputFeatureBridge, DataFeaturesBridge, WorkbenchFeaturesBridge, ManagementFeaturesBridge, PluginUpdatesBridge, McpFeaturesBridge, ResultFilesBridge, CloudSyncFeaturesBridge, GoalFeaturesBridge, SideQuestionFeatureBridge, RemoteAccessFeaturesBridge {
   getPersonalization(): Promise<UiInstructionDocument[]>;
   saveInstruction(request: UiSaveInstructionRequest): Promise<UiSaveInstructionResult>;
   getPluginCatalog(cwd: string): Promise<UiPluginCatalog>;
   mutatePlugin(input: UiPluginMutation): Promise<UiPluginCatalog>;
   previewPluginResource(request: { cwd: string; path: string; kind: UiPluginResourceKind; scope: UiPluginScope }): Promise<UiPluginResourcePreview>;
+  /** Reveals a verified plugin package or resource path in the OS file manager. */
+  revealPluginPath?(request: { cwd: string; path: string }): Promise<void>;
   pickPluginDirectory(): Promise<string | null>;
   discoverPlugins(query: string): Promise<UiPluginDiscovery>;
   getAutomationSnapshot(): Promise<UiAutomationSnapshot>;
@@ -1225,6 +1258,8 @@ export interface AgentBridge extends AgentRuntimeFeaturesBridge, InputFeatureBri
   minimizeWindow(): Promise<void>;
   toggleMaximizeWindow(): Promise<void>;
   closeWindow(): Promise<void>;
+  onWindowClosePrompt?(listener: (prompt: UiWindowClosePrompt) => void): () => void;
+  respondWindowClosePrompt?(response: UiWindowClosePromptResponse): Promise<void>;
   /** Opens a native directory picker. Returns null when cancelled. */
   pickWorkspace(): Promise<string | null>;
   /** Picks a standalone-conversation storage folder without registering a project. */
@@ -1418,6 +1453,8 @@ export interface AgentBridge extends AgentRuntimeFeaturesBridge, InputFeatureBri
   updateQueuedMessage(id: string, action: 'edit' | 'remove' | 'steer', text?: string): Promise<void>;
   /** Kill the conversation's running bash/powershell commands (exit 130 + marker) without aborting the turn. Returns how many were interrupted. */
   interruptShellTools(toolCallId?: string): Promise<number>;
+  /** Terminate one running background task belonging to the active conversation. Returns false when not running. */
+  stopBackgroundTask?(taskId: string): Promise<boolean>;
   abort(): Promise<void>;
   /** Omitted cwd creates an independent folder. The returned scope remains valid for draft persistence after navigation. */
   newSession(options?: { cwd?: string }): Promise<UiNewSessionReceipt | void>;

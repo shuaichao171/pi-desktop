@@ -1,6 +1,8 @@
-import { AGENT_RUNTIME_CHANNELS, MCP_FEATURE_CHANNELS, PLUGIN_UPDATE_CHANNELS, isValidAgentId, requireAgentOptionChange, requireAgentSaveRequest } from '@pidesktop/shared';
+import { AGENT_RUNTIME_CHANNELS, MCP_FEATURE_CHANNELS, PLUGIN_UPDATE_CHANNELS, REMOTE_ACCESS_CHANNELS, isValidAgentId, requireAgentOptionChange, requireAgentSaveRequest } from '@pidesktop/shared';
 import { registerCloudSyncIpc } from './cloudSyncIpc';
 import { registerDebugApiIpc } from './debugApiIpc';
+import { registerRemoteAccessIpc } from './remote/remoteAccessIpc';
+import type { RemoteRpcHandlers } from './remote/remoteServer';
 /**
  * IPC wiring: renderer ⇄ main ⇄ AgentService.
  *
@@ -8,11 +10,12 @@ import { registerDebugApiIpc } from './debugApiIpc';
  * call is a typed invoke against the contract in @pidesktop/shared. Hosted pai
  */
 
-import { app, BrowserWindow, dialog, nativeImage, nativeTheme, shell, type IpcMainInvokeEvent } from 'electron';
+import { app, BrowserWindow, dialog, nativeImage, nativeTheme, shell, type IpcMainInvokeEvent, type WebContents } from 'electron';
+import { randomUUID } from 'node:crypto';
 import { statSync } from 'node:fs';
 import { mkdir, rm, stat } from 'node:fs/promises';
-import { basename, dirname, join, resolve } from 'node:path';
-import { IPC_CHANNELS, PROJECT_BAR_ANIM_IDS, isValidProjectBarValue, normalizeProjectBarValue, type AgentEventEnvelope, type AppLocale, type UiAppCommand, type UiAttachment, type UiExtensionDialogRequest, type UiNewSessionReceipt, type UiSessionMetaPatch, type UiSessionSummary, type UiSidebarGroupChange, type UiSlashCommandRequest, type UiThinkingLevel } from '@pidesktop/shared';
+import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
+import { IPC_CHANNELS, PROJECT_BAR_ANIM_IDS, isValidProjectBarValue, normalizeProjectBarValue, type AgentEventEnvelope, type AppLocale, type UiAppCommand, type UiAttachment, type UiExtensionDialogRequest, type UiNewSessionReceipt, type UiSessionMetaPatch, type UiSessionSummary, type UiSidebarGroupChange, type UiSlashCommandRequest, type UiThinkingLevel, type UiWindowClosePrompt, type UiWindowClosePromptResponse } from '@pidesktop/shared';
 import { createIsolatedAgentService } from './agentClient';
 import { guardExternalNavigation } from './externalLinks';
 import { InterruptedRunTracker, isRunningPhase } from './interruptedRuns';
@@ -71,7 +74,14 @@ type PendingDialog = {
 	cleanup: () => void;
 };
 
+type PendingClosePrompt = {
+	id: string;
+	resolve: (response: Omit<UiWindowClosePromptResponse, 'id'>) => void;
+	cleanup: () => void;
+};
+
 const pendingDialogs = new Map<string, PendingDialog>();
+const pendingClosePrompts = new Map<WebContents, PendingClosePrompt>();
 type StartupNotifications = {
 	requests: UiExtensionDialogRequest[];
 	rendererReady: boolean;
@@ -90,6 +100,7 @@ let workbenchService: WorkbenchService | null = null;
 let workbenchFeatures: ReturnType<typeof registerWorkbenchFeatureIpc> | null = null;
 let cloudSync: ReturnType<typeof registerCloudSyncIpc> | null = null;
 let debugApi: ReturnType<typeof registerDebugApiIpc> | null = null;
+let remoteAccess: ReturnType<typeof registerRemoteAccessIpc> | null = null;
 let inputFeatures: ReturnType<typeof registerInputAttachmentIpc> | null = null;
 let disposingServices = false;
 let serviceShutdown: Promise<void> | null = null;
@@ -502,6 +513,7 @@ function extensionDialogFor(owner: BrowserWindow, request: UiExtensionDialogRequ
 			pendingDialogs.delete(request.id);
 			cleanup();
 			if (!owner.isDestroyed() && !owner.webContents.isDestroyed()) owner.webContents.send(IPC_CHANNELS.agentExtensionDialogClosed, request.id);
+			remoteAccess?.broadcastExtensionDialogClosed(request.id);
 			resolve(value);
 		};
 		const onAbort = (): void => finish(null);
@@ -517,6 +529,7 @@ function extensionDialogFor(owner: BrowserWindow, request: UiExtensionDialogRequ
 		owner.once('closed', onClosed);
 		if (request.timeout && request.timeout > 0) timer = setTimeout(() => finish(null), request.timeout);
 		owner.webContents.send(IPC_CHANNELS.agentExtensionDialog, request);
+		remoteAccess?.broadcastExtensionDialog(request);
 		// A window that was never revealed is still behind the splash; startup
 		// requests reveal it themselves instead of notifying.
 		if (notificationReadyWindows.has(owner)) notifyInputRequest?.(request);
@@ -659,16 +672,67 @@ export function sendAppCommand(command: UiAppCommand): void {
 	broadcastToRenderers(IPC_CHANNELS.appCommand, command);
 }
 
-/** True while a foreground turn streams or an automation run is in flight (4.2). */
+/** True while a foreground/background conversation turn, split pane, or automation run is active (4.2). */
 export async function isAgentWorkActive(): Promise<boolean> {
 	try {
 		const snapshot = await agentService.getSnapshot();
 		if (snapshot.status === 'busy') return true;
+		if (snapshot.sessionRuntimes?.some((item) => isRunningPhase(item.runtime.phase) || item.runtime.subagentRunning === true)) return true;
 	} catch { /* snapshot unavailable — treat as idle */ }
+	if (paneSlots().some((pane) => !pane.closing && !pane.disposed && pane.busy)) return true;
 	try {
 		if (await automationService?.hasActiveRuns()) return true;
 	} catch { /* ignore scheduler errors */ }
 	return false;
+}
+
+/** Stop idle external ACP agent processes owned by the main window and its embedded split panes. */
+export async function stopIdleAgentsForWindow(win: BrowserWindow): Promise<number> {
+	const targets: Array<{ stopIdleAgents?: () => Promise<number> }> = [agentService];
+	for (const pane of paneSlots()) {
+		if (pane.parentWin === win && !pane.closing && !pane.disposed) targets.push(pane.agent);
+	}
+	const results = await Promise.allSettled(targets.map((target) => target.stopIdleAgents?.() ?? Promise.resolve(0)));
+	return results.reduce((sum, result) => sum + (result.status === 'fulfilled' && typeof result.value === 'number' ? result.value : 0), 0);
+}
+
+/** Ask the main window renderer to present the custom busy-close dialog and wait for the user's choice. */
+export function requestWindowClosePrompt(
+	win: BrowserWindow,
+	options: Omit<UiWindowClosePrompt, 'id'>,
+): Promise<Omit<UiWindowClosePromptResponse, 'id'>> {
+	if (disposingServices || win.isDestroyed() || win.webContents.isDestroyed()) {
+		return Promise.resolve({ action: 'cancel' });
+	}
+	const sender = win.webContents;
+	const existing = pendingClosePrompts.get(sender);
+	if (existing) {
+		pendingClosePrompts.delete(sender);
+		existing.cleanup();
+		existing.resolve({ action: 'cancel' });
+	}
+	const id = randomUUID();
+	return new Promise((resolve) => {
+		const finish = (response: Omit<UiWindowClosePromptResponse, 'id'>): void => {
+			if (pendingClosePrompts.get(sender)?.id !== id) return;
+			pendingClosePrompts.delete(sender);
+			cleanup();
+			resolve(response);
+		};
+		const onCancel = (): void => finish({ action: 'cancel' });
+		const cleanup = (): void => {
+			win.removeListener?.('closed', onCancel);
+			sender.removeListener?.('destroyed', onCancel);
+			sender.removeListener?.('render-process-gone', onCancel);
+			sender.removeListener?.('did-start-navigation', onCancel);
+		};
+		pendingClosePrompts.set(sender, { id, resolve: finish, cleanup });
+		win.once?.('closed', onCancel);
+		sender.once?.('destroyed', onCancel);
+		sender.once?.('render-process-gone', onCancel);
+		sender.once?.('did-start-navigation', onCancel);
+		sender.send(IPC_CHANNELS.windowClosePrompt, { id, ...options } satisfies UiWindowClosePrompt);
+	});
 }
 
 function workspaceSettingsPath(): string {
@@ -1333,12 +1397,12 @@ const mainOnlyChannels = new Set<string>([
 	IPC_CHANNELS.agentListSessions, IPC_CHANNELS.agentListSessionsPage, IPC_CHANNELS.agentSearchSessions, IPC_CHANNELS.agentSwitchSession, IPC_CHANNELS.agentPeekSession,
 	IPC_CHANNELS.sessionRevealFile, IPC_CHANNELS.sessionFork, IPC_CHANNELS.sessionOpenWindow, IPC_CHANNELS.sessionDelete, IPC_CHANNELS.sessionMoveToWorkspace,
 	IPC_CHANNELS.agentUpdateSessionMeta, IPC_CHANNELS.agentUpdateSessionOrders, IPC_CHANNELS.agentListSessionGroups, IPC_CHANNELS.agentUpdateSessionGroups,
-	IPC_CHANNELS.appRelaunch,
+	IPC_CHANNELS.appRelaunch, IPC_CHANNELS.windowClosePromptResponse,
 	IPC_CHANNELS.splitPaneOpen, IPC_CHANNELS.splitPaneSetBounds, IPC_CHANNELS.splitPaneList, IPC_CHANNELS.splitPaneDescribe,
 	IPC_CHANNELS.agentLoadSession, IPC_CHANNELS.agentUnloadSession,
 	IPC_CHANNELS.workspacePick, IPC_CHANNELS.workspaceProjectsDirectory, IPC_CHANNELS.workspaceCreateProject, IPC_CHANNELS.workspaceAddDropped, IPC_CHANNELS.workspaceResolveProjectCandidate,
 	IPC_CHANNELS.workspaceSwitch, IPC_CHANNELS.workspaceDefault, IPC_CHANNELS.workspaceRemove, IPC_CHANNELS.workspaceListPinned, IPC_CHANNELS.workspaceSetPinned,
-	IPC_CHANNELS.pluginCatalog, IPC_CHANNELS.pluginMutate, IPC_CHANNELS.pluginPreview, IPC_CHANNELS.pluginPickDirectory, IPC_CHANNELS.pluginDiscover,
+	IPC_CHANNELS.pluginCatalog, IPC_CHANNELS.pluginMutate, IPC_CHANNELS.pluginPreview, IPC_CHANNELS.pluginRevealPath, IPC_CHANNELS.pluginPickDirectory, IPC_CHANNELS.pluginDiscover,
 	IPC_CHANNELS.agentSetExtensionEnabled, PLUGIN_UPDATE_CHANNELS.checkPluginUpdate,
 	AGENT_RUNTIME_CHANNELS.installAgent, AGENT_RUNTIME_CHANNELS.cancelAgentInstall, AGENT_RUNTIME_CHANNELS.listAgentInstalls, AGENT_RUNTIME_CHANNELS.openAgentLogin,
 	IPC_CHANNELS.updateCheck, IPC_CHANNELS.updateInstall,
@@ -1359,6 +1423,9 @@ const mainOnlyChannels = new Set<string>([
 	WORKBENCH_FEATURE_CHANNELS.openWorkspaceTerminal, WORKBENCH_FEATURE_CHANNELS.getWorkspaceTerminal, WORKBENCH_FEATURE_CHANNELS.writeWorkspaceTerminal,
 	WORKBENCH_FEATURE_CHANNELS.resizeWorkspaceTerminal, WORKBENCH_FEATURE_CHANNELS.acknowledgeWorkspaceTerminal, WORKBENCH_FEATURE_CHANNELS.closeWorkspaceTerminal,
 	DATA_FEATURE_CHANNELS.listMachineSessions, DATA_FEATURE_CHANNELS.searchSessionsPage, DATA_FEATURE_CHANNELS.searchProjectFiles, DATA_FEATURE_CHANNELS.cancelDataSearch,
+	REMOTE_ACCESS_CHANNELS.getState, REMOTE_ACCESS_CHANNELS.setConfig, REMOTE_ACCESS_CHANNELS.createPairing,
+	REMOTE_ACCESS_CHANNELS.revokePairing, REMOTE_ACCESS_CHANNELS.revokeSession, REMOTE_ACCESS_CHANNELS.revokeAllSessions,
+	REMOTE_ACCESS_CHANNELS.installCloudflared, REMOTE_ACCESS_CHANNELS.refreshNetwork,
 ]);
 
 export function registerIpc(options: {
@@ -1528,6 +1595,183 @@ export function registerIpc(options: {
 		appVersion: () => app.getVersion(),
 		requireTrustedSender: (event) => { requireTrustedSender(event); },
 	});
+	const remoteRpcHandlers: RemoteRpcHandlers = {
+		'environment.getDescriptor': () => {
+			const state = remoteAccess?.getState();
+			if (!state) throw new Error('远程访问服务未初始化');
+			return {
+				environmentId: state.environmentId,
+				label: state.config.machineLabel,
+				appVersion: app.getVersion(),
+				platform: process.platform,
+				protocolVersion: 1,
+				capabilities: {
+					bearer: true, wsTickets: true, scopes: true, directEndpoints: true,
+					fileBrowse: true, gitDiff: true, backgroundTasks: true,
+				},
+				directEndpoints: state.endpoints,
+			};
+		},
+		'agent.getSnapshot': () => agentService.getSnapshot(),
+		'agent.getHistoryPage': (params) => {
+			const pageOffset = typeof params?.offset === 'number' ? params.offset : Number.NaN;
+			const pageLimit = typeof params?.limit === 'number' ? params.limit : Number.NaN;
+			if (!Number.isInteger(pageOffset) || !Number.isInteger(pageLimit) || pageOffset < 0 || pageLimit < 1 || pageLimit > 500) {
+				throw new Error('历史分页参数无效');
+			}
+			return agentService.getHistoryPage(pageOffset, pageLimit);
+		},
+		'agent.listWorkspaces': () => listWorkspaces(),
+		'agent.listConversationWorkspaces': () => listConversationWorkspaces(),
+		'agent.listSessions': async (params) => {
+			const targetCwd = typeof params?.cwd === 'string' && params.cwd ? params.cwd : activeWorkspace;
+			if (targetCwd && !(await listWorkspaces()).includes(targetCwd)) throw new Error('未知工作区');
+			return (await serveWorkspaceSessions(targetCwd)).sessions;
+		},
+		'agent.listSessionsPage': async (params) => {
+			const cwd = typeof params?.cwd === 'string' ? params.cwd : '';
+			const pageOffset = typeof params?.offset === 'number' ? params.offset : Number.NaN;
+			const pageLimit = typeof params?.limit === 'number' ? params.limit : Number.NaN;
+			if (!cwd || !Number.isInteger(pageOffset) || !Number.isInteger(pageLimit) || pageOffset < 0 || pageLimit < 1 || pageLimit > 500) {
+				throw new Error('会话分页参数无效');
+			}
+			if (!(await listWorkspaces()).includes(cwd)) throw new Error('未知工作区');
+			const { snapshot, sessions } = await serveWorkspaceSessions(cwd);
+			const page = sessions.slice(pageOffset, pageOffset + pageLimit);
+			return { sessions: page, total: sessions.length, hasMore: pageOffset + page.length < sessions.length, revision: snapshot.revision };
+		},
+		'agent.listModels': () => agentService.listModels(),
+		'agent.listAgents': () => agentService.listAgents(),
+		'agent.getInputQueue': (params) => agentService.getInputQueue(requireInputQueueScope(params?.scope)),
+		'agent.getPendingExtensionDialogs': () => [...pendingDialogs.values()].map(({ request }) => request),
+		'agent.getFileChangeDiffs': (params) => agentService.getFileChangeDiffs(params.scope),
+		'agent.getSessionStats': () => agentService.getSessionStats(),
+		'agent.getMessageAttachment': (params) => {
+			if (typeof params?.sessionPath !== 'string' || !params.sessionPath || typeof params.messageId !== 'string' || !params.messageId || !Number.isInteger(params.index) || params.index < 0) {
+				throw new Error('附件参数无效');
+			}
+			return agentService.getMessageAttachment(params.sessionPath, params.messageId, params.index);
+		},
+		'agent.getToolResultImage': (params) => {
+			if (typeof params?.sessionPath !== 'string' || !params.sessionPath || typeof params.toolCallId !== 'string' || !params.toolCallId || !Number.isInteger(params.index) || params.index < 0) {
+				throw new Error('工具图片参数无效');
+			}
+			return agentService.getToolResultImage(params.sessionPath, params.toolCallId, params.index);
+		},
+		'agent.prompt': async (params) => {
+			if (!isRecord(params) || typeof params.text !== 'string') throw new Error('消息内容无效');
+			const behavior = params.behavior === 'steer' || params.behavior === 'followUp' ? params.behavior : undefined;
+			await agentService.prompt(params.text, behavior, Array.isArray(params.attachments) ? params.attachments : undefined);
+			return { ok: true as const };
+		},
+		'agent.abort': async () => {
+			await agentService.abort();
+			return { ok: true as const };
+		},
+		'agent.newSession': async (params) => {
+			const receipt = await newConversation(isRecord(params) && typeof params.cwd === 'string' ? { cwd: params.cwd } : undefined);
+			return receipt ?? null;
+		},
+		'agent.switchWorkspace': async (params) => {
+			if (!isRecord(params) || typeof params.cwd !== 'string' || !params.cwd) throw new Error('工作区参数无效');
+			if (!(await listWorkspaces()).includes(params.cwd)) throw new Error('未知工作区');
+			await activateWorkspace(params.cwd, false, params.fresh === true);
+			return { ok: true as const };
+		},
+		'agent.switchSession': async (params) => {
+			if (!isRecord(params) || typeof params.path !== 'string' || !params.path) throw new Error('会话路径无效');
+			const ticket = ++latestSessionSwitch;
+			await queueWorkspaceActivation(async () => {
+				if (ticket !== latestSessionSwitch) throw new Error('已有更新的切换请求，本次切换已让位');
+				const target = normalizeSessionPath(params.path);
+				if (automationExecutor.isSessionRunning(target)) throw new Error('自动化仍在运行，请结束后再打开会话');
+				if (new Set(hostedHeldSessionPaths()).has(target)) throw new Error('会话已在 pai 小窗或分屏窗格中打开，请先关闭它');
+				await agentService.switchSession(target);
+				await markSessionRead(target);
+			});
+			return { ok: true as const };
+		},
+		'agent.setModel': async (params) => {
+			if (!isRecord(params) || typeof params.provider !== 'string' || typeof params.id !== 'string') throw new Error('模型参数无效');
+			await agentService.setModel(params.provider, params.id);
+			return { ok: true as const };
+		},
+		'agent.setThinkingLevel': async (params) => {
+			if (!isRecord(params) || typeof params.level !== 'string') throw new Error('思考强度无效');
+			await agentService.setThinkingLevel(params.level as UiThinkingLevel);
+			return { ok: true as const };
+		},
+		'agent.setSessionAgent': async (params) => {
+			if (!isRecord(params) || !isValidAgentId(params.agentId)) throw new Error('Agent 参数无效');
+			await agentService.setSessionAgent(params.agentId);
+			const snapshot = await agentService.getSnapshot();
+			return { ok: true as const, ...(snapshot.agent ? { agent: snapshot.agent } : {}) };
+		},
+		'agent.setAgentOption': async (params) => {
+			if (!isRecord(params)) throw new Error('Agent 选项无效');
+			const change = requireAgentOptionChange(params.optionId, params.value);
+			await agentService.setAgentOption(change.optionId, change.value);
+			return { ok: true as const };
+		},
+		'agent.updateQueuedMessage': async (params) => {
+			if (!isRecord(params) || typeof params.id !== 'string' || !params.id.trim()) throw new Error('排队消息标识无效');
+			if (params.action !== 'edit' && params.action !== 'remove' && params.action !== 'steer') throw new Error('排队消息操作无效');
+			await agentService.updateQueuedMessage(params.id, params.action, params.action === 'edit' && typeof params.text === 'string' ? params.text : undefined);
+			return { ok: true as const };
+		},
+		'agent.interruptShellTools': async (params) => {
+			const toolCallId = isRecord(params) && typeof params.toolCallId === 'string' ? params.toolCallId : undefined;
+			const interrupted = await agentService.interruptShellTools(toolCallId);
+			return { interrupted };
+		},
+		'agent.stopBackgroundTask': async (params) => {
+			if (!isRecord(params) || typeof params.taskId !== 'string' || !params.taskId.trim()) throw new Error('后台任务标识无效');
+			const stopped = await agentService.stopBackgroundTask(params.taskId.trim());
+			return { stopped };
+		},
+		'agent.respondExtensionDialog': (params) => {
+			if (!isRecord(params) || typeof params.id !== 'string') throw new Error('交互结果无效');
+			const pending = pendingDialogs.get(params.id);
+			if (!pending) throw new Error('该交互请求已结束或不存在');
+			pending.resolve(requireDialogResponse(pending.request, params.value));
+			return { ok: true as const };
+		},
+		'workspace.listEntries': async (params) => {
+			if (!workbenchService) throw new Error('工作台服务未就绪');
+			const relativePath = isRecord(params) && typeof params.relativePath === 'string' ? params.relativePath : '';
+			return workbenchService.listEntries(relativePath);
+		},
+		'workspace.readFile': async (params) => {
+			if (!workbenchService) throw new Error('工作台服务未就绪');
+			if (!isRecord(params) || typeof params.relativePath !== 'string' || !params.relativePath) throw new Error('文件路径无效');
+			const content = await workbenchService.readFile(params.relativePath);
+			return { path: params.relativePath, content };
+		},
+		'workspace.gitStatus': async () => {
+			if (!workbenchService) throw new Error('工作台服务未就绪');
+			return workbenchService.gitStatus();
+		},
+		'workspace.gitDiff': async (params) => {
+			if (!workbenchService) throw new Error('工作台服务未就绪');
+			if (!isRecord(params) || typeof params.relativePath !== 'string' || !params.relativePath) throw new Error('文件路径无效');
+			const source = params.source === 'staged' || params.source === 'unstaged' || params.source === 'all' ? params.source : 'all';
+			const diff = await workbenchService.gitDiff(params.relativePath, source);
+			return { path: params.relativePath, diff };
+		},
+		'workspace.branches': async () => {
+			if (!workbenchService) throw new Error('工作台服务未就绪');
+			return workbenchService.gitBranches();
+		},
+	};
+	remoteAccess = registerRemoteAccessIpc({
+		userDataDir: app.getPath('userData'),
+		appVersion: () => app.getVersion(),
+		getInitialSnapshot: () => agentService.getSnapshot(),
+		getPendingDialogs: () => [...pendingDialogs.values()].map(({ request }) => request),
+		handlers: remoteRpcHandlers,
+		requireTrustedSender: (event) => { requireTrustedSender(event); },
+		isMainWindow: (win) => !isPaiWindow(win),
+	});
 	const diagnosticsService = initializeDiagnostics(join(app.getPath('userData'), 'diagnostics'));
 	// Kept for the error-details export affordance; the data-management page itself is gone.
 	handleRendererInvoke(MANAGEMENT_FEATURE_CHANNELS.exportDiagnostics, async (_event, days: number) => {
@@ -1614,6 +1858,7 @@ export function registerIpc(options: {
 			const next: DesktopSettings = {
 				notificationsEnabled: typeof patch.notificationsEnabled === 'boolean' ? patch.notificationsEnabled : current.notificationsEnabled,
 				closeBehavior: chosenCloseBehavior ?? current.closeBehavior,
+				stopIdleAgentsOnTrayHide: typeof patch.stopIdleAgentsOnTrayHide === 'boolean' ? patch.stopIdleAgentsOnTrayHide : current.stopIdleAgentsOnTrayHide,
 				// Choosing a close behavior in Settings is a fresh decision: ask again on the next busy close.
 				confirmBusyClose: chosenCloseBehavior !== null ? true : current.confirmBusyClose,
 				keepAwakeWhileRunning: typeof patch.keepAwakeWhileRunning === 'boolean' ? patch.keepAwakeWhileRunning : current.keepAwakeWhileRunning,
@@ -1711,6 +1956,21 @@ export function registerIpc(options: {
 		requirePluginWorkspace(request.cwd);
 		return agentService.previewPluginResource(request);
 	});
+	handleRendererInvoke(IPC_CHANNELS.pluginRevealPath, async (event, request: { cwd: string; path: string }) => {
+		requirePluginSender(event);
+		if (!isRecord(request) || typeof request.path !== 'string' || !request.path.trim() || request.path.length > 32_768 || /[\0-\x1f\x7f]/.test(request.path) || !isAbsolute(request.path)) {
+			throw new Error('插件路径参数无效');
+		}
+		requirePluginWorkspace(request.cwd);
+		const normalizePath = (value: string) => process.platform === 'win32' ? resolve(value).toLowerCase() : resolve(value);
+		const catalog = await agentService.getPluginCatalog(request.cwd);
+		const requestedKey = normalizePath(request.path);
+		const candidates = [...catalog.packages.map((item) => item.path).filter((item): item is string => Boolean(item)), ...catalog.resources.map((item) => item.path)];
+		const matched = candidates.find((candidate) => normalizePath(candidate) === requestedKey);
+		if (!matched) throw new Error('未找到对应的插件路径');
+		await stat(matched);
+		shell.showItemInFolder(matched);
+	});
 	handleRendererInvoke(IPC_CHANNELS.pluginPickDirectory, async (event) => {
 		const owner = requirePluginSender(event);
 		const selected = await dialog.showOpenDialog(owner, {
@@ -1783,6 +2043,7 @@ export function registerIpc(options: {
 		}
 		notifier.handleAgentEvent(event, activeSessionPath, agentService.cwd || activeWorkspace);
 		broadcastToRenderers(IPC_CHANNELS.agentEvent, event, (win) => !isPaiWindow(win));
+		remoteAccess?.broadcastAgentEvent(event);
 	});
 	agentService.onBackgroundActivity((_, path) => {
 		if (pendingUnreadPaths.has(path)) return;
@@ -1837,6 +2098,16 @@ export function registerIpc(options: {
 	});
 	handleRendererInvoke(IPC_CHANNELS.windowClose, (event) => {
 		invokingWindow(event).close();
+	});
+	handleRendererInvoke(IPC_CHANNELS.windowClosePromptResponse, (event, raw: unknown) => {
+		if (!raw || typeof raw !== 'object') throw new Error('关闭确认结果无效');
+		const payload = raw as Partial<UiWindowClosePromptResponse>;
+		if (typeof payload.id !== 'string' || !payload.id) throw new Error('关闭确认标识无效');
+		if (payload.action !== 'cancel' && payload.action !== 'tray' && payload.action !== 'quit') throw new Error('关闭确认操作无效');
+		if (payload.remember !== undefined && typeof payload.remember !== 'boolean') throw new Error('关闭确认选项无效');
+		const pending = pendingClosePrompts.get(event.sender);
+		if (!pending || pending.id !== payload.id) return;
+		pending.resolve({ action: payload.action, remember: payload.remember === true });
 	});
 
 	handleRendererInvoke(IPC_CHANNELS.workspaceProjectsDirectory, () => getProjectsDirectory());
@@ -2373,6 +2644,11 @@ export function registerIpc(options: {
 		return agentFor(event).interruptShellTools(toolCallId);
 	});
 
+	handleRendererInvoke(IPC_CHANNELS.agentStopBackgroundTask, (event, taskId: string) => {
+		if (typeof taskId !== 'string' || !taskId.trim() || taskId.length > 200 || taskId.includes('\0')) throw new Error('后台任务标识无效');
+		return agentFor(event).stopBackgroundTask(taskId.trim());
+	});
+
 	handleRendererInvoke(IPC_CHANNELS.agentGenerateCommitMessage, (event, context: string) => {
 		if (typeof context !== 'string' || !context.trim() || context.length > 256 * 1024) throw new Error('提交上下文无效或过长');
 		return agentFor(event).generateCommitMessage(context);
@@ -2475,6 +2751,7 @@ export function disposeServices(): Promise<void> {
 	agentInstalls?.dispose();
 	for (const queue of startupNotifications.values()) queue.cleanup();
 	for (const pending of pendingDialogs.values()) pending.resolve(null);
+	for (const pending of pendingClosePrompts.values()) pending.resolve({ action: 'cancel' });
 	if (automaticRecoveryTimer) clearTimeout(automaticRecoveryTimer);
 	automaticRecoveryTimer = null;
 	return serviceShutdown = (async () => {
@@ -2494,6 +2771,8 @@ export function disposeServices(): Promise<void> {
 		cloudSync = null;
 		await debugApi?.dispose();
 		debugApi = null;
+		await remoteAccess?.dispose();
+		remoteAccess = null;
 		const results = await Promise.allSettled([agentService.dispose(), workbenchService?.dispose(), workbenchFeatures?.dispose(), automationService?.dispose()]);
 		// A failed service must not let app.quit interrupt another service's
 		// cleanup or metadata that was queued by its final activity events.

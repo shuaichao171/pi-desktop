@@ -31,6 +31,7 @@ import { randomUUID } from 'node:crypto';
 import { join, dirname } from 'node:path';
 import { Type, type Static } from 'typebox';
 import type { ToolDefinition } from '@earendil-works/pi-coding-agent';
+import type { UiBackgroundTask } from '@pidesktop/shared';
 
 /** Per-session concurrent background task cap. */
 export const MAX_BACKGROUND_TASKS_PER_SESSION = 8;
@@ -97,6 +98,26 @@ export interface BackgroundSessionHooks {
 	isRunning?(): boolean;
 	/** Live UI system notice (does not persist in the transcript). */
 	notify(kind: 'info' | 'warning' | 'error', text: string): void;
+	/** Called whenever this session's tracked background tasks change (start, settle, adopt, deliver, prune). */
+	onChange?(records: BackgroundTaskRecord[]): void;
+}
+
+/** Project a manager record into the plain IPC-safe shape sent to the renderer. */
+export function toUiBackgroundTask(record: BackgroundTaskRecord): UiBackgroundTask {
+	return {
+		taskId: record.taskId,
+		command: record.command,
+		...(record.note ? { note: record.note } : {}),
+		pid: record.pid,
+		logFile: record.logFile,
+		startedAt: record.startedAt,
+		...(record.endedAt !== undefined ? { endedAt: record.endedAt } : {}),
+		...(record.exitCode !== undefined ? { exitCode: record.exitCode } : {}),
+		...(record.signal ? { signal: record.signal } : {}),
+		...(record.exitedOffline ? { exitedOffline: record.exitedOffline } : {}),
+		status: record.status,
+		...(record.delivered !== undefined ? { delivered: record.delivered } : {}),
+	};
 }
 
 export interface BackgroundTaskStart {
@@ -269,6 +290,7 @@ interface TrackedTask {
 	registryPath: string;
 	child?: ChildProcess;
 	pollTimer?: ReturnType<typeof setInterval>;
+	stopPollTimer?: ReturnType<typeof setTimeout>;
 	deliverTimer?: ReturnType<typeof setTimeout>;
 	deliverStartedAt?: number;
 	deliverAttempts?: number;
@@ -360,6 +382,7 @@ export class BackgroundTaskManager {
 		const tracked: TrackedTask = { record, registryPath, child };
 		this.tasks.set(taskId, tracked);
 		this.persist(tracked);
+		this.emitChange(request.sessionId);
 		child.once('exit', (code, signal) => { this.settle(taskId, code, { signal: signal ?? undefined }); });
 		// 启动后才出现的 spawn 错误（通常不会再有 exit 事件）：按失败结算，settle 本身幂等。
 		child.once('error', () => { this.settle(taskId, null); });
@@ -379,7 +402,11 @@ export class BackgroundTaskManager {
 		tracked.record.endedAt = Date.now();
 		tracked.record.settled = true;
 		if (tracked.pollTimer) clearInterval(tracked.pollTimer);
+		tracked.pollTimer = undefined;
+		if (tracked.stopPollTimer) clearTimeout(tracked.stopPollTimer);
+		tracked.stopPollTimer = undefined;
 		this.persist(tracked);
+		this.emitChange(tracked.record.sessionId);
 		this.scheduleDelivery(taskId, 0);
 		return tracked.record;
 	}
@@ -389,8 +416,10 @@ export class BackgroundTaskManager {
 		const path = registryFile(sessionDir, sessionId);
 		if (!existsSync(path)) return;
 		const records = readRegistry(path);
+		let added = false;
 		for (const record of records) {
 			if (this.tasks.has(record.taskId)) continue;
+			added = true;
 			const tracked: TrackedTask = { record, registryPath: path };
 			this.tasks.set(record.taskId, tracked);
 			if (record.status === 'running') {
@@ -407,6 +436,7 @@ export class BackgroundTaskManager {
 				this.scheduleDelivery(record.taskId, 1000);
 			}
 		}
+		if (added) this.emitChange(sessionId);
 	}
 
 	/** Drop finished, delivered records older than a day, with their log files (called on adopt). */
@@ -415,21 +445,27 @@ export class BackgroundTaskManager {
 		if (!existsSync(path)) return;
 		const cutoff = Date.now() - 24 * 60 * 60 * 1000;
 		const kept: BackgroundTaskRecord[] = [];
+		let pruned = false;
 		for (const record of readRegistry(path)) {
 			if (record.status === 'running' || !record.delivered || (record.endedAt ?? 0) >= cutoff) kept.push(record);
 			else {
 				removeTaskLog(path, record);
 				const tracked = this.tasks.get(record.taskId);
-				if (tracked?.record.delivered) this.tasks.delete(record.taskId);
+				if (tracked?.record.delivered) {
+					this.tasks.delete(record.taskId);
+					pruned = true;
+				}
 			}
 		}
 		writeRegistry(path, kept);
+		if (pruned) this.emitChange(sessionId);
 	}
 
-	/** Kill a running task's process tree (user or model stop). Returns false when not running. */
-	stop(taskId: string): boolean {
+	/** Kill a running task's process tree (user or model stop). Returns false when not running or outside `sessionId`. */
+	stop(taskId: string, sessionId?: string): boolean {
 		const tracked = this.tasks.get(taskId);
 		if (!tracked || tracked.record.status !== 'running') return false;
+		if (sessionId !== undefined && tracked.record.sessionId !== sessionId) return false;
 		try {
 			if (process.platform === 'win32') {
 				const child = spawn(join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'taskkill.exe'), ['/F', '/T', '/PID', String(tracked.record.pid)], { stdio: 'ignore', detached: true, windowsHide: true });
@@ -440,23 +476,49 @@ export class BackgroundTaskManager {
 		} catch {
 			// settle will arrive via the exit event / pid poll.
 		}
+		// Adopted tasks lack a live ChildProcess exit handle; probe quickly so the UI reflects the stop right away.
+		if (!tracked.child && !tracked.stopPollTimer) {
+			const probe = (remaining: number) => {
+				if (tracked.record.status !== 'running') { tracked.stopPollTimer = undefined; return; }
+				if (!isPidAlive(tracked.record.pid)) {
+					tracked.stopPollTimer = undefined;
+					this.settle(taskId, null, { offline: true });
+					return;
+				}
+				if (remaining <= 0) { tracked.stopPollTimer = undefined; return; }
+				tracked.stopPollTimer = setTimeout(() => probe(remaining - 1), 250);
+				tracked.stopPollTimer.unref?.();
+			};
+			tracked.stopPollTimer = setTimeout(() => probe(8), 250);
+			tracked.stopPollTimer.unref?.();
+		}
 		return true;
 	}
 
 	currentRecords(sessionId: string): BackgroundTaskRecord[] {
-		return [...this.tasks.values()].filter((task) => task.record.sessionId === sessionId).map((task) => ({ ...task.record }));
+		return [...this.tasks.values()]
+			.filter((task) => task.record.sessionId === sessionId)
+			.sort((left, right) => left.record.startedAt - right.record.startedAt || left.record.taskId.localeCompare(right.record.taskId))
+			.map((task) => ({ ...task.record }));
 	}
 
 	/** Test/teardown helper: clear all timers and in-memory state. */
 	clear(): void {
 		for (const tracked of this.tasks.values()) {
 			if (tracked.pollTimer) clearInterval(tracked.pollTimer);
+			if (tracked.stopPollTimer) clearTimeout(tracked.stopPollTimer);
 			if (tracked.deliverTimer) clearTimeout(tracked.deliverTimer);
 		}
 		this.tasks.clear();
 		this.hooks.clear();
 		this.wakeChain.clear();
 		this.delivering.clear();
+	}
+
+	private emitChange(sessionId: string): void {
+		const onChange = this.hooks.get(sessionId)?.onChange;
+		if (!onChange) return;
+		try { onChange(this.currentRecords(sessionId)); } catch { /* Never let UI listeners break task lifecycle. */ }
 	}
 
 	private persist(tracked: TrackedTask): void {
@@ -502,6 +564,7 @@ export class BackgroundTaskManager {
 			task.record.delivered = true;
 			this.persist(task);
 		}
+		if (batch.length > 0) this.emitChange(batch[0]!.record.sessionId);
 	}
 
 	private async deliver(taskId: string): Promise<void> {

@@ -90,6 +90,7 @@ import type {
 	UiSubagentFleetNode,
 	UiSubagentInspectReply,
 	UiSubagentInspectMessage,
+	UiBackgroundTask,
 	UiSessionPeek,
 } from '@pidesktop/shared';
 import { createAgentError, normalizeAgentError } from '../../shared/src/agentErrors.ts';
@@ -135,7 +136,7 @@ import { CuaSessionState, cuaExtension } from './cua/index.ts';
 import { CuaPermissionStore, CuaScopeStore, LocalScopeStore } from './cua/permissions.ts';
 import { antigravityCommandApproval, ANTIGRAVITY_COMMAND_APPROVALS } from './acp/commandApproval.ts';
 import { createInterruptibleShellTools, shellRunRegistry } from './shellInterrupt.ts';
-import { backgroundTaskManager, createBackgroundTaskTool } from './backgroundTasks.ts';
+import { backgroundTaskManager, createBackgroundTaskTool, toUiBackgroundTask, type BackgroundTaskRecord } from './backgroundTasks.ts';
 import type { UiMcpSaveRequest, UiMcpTarget } from '../../shared/src/mcpFeatures.ts';
 import type { PluginUpdateCheck } from '../../shared/src/pluginUpdates.ts';
 import { checkPluginUpdate } from './pluginUpdates.ts';
@@ -562,6 +563,8 @@ class SingleAgentService {
 	private readonly subagentLiveSessions = new Map<string, boolean>();
 	/** Session id currently registered with backgroundTaskManager; null when detached. */
 	private attachedBackgroundSessionId: string | null = null;
+	/** Tracked background tasks for the currently attached session (oldest first). */
+	private backgroundTasks: UiBackgroundTask[] = [];
 	/** External agent that owns the loaded conversation; null means Pi. */
 	private agentBinding: { agentId: string; config: UiAgentConfig | null; nativeSessionId: string | null } | null = null;
 	private acp: AcpConversation | null = null;
@@ -677,6 +680,23 @@ class SingleAgentService {
 		this.fire({ type: 'subagent-fleet', fleet, sessionPath: this.state.sessionPath });
 	}
 
+	/** Background task updates carry session identity so switches never leak stale tasks. */
+	private fireBackgroundTasks(): void {
+		this.fire({
+			type: 'background-tasks',
+			tasks: this.backgroundTasks.map((item) => ({ ...item })),
+			sessionId: this.state.sessionId,
+			sessionPath: this.state.sessionPath,
+		});
+	}
+
+	private publishBackgroundTasks(records: BackgroundTaskRecord[]): void {
+		this.backgroundTasks = records.map(toUiBackgroundTask);
+		if (!this.lifecycleOperation && this.state.sessionId && this.state.sessionId === this.attachedBackgroundSessionId) {
+			this.fireBackgroundTasks();
+		}
+	}
+
 	/** Consume a pi-subagents rpc-mode widget payload; unknown shapes never throw. */
 	private consumeSubagentWidget(key: string, content: unknown): void {
 		const line = Array.isArray(content) && content.length > 0 && typeof content[0] === 'string'
@@ -739,6 +759,7 @@ class SingleAgentService {
 			fileChangeTurns: this.state.fileChangeTurns.map((turn) => ({ runId: turn.runId, items: turn.items.map((file) => ({ ...file })) })),
 			fileChangeActiveRunId: this.state.fileChangeActiveRunId,
 			subagentFleet: this.subagentFleet,
+			backgroundTasks: this.backgroundTasks.map((item) => ({ ...item })),
 		};
 	}
 	getSessionBranchHead(): { path: string; leafId: string | null } | null { const manager = this.runtime?.session.sessionManager; const path = this.runtime?.session.sessionFile; return manager && path ? { path, leafId: manager.getLeafId() } : null; }
@@ -1743,6 +1764,13 @@ class SingleAgentService {
 		return shellRunRegistry.interrupt(sessionId, toolCallId);
 	}
 
+	/** Terminate one running background task belonging to this session. */
+	stopBackgroundTask(taskId: string): boolean {
+		const sessionId = this.runtime?.session?.sessionId;
+		if (!sessionId || !taskId) return false;
+		return backgroundTaskManager.stop(taskId, sessionId);
+	}
+
 	/** Start a fresh conversation in the same working directory. */
 	async newSession(): Promise<void> {
 		await this.runLifecycle(() => this.startNewSession());
@@ -1929,6 +1957,22 @@ class SingleAgentService {
 		this.acpToolChanges.clear();
 		this.acpConfigStale = false;
 		await conversation?.dispose().catch(() => {});
+	}
+
+	/**
+	 * Stop the external ACP agent process when this conversation is idle.
+	 * The agent binding, native session id, and cached model/option lists stay intact
+	 * so the next prompt or setting change transparently restarts and resumes it.
+	 */
+	async stopIdleAgent(): Promise<boolean> {
+		const conversation = this.acp;
+		if (!conversation) return false;
+		if (this.closing || this.lifecycleOperation || this.activePromptCalls > 0 || this.activeConfigurationCalls > 0 || conversation.busy) return false;
+		this.acp = null;
+		this.acpToolChanges.clear();
+		this.acpConfigStale = false;
+		await conversation.dispose().catch(() => {});
+		return true;
 	}
 
 	/**
@@ -2403,6 +2447,7 @@ class SingleAgentService {
 		if (this.attachedBackgroundSessionId === sessionId) return;
 		if (this.attachedBackgroundSessionId) backgroundTaskManager.detach(this.attachedBackgroundSessionId);
 		this.attachedBackgroundSessionId = sessionId;
+		this.backgroundTasks = [];
 		const sessionDir = session.sessionManager.getSessionDir();
 		backgroundTaskManager.attach(sessionId, {
 			prompt: (text) => this.deliverSyntheticPrompt(text),
@@ -2410,14 +2455,17 @@ class SingleAgentService {
 			steer: (text) => this.sendPrompt(text, 'steer', [], false),
 			isRunning: () => this.backgroundSteerReady(),
 			notify: (_kind, text) => this.fire({ type: 'system-message', id: this.nextId('system'), order: this.timelineOrder++, text, systemKind: 'background-task' }),
+			onChange: (records) => this.publishBackgroundTasks(records),
 		});
 		backgroundTaskManager.adopt(sessionId, sessionDir);
 		backgroundTaskManager.prune(sessionId, sessionDir);
+		this.backgroundTasks = backgroundTaskManager.currentRecords(sessionId).map(toUiBackgroundTask);
 	}
 
 	private detachBackgroundTasks(): void {
 		if (this.attachedBackgroundSessionId) backgroundTaskManager.detach(this.attachedBackgroundSessionId);
 		this.attachedBackgroundSessionId = null;
+		this.backgroundTasks = [];
 	}
 
 	/** A synthetic wake may only start when the session can take a fresh run. */
@@ -2643,6 +2691,8 @@ class SingleAgentService {
 			historyTotal: recent.historyTotal,
 		});
 		this.publishQueue({ steering: session.getSteeringMessages(), followUp: session.getFollowUpMessages() });
+		this.backgroundTasks = backgroundTaskManager.currentRecords(session.sessionId).map(toUiBackgroundTask);
+		this.fireBackgroundTasks();
 	}
 
 	private publishQueue(queue: SdkQueueSnapshot): void {
@@ -3967,6 +4017,10 @@ export class AgentService {
 		return this.requireActive().interruptShellTools(toolCallId);
 	}
 
+	stopBackgroundTask(taskId: string): boolean {
+		return this.requireActive().stopBackgroundTask(taskId);
+	}
+
 	generateCommitMessage(context: string): Promise<string> {
 		if (this.pluginOperation) return Promise.reject(new Error('插件设置正在更新，请稍后再试'));
 		return this.requireActive().generateCommitMessage(context);
@@ -4007,6 +4061,20 @@ export class AgentService {
 	listAgents(): Promise<UiAgentStatus[]> { return this.agents.statuses(); }
 	probeAgents(): Promise<UiAgentStatus[]> { return this.agents.statuses(true); }
 	clearAntigravityCommandApprovals(): void { antigravityCommandGrants().clear(); }
+	/**
+	 * Stop every idle external ACP agent process across all loaded contexts
+	 * (used when the window hides to the system tray). Contexts with an active turn
+	 * or waiting on an approval/question dialog keep running untouched.
+	 */
+	async stopIdleAgents(): Promise<number> {
+		if (this.agentWarmupTimer) {
+			clearTimeout(this.agentWarmupTimer);
+			this.agentWarmupTimer = null;
+		}
+		const targets = [...this.contexts.values()].filter((service) => !this.waitingContexts.has(service));
+		const results = await Promise.allSettled(targets.map((service) => service.stopIdleAgent()));
+		return results.filter((result) => result.status === 'fulfilled' && result.value === true).length;
+	}
 	readAgentQuota(agentId: string, refresh = false): Promise<UiAgentQuota> {
 		const agent = this.agents.get(agentId);
 		if (!agent) return Promise.reject(new Error('Agent 不存在'));
@@ -4530,6 +4598,7 @@ export class AgentService {
 		// A warm context keeps its fleet while in the background, but its widget only
 		// re-emits on change: replay it (or its absence) for the conversation now shown.
 		if (snapshot.sessionId) this.fire({ type: 'subagent-fleet', fleet: snapshot.subagentFleet ?? null, sessionPath: snapshot.sessionPath });
+		if (snapshot.sessionId) this.fire({ type: 'background-tasks', tasks: snapshot.backgroundTasks ?? [], sessionId: snapshot.sessionId, sessionPath: snapshot.sessionPath });
 		if (snapshot.error) this.fire({ type: 'error', message: snapshot.error, error: snapshot.errorInfo ?? undefined });
 		this.scheduleAgentWarmup(service);
 	}
