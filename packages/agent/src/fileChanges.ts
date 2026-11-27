@@ -53,7 +53,6 @@ export class SessionFileChanges {
 	/** Per-turn aggregates in first-change order; runId null groups pre-run-tracking records. */
 	private readonly turns: { runId: string | null; files: Map<string, SavedFile> }[] = [];
 	private readonly turnsByRun = new Map<string, { runId: string | null; files: Map<string, SavedFile> }>();
-	private readonly statsCache = new WeakMap<SavedFile, UiFileChange>();
 	private readonly diffCache = new WeakMap<SavedFile, UiFileDiff>();
 	private readonly checkpoint: FileCheckpoint;
 
@@ -196,9 +195,7 @@ export class SessionFileChanges {
 		const items: UiFileChange[] = [];
 		for (const record of files.values()) {
 			if (record.before.fingerprint === record.after.fingerprint) continue;
-			let stats = this.statsCache.get(record);
-			if (!stats) this.statsCache.set(record, stats = toStats(record));
-			items.push({ ...stats });
+			items.push(toChange(record));
 		}
 		return items.sort((a, b) => a.path.localeCompare(b.path));
 	}
@@ -369,23 +366,22 @@ export class SessionFileChanges {
 	}
 }
 
-function toStats({ path, before, after }: SavedFile): UiFileChange {
+function toChange({ path, before, after }: SavedFile): UiFileChange {
 	const kind = !before.exists ? 'added' : !after.exists ? 'deleted' : 'modified';
-	if (before.text === null || after.text === null) return { path, kind, additions: null, deletions: null, preview: before.preview ?? after.preview ?? 'unavailable' };
-	const patch = lineDiff(before.text, after.text, false);
-	return { path, kind, additions: patch.additions, deletions: patch.deletions };
+	if (before.text === null || after.text === null) return { path, kind, preview: before.preview ?? after.preview ?? 'unavailable' };
+	return { path, kind };
 }
 
 function toDiff({ path, before, after }: SavedFile): UiFileDiff {
 	if (before.text === null || after.text === null) return { path, diff: null, preview: before.preview ?? after.preview ?? 'unavailable' };
-	const patch = lineDiff(before.text, after.text);
-	const diff = `--- ${before.exists ? `a/${path}` : '/dev/null'}\n+++ ${after.exists ? `b/${path}` : '/dev/null'}\n${patch.lines.join('\n')}\n`;
+	const lines = lineDiff(before.text, after.text);
+	const diff = `--- ${before.exists ? `a/${path}` : '/dev/null'}\n+++ ${after.exists ? `b/${path}` : '/dev/null'}\n${lines.join('\n')}\n`;
 	if (diff.length > MAX_DIFF_CHARS) return { path, diff: null, preview: 'too-large' };
 	return { path, diff };
 }
 
 /** A bounded LCS yields ordinary unified line diffs without subprocesses or temp files. */
-function lineDiff(before: string, after: string, buildPatch = true): { lines: string[]; additions: number; deletions: number } {
+function lineDiff(before: string, after: string): string[] {
 	const lines = (text: string) => {
 		if (!text) return [];
 		const result = text.replace(/\r\n/g, '\n').replace(/\n$/, '').split('\n');
@@ -399,28 +395,24 @@ function lineDiff(before: string, after: string, buildPatch = true): { lines: st
 	while (suffix < a.length - prefix && suffix < b.length - prefix && a[a.length - 1 - suffix] === b[b.length - 1 - suffix]) suffix++;
 	const old = a.slice(prefix, a.length - suffix), next = b.slice(prefix, b.length - suffix);
 	const changes: string[] = [];
-	let additions = 0, deletions = 0;
 	if (old.length * next.length <= 500_000) {
 		const width = next.length + 1;
 		const table = new Uint32Array((old.length + 1) * width);
 		for (let i = old.length - 1; i >= 0; i--) for (let j = next.length - 1; j >= 0; j--) table[i * width + j] = old[i] === next[j] ? table[(i + 1) * width + j + 1]! + 1 : Math.max(table[(i + 1) * width + j]!, table[i * width + j + 1]!);
 		let i = 0, j = 0;
 		while (i < old.length || j < next.length) {
-			if (i < old.length && j < next.length && old[i] === next[j]) { if (buildPatch) changes.push(...render(old[i++]!, ' ')); else i++; j++; }
-			else if (j < next.length && (i === old.length || table[i * width + j + 1]! > table[(i + 1) * width + j]!)) { if (buildPatch) changes.push(...render(next[j++]!, '+')); else j++; additions++; }
-			else { if (buildPatch) changes.push(...render(old[i++]!, '-')); else i++; deletions++; }
+			if (i < old.length && j < next.length && old[i] === next[j]) { changes.push(...render(old[i++]!, ' ')); j++; }
+			else if (j < next.length && (i === old.length || table[i * width + j + 1]! > table[(i + 1) * width + j]!)) changes.push(...render(next[j++]!, '+'));
+			else changes.push(...render(old[i++]!, '-'));
 		}
 	} else {
-		if (buildPatch) for (const line of old) changes.push(...render(line, '-'));
-		if (buildPatch) for (const line of next) changes.push(...render(line, '+'));
-		deletions = old.length; additions = next.length;
+		for (const line of old) changes.push(...render(line, '-'));
+		for (const line of next) changes.push(...render(line, '+'));
 	}
-	if (!buildPatch) return { additions, deletions, lines: [] };
 	const start = Math.max(0, prefix - 3), end = Math.min(3, suffix);
 	const contextBefore = a.slice(start, prefix).flatMap((line) => render(line, ' '));
 	const contextAfter = suffix ? a.slice(a.length - suffix, a.length - suffix + end).flatMap((line) => render(line, ' ')) : [];
-	if (!changes.length) return { additions: 0, deletions: 0, lines: before === after ? [] : ['\\ Line endings changed'] };
+	if (!changes.length) return before === after ? [] : ['\\ Line endings changed'];
 	const oldCount = prefix - start + old.length + end, newCount = prefix - start + next.length + end;
-	const patch = [`@@ -${oldCount ? start + 1 : 0},${oldCount} +${newCount ? start + 1 : 0},${newCount} @@`, ...contextBefore, ...changes, ...contextAfter];
-	return { additions, deletions, lines: patch };
+	return [`@@ -${oldCount ? start + 1 : 0},${oldCount} +${newCount ? start + 1 : 0},${newCount} @@`, ...contextBefore, ...changes, ...contextAfter];
 }

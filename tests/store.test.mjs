@@ -107,8 +107,8 @@ beforeEach(() => {
 });
 
 test('conversation file changes hydrate, replay newer events, and reset across sessions and bridges', async () => {
-  const first = { path: 'src/app.ts', kind: 'modified', additions: 2, deletions: 1 };
-  const latest = { ...first, additions: 3 };
+  const first = { path: 'src/app.ts', kind: 'modified' };
+  const latest = { path: 'src/app.ts', kind: 'added' };
   const turn = { runId: 'run-1', items: [latest] };
   const pending = deferred();
   const host = createBridge({ snapshot: pending.promise });

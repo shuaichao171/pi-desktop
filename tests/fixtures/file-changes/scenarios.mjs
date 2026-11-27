@@ -15,15 +15,15 @@ export default async function fileChangesScenarios(review) {
     const state = window.__changesReview = { path: fixture.snapshot.sessionPath, copied: null };
     state.visible = node => !!node && !node.closest('[hidden],[inert],[aria-hidden="true"]') && node.getClientRects().length > 0 && getComputedStyle(node).visibility !== 'hidden' && getComputedStyle(node).display !== 'none';
     Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async text => { state.copied = text; } } });
-    state.textFile = (path, index = 0) => ({ path, kind: 'modified', additions: index + 2, deletions: 1 });
+    state.textFile = (path) => ({ path, kind: 'modified' });
     state.diffFor = (path, index = 0) => ({ path, diff: '--- a/' + path + '\\n+++ b/' + path + '\\n@@ -1,2 +1,2 @@\\n context line\\n-old value\\n+new value ' + index + ' ' + 'long output '.repeat(25) + '\\n' });
     state.firstPath = 'src/engine.ts'; state.binaryPath = 'assets/header.png'; state.unknownPath = 'generated/catalog.json';
     state.items = [state.textFile(state.firstPath),
-      { path: state.binaryPath, kind: 'modified', additions: null, deletions: null, preview: 'binary' },
-      { path: state.unknownPath, kind: 'modified', additions: null, deletions: null, preview: 'too-large' },
-      ...Array.from({length:25}, (_, index) => state.textFile('packages/feature-' + String(index).padStart(2,'0') + '/nested/component-with-a-long-name.ts', index + 3))];
+      { path: state.binaryPath, kind: 'modified', preview: 'binary' },
+      { path: state.unknownPath, kind: 'modified', preview: 'too-large' },
+      ...Array.from({length:25}, (_, index) => state.textFile('packages/feature-' + String(index).padStart(2,'0') + '/nested/component-with-a-long-name.ts'))];
     state.lastPath = state.items.at(-1).path;
-    state.diffsFor = items => items.map(item => item.preview ? { path: item.path, diff: null, preview: item.preview } : state.diffFor(item.path, item.additions));
+    state.diffsFor = items => items.map((item, index) => item.preview ? { path: item.path, diff: null, preview: item.preview } : state.diffFor(item.path, index));
     state.fileDiffs = state.diffsFor(state.items);
     // The fixture bridge serves getFileChangeDiffs from window.__modelReview.
     fixture.fileDiffs = structuredClone(state.fileDiffs);
@@ -113,7 +113,7 @@ export default async function fileChangesScenarios(review) {
   // Settled turn card: sits inside the turn that produced the changes.
   await review.assert(`Boolean(document.querySelector(".pd-conversation-turn .pd-turn-changes")) && /本轮|this turn/i.test(document.querySelector('${card}').textContent)`, 'The settled card labels its turn scope');
   await review.assert(`${visibleRows}.length === 3`, 'The turn card initially shows only three files');
-  await review.assert(`!document.querySelector('${row('assets/header.png')} .pd-change-stats') && !document.querySelector('${row('generated/catalog.json')} .pd-change-stats')`, 'Binary and unknown file sizes never claim fabricated zero additions or deletions');
+  await review.assert(`!document.querySelector('${card} .pd-change-stats')`, 'File change cards render without line-count statistics');
   await review.assert('(() => { const card=document.querySelector(".pd-turn-changes")?.getBoundingClientRect(), answer=document.querySelector(".pd-turn-answer")?.getBoundingClientRect(); return !!card && !!answer && Math.abs(card.left-answer.left)<=1 && Math.abs(card.right-answer.right)<=1; })()', 'The wide turn card aligns both horizontal edges with the turn answer column');
   await review.screenshot('changes-turn-card-dark-1440');
 

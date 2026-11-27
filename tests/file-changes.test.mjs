@@ -36,20 +36,20 @@ test('file previews compare against actual tool preimages, accumulate and rebase
     await f.tracker.afterTool('one');
     let change = f.tracker.snapshot()[0];
     assert.equal(change.kind, 'modified');
-    assert.equal(change.additions, 1);
-    assert.equal(change.deletions, 0);
+    assert.equal('additions' in change, false);
+    assert.equal('deletions' in change, false);
     assert.match(f.tracker.diffs({ kind: 'conversation' })[0].diff, /\+model one/);
     assert.doesNotMatch(f.tracker.diffs({ kind: 'conversation' })[0].diff, /\+existing user change/);
     await f.tracker.beforeTool('two', 'edit', { path: 'dirty.txt' });
     await writeFile(path, 'existing user change\nmodel one\nmodel two\n');
     await f.tracker.afterTool('two');
-    assert.equal(f.tracker.snapshot()[0].additions, 2);
+    assert.match(f.tracker.diffs({ kind: 'conversation' })[0].diff, /\+model one\n\+model two/);
     await writeFile(path, 'existing user change\nmodel one\nmodel two\nmanual extra\n');
     await f.tracker.beforeTool('three', 'edit', { path: 'dirty.txt' });
     await writeFile(path, 'existing user change\nmodel one\nmodel two\nmanual extra\nmodel three\n');
     await f.tracker.afterTool('three');
     change = f.tracker.snapshot()[0];
-    assert.equal(change.additions, 1);
+    assert.equal(change.kind, 'modified');
     assert.match(f.tracker.diffs({ kind: 'conversation' })[0].diff, /\+model three/);
     assert.doesNotMatch(f.tracker.diffs({ kind: 'conversation' })[0].diff, /\+manual extra/);
     const snapshot = f.tracker.snapshot();
@@ -86,7 +86,7 @@ test('shell snapshots include clean tracked, already dirty and untracked files w
     assert.deepEqual(changes.map(({ path, kind }) => [path, kind]), [['added.txt', 'added'], ['removed.txt', 'deleted'], ['tracked.txt', 'modified'], ['untracked.txt', 'modified']]);
     assert.match(f.tracker.diffs({ kind: 'conversation' }).find(({ path }) => path === 'added.txt').diff, /@@ -0,0 \+1,1 @@/);
     assert.match(f.tracker.diffs({ kind: 'conversation' }).find(({ path }) => path === 'removed.txt').diff, /@@ -1,1 \+0,0 @@/);
-    assert.equal(changes.find(({ path }) => path === 'untracked.txt').additions, 1);
+    assert.match(f.tracker.diffs({ kind: 'conversation' }).find(({ path }) => path === 'untracked.txt').diff, /\+changed/);
   } finally { await f.cleanup(); }
 });
 

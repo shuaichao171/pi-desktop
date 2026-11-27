@@ -2,24 +2,6 @@ import type { UiFileChange } from '@pidesktop/shared';
 import { useT } from '../i18n';
 import { FileDisplayIcon } from './FileDisplayIcon';
 
-export function ChangeStats({ items }: { items: UiFileChange[] }) {
-  const { t } = useT();
-  const total = (side: 'additions' | 'deletions') => items.some(item => typeof item[side] === 'number')
-    ? items.reduce((sum, item) => sum + (item[side] ?? 0), 0) : null;
-  const additions = total('additions'), deletions = total('deletions');
-  if (additions === null && deletions === null) return null;
-  const partial = items.some(item => item.additions == null || item.deletions == null);
-  const description = t(partial ? 'changes.partialStats' : 'changes.stats', { additions: additions ?? '—', deletions: deletions ?? '—' });
-  // A partial total marks itself with a help cursor and a dotted underline so the
-  // asterisk's meaning (some files have no line counts) is one hover away.
-  return <span className={`pd-change-stats${partial ? ' is-partial' : ''}`} aria-label={description} title={partial ? description : undefined}>
-    <span className="pd-change-added" aria-hidden="true">+{additions ?? '—'}</span>
-    <span className="pd-change-deleted" aria-hidden="true">−{deletions ?? '—'}</span>
-    {partial && <span className="pd-change-partial" aria-hidden="true">*</span>}
-  </span>;
-}
-
-
 export function FileLabel({ item, compact = false }: { item: UiFileChange; compact?: boolean }) {
   const { t, locale } = useT();
   const parts = item.path.split(/[\\/]/), name = parts.pop() || item.path;

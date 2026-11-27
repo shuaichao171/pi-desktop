@@ -6,25 +6,25 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 const uiRequire = createRequire(new URL('../packages/ui/package.json', import.meta.url));
 const desktopRequire = createRequire(new URL('../packages/desktop/package.json', import.meta.url));
 
-test('file change presentation preserves unknown counts and full path identity', async context => {
+test('file change presentation omits line-count stats and preserves full path identity', async context => {
   const { createElement } = await import(pathToFileURL(uiRequire.resolve('react')).href);
   const { renderToStaticMarkup } = await import(pathToFileURL(uiRequire.resolve('react-dom/server')).href);
   const { createServer } = await import(pathToFileURL(desktopRequire.resolve('vite')).href);
   const server = await createServer({ root: fileURLToPath(new URL('../packages/ui', import.meta.url)), configFile: false, server: { middlewareMode: true, hmr: false }, optimizeDeps: { noDiscovery: true, include: [] }, appType: 'custom' });
   try {
-    const { ChangeStats, FileLabel } = await server.ssrLoadModule('/src/components/FileChangePresentation.tsx');
-    const renderStats = items => renderToStaticMarkup(createElement(ChangeStats, { items }));
-    await context.test('binary-only and one-sided unknown counts are never presented as zero', () => {
-      assert.equal(renderStats([{ additions: null, deletions: null }]), '');
-      const oneSide = renderStats([{ additions: 3, deletions: null }]);
-      assert.match(oneSide, />\+3</);
-      assert.match(oneSide, />−—</);
-      assert.doesNotMatch(oneSide, />−0</);
-      const partial = renderStats([{ additions: 3, deletions: 1 }, { additions: null, deletions: null }]);
-      assert.match(partial, /部分文件未计入行数/);
-      assert.match(partial, />\*</);
-      assert.match(partial, />\+3</);
-      assert.match(partial, />−1</);
+    const presentation = await server.ssrLoadModule('/src/components/FileChangePresentation.tsx');
+    const { ChangesCard } = await server.ssrLoadModule('/src/components/ComposerChanges.tsx');
+    const { FileLabel } = presentation;
+    await context.test('line-count stats component is removed and cards render without stats', () => {
+      assert.equal('ChangeStats' in presentation, false);
+      const html = renderToStaticMarkup(createElement(ChangesCard, {
+        items: [{ path: 'src/a.ts', kind: 'modified' }, { path: 'assets/logo.png', kind: 'added', preview: 'binary' }],
+        scope: { kind: 'turn', runId: 'r1' },
+        variant: 'turn',
+        review: () => {},
+      }));
+      assert.doesNotMatch(html, /pd-change-stats|pd-change-partial/);
+      assert.match(html, /已修改 2 个文件/);
     });
     await context.test('Windows and slash paths display directory before basename without status letters', () => {
       for (const path of ['packages/ui/index.ts', 'packages\\ui\\index.ts']) {

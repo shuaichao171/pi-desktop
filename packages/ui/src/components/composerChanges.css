@@ -14,10 +14,6 @@
 .pd-changes-card-main:hover .pd-changes-card-copy > strong { text-decoration: underline; text-underline-offset: 3px; }
 .pd-composer-changes-review { display: inline-flex; flex: 0 0 auto; align-items: center; justify-content: center; gap: 6px; min-height: 30px; padding: 4px 10px; border: 1px solid var(--pd-border); border-radius: var(--pd-radius-sm); background: transparent; color: var(--pd-text); font-size: var(--pd-font-sm); line-height: 1.4; white-space: nowrap; }
 .pd-composer-changes-review:hover { background: var(--pd-surface-hover); }
-.pd-change-stats { display: inline-flex; flex: 0 0 auto; align-items: center; gap: 5px; font-size: var(--pd-font-sm); font-variant-numeric: tabular-nums; white-space: nowrap; }
-.pd-change-added { color: var(--pd-success); }
-.pd-change-deleted { color: var(--pd-danger); }
-.pd-change-unknown { color: var(--pd-text-weak); }
 .pd-change-filename { display: flex; flex: 1; gap: 0; align-items: baseline; min-width: 0; overflow: hidden; }
 .pd-change-filename > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--pd-text); }
 .pd-change-filename > small { flex: 0 1 auto; max-width: 60%; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--pd-text-weak); font-size: inherit; }
@@ -30,7 +26,7 @@
 .pd-changes-show-more { display: flex; align-items: center; gap: 7px; width: 100%; min-height: 36px; border: 0; padding: 7px 14px; background: transparent; color: var(--pd-text-subtle); text-align: left; font-size: var(--pd-font-sm); }
 .pd-composer-changes.is-running { position: relative; max-width: 100%; }
 .pd-composer-changes.is-session { max-width: 100%; }
-/* Dock capsule (running + idle session): one row — icon, label, stats chip, affordance. */
+/* Dock capsule (running + idle session): one row — icon, label, affordance. */
 .pd-composer-changes-summary { display: flex; align-items: center; max-width: 100%; gap: 2px; padding: 3px; border: 1px solid var(--pd-border); border-radius: var(--pd-radius-pill); background: var(--pd-surface-raised); box-shadow: 0 4px 14px #0000001a; }
 .pd-composer-changes-summary .pd-changes-live-main { display: inline-flex; flex: 0 1 auto; align-items: center; gap: 8px; min-width: 0; min-height: 28px; padding: 3px 10px 3px 10px; border: 0; border-radius: var(--pd-radius-pill); background: transparent; color: var(--pd-text-subtle); font-size: var(--pd-font-sm); line-height: 1.4; white-space: nowrap; cursor: pointer; transition: background-color .12s ease, color .12s ease; }
 .pd-composer-changes-summary .pd-changes-live-main:hover { background: var(--pd-surface-hover); color: var(--pd-text); }
@@ -38,7 +34,6 @@
 .pd-changes-live-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pd-changes-session-scope { color: var(--pd-text-weak); }
 .pd-changes-session-sep { margin-inline: 6px; color: var(--pd-text-weak); opacity: .7; }
-.pd-changes-live-main .pd-change-stats { gap: 6px; padding-left: 9px; border-left: 1px solid var(--pd-border-soft); font-size: var(--pd-font-xs); }
 .pd-changes-live-main > .pd-changes-live-chevron { margin-left: -2px; margin-right: -3px; opacity: .7; transition: transform .12s ease, opacity .12s ease; }
 .pd-changes-live-main:hover > .pd-changes-live-chevron { opacity: 1; transform: translateX(1px); }
 .pd-composer-changes-toggle { display: flex; flex: 0 0 26px; align-items: center; justify-content: center; width: 26px; height: 26px; padding: 0; border: 0; border-radius: 50%; background: transparent; color: var(--pd-text-subtle); }

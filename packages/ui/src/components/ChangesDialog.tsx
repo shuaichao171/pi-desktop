@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import type { UiFileChange, UiFileDiff } from '@pidesktop/shared';
 import { useT } from '../i18n';
 import { useDiffParse } from '../useDiffParse';
-import { ChangeStats, FileLabel } from './FileChangePresentation';
+import { FileLabel } from './FileChangePresentation';
 import { Icon } from './Icons';
 import './changesDialog.css';
 
@@ -112,7 +112,7 @@ export function ChangesDialog({ items, diffs, initialPath, returnFocus, getRetur
 
   return createPortal(<dialog ref={dialogRef} className="pd-changes-dialog" role="dialog" aria-modal="true" aria-labelledby={titleId}
     onCancel={event => { event.preventDefault(); onClose(); }} onKeyDown={event => event.stopPropagation()}>
-    <header className="pd-changes-dialog-header"><div><h2 id={titleId}>{t('changes.title')}</h2><span>{t('changes.count', { count: items.length })}</span><ChangeStats items={items} /></div>
+    <header className="pd-changes-dialog-header"><div><h2 id={titleId}>{t('changes.title')}</h2><span>{t('changes.count', { count: items.length })}</span></div>
       <button ref={closeRef} type="button" className="pd-icon-button" aria-label={t('changes.close')} onClick={onClose} autoFocus><Icon name="close" width="18" height="18" /></button>
     </header>
     <p className="pd-changes-description">{t('changes.description')}</p>
@@ -122,11 +122,11 @@ export function ChangesDialog({ items, diffs, initialPath, returnFocus, getRetur
           className={`pd-changes-file${selectedPath === item.path ? ' is-selected' : ''}`} data-change-path={item.path} title={item.path}
           tabIndex={selectedPath === item.path ? 0 : -1} aria-current={selectedPath === item.path ? 'true' : undefined} aria-controls={diffId}
           onFocus={event => { focusedFile.current = event.currentTarget; }} onClick={() => setPath(item.path)}>
-          <FileLabel item={item} /><ChangeStats items={[item]} />
+          <FileLabel item={item} />
         </button>)}
       </nav>
       {selected ? <section id={diffId} className="pd-changes-diff" aria-label={t('changes.diffFor', { path: selected.path })}>
-        <div className="pd-changes-diff-header"><span title={selected.path}>{selected.path}</span><ChangeStats items={[selected]} /></div>
+        <div className="pd-changes-diff-header"><span title={selected.path}>{selected.path}</span></div>
         <div className="pd-changes-diff-tools">
           <button type="button" onClick={() => void copy(selected.path, 'path')}><Icon name="copy" width="13" height="13" />{t('changes.copyPath')}</button>
           <button type="button" disabled={!diffs?.get(selected.path)?.diff} onClick={() => void copy(diffs?.get(selected.path)?.diff ?? '', 'diff')}><Icon name="copy" width="13" height="13" />{t('changes.copyDiff')}</button>

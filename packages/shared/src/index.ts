@@ -597,8 +597,6 @@ export interface UiQueuedMessage {
 export interface UiFileChange {
   path: string;
   kind: 'added' | 'modified' | 'deleted';
-  additions: number | null;
-  deletions: number | null;
   preview?: 'binary' | 'too-large' | 'unavailable';
 }
 

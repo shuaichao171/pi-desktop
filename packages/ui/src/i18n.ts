@@ -9,8 +9,6 @@ const STORAGE_KEY = 'pi-desktop.locale';
 export const translations: Record<string, { 'zh-CN': string; 'en-US': string }> = {
   'changes.title': { 'zh-CN': '文件更改', 'en-US': 'File changes' },
   'changes.count': { 'zh-CN': '已修改 {count} 个文件', 'en-US': '{count} files changed' },
-  'changes.stats': { 'zh-CN': '新增 {additions} 行，删除 {deletions} 行', 'en-US': '{additions} lines added, {deletions} lines deleted' },
-  'changes.partialStats': { 'zh-CN': '可预览文本中新增 {additions} 行，删除 {deletions} 行；部分文件未计入行数', 'en-US': '{additions} lines added, {deletions} lines deleted in previewable text; some files are excluded from line counts' },
   'changes.review': { 'zh-CN': '查看更改', 'en-US': 'Review' },
   'changes.close': { 'zh-CN': '关闭文件更改', 'en-US': 'Close file changes' },
   'changes.files': { 'zh-CN': '本次对话修改的文件', 'en-US': 'Files changed in this conversation' },
@@ -22,7 +20,7 @@ export const translations: Record<string, { 'zh-CN': string; 'en-US': string }> 
   'changes.deleted': { 'zh-CN': '删除文件', 'en-US': 'Deleted file' },
   'changes.emptyFile': { 'zh-CN': '文件发生更改，没有可显示的文本差异。', 'en-US': 'The file changed with no text differences to display.' },
   'changes.preview.binary': { 'zh-CN': '二进制文件已更改，无法显示文本差异。', 'en-US': 'This binary file changed. A text diff is unavailable.' },
-  'changes.preview.too-large': { 'zh-CN': '文件或差异较大，预览内容和行数统计可能不完整。', 'en-US': 'This file or diff is large. The preview and line counts may be incomplete.' },
+  'changes.preview.too-large': { 'zh-CN': '文件或差异较大，预览内容可能不完整。', 'en-US': 'This file or diff is large. The preview may be incomplete.' },
   'changes.preview.unavailable': { 'zh-CN': '已记录文件更改，暂时无法预览文本差异。', 'en-US': 'The file change was recorded, but its text diff is unavailable.' },
   'plugins.localUpdateHint': { 'zh-CN': '本地插件直接读取源目录。修改文件后可在此直接重新加载资源。', 'en-US': 'Local plugins read their source directory directly. Reload resources here after editing files.' },
   'plugins.doneWithWarnings': { 'zh-CN': '操作已完成，请查看资源诊断与当前加载状态。', 'en-US': 'Operation completed. Check resource diagnostics and the current loading state.' },

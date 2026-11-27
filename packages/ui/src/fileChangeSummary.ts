@@ -5,8 +5,8 @@ import type { UiFileChange, UiFileChangeTurn, UiFileDiff, UiToolActivity } from 
  *
  * Primary data source is the session file-changes tracker (fileChangeTurns,
  * recorded per tool call by the agent and replayed with the session): it carries
- * per-file paths, kinds and exact line stats and works without Git. The helpers
- * here cover what that tracker cannot know:
+ * per-file paths and kinds and works without Git. The helpers here cover what
+ * that tracker cannot know:
  * - sessions recorded before the tracker existed have no fileChangeTurns, so
  *   edit/write tool calls in the transcript are aggregated as a fallback;
  * - the session-level summary is one union across every turn's changes.
@@ -56,41 +56,10 @@ function relativeParts(input: string): string | null {
 }
 
 /**
- * Line counts from one pi edit-tool result diff (`+12 added line` /
- * `-3 removed line` rows; context and `...` elision rows are ignored). Changed
- * lines are always enumerated, so counts are exact for a complete text; rows
- * that do not match the format (a capped or foreign text) yield null.
- */
-export function editDiffStats(text: string): { additions: number; deletions: number } | null {
-	if (!text) return null;
-	const lines = text.split('\n');
-	if (lines.at(-1) === '') lines.pop();
-	let additions = 0, deletions = 0, changed = 0;
-	for (const line of lines) {
-		// Aligned with the authoritative edit-diff grammars (unifiedDiff.ts and
-		// isEditDiffText in the agent host): sign + optional spaces + digits.
-		const change = /^([+-]) *\d+(?: |$)/.exec(line);
-		if (change) {
-			if (change[1] === '+') additions += 1; else deletions += 1;
-			changed += 1;
-			continue;
-		}
-		if (/^ +\d+(?: |$)/.test(line) || /^ +\.\.\.$/.test(line)) continue;
-		return null;
-	}
-	return changed > 0 ? { additions, deletions } : null;
-}
-
-type FallbackStats = { additions: number; deletions: number } | null;
-type FallbackFile = { kind: UiFileChange['kind']; stats: FallbackStats; statless: boolean };
-
-/**
  * Aggregate completed edit/write tool calls into per-run change lists — the
  * data source for sessions predating the file-changes tracker. Paths are
- * deduplicated per run; stats sum the edit diffs only when every contributing
- * call has parseable counts (a write rewrites the whole file, so mixing one in
- * makes exact counts unknowable). Kind stays 'modified': without before-state
- * snapshots added/deleted cannot be told apart.
+ * deduplicated per run. Kind stays 'modified': without before-state snapshots
+ * added/deleted cannot be told apart.
  *
  * `trackedRunIds` are the runs the tracker has records for. Once the transcript
  * reaches the first of them the tracker was running, and from there on its
@@ -100,28 +69,24 @@ type FallbackFile = { kind: UiFileChange['kind']; stats: FallbackStats; statless
  * covers the calls recorded before the tracker's first run.
  */
 export function fallbackTurnChanges(cwd: string, activities: readonly UiToolActivity[], trackedRunIds: ReadonlySet<string | null> = new Set()): Map<string | null, UiFileChange[]> {
-	const files = new Map<string | null, Map<string, FallbackFile>>();
+	const files = new Map<string | null, Set<string>>();
 	for (const activity of activities) {
 		if (trackedRunIds.has(activity.runId ?? null)) break;
 		if (activity.status !== 'done' || !WRITING_TOOLS.has(activity.tool) || !activity.files?.length) continue;
-		const stats = activity.tool === 'edit' && activity.diff ? editDiffStats(activity.diff) : null;
 		for (const raw of activity.files) {
 			const path = normalizeToolFilePath(cwd, raw);
 			if (!path) continue;
 			const key = activity.runId ?? null;
 			let bucket = files.get(key);
-			if (!bucket) files.set(key, bucket = new Map());
-			const existing = bucket.get(path);
-			if (!existing) { bucket.set(path, { kind: 'modified', stats, statless: stats === null }); continue; }
-			if (stats && !existing.statless) existing.stats = { additions: (existing.stats?.additions ?? 0) + stats.additions, deletions: (existing.stats?.deletions ?? 0) + stats.deletions };
-			else { existing.stats = null; existing.statless = true; }
+			if (!bucket) files.set(key, bucket = new Set());
+			bucket.add(path);
 		}
 	}
 	const result = new Map<string | null, UiFileChange[]>();
 	for (const [runId, bucket] of files) {
-		result.set(runId, [...bucket.entries()]
-			.map(([path, file]) => ({ path, kind: file.kind, additions: file.stats?.additions ?? null, deletions: file.stats?.deletions ?? null }))
-			.sort((a, b) => a.path.localeCompare(b.path)));
+		result.set(runId, [...bucket]
+			.sort((a, b) => a.localeCompare(b))
+			.map((path): UiFileChange => ({ path, kind: 'modified' })));
 	}
 	return result;
 }

@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import type { UiFileChange, UiFileDiffScope } from '@pidesktop/shared';
 import { useT } from '../i18n';
 import { Icon } from './Icons';
-import { ChangeStats, FileLabel } from './FileChangePresentation';
+import { FileLabel } from './FileChangePresentation';
 import './composerChanges.css';
 
 const INITIAL_FILES = 3;
@@ -51,13 +51,13 @@ export function ChangesCard({ items, scope, variant, review }: { items: UiFileCh
 	const visible = showAll ? items : items.slice(0, INITIAL_FILES);
 	const openReview = (path: string, event: MouseEvent<HTMLButtonElement>) => review(scope, path, event.currentTarget);
 	const fileRows = (files: UiFileChange[]) => files.map(item => <button key={item.path} type="button" className="pd-composer-changes-file" data-change-path={item.path} title={item.path} aria-label={t('changes.diffFor', { path: item.path })} aria-haspopup="dialog" onClick={event => openReview(item.path, event)}>
-		<FileLabel item={item} /><ChangeStats items={[item]} /><Icon name="chevronRight" width="12" height="12" />
+		<FileLabel item={item} /><Icon name="chevronRight" width="12" height="12" />
 	</button>);
 	return <section className="pd-composer-changes pd-conversation-changes" aria-label={t('changes.files')} onFocusCapture={() => { entryHasFocus.current = true; }} onBlurCapture={event => trackBlur(event, entryHasFocus)}>
 		<div className="pd-changes-card-header">
 			<button ref={primary} type="button" className="pd-changes-card-main" aria-haspopup="dialog" onClick={event => openReview(items[0]!.path, event)}>
 				<span className="pd-changes-card-icon"><Icon name="file" width="21" height="21" /></span>
-				<span className="pd-changes-card-copy"><strong title={single?.path}>{title}</strong><span className="pd-changes-card-subtitle"><span>{variant === 'turn' ? (t('composerChanges.thisTurn')) : (t('composerChanges.thisConversation'))}</span><ChangeStats items={items} /></span></span>
+				<span className="pd-changes-card-copy"><strong title={single?.path}>{title}</strong><span className="pd-changes-card-subtitle"><span>{variant === 'turn' ? (t('composerChanges.thisTurn')) : (t('composerChanges.thisConversation'))}</span></span></span>
 			</button>
 			<button type="button" className="pd-composer-changes-review" aria-haspopup="dialog" onClick={event => openReview(items[0]!.path, event)}>{t('changes.review')}<Icon name="arrowRight" width="13" height="13" /></button>
 		</div>
@@ -103,12 +103,12 @@ export function LiveChangesSummary({ items, scope, target, review }: { items: Ui
 		setLiveFilesOpen(false);
 	};
 	const fileRows = (files: UiFileChange[]) => files.map(item => <button key={item.path} type="button" className="pd-composer-changes-file" data-change-path={item.path} title={item.path} aria-label={t('changes.diffFor', { path: item.path })} aria-haspopup="dialog" onClick={event => openReview(item.path, event)}>
-		<FileLabel item={item} /><ChangeStats items={[item]} /><Icon name="chevronRight" width="12" height="12" />
+		<FileLabel item={item} /><Icon name="chevronRight" width="12" height="12" />
 	</button>);
 	return createPortal(<section ref={liveRoot} className="pd-composer-changes is-running" aria-label={t('changes.files')} onFocusCapture={() => { entryHasFocus.current = true; }} onBlurCapture={event => trackBlur(event, entryHasFocus)}>
 		<div className="pd-composer-changes-summary">
 			<button ref={primary} type="button" className="pd-composer-changes-review pd-changes-live-main" aria-haspopup="dialog" title={t('changes.files')} onClick={event => openReview(items[0]!.path, event)}>
-				<Icon name="file" width="14" height="14" /><span className="pd-changes-live-label">{t('changes.count', { count: items.length })}</span><ChangeStats items={items} />
+				<Icon name="file" width="14" height="14" /><span className="pd-changes-live-label">{t('changes.count', { count: items.length })}</span>
 			</button>
 			<button ref={popupToggle} type="button" className="pd-composer-changes-toggle" aria-expanded={liveFilesOpen} aria-controls={listId} aria-label={t('composerChanges.show')} onClick={() => setLiveFilesOpen(value => !value)}><Icon name="chevronDown" width="14" height="14" /></button>
 		</div>
@@ -126,7 +126,6 @@ export function SessionChangesSummary({ items, target, review }: { items: UiFile
 			<button type="button" className="pd-changes-live-main" aria-haspopup="dialog" aria-label={label} title={label} onClick={event => review({ kind: 'conversation' }, items[0]!.path, event.currentTarget)}>
 				<Icon name="file" width="14" height="14" />
 				<span className="pd-changes-live-label"><span className="pd-changes-session-scope">{t('composerChanges.thisConversation')}</span><span className="pd-changes-session-sep" aria-hidden="true">·</span>{t('changes.count', { count: items.length })}</span>
-				<ChangeStats items={items} />
 				<Icon className="pd-changes-live-chevron" name="chevronRight" width="13" height="13" />
 			</button>
 		</div>

@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import { countOccurrences, findChangeMatches, findPathMatches } from '../packages/ui/src/changesFind.ts';
 
 function change(path) {
-  return { path, kind: 'modified', additions: 1, deletions: 0 };
+  return { path, kind: 'modified' };
 }
 
 function diffs(entries) {
@@ -39,7 +39,7 @@ test('null diffs (still loading) match on paths only', () => {
 });
 
 test('changes without readable diffs still match on their path', () => {
-  const result = findChangeMatches([{ path: 'images/logo.png', kind: 'added', additions: null, deletions: null, preview: 'binary' }], 'logo', diffs([['images/logo.png', null]]));
+  const result = findChangeMatches([{ path: 'images/logo.png', kind: 'added', preview: 'binary' }], 'logo', diffs([['images/logo.png', null]]));
   assert.equal(result.total, 1);
   assert.equal(result.files[0].path, 'images/logo.png');
 });

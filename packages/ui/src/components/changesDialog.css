@@ -9,7 +9,7 @@
 .pd-changes-dialog-header { display: flex; flex: 0 0 auto; align-items: center; justify-content: space-between; gap: 12px; padding: 16px 18px 9px; }
 .pd-changes-dialog-header > div { display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px; min-width: 0; }
 .pd-changes-dialog-header h2 { margin: 0; font-size: var(--pd-font-lg); font-weight: var(--pd-weight-semibold); }
-.pd-changes-dialog-header > div > span:not(.pd-change-stats) { color: var(--pd-text-weak); font-size: var(--pd-font-sm); }
+.pd-changes-dialog-header > div > span { color: var(--pd-text-weak); font-size: var(--pd-font-sm); }
 .pd-changes-description { flex: 0 0 auto; margin: 0; padding: 0 18px 14px; color: var(--pd-text-weak); font-size: var(--pd-font-sm); line-height: 1.5; }
 .pd-changes-review { display: flex; flex: 1; min-height: 0; overflow: hidden; border-top: 1px solid var(--pd-border); }
 .pd-changes-file-list { flex: 0 0 320px; min-width: 0; padding: 8px; overflow: auto; border-right: 1px solid var(--pd-border); background: var(--pd-surface-muted); scrollbar-width: thin; overscroll-behavior: contain; }
@@ -20,11 +20,8 @@
 .pd-changes-file .pd-change-filename > small { direction: rtl; font-size: var(--pd-font-xs); text-align: left; }
 .pd-changes-file .pd-change-filename > small > bdi { direction: ltr; unicode-bidi: isolate; }
 .pd-changes-file > .pd-change-file-icon { margin-top: 1px; }
-.pd-changes-file > .pd-change-stats { margin-top: 1px; font-size: var(--pd-font-xs); }
 /* "Modified" is the default kind: only added/deleted earn a visible badge; screen readers still hear it. */
 .pd-change-file-state.is-modified { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
-.pd-change-stats.is-partial { cursor: help; }
-.pd-change-stats.is-partial .pd-change-partial { color: var(--pd-text-weak); text-decoration: underline dotted; text-underline-offset: 2px; }
 .pd-changes-file .pd-change-filename > span, .pd-changes-file .pd-change-filename > small { flex: 0 1 auto; max-width: 100%; }
 .pd-changes-file:hover, .pd-changes-file.is-selected { background: var(--pd-surface-hover); }
 .pd-changes-file.is-selected { box-shadow: inset 2px 0 var(--pd-brand); }

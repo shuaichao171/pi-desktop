@@ -46,7 +46,7 @@ function seed() {
   ];
   Object.assign(fixture.snapshot, { cwd, sessionId: rows[cwd][0].id, sessionPath: rows[cwd][0].path, status: 'idle', messages, activities, runs, historyTotal: messages.length, error: null,
     contextUsage: { tokens: 48200, contextWindow: 200000, percent: 24.1 },
-    fileChanges: [{ path: 'packages/ui/src/settings.css', status: 'modified', additions: 12, deletions: 8 }, { path: 'packages/ui/src/components/SettingsPanel.tsx', status: 'modified', additions: 3, deletions: 1 }] });
+    fileChanges: [{ path: 'packages/ui/src/settings.css', kind: 'modified' }, { path: 'packages/ui/src/components/SettingsPanel.tsx', kind: 'modified' }] });
   fixture.sessionStats = { sessionId: fixture.snapshot.sessionId, userMessages: 1, assistantMessages: 1, toolCalls: 2, toolResults: 2, totalMessages: 4, tokens: { input: 40100, output: 3200, cacheRead: 12000, cacheWrite: 0, total: 55300 }, cost: 0.083, timing: { sampledAt: now, durationMs: 92000, running: false, latestRun: null } };
   localStorage.setItem('pi-desktop.sidebar-width', '274');
 }
