@@ -148,7 +148,8 @@ export function SubagentWorkspace({ children }: { children: ReactNode }) {
 		actionRef.current = token;
 		setPending(true);
 		try {
-			await state.bridge.executeSlashCommand({ cwd: state.cwd, sessionId: state.sessionId, name, args });
+			// Panel controls are not conversation turns: no "Worked 0s" row per inspect.
+			await state.bridge.executeSlashCommand({ cwd: state.cwd, sessionId: state.sessionId, name, args, control: true });
 			return actionRef.current === token;
 		} catch (error) {
 			if (actionRef.current === token) operationFeedback.show({ id: `subagent-command:${name}`, kind: 'error', title: t('fleet.actionFailed'), detail: error instanceof Error ? error.message : String(error) });

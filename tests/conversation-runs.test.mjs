@@ -84,6 +84,35 @@ test('SDK cancellation and failed requests finish accurately; handled commands n
   assert.equal(f.service.getSnapshot().runs.at(-1).status, 'interrupted', 'a settled stream with no final assistant event must not claim successful completion');
 });
 
+test('panel control commands (subagent inspect, goal pause) open no conversation run; a turn they start is still timed', async t => {
+  const f = await fixture(t, `export default pi => {
+    pi.registerCommand('inspect-rpc', { handler: async () => {} });
+    pi.registerCommand('broken-rpc', { handler: async () => { throw new Error('fixture control failed'); } });
+    pi.registerCommand('resume-goal', { handler: async () => { pi.sendUserMessage('Continue the goal'); } });
+  }`), events = [];
+  f.service.onEvent(({ event }) => events.push(event));
+  const message = assistant([{ type: 'text', text: 'Goal resumed' }]);
+  f.session.agent.streamFunction = async () => ({ async *[Symbol.asyncIterator]() { yield { type: 'done', reason: 'stop', message }; }, async result() { return message; } });
+  const { cwd, sessionId } = f.service.getSnapshot(), control = name => f.service.executeSlashCommand({ cwd, sessionId, name, control: true });
+  await control('inspect-rpc'); await tick();
+  assert.deepEqual(f.service.getSnapshot().runs, [], 'an inspection is not a conversation turn');
+  assert.equal(events.some(event => event.type === 'run'), false, 'no transient running row either');
+  await assert.rejects(control('broken-rpc'), /fixture control failed/); await tick();
+  assert.deepEqual(f.service.getSnapshot().runs, [], 'a failed control leaves no failed turn');
+  const turnSettled = new Promise(resolve => f.service.onEvent(({ event }) => { if (event.type === 'run' && event.run.status !== 'running') resolve(event.run); }));
+  await control('resume-goal'); const settled = await turnSettled; await f.session.waitForIdle(); await tick();
+  const [resumed] = f.service.getSnapshot().runs;
+  assert.equal(resumed.id, settled.id);
+  assert.equal(f.service.getSnapshot().runs.length, 1); assert.equal(resumed.status, 'completed');
+  assert.equal(f.service.getSnapshot().messages.find(item => item.text === 'Goal resumed').runId, resumed.id);
+  assert.equal((await readFile(f.service.getSnapshot().sessionPath, 'utf8')).split('\n').filter(line => line.includes('pi-desktop:conversation-run-v1')).length, 2,
+    'only the started turn persists its start/end records');
+  // Typed in the composer, the same handled command keeps its existing run summary.
+  await f.service.executeSlashCommand({ cwd, sessionId, name: 'inspect-rpc' }); await tick();
+  assert.equal(f.service.getSnapshot().runs.length, 2);
+  await assert.rejects(f.service.executeSlashCommand({ cwd, sessionId, name: 'inspect-rpc', control: 'yes' }), /指令参数无效/);
+});
+
 test('persisted start without end is interrupted with unknown duration and legacy history gains no fabricated timer', async t => {
   const f = await fixture(t), manager = f.session.sessionManager, errors = [];
   const tracker = new ConversationRunTracker(manager, () => {}, error => errors.push(error));

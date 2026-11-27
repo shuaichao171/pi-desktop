@@ -43,6 +43,9 @@ export function buildConversationTimeline(messages: UiMessage[], activities: UiT
   const entryRun = (entry: ConversationTimelineEntry) => entry.kind === 'turn' ? entry.runId : messages[entry.index]?.runId;
   for (const run of runs) if (!represented.has(run.id)) {
     const userIndex = result.findLastIndex(entry => entryRun(entry) === run.id);
+    // A handled command that finished without any row of its own (older panel
+    // inspections, a no-op extension command) has nothing to report: no "Worked 0s".
+    if (userIndex < 0 && run.status === 'completed') continue;
     const nextIndex = result.findIndex(entry => (runOrder.get(entryRun(entry) ?? '') ?? -1) > runOrder.get(run.id)!);
     const index = userIndex >= 0 ? userIndex + 1 : nextIndex >= 0 ? nextIndex : result.length;
     result.splice(index, 0, { kind: 'turn', id: `waiting:${run.id}`, runId: run.id, entries: [], lastForRun: true });

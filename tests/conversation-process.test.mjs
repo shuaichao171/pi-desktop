@@ -109,6 +109,20 @@ test('a stop before the first assistant token retains its summary in the correct
   assert.equal(orphan.at(-1).runId, 'c');
 });
 
+test('a handled command that completed without any row of its own leaves no empty "Worked 0s" turn', () => {
+  // Older desktop builds recorded every subagent-panel inspection as such a run.
+  const messages = [message('u', 0, 'user', 'Delegate', 'a'), message('a1', 1, 'assistant', 'Delegated', 'a')];
+  const entries = buildConversationTimeline(messages, [], [run('a'), run('inspect1'), run('inspect2')]);
+  assert.deepEqual(entries.map(entry => entry.kind === 'message' ? entry.id : entry.runId), ['u', 'a']);
+  // Observed waits, stops and failures without an assistant token stay visible.
+  for (const status of ['running', 'cancelled', 'failed', 'interrupted']) {
+    assert.equal(buildConversationTimeline(messages, [], [run('a'), run('x', status)]).at(-1).runId, 'x', status);
+  }
+  // A completed run anchored to its own user message still reports its summary.
+  const anchored = [...messages, message('u2', 2, 'user', 'Next', 'b')];
+  assert.equal(buildConversationTimeline(anchored, [], [run('a'), run('b')]).at(-1).runId, 'b');
+});
+
 test('store preserves run identity across live events, never settles on a single assistant end, and clears on navigation', () => {
   const store = useChatStore.getState;
   store().handleEvent({ type: 'run', run: run('a', 'running') });

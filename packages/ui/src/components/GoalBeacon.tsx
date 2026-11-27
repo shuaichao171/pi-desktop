@@ -225,7 +225,7 @@ export function GoalBeacon() {
 		if (!currentBridge || !currentCwd || !currentSessionId || actionPending) return;
 		setActionPending(name);
 		try {
-			await currentBridge.executeSlashCommand({ cwd: currentCwd, sessionId: currentSessionId, name });
+			await currentBridge.executeSlashCommand({ cwd: currentCwd, sessionId: currentSessionId, name, control: true });
 			// The command mutates goal state asynchronously; the watcher broadcast
 			// refreshes the snapshot, with a slow fallback in case files did not change.
 			if (refreshTimer.current !== undefined) window.clearTimeout(refreshTimer.current);

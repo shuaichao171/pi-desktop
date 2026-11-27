@@ -542,7 +542,7 @@ class SingleAgentService {
 	private readonly createRuntime: CreateAgentSessionRuntimeFactory;
 	private readonly requestExtensionDialog: RequestExtensionDialog;
 	private readonly reserveSessionSwitch: (path: string) => () => void;
-	private readonly slashCommandExecution = new AsyncLocalStorage<{ name: string; error: string | null }>();
+	private readonly slashCommandExecution = new AsyncLocalStorage<{ name: string; error: string | null; control?: boolean }>();
 	private readonly queuedPrompt = new AsyncLocalStorage<{ text: string; behavior: 'steer' | 'followUp' | undefined; images: UiQueuedAttachment[]; claimed: boolean }>();
 	private queuedMessages: QueuedMessageRecord[] = [];
 	private queueMutationDepth = 0;
@@ -973,9 +973,14 @@ class SingleAgentService {
 			if (!session) throw new Error('Agent is not initialized');
 			const behavior = request.behavior ?? (!session.isIdle ? 'followUp' : undefined);
 			if (command.source === 'extension') {
-				const execution = { name: command.name, error: null as string | null };
+				const control = request.control === true;
+				const execution = { name: command.name, error: null as string | null, control };
 				await this.slashCommandExecution.run(execution, async () => {
-					await this.prompt(`/${command.name}${args ? ` ${args}` : ''}`, behavior);
+					const text = `/${command.name}${args ? ` ${args}` : ''}`;
+					// A panel control (subagent inspect/steer/stop, goal pause…) is not user
+					// input: no run record, model gate, auto-wake reset or agent preference.
+					if (control) await this.sendPrompt(text, behavior, [], true, false);
+					else await this.prompt(text, behavior);
 					// Pi reports command exceptions through onError but resolves prompt().
 					// Only the matching command in this async call may reject this draft.
 					if (execution.error) throw new Error(execution.error);
@@ -1540,7 +1545,9 @@ class SingleAgentService {
 		if (this.persistAgentPreference) this.agents.preferences.rememberLastAgent(usedAgentId);
 	}
 
-	private async sendPrompt(text: string, behavior: 'steer' | 'followUp' | undefined, attachments: UiAttachment[], expandPromptTemplates: boolean): Promise<void> {
+	/** `trackRun: false` is for panel controls: a handled command then leaves no
+	 * conversation run, and a turn it starts is still recorded from agent_start. */
+	private async sendPrompt(text: string, behavior: 'steer' | 'followUp' | undefined, attachments: UiAttachment[], expandPromptTemplates: boolean, trackRun = true): Promise<void> {
 		if (this.agentBinding) return this.sendAgentPrompt(text, attachments);
 		if (this.lifecycleOperation) throw new Error('会话正在切换，请稍后发送消息');
 		if (this.pluginReloadError || this.pluginModelError) throw new Error(this.pluginReloadError ?? this.pluginModelError!);
@@ -1556,7 +1563,7 @@ class SingleAgentService {
 		const images = imageAttachments(attachments);
 		const tracker = this.conversationRuns;
 		const inputQueue = this.inputQueue, inputId = this.inputRequest.getStore()?.id;
-		const startsRun = session.isIdle && !tracker?.active;
+		const startsRun = trackRun && session.isIdle && !tracker?.active;
 		// Host-authoritative send gate (model availability): a send that starts a
 		// new run needs a usable model before the busy transition and any ACK so
 		// a blocked send never consumes the draft. Queueing onto a running session
@@ -1593,7 +1600,8 @@ class SingleAgentService {
 				if (inputId) inputQueue?.completePrompt(inputId);
 			}).catch((error: unknown) => {
 				const info = normalizeAgentError(error);
-				if (session.isIdle) { this.finishInterruptedAssistant(info.message, info); tracker?.finish('failed'); }
+				// An untracked control never owns the transcript row or the active run.
+				if (session.isIdle && trackRun) { this.finishInterruptedAssistant(info.message, info); tracker?.finish('failed'); }
 				this.fire({ type: 'error', message: info.message, error: info });
 				if (!acknowledged) {
 					acknowledged = true;
@@ -2531,8 +2539,10 @@ class SingleAgentService {
 			onError: ({ extensionPath, event, error }) => {
 				const message = `Pi 扩展 ${extensionPath}：${error}`;
 				const execution = this.slashCommandExecution.getStore();
-				if (execution && event === 'command' && extensionPath === `command:${execution.name}`) execution.error = message;
-				if (event === 'command') this.conversationRuns?.assistantEnd('error');
+				const current = execution && event === 'command' && extensionPath === `command:${execution.name}`;
+				if (current) execution.error = message;
+				// A failing panel control must not mark the conversation run it interrupts as failed.
+				if (event === 'command' && !(current && execution.control)) this.conversationRuns?.assistantEnd('error');
 				this.fire({ type: 'error', message, error: normalizeAgentError(message, 'extension') });
 			},
 		});

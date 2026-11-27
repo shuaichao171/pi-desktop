@@ -568,6 +568,11 @@ export interface UiSlashCommandRequest {
   args?: string;
   behavior?: 'steer' | 'followUp';
   attachments?: UiAttachment[];
+  /** Issued by a host panel (subagent fleet, goal beacon) rather than typed in the
+   * composer: an extension command run for its own side effects is not a
+   * conversation turn, so it opens no run record. A turn the command itself
+   * starts is still timed from its agent_start. Only extension commands honor it. */
+  control?: boolean;
 }
 
 export type UiAttachment =

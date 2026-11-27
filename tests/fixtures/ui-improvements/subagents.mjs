@@ -58,6 +58,7 @@ export default async function subagentScenarios(review) {
   await review.waitFor('Boolean(document.querySelector(".pd-fleet-inspect-task"))');
   await review.assert('document.querySelector(".pd-fleet-detail-heading h4")?.textContent === "researcher" && document.querySelector(".pd-fleet-detail-meta").textContent.includes("review-model")', 'Detail retains identity, model and live state');
   await review.assert('window.__fleetCalls[0].name === "subagents-inspect-rpc" && window.__fleetCalls[0].args.includes(" research --lines 60")', 'Inspection addresses the selected run');
+  await review.assert('window.__fleetCalls.every(call => call.control === true)', 'Panel commands are controls, not conversation turns');
   await review.screenshot('subagents-detail');
   await review.clickText('.pd-fleet-detail-actions button', '引导');
   await review.fill('.pd-fleet-steer textarea', '请优先检查错误与等待状态');

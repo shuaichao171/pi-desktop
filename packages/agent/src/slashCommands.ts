@@ -15,7 +15,8 @@ export function validateSlashCommandRequest(value: unknown): asserts value is Ui
 		|| typeof request.name !== 'string' || !validSlashCommandName(request.name)
 		|| (request.args !== undefined && (typeof request.args !== 'string' || request.args.length > 200_000 || request.args.includes('\0')))
 		|| (request.behavior !== undefined && request.behavior !== 'steer' && request.behavior !== 'followUp')
-		|| (request.attachments !== undefined && !Array.isArray(request.attachments))) throw new Error('指令参数无效');
+		|| (request.attachments !== undefined && !Array.isArray(request.attachments))
+		|| (request.control !== undefined && typeof request.control !== 'boolean')) throw new Error('指令参数无效');
 }
 
 export function validSlashCommandName(name: string): boolean {
