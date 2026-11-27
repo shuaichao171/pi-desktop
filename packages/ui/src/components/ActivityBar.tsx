@@ -8,11 +8,11 @@ import { HoverTooltip } from './HoverTooltip';
 /** A view the activity bar can switch the sidebar/main area to. Builtin ids are
  * matched against the AppShell main view; contributions are reserved for the
  * future extension/plugin system (stable interface, see shared/src/activity.ts). */
-export type ActivityViewId = 'automations' | 'plugins' | (string & {});
+export type ActivityViewId = 'automations' | 'plugins' | 'remote' | (string & {});
 
 interface ActivityBarProps {
 	/** Active main view: 'chat' means the sidebar shows the session list. */
-	mainView: 'chat' | 'automations' | 'plugins';
+	mainView: 'chat' | 'automations' | 'plugins' | 'remote';
 	onOpenView(view: ActivityViewId): void;
 	onNewSession(): void;
 	onOpenSettings(): void;
@@ -23,9 +23,11 @@ interface ActivityBarProps {
 	/** Sidebar pane visibility; the top rail button toggles it (Ctrl+B twin). */
 	sidebarOpen: boolean;
 	onToggleSidebar(): void;
+	/** Shows the 手机远控 entry; remote access is main-window only (hidden in pai windows and split panes). */
+	showRemote?: boolean;
 }
 
-export function ActivityBar({ mainView, onOpenView, onNewSession, onOpenSettings, onOpenUpdates, navigationPending, sidebarOpen, onToggleSidebar }: ActivityBarProps) {
+export function ActivityBar({ mainView, onOpenView, onNewSession, onOpenSettings, onOpenUpdates, navigationPending, sidebarOpen, onToggleSidebar, showRemote = false }: ActivityBarProps) {
 	const { t } = useT();
 	const bridge = useChatStore((s) => s.bridge);
 	const platform = useChatStore((s) => s.appInfo?.platform);
@@ -61,6 +63,9 @@ export function ActivityBar({ mainView, onOpenView, onNewSession, onOpenSettings
 				{/* New conversation lives at the top of the sidebar; the rail offers it only while the sidebar is collapsed. */}
 				{!sidebarOpen && <HoverTooltip title={t('sidebar.newConversation')}>
 					<button type="button" className="pd-activity-item pd-activity-new-session" disabled={navigationPending} aria-label={t('sidebar.newConversation')} onClick={() => void onNewSession()}><Icon name="plus" width="20" height="20" /></button>
+				</HoverTooltip>}
+				{showRemote && <HoverTooltip title={t('activity.remoteView')}>
+					<button type="button" className={`pd-activity-item pd-activity-remote${mainView === 'remote' ? ' is-active' : ''}`} aria-label={t('activity.remoteView')} aria-current={mainView === 'remote' ? 'page' : undefined} onClick={() => onOpenView('remote')}><Icon name="smartphone" width="20" height="20" /></button>
 				</HoverTooltip>}
 				<HoverTooltip title={t('sidebar.automation')}>
 					<button type="button" className={`pd-activity-item pd-activity-automations${mainView === 'automations' ? ' is-active' : ''}`} aria-label={t('sidebar.automation')} aria-current={mainView === 'automations' ? 'page' : undefined} onClick={() => onOpenView('automations')}><Icon name="automation" width="20" height="20" /></button>

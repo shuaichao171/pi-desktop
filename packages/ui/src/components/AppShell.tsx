@@ -10,7 +10,7 @@ import { ActivityBar } from './ActivityBar';
 import { TopBar } from './TopBar';
 import type { SearchCommand } from './SearchDialog';
 import type { ThemePreference } from './SettingsPanel';
-import { AutomationPage, ChatCommitDialog, PluginsPage, SearchDialog, SettingsPanel, WorkbenchSidePane, preloadLazySurfaces } from './lazySurfaces';
+import { AutomationPage, ChatCommitDialog, PluginsPage, RemoteControlPage, SearchDialog, SettingsPanel, WorkbenchSidePane, preloadLazySurfaces } from './lazySurfaces';
 import { Sidebar } from './Sidebar';
 import { Icon } from './Icons';
 import { HoverTooltip } from './HoverTooltip';
@@ -103,17 +103,19 @@ export function AppShell() {
 	const [searchOpen, setSearchOpen] = useState(false);
 	const [windowClosePrompt, setWindowClosePrompt] = useState<UiWindowClosePrompt | null>(null);
 	const searchButtonRef = useRef<HTMLButtonElement>(null);
-	const [mainView, setMainView] = useState<'chat' | 'automations' | 'plugins'>('chat');
+	const [mainView, setMainView] = useState<'chat' | 'automations' | 'plugins' | 'remote'>('chat');
 	const [automationsMounted, setAutomationsMounted] = useState(false);
 	const [pluginsMounted, setPluginsMounted] = useState(false);
+	const [remoteMounted, setRemoteMounted] = useState(false);
 	useLayoutEffect(() => {
 		if (mainView === 'automations') setAutomationsMounted(true);
 		else if (mainView === 'plugins') setPluginsMounted(true);
+		else if (mainView === 'remote') setRemoteMounted(true);
 	}, [mainView]);
 	// Activity bar: clicking a builtin view icon switches the sidebar/main area; clicking
 	// the already-active icon returns to the session list ('chat'). The rail itself never
 	// collapses — Ctrl+B toggles only the sidebar pane to its right.
-	function openActivityView(view: 'automations' | 'plugins') {
+	function openActivityView(view: 'automations' | 'plugins' | 'remote') {
 		setMainView((current) => (current === view ? 'chat' : view));
 	}
 	const preparationRequestId = useChatStore((state) => state.sessionPreparation?.requestId ?? state.draftTransfer?.requestId ?? null);
@@ -432,6 +434,7 @@ export function AppShell() {
 	const searchCommands: SearchCommand[] = [
 		{ id: 'new-session', label: t('sidebar.newSession'), icon: 'plus', keywords: 'new chat session 新建对话', run: () => { void useChatStore.getState().newSession().catch(() => {}); setMainView('chat'); setSearchMessageTarget(null); if (narrow) setSidebarOpen(false); } },
 		{ id: 'open-project', label: t('sidebar.openProject'), icon: 'folder', keywords: 'open folder workspace 项目 文件夹 工作区', run: async () => { await useChatStore.getState().pickWorkspace(); setMainView('chat'); } },
+		...(!paiMode && !paneMode ? [{ id: 'remote', label: t('activity.remoteView'), icon: 'smartphone' as const, keywords: 'remote phone mobile qr 手机 远控 远程 二维码', run: () => { setMainView('remote'); if (narrow) setSidebarOpen(false); } }] : []),
 		{ id: 'automations', label: t('sidebar.automation'), icon: 'automation', keywords: 'automation schedule recurring 自动化 定时 计划', run: () => { setMainView('automations'); if (narrow) setSidebarOpen(false); } },
 		{ id: 'plugins', label: t('sidebar.plugins'), icon: 'plugins', keywords: 'plugins extensions skills prompts 插件 扩展 技能 提示词', run: () => { setMainView('plugins'); if (narrow) setSidebarOpen(false); } },
 		{ id: 'settings', label: t('sidebar.settings'), icon: 'settings', keywords: 'preferences general appearance model language 设置 常规 偏好 模型 语言', run: () => { setSettingsInitialPage('general'); setSettingsOpen(true); } },
@@ -531,7 +534,8 @@ export function AppShell() {
 			<button type="button" className={`pd-sidebar-scrim${narrow && sidebarOpen ? ' is-open' : ''}`} aria-label={t('app.closeSidebar')} aria-hidden={!narrow || !sidebarOpen} inert={!narrow || !sidebarOpen} tabIndex={-1} onClick={() => setSidebarOpen(false)} />
 			<ActivityBar
 				mainView={mainView}
-				onOpenView={(view: 'automations' | 'plugins') => { openActivityView(view); if (narrow) setSidebarOpen(false); }}
+				onOpenView={(view: 'automations' | 'plugins' | 'remote') => { openActivityView(view); if (narrow) setSidebarOpen(false); }}
+				showRemote={!paiMode && !paneMode}
 				onNewSession={startNewSession}
 				onOpenSettings={() => { if (narrow) setSidebarOpen(false); setSettingsInitialPage('general'); setSettingsOpen(true); }}
 				onOpenUpdates={() => { if (narrow) setSidebarOpen(false); setSettingsInitialPage('updates'); setSettingsOpen(true); }}
@@ -566,6 +570,7 @@ export function AppShell() {
 			</div>}
 			{automationsMounted && <div className="pd-page-host" hidden={mainView !== 'automations'} inert={mainView !== 'automations'}><ScopedErrorBoundary scope="automation"><Suspense fallback={null}><AutomationPage active={mainView === 'automations'} onOpenSession={async (cwd, path) => { const selected = await useChatStore.getState().selectSession(cwd, path); if (selected) { setSearchMessageTarget(null); setMainView('chat'); if (narrow) setSidebarOpen(false); } return selected; }} /></Suspense></ScopedErrorBoundary></div>}
 			{pluginsMounted && <div className="pd-page-host" hidden={mainView !== 'plugins'} inert={mainView !== 'plugins'}><ScopedErrorBoundary scope="plugins"><Suspense fallback={null}><PluginsPage active={mainView === 'plugins'} /></Suspense></ScopedErrorBoundary></div>}
+			{remoteMounted && <div className="pd-page-host" hidden={mainView !== 'remote'} inert={mainView !== 'remote'}><ScopedErrorBoundary scope="settings"><Suspense fallback={null}><RemoteControlPage /></Suspense></ScopedErrorBoundary></div>}
 			{/* Pages without a composer keep notices at the top of the view. */}
 			<div className="pd-notification-center">{mainView !== 'chat' && <><OperationFeedback /><UpdateNotice /></>}<div ref={setNotificationTarget} className="pd-extension-notification-slot" /></div>
 			</div>

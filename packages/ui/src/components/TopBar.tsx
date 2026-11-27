@@ -12,7 +12,7 @@ interface TopBarProps {
 	searchOpen: boolean;
 	searchButtonRef: RefObject<HTMLButtonElement | null>;
 	onOpenSearch(): void;
-	mainView: 'chat' | 'automations' | 'plugins';
+	mainView: 'chat' | 'automations' | 'plugins' | 'remote';
 	title: string;
 	sessionPath: string | null;
 	cwd: string;

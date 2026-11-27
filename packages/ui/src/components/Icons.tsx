@@ -17,6 +17,7 @@ export type IconName =
 	| 'queue'
 	| 'steer'
 	| 'message'
+	| 'smartphone'
 	| 'arrowUp'
 	| 'arrowDown'
 	| 'arrowLeft'
@@ -118,6 +119,7 @@ const paths: Record<IconName, ReactNode> = {
 	cloud: <path d="M17.5 19H9a7 7 0 1 1 6.7-9h1.8a4.5 4.5 0 1 1 0 9Z" />,
 	cpu: <><rect x="5" y="5" width="14" height="14" rx="2" /><rect x="9" y="9" width="6" height="6" rx="1" /><path d="M9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3" /></>,
 	user: <><circle cx="12" cy="8" r="4" /><path d="M4 21a8 8 0 0 1 16 0" /></>,
+	smartphone: <><rect x="6" y="2.5" width="12" height="19" rx="2.5" /><path d="M10.5 18.5h3" /></>,
 	automation: <path d="m13 2-10 12h8l-1 8 11-12h-8l1-8Z" />,
 	plugins: <path d="M9 5V3a2 2 0 0 1 4 0v2h6a1 1 0 0 1 1 1v4h-2a2 2 0 0 0 0 4h2v5a1 1 0 0 1-1 1h-5v-2a2 2 0 0 0-4 0v2H5a1 1 0 0 1-1-1v-5H3a2 2 0 0 1 0-4h1V6a1 1 0 0 1 1-1Z" />,
 	search: <><circle cx="11" cy="11" r="6.5" /><path d="m16 16 4 4" /></>,
