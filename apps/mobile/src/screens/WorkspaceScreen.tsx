@@ -69,6 +69,7 @@ export function WorkspaceScreen({ onBack }: WorkspaceScreenProps) {
     viewerReqIdRef.current += 1;
     lastCwdRef.current = snapshotCwd;
     setCurrentDir('');
+    setTab('git');
     setEntries([]);
     setGitStatus(null);
     setChangeDiffs([]);
@@ -125,6 +126,11 @@ export function WorkspaceScreen({ onBack }: WorkspaceScreenProps) {
   useEffect(() => {
     void loadCurrent();
   }, [loadCurrent, snapshotCwd, changesFileTrigger, changesSessionTrigger]);
+
+  const notRepository = gitStatus !== null && !gitStatus.isRepository;
+  useEffect(() => {
+    if (tab === 'git' && notRepository) setTab('changes');
+  }, [tab, notRepository]);
 
   const closeViewer = useCallback(() => {
     viewerReqIdRef.current += 1;
@@ -251,17 +257,20 @@ export function WorkspaceScreen({ onBack }: WorkspaceScreenProps) {
           snapshotCwd && !isRemoteConversationWorkspace(snapshotCwd, conversationWorkspaces) ? folderBasename(snapshotCwd) : undefined
         } onBack={onBack} />
 
-      <View style={styles.segmentWrap}>
-        <Segmented<TabKind>
-          value={tab}
-          onChange={setTab}
-          options={[
-            { key: 'git', label: t('files.tab.git') },
-            { key: 'changes', label: t('files.tab.thread') },
-            { key: 'files', label: t('files.tab.browse') },
-          ]}
-        />
-      </View>
+      {/* Wait for the first Git check so the tabs do not appear and then lose one. */}
+      {tab === 'git' && gitStatus === null && !error ? null : (
+        <View style={styles.segmentWrap}>
+          <Segmented<TabKind>
+            value={tab}
+            onChange={setTab}
+            options={[
+              ...(notRepository ? [] : [{ key: 'git' as const, label: t('files.tab.git') }]),
+              { key: 'changes', label: t('files.tab.thread') },
+              { key: 'files', label: t('files.tab.browse') },
+            ]}
+          />
+        </View>
+      )}
 
       {error ? <Banner tone="danger" text={error} actionLabel={t('common.dismiss')} onPress={() => setError(null)} /> : null}
 
@@ -316,9 +325,11 @@ export function WorkspaceScreen({ onBack }: WorkspaceScreenProps) {
             <EmptyState title={t('files.notRepo')} />
           ) : (
             <>
-              <Text style={[styles.caption, { color: theme.textMuted }]}>
-                {t('files.branch', { branch: gitStatus?.branch ?? '—', n: gitEntries.length })}
-              </Text>
+              {gitStatus ? (
+                <Text style={[styles.caption, { color: theme.textMuted }]}>
+                  {t('files.branch', { branch: gitStatus.branch ?? '—', n: gitEntries.length })}
+                </Text>
+              ) : null}
               {gitEntries.length === 0 && !loading ? (
                 <EmptyState title={t('files.clean')} />
               ) : (

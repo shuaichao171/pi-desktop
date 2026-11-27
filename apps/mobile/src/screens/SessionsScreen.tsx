@@ -62,26 +62,21 @@ const SessionRow = memo(function SessionRow({
       onPress={() => onPress(entry)}
       style={({ pressed }) => [styles.row, { backgroundColor: pressed ? theme.surfaceAlt : active ? theme.surface : theme.bg }]}
     >
-      <View style={styles.rowTop}>
-        <Text style={[styles.rowTitle, { color: theme.text, fontWeight: item.unread ? '700' : '600' }]} numberOfLines={1}>
-          {item.name || item.firstMessage || t('home.untitled')}
-        </Text>
-        <Text style={[styles.rowTime, { color: theme.textMuted }]}>{relativeTime(item.modified)}</Text>
-      </View>
-      <View style={styles.rowBottom}>
-        {phase !== 'idle' ? (
-          <View style={styles.phase}>
-            <StatusDot color={phaseColor(theme, phase)} size={6} />
-            <Text style={[styles.rowMeta, { color: phaseColor(theme, phase) }]}>{t(`phase.${phase}`)}</Text>
-          </View>
-        ) : (
-          <Text style={[styles.rowMeta, { color: theme.textMuted }]}>
-            {active ? `${t('home.current')} · ` : ''}
-            {t('home.messages', { n: item.messageCount })}
-          </Text>
-        )}
-        {item.unread ? <StatusDot color={theme.brand} /> : null}
-      </View>
+      <Text
+        style={[styles.rowTitle, { color: theme.text, fontWeight: item.unread || active ? '600' : '400' }]}
+        numberOfLines={1}
+      >
+        {item.name || item.firstMessage || t('home.untitled')}
+      </Text>
+      {phase !== 'idle' ? (
+        <View style={styles.phase}>
+          <StatusDot color={phaseColor(theme, phase)} size={6} />
+          <Text style={[styles.rowMeta, { color: phaseColor(theme, phase) }]}>{t(`phase.${phase}`)}</Text>
+        </View>
+      ) : (
+        <Text style={[styles.rowMeta, { color: theme.textMuted }]}>{relativeTime(item.modified)}</Text>
+      )}
+      {item.unread ? <StatusDot color={theme.brand} size={7} /> : null}
     </Pressable>
   );
 });
@@ -378,11 +373,8 @@ const styles = StyleSheet.create({
   chips: { gap: space.sm, paddingHorizontal: space.lg, paddingBottom: space.sm },
   searchWrap: { paddingHorizontal: space.lg, paddingBottom: space.sm },
   listContent: { paddingBottom: 96 },
-  row: { paddingHorizontal: space.lg, paddingVertical: space.md, gap: 3 },
-  rowTop: { flexDirection: 'row', alignItems: 'center', gap: space.md },
-  rowTitle: { flex: 1, fontSize: font.body },
-  rowTime: { fontSize: font.caption },
-  rowBottom: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', minHeight: 16 },
+  row: { flexDirection: 'row', alignItems: 'center', gap: space.sm, paddingHorizontal: space.lg, paddingVertical: 14 },
+  rowTitle: { flex: 1, fontSize: font.body, marginRight: space.xs },
   phase: { flexDirection: 'row', alignItems: 'center', gap: 5 },
   rowMeta: { fontSize: font.caption },
   fab: {

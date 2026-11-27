@@ -18,7 +18,9 @@ import { t, thinkingLabel } from '../i18n';
 import { ApprovalCard } from '../components/ApprovalCard';
 import { BackgroundTasksStrip } from '../components/BackgroundTasksStrip';
 import { ModelAgentSheet } from '../components/ModelAgentSheet';
-import { Banner, Chip, EmptyState, Header, StatusDot, TextAction } from '../components/ui';
+import { Markdown } from '../components/Markdown';
+import { copyText } from '../components/copy';
+import { Banner, Chip, EmptyState, FadeIn, Header, StatusDot, TextAction } from '../components/ui';
 
 interface ChatScreenProps {
   onBack: () => void;
@@ -27,55 +29,86 @@ interface ChatScreenProps {
 
 type TimelineRow =
   | { readonly key: string; readonly kind: 'message'; readonly order: number; readonly message: UiMessage }
-  | { readonly key: string; readonly kind: 'tool'; readonly order: number; readonly activity: UiToolActivity };
+  | { readonly key: string; readonly kind: 'tool'; readonly order: number; readonly activity: UiToolActivity }
+  | { readonly key: string; readonly kind: 'notices'; readonly order: number; readonly messages: UiMessage[] };
 
 const PREVIEW_LIMIT = 2000;
+
+/** Consecutive system notices fold into one line; a lone notice shows as is. */
+const NoticeGroup = memo(function NoticeGroup({ messages }: { messages: readonly UiMessage[] }) {
+  const theme = useTheme();
+  const [open, setOpen] = useState(false);
+  if (messages.length === 1) {
+    return (
+      <Text style={[styles.systemText, { color: theme.textMuted }]} numberOfLines={4}>
+        {messages[0].text}
+      </Text>
+    );
+  }
+  return (
+    <Pressable
+      onPress={() => setOpen((value) => !value)}
+      hitSlop={4}
+      style={styles.notices}
+    >
+      <Text style={[styles.systemText, { color: theme.textMuted }]}>
+        {t('chat.notices', { n: messages.length })} {open ? '▴' : '▾'}
+      </Text>
+      {open ? (
+        <FadeIn style={styles.notices}>
+          {messages.map((message) => (
+            <Text key={message.id} style={[styles.systemText, { color: theme.textMuted }]} numberOfLines={6}>
+              {message.text}
+            </Text>
+          ))}
+        </FadeIn>
+      ) : null}
+    </Pressable>
+  );
+});
 
 /** Rows keep their own expand state, so opening one tool or thought never re-renders the whole timeline. */
 const MessageRow = memo(function MessageRow({ message }: { message: UiMessage }) {
   const theme = useTheme();
   const [thinkingOpen, setThinkingOpen] = useState(false);
-
-  if (message.role === 'system') {
-    return (
-      <Text style={[styles.systemText, { color: theme.textMuted }]} numberOfLines={6}>
-        {message.text}
-      </Text>
-    );
-  }
+  // Long-press copies the whole message; a code block inside a reply copies just that block.
+  const copyMessage = () => {
+    if (message.text) copyText(message.text);
+  };
 
   if (message.role === 'user') {
     return (
-      <View style={[styles.userBubble, { backgroundColor: theme.userBubble }]}>
-        <Text style={[styles.messageText, { color: theme.text }]} selectable>
-          {message.text}
-        </Text>
-      </View>
+      <Pressable onLongPress={copyMessage} style={[styles.userBubble, { backgroundColor: theme.userBubble }]}>
+        <Text style={[styles.messageText, { color: theme.text }]}>{message.text}</Text>
+      </Pressable>
     );
   }
 
   const thinkingLive = message.thinkingStatus === 'streaming';
   return (
-    <View style={styles.assistant}>
+    <Pressable onLongPress={copyMessage} style={styles.assistant}>
       {message.thinking ? (
-        <Pressable onPress={() => setThinkingOpen((open) => !open)} hitSlop={6}>
+        <Pressable
+          onPress={() => setThinkingOpen((open) => !open)}
+          hitSlop={6}
+        >
           <Text style={[styles.thinkingToggle, { color: theme.textMuted }]}>
             {thinkingLive ? t('chat.thinkingLive') : t('chat.thinking')} {thinkingOpen ? '▴' : '▾'}
           </Text>
           {thinkingOpen ? (
-            <Text style={[styles.thinkingBody, { color: theme.textSubtle, borderLeftColor: theme.border }]}>{message.thinking}</Text>
+            <FadeIn>
+              <Text style={[styles.thinkingBody, { color: theme.textSubtle, borderLeftColor: theme.border }]}>{message.thinking}</Text>
+            </FadeIn>
           ) : null}
         </Pressable>
       ) : null}
       {message.text ? (
-        <Text style={[styles.messageText, { color: theme.text }]} selectable>
-          {message.text}
-        </Text>
+        <Markdown text={message.text} />
       ) : message.status === 'streaming' && !thinkingLive ? (
         <Text style={[styles.messageText, { color: theme.textMuted }]}>…</Text>
       ) : null}
       {message.errorMessage ? <Text style={[styles.errorText, { color: theme.danger }]}>{message.errorMessage}</Text> : null}
-    </View>
+    </Pressable>
   );
 });
 
@@ -111,7 +144,7 @@ const ToolRow = memo(function ToolRow({ activity }: { activity: UiToolActivity }
         {statusText ? <Text style={[styles.toolStatus, { color: failed ? theme.danger : theme.textMuted }]}>{statusText}</Text> : null}
       </View>
       {open ? (
-        <View style={styles.toolBody}>
+        <FadeIn style={styles.toolBody}>
           {activity.command ? (
             <Text style={[styles.mono, { backgroundColor: theme.surface, color: theme.text }]} selectable>
               $ {activity.command}
@@ -127,7 +160,7 @@ const ToolRow = memo(function ToolRow({ activity }: { activity: UiToolActivity }
               {activity.detail.slice(0, PREVIEW_LIMIT)}
             </Text>
           ) : null}
-        </View>
+        </FadeIn>
       ) : null}
     </Pressable>
   );
@@ -196,7 +229,17 @@ export function ChatScreen({ onBack, onOpenFiles }: ChatScreenProps) {
       ...snapshot.activities.map((activity) => ({ key: `t:${activity.id}`, kind: 'tool' as const, order: activity.order, activity })),
     ];
     rows.sort((a, b) => a.order - b.order);
-    return rows;
+    const folded: TimelineRow[] = [];
+    for (const row of rows) {
+      if (row.kind === 'message' && row.message.role === 'system') {
+        const previous = folded[folded.length - 1];
+        if (previous?.kind === 'notices') previous.messages.push(row.message);
+        else folded.push({ key: `n:${row.message.id}`, kind: 'notices', order: row.order, messages: [row.message] });
+        continue;
+      }
+      folded.push(row);
+    }
+    return folded;
   }, [snapshot?.messages, snapshot?.activities]);
 
   const sessionPath = snapshot?.sessionPath ?? null;
@@ -350,7 +393,15 @@ export function ChatScreen({ onBack, onOpenFiles }: ChatScreenProps) {
             </View>
           ) : null
         }
-        renderItem={({ item }) => (item.kind === 'tool' ? <ToolRow activity={item.activity} /> : <MessageRow message={item.message} />)}
+        renderItem={({ item }) =>
+          item.kind === 'tool' ? (
+            <ToolRow activity={item.activity} />
+          ) : item.kind === 'notices' ? (
+            <NoticeGroup messages={item.messages} />
+          ) : (
+            <MessageRow message={item.message} />
+          )
+        }
       />
 
       <BackgroundTasksStrip tasks={snapshot.backgroundTasks ?? []} canOperate={canOperate} onStop={stopBackgroundTask} />
@@ -483,7 +534,8 @@ const styles = StyleSheet.create({
   errorText: { fontSize: font.small },
   thinkingToggle: { fontSize: font.small, fontWeight: '500' },
   thinkingBody: { fontSize: font.small, lineHeight: 19, marginTop: 6, paddingLeft: 10, borderLeftWidth: 2 },
-  systemText: { fontSize: font.caption, textAlign: 'center', paddingHorizontal: space.lg },
+  systemText: { fontSize: font.caption, lineHeight: 17, textAlign: 'center', paddingHorizontal: space.lg },
+  notices: { gap: 6 },
   tool: { borderRadius: radius.sm, paddingVertical: 4, marginHorizontal: -6, paddingHorizontal: 6 },
   toolHead: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   toolName: { fontSize: font.caption, fontWeight: '600' },

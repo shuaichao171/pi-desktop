@@ -5,7 +5,7 @@ import { useRemote } from '../runtime/remoteStore';
 import { font, radius, space, useTheme } from '../theme';
 import { t } from '../i18n';
 import { QrScanner } from '../components/QrScanner';
-import { Button, Header, SectionLabel, StatusDot, TextAction, TextField } from '../components/ui';
+import { Button, FadeIn, Header, SectionLabel, StatusDot, TextAction, TextField } from '../components/ui';
 
 interface EnvironmentsScreenProps {
   onBack?: () => void;
@@ -79,14 +79,14 @@ function HostCard({ env, onOpenChats }: { env: SavedRemoteEnvironment; onOpenCha
         {isCurrent && phase === 'connected' ? (
           <>
             <Button label={t('hosts.openChats')} compact style={styles.flex} onPress={onOpenChats} />
-            <Button label={t('hosts.disconnect')} compact variant="secondary" style={{ backgroundColor: theme.bg }} onPress={disconnectHost} />
+            <Button label={t('hosts.disconnect')} compact variant="secondary" style={{ backgroundColor: theme.raised }} onPress={disconnectHost} />
           </>
         ) : isCurrent && (phase === 'connecting' || phase === 'reconnecting') ? (
           <Button
             label={phase === 'reconnecting' ? t('hosts.cancelReconnect') : t('hosts.cancelConnect')}
             compact
             variant="secondary"
-            style={[styles.flex, { backgroundColor: theme.bg }]}
+            style={[styles.flex, { backgroundColor: theme.raised }]}
             onPress={disconnectHost}
           />
         ) : (
@@ -101,7 +101,7 @@ function HostCard({ env, onOpenChats }: { env: SavedRemoteEnvironment; onOpenCha
       </Pressable>
 
       {routesOpen ? (
-        <View style={styles.routes}>
+        <FadeIn style={styles.routes}>
           {env.routes.map((route) => {
             const active = isCurrent && connection.activeRoute?.id === route.id;
             return (
@@ -133,7 +133,7 @@ function HostCard({ env, onOpenChats }: { env: SavedRemoteEnvironment; onOpenCha
           <View style={styles.forget}>
             <TextAction label={t('hosts.forget')} tone="danger" onPress={confirmForget} />
           </View>
-        </View>
+        </FadeIn>
       ) : null}
     </View>
   );
@@ -193,7 +193,7 @@ export function EnvironmentsScreen({ onBack, onPaired }: EnvironmentsScreenProps
         onPress={() => setScannerOpen(true)}
       />
       {linkOpen ? (
-        <View style={styles.linkForm}>
+        <FadeIn style={styles.linkForm}>
           <TextField value={pairingInput} onChangeText={setPairingInput} placeholder={t('hosts.pastePlaceholder')} />
           {needsCode ? <TextField value={manualCode} onChangeText={setManualCode} placeholder={t('hosts.codePlaceholder')} /> : null}
           <Button
@@ -202,10 +202,13 @@ export function EnvironmentsScreen({ onBack, onPaired }: EnvironmentsScreenProps
             disabled={pairingBusy || !pairingInput.trim()}
             onPress={() => void handlePair(pairingInput, manualCode || undefined)}
           />
-        </View>
+        </FadeIn>
       ) : (
         <View style={styles.center}>
-          <TextAction label={t('hosts.pasteToggle')} onPress={() => setLinkOpen(true)} />
+          <TextAction
+            label={t('hosts.pasteToggle')}
+            onPress={() => setLinkOpen(true)}
+          />
         </View>
       )}
       {error ? <Text style={[styles.error, { color: theme.danger }]}>{error}</Text> : null}

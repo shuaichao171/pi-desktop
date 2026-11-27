@@ -1,6 +1,7 @@
-import React from 'react';
+import React, { useEffect, useRef } from 'react';
 import {
   ActivityIndicator,
+  Animated,
   Pressable,
   StyleSheet,
   Text,
@@ -12,6 +13,19 @@ import {
 } from 'react-native';
 import { font, radius, space, useTheme } from '../theme';
 import { t } from '../i18n';
+
+/**
+ * Wraps a section that has just been expanded so it eases in instead of popping. LayoutAnimation is avoided
+ * on purpose: under the new architecture on Android it can leave a later-opened modal half transparent.
+ */
+export function FadeIn({ children, style }: { children: React.ReactNode; style?: StyleProp<ViewStyle> }) {
+  const progress = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    Animated.timing(progress, { toValue: 1, duration: 180, useNativeDriver: true }).start();
+  }, [progress]);
+  const translateY = progress.interpolate({ inputRange: [0, 1], outputRange: [-4, 0] });
+  return <Animated.View style={[style, { opacity: progress, transform: [{ translateY }] }]}>{children}</Animated.View>;
+}
 
 /** Top bar shared by every page: optional back arrow, a title that can open something, and trailing actions. */
 export function Header({
@@ -184,7 +198,7 @@ export function Segmented<K extends string>({
           <Pressable
             key={option.key}
             onPress={() => onChange(option.key)}
-            style={[styles.segment, selected && { backgroundColor: theme.bg, elevation: 1 }]}
+            style={[styles.segment, selected && { backgroundColor: theme.raised, elevation: theme.dark ? 0 : 1 }]}
           >
             <Text style={{ color: selected ? theme.text : theme.textSubtle, fontSize: font.small, fontWeight: selected ? '600' : '500' }}>
               {option.label}

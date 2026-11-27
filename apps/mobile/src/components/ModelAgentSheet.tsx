@@ -39,7 +39,7 @@ function ModelRow({
   onPress,
 }: {
   title: string;
-  detail: string;
+  detail?: string;
   selected: boolean;
   disabled: boolean;
   onPress: () => void;
@@ -58,9 +58,11 @@ function ModelRow({
         <Text style={{ color: theme.text, fontSize: font.body, fontWeight: selected ? '600' : '400' }} numberOfLines={1}>
           {title}
         </Text>
-        <Text style={{ color: theme.textMuted, fontSize: font.caption }} numberOfLines={1}>
-          {detail}
-        </Text>
+        {detail ? (
+          <Text style={{ color: theme.textMuted, fontSize: font.caption }} numberOfLines={1}>
+            {detail}
+          </Text>
+        ) : null}
       </View>
       {selected ? <Text style={[styles.check, { color: theme.brand }]}>✓</Text> : null}
     </Pressable>
@@ -90,15 +92,26 @@ export function ModelAgentSheet(props: ModelAgentSheetProps) {
   const activeAcpModelId = props.agent?.currentModelId || props.currentModelId;
   const readyAgents = props.agents.filter((a) => a.enabled && a.readiness === 'ready');
 
-  const filteredPiModels = useMemo(() => {
-    if (isAcp) return [];
+  // The current model sits on top with its check mark; the rest are grouped under their provider.
+  const piModels = useMemo(() => {
+    const empty = { current: null as UiModelSummary | null, groups: [] as [string, UiModelSummary[]][], count: 0 };
+    if (isAcp) return empty;
     const q = query.trim().toLowerCase();
     const matches = props.models.filter((m) => !q || `${m.provider} ${m.id} ${m.name}`.toLowerCase().includes(q));
-    // Keep the current model first so its check mark is visible and never cut off by the limit.
-    const current = matches.findIndex((m) => m.provider === props.currentProvider && m.id === props.currentModelId);
-    if (current > 0) matches.unshift(...matches.splice(current, 1));
-    return matches.slice(0, 60);
+    const current = matches.find((m) => m.provider === props.currentProvider && m.id === props.currentModelId) ?? null;
+    const groups = new Map<string, UiModelSummary[]>();
+    for (const model of matches) {
+      if (model === current) continue;
+      const list = groups.get(model.provider);
+      if (list) list.push(model);
+      else groups.set(model.provider, [model]);
+    }
+    return { current, groups: [...groups.entries()], count: matches.length };
   }, [isAcp, props.models, props.currentProvider, props.currentModelId, query]);
+  const currentAgentName =
+    props.currentAgentId === PI_AGENT_ID
+      ? t('model.builtin')
+      : (props.agent?.displayName ?? props.agents.find((a) => a.id === props.currentAgentId)?.displayName ?? props.currentAgentId);
 
   const filteredAcpModels = useMemo(() => {
     if (!isAcp) return [];
@@ -136,15 +149,22 @@ export function ModelAgentSheet(props: ModelAgentSheetProps) {
           {error ? <Banner tone="danger" text={error} actionLabel={t('common.dismiss')} onPress={() => setError(null)} /> : null}
 
           <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-            {readyAgents.length > 0 || props.currentAgentId !== PI_AGENT_ID ? (
+            {(readyAgents.length > 0 || props.currentAgentId !== PI_AGENT_ID) && props.agentLocked ? (
               <>
                 <SectionLabel>{t('model.agent')}</SectionLabel>
-                {props.agentLocked ? <Text style={[styles.note, { color: theme.textMuted }]}>{t('model.agentLocked')}</Text> : null}
+                <Text style={[styles.lockedAgent, { color: theme.text }]} numberOfLines={1}>
+                  {currentAgentName}
+                  <Text style={{ color: theme.textMuted }}>{`  ·  ${t('model.agentLocked')}`}</Text>
+                </Text>
+              </>
+            ) : readyAgents.length > 0 || props.currentAgentId !== PI_AGENT_ID ? (
+              <>
+                <SectionLabel>{t('model.agent')}</SectionLabel>
                 <View style={styles.chipWrap}>
                   <Chip
                     label={t('model.builtin')}
                     selected={props.currentAgentId === PI_AGENT_ID}
-                    disabled={busy || props.agentLocked || props.currentAgentId === PI_AGENT_ID}
+                    disabled={busy || props.currentAgentId === PI_AGENT_ID}
                     onPress={() => void runUpdate(() => props.onSelectAgent(PI_AGENT_ID), true)}
                   />
                   {readyAgents.map((agent) => {
@@ -154,7 +174,7 @@ export function ModelAgentSheet(props: ModelAgentSheetProps) {
                         key={agent.id}
                         label={agent.displayName}
                         selected={selected}
-                        disabled={busy || props.agentLocked || selected}
+                        disabled={busy || selected}
                         onPress={() => void runUpdate(() => props.onSelectAgent(agent.id), true)}
                       />
                     );
@@ -226,19 +246,34 @@ export function ModelAgentSheet(props: ModelAgentSheetProps) {
                   />
                 ))
               )
-            ) : filteredPiModels.length === 0 ? (
+            ) : piModels.count === 0 ? (
               <Text style={[styles.note, { color: theme.textMuted }]}>{t('model.noMatch')}</Text>
             ) : (
-              filteredPiModels.map((model) => (
-                <ModelRow
-                  key={`${model.provider}/${model.id}`}
-                  title={model.name || model.id}
-                  detail={model.provider}
-                  selected={model.provider === props.currentProvider && model.id === props.currentModelId}
-                  disabled={busy}
-                  onPress={() => void runUpdate(() => props.onSelectModel(model.provider, model.id), true)}
-                />
-              ))
+              <>
+                {piModels.current ? (
+                  <ModelRow
+                    title={piModels.current.name || piModels.current.id}
+                    detail={piModels.current.provider}
+                    selected
+                    disabled={busy}
+                    onPress={props.onClose}
+                  />
+                ) : null}
+                {piModels.groups.map(([provider, list]) => (
+                  <View key={provider}>
+                    <Text style={[styles.groupLabel, { color: theme.textMuted }]}>{provider}</Text>
+                    {list.map((model) => (
+                      <ModelRow
+                        key={model.id}
+                        title={model.name || model.id}
+                        selected={false}
+                        disabled={busy}
+                        onPress={() => void runUpdate(() => props.onSelectModel(model.provider, model.id), true)}
+                      />
+                    ))}
+                  </View>
+                ))}
+              </>
             )}
           </ScrollView>
         </View>
@@ -264,12 +299,14 @@ const styles = StyleSheet.create({
   note: { fontSize: font.caption, lineHeight: 17, paddingHorizontal: space.lg, paddingBottom: space.sm },
   chipWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm, paddingHorizontal: space.lg },
   searchWrap: { paddingHorizontal: space.lg, paddingBottom: space.xs },
+  lockedAgent: { fontSize: font.body, paddingHorizontal: space.lg },
+  groupLabel: { fontSize: font.caption, fontWeight: '600', paddingHorizontal: space.lg, paddingTop: space.md, paddingBottom: 2 },
   modelRow: {
     flexDirection: 'row',
     alignItems: 'center',
     marginHorizontal: space.sm,
     paddingHorizontal: space.sm,
-    paddingVertical: 10,
+    paddingVertical: 11,
     borderRadius: radius.md,
     gap: space.md,
   },

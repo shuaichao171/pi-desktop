@@ -24,6 +24,7 @@ const MESSAGES = {
   'common.stopping': { zh: '正在停止…', en: 'Stopping…' },
   'common.dismiss': { zh: '知道了', en: 'Dismiss' },
   'common.error': { zh: '出错了', en: 'Error' },
+  'common.copied': { zh: '已复制', en: 'Copied' },
 
   // Connection
   'conn.connecting': { zh: '正在连接…', en: 'Connecting…' },
@@ -41,8 +42,6 @@ const MESSAGES = {
   'home.emptyUnassigned': { zh: '还没有项目之外的对话', en: 'No chats outside projects yet' },
   'home.emptySearch': { zh: '没有匹配的对话', en: 'No matching chats' },
   'home.untitled': { zh: '新对话', en: 'New chat' },
-  'home.messages': { zh: '{n} 条', en: '{n} msgs' },
-  'home.current': { zh: '当前', en: 'Current' },
   'home.pending': { zh: '有 {n} 个请求等待你处理', en: '{n} request(s) waiting for you' },
   'home.notConnectedHint': { zh: '连接电脑后即可查看对话', en: 'Connect to a computer to see chats' },
 
@@ -80,6 +79,7 @@ const MESSAGES = {
   'chat.toolRunning': { zh: '运行中', en: 'running' },
   'chat.toolFailed': { zh: '失败', en: 'failed' },
   'chat.toolInterrupted': { zh: '已中断', en: 'interrupted' },
+  'chat.notices': { zh: '{n} 条系统提示', en: '{n} system notices' },
   'chat.background': { zh: '后台任务 {n}', en: 'Background tasks {n}' },
   'chat.steerUnsupported': { zh: '这个 Agent 不支持插话，消息会排队', en: 'This agent queues messages; steering is unsupported' },
 
@@ -91,7 +91,7 @@ const MESSAGES = {
   'model.model': { zh: '模型', en: 'Model' },
   'model.search': { zh: '搜索模型', en: 'Search models' },
   'model.default': { zh: '默认模型', en: 'Default model' },
-  'model.agentLocked': { zh: '对话开始后不能切换 Agent，新建对话再切换。', en: 'Locked once the chat starts. Start a new chat to switch.' },
+  'model.agentLocked': { zh: '新建对话可切换', en: 'switch in a new chat' },
   'model.noAgentModels': { zh: '{name} 还没有报告可用模型', en: 'No models reported by {name} yet' },
   'model.noMatch': { zh: '没有匹配的模型', en: 'No matching models' },
 
@@ -154,7 +154,7 @@ const MESSAGES = {
   'hosts.paired': { zh: '已配对的电脑', en: 'Paired computers' },
   'hosts.addAnother': { zh: '添加电脑', en: 'Add a computer' },
   'hosts.readOnly': { zh: '只读', en: 'Read-only' },
-  'hosts.via': { zh: '通过{route}连接', en: 'via {route}' },
+  'hosts.via': { zh: '通过 {route} 连接', en: 'via {route}' },
   'hosts.routes': { zh: '{n} 条线路', en: '{n} route(s)' },
   'hosts.inUse': { zh: '使用中', en: 'In use' },
   'hosts.auto': { zh: '自动', en: 'auto' },
@@ -167,8 +167,8 @@ const MESSAGES = {
   'hosts.addRoutePlaceholder': { zh: '线路地址（局域网 / Tailscale / 隧道）', en: 'Route URL (LAN / Tailscale / tunnel)' },
   'hosts.addRouteHttpsPlaceholder': { zh: 'HTTPS 线路地址（https://…）', en: 'HTTPS route URL (https://…)' },
   'hosts.routesHint': {
-    zh: '支持局域网、Tailscale HTTPS 和 Cloudflare 隧道，会自动优先使用更快的线路；通过 HTTPS 配对的电脑只在 HTTPS 线路之间切换。',
-    en: 'LAN, Tailscale HTTPS and Cloudflare Tunnel are supported. Faster routes are preferred automatically; HTTPS-paired computers only switch between HTTPS routes.',
+    zh: '自动选用最快的线路：局域网、Tailscale 或 Cloudflare',
+    en: 'Uses the fastest route automatically: LAN, Tailscale or Cloudflare',
   },
   'hosts.full': { zh: '完全控制', en: 'Full control' },
   'hosts.cancelConnect': { zh: '取消连接', en: 'Cancel' },

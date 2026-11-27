@@ -8,6 +8,8 @@ export interface MobileTheme {
   readonly surface: string;
   /** Pressed rows and selected chips. */
   readonly surfaceAlt: string;
+  /** A control sitting on a surface, such as the selected segment or a button inside a card. */
+  readonly raised: string;
   readonly border: string;
   readonly text: string;
   readonly textSubtle: string;
@@ -32,6 +34,7 @@ const LIGHT_THEME: MobileTheme = {
   bg: '#ffffff',
   surface: '#f4f5f7',
   surfaceAlt: '#eaecf0',
+  raised: '#ffffff',
   border: '#e4e6eb',
   text: '#15171c',
   textSubtle: '#5a606c',
@@ -55,6 +58,7 @@ const DARK_THEME: MobileTheme = {
   bg: '#0e0f12',
   surface: '#1a1c21',
   surfaceAlt: '#24272e',
+  raised: '#2c2f37',
   border: '#272a31',
   text: '#eceef2',
   textSubtle: '#a4aab5',

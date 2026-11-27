@@ -3,7 +3,7 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import type { UiBackgroundTask } from '@pidesktop/shared';
 import { font, radius, space, useTheme } from '../theme';
 import { t } from '../i18n';
-import { StatusDot, TextAction } from './ui';
+import { FadeIn, StatusDot, TextAction } from './ui';
 
 interface BackgroundTasksStripProps {
   tasks: readonly UiBackgroundTask[];
@@ -59,8 +59,9 @@ export function BackgroundTasksStrip({ tasks, canOperate, onStop }: BackgroundTa
           <TextAction label={t('common.dismiss')} tone="muted" onPress={() => setStopError(null)} />
         </View>
       ) : null}
-      {open
-        ? visible.map((task) => {
+      {open ? (
+        <FadeIn>
+          {visible.map((task) => {
             const isRunning = task.status === 'running';
             const stopping = Boolean(stoppingIds[task.taskId]);
             const color = isRunning ? theme.brand : task.status === 'completed' ? theme.success : theme.danger;
@@ -86,8 +87,9 @@ export function BackgroundTasksStrip({ tasks, canOperate, onStop }: BackgroundTa
                 ) : null}
               </View>
             );
-          })
-        : null}
+          })}
+        </FadeIn>
+      ) : null}
     </View>
   );
 }

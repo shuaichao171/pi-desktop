@@ -87,7 +87,7 @@ function MobileShell() {
 
   return (
     <SafeAreaView style={[styles.root, { backgroundColor: theme.bg }]} edges={['top', 'bottom']}>
-      <StatusBar style={theme.dark ? 'light' : 'dark'} />
+      <StatusBar style={theme.dark ? 'light' : 'dark'} backgroundColor={theme.bg} />
       <View style={styles.content}>{page}</View>
     </SafeAreaView>
   );
