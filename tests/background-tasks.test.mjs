@@ -570,3 +570,50 @@ test('onChange hook tracks start, settle, delivery, adopt and prune in stable ch
 	assert.deepEqual(snapshots.at(-1).map((item) => item.taskId), [a.taskId, b.taskId]);
 	manager.clear();
 });
+
+test('stopping a re-adopted live task settles as failed (not completed/exitedOffline)', async () => {
+	const { manager } = await makeManager({ adoptPollMs: 20 });
+	const dir = mkdtempSync(join(tmpdir(), 'bgtask-adopted-stop-'));
+	const registryDir = join(dir, '.pi-desktop-background-tasks');
+	mkdirSync(registryDir, { recursive: true });
+	const logFile = join(registryDir, 'bg-adopted-stop.log');
+	writeFileSync(logFile, 'running\n', 'utf8');
+
+	const sleeper = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 60000);'], {
+		cwd: dir,
+		detached: true,
+		stdio: 'ignore',
+	});
+	sleeper.unref();
+	assert.ok(sleeper.pid > 0);
+
+	writeFileSync(join(registryDir, 'session-adopted-stop.json'), JSON.stringify([
+		{
+			taskId: 'bg-adopted-stop',
+			sessionId: 'session-adopted-stop',
+			command: 'node sleeper',
+			cwd: dir,
+			pid: sleeper.pid,
+			logFile,
+			startedAt: Date.now() - 5000,
+			status: 'running',
+		},
+	]), 'utf8');
+
+	const { calls, hooks } = recorder();
+	manager.attach('session-adopted-stop', hooks);
+	manager.adopt('session-adopted-stop', dir);
+	await sleep(60);
+
+	assert.equal(manager.stop('bg-adopted-stop', 'session-adopted-stop'), true);
+	await sleep(600);
+
+	const settled = manager.currentRecords('session-adopted-stop').find((item) => item.taskId === 'bg-adopted-stop');
+	assert.ok(settled);
+	assert.equal(settled.status, 'failed');
+	assert.equal(Boolean(settled.exitedOffline), false);
+	assert.equal(calls.prompts.length, 1);
+	assert.doesNotMatch(calls.prompts[0], /离线/);
+	assert.match(calls.prompts[0], /失败/);
+	manager.clear();
+});

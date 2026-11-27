@@ -296,6 +296,8 @@ interface TrackedTask {
 	deliverAttempts?: number;
 	/** Consecutive hooks.prompt rejections (busy retries excluded). */
 	promptFailures?: number;
+	/** True once stop() has been requested so re-adopted tasks settle as failed rather than exitedOffline. */
+	stopped?: boolean;
 }
 
 /** Delete a task log only when it lives in the registry's own directory. */
@@ -425,7 +427,13 @@ export class BackgroundTaskManager {
 			if (record.status === 'running') {
 				if (record.pid && isPidAlive(record.pid)) {
 					tracked.pollTimer = setInterval(() => {
-						if (!isPidAlive(record.pid)) void this.settle(record.taskId, null, { offline: true });
+						if (!isPidAlive(record.pid)) {
+							void this.settle(
+								record.taskId,
+								null,
+								tracked.stopped ? (process.platform === 'win32' ? {} : { signal: 'SIGKILL' }) : { offline: true },
+							);
+						}
 					}, this.timing.adoptPollMs);
 					tracked.pollTimer.unref?.();
 				} else {
@@ -466,6 +474,7 @@ export class BackgroundTaskManager {
 		const tracked = this.tasks.get(taskId);
 		if (!tracked || tracked.record.status !== 'running') return false;
 		if (sessionId !== undefined && tracked.record.sessionId !== sessionId) return false;
+		tracked.stopped = true;
 		try {
 			if (process.platform === 'win32') {
 				const child = spawn(join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'taskkill.exe'), ['/F', '/T', '/PID', String(tracked.record.pid)], { stdio: 'ignore', detached: true, windowsHide: true });
@@ -482,7 +491,7 @@ export class BackgroundTaskManager {
 				if (tracked.record.status !== 'running') { tracked.stopPollTimer = undefined; return; }
 				if (!isPidAlive(tracked.record.pid)) {
 					tracked.stopPollTimer = undefined;
-					this.settle(taskId, null, { offline: true });
+					this.settle(taskId, null, process.platform === 'win32' ? {} : { signal: 'SIGKILL' });
 					return;
 				}
 				if (remaining <= 0) { tracked.stopPollTimer = undefined; return; }
