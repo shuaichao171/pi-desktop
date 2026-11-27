@@ -1,12 +1,16 @@
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 
 const FAKE_AGENT = fileURLToPath(new URL('./fixtures/acp/fake-agent.mjs', import.meta.url));
-const { AGENT_APPROVAL_OPTION } = await import('../packages/shared/src/agentRuntimes.ts');
+const {
+	AGENT_APPROVAL_OPTION,
+	ANTIGRAVITY_ORCHESTRATOR_PLANNER_OPTION,
+	ANTIGRAVITY_ORCHESTRATOR_EXECUTOR_OPTION,
+} = await import('../packages/shared/src/agentRuntimes.ts');
 
 async function until(check, message, timeout = 15000) {
 	const started = Date.now();
@@ -634,4 +638,73 @@ test('new conversations start with the last used agent and fall back to Pi when 
 	await reopened.setSessionAgent('pi');
 	await reopened.newSession();
 	assert.equal(reopened.getSnapshot().agent.id, 'pi', 'switching back to Pi makes Pi the last used agent');
+});
+
+test('Antigravity Orchestrator exposes planner/executor models and strengths and syncs settings.json', async (t) => {
+	const root = mkdtempSync(join(tmpdir(), 'pi-acp-agy-orch-'));
+	const workspace = join(root, 'workspace');
+	const geminiDir = join(root, 'gemini');
+	const settingsFile = join(geminiDir, 'antigravity-cli', 'settings.json');
+	mkdirSync(workspace);
+	mkdirSync(join(geminiDir, 'antigravity-cli'), { recursive: true });
+	writeFileSync(settingsFile, JSON.stringify({
+		colorScheme: 'solarized dark',
+		orchestrator: { planner: 'Gemini 4 Neon (XHigh)' },
+	}, null, 2), 'utf8');
+	const environment = new Map(['PI_CODING_AGENT_DIR', 'PI_OFFLINE'].map((name) => [name, process.env[name]]));
+	process.env.PI_CODING_AGENT_DIR = join(root, 'agent');
+	process.env.PI_OFFLINE = '1';
+	let service;
+	t.after(async () => {
+		await service?.dispose();
+		for (const [name, value] of environment) {
+			if (value === undefined) delete process.env[name];
+			else process.env[name] = value;
+		}
+		try { rmSync(root, { recursive: true, force: true, maxRetries: 50, retryDelay: 100 }); }
+		catch (error) { console.warn('temp cleanup skipped:', error.message); }
+	});
+	const { AgentService } = await import('../packages/agent/src/index.ts');
+	service = new AgentService(undefined, async () => true);
+	await service.saveAgent({
+		id: 'antigravity',
+		displayName: 'Antigravity',
+		command: process.execPath,
+		args: [FAKE_AGENT, '--gemini-dir', geminiDir],
+		env: { FAKE_ACP_SETTINGS: 'antigravity-orchestrator', FAKE_ACP_LOAD: '1' },
+		enabled: true,
+	});
+	await service.init({ cwd: workspace, fresh: true });
+	await service.setSessionAgent('antigravity');
+	await until(() => service.getSnapshot().agent.models?.length === 6, 'Antigravity models load');
+	assert.equal(service.getSnapshot().agent.orchestrator, undefined, 'regular model hides orchestrator config');
+
+	await service.setModel('acp:antigravity', 'gemini-pro-orchestrator-neon');
+	let orch = service.getSnapshot().agent.orchestrator;
+	assert.ok(orch, 'selecting Orchestrator exposes planner and executor controls');
+	assert.equal(orch.planner.currentValue, 'Gemini 4 Neon (XHigh)');
+	assert.equal(orch.executor.currentValue, 'Gemini 4 Hydrogen (High)');
+
+	await service.setAgentOption(ANTIGRAVITY_ORCHESTRATOR_PLANNER_OPTION, 'Gemini 4 Carbon (High)');
+	await service.setAgentOption(ANTIGRAVITY_ORCHESTRATOR_EXECUTOR_OPTION, 'Gemini 4 Hydrogen (XHigh)');
+	assert.equal(service.getSnapshot().model, 'gemini-pro-orchestrator', 'Carbon planner syncs Orchestrator preset');
+	orch = service.getSnapshot().agent.orchestrator;
+	assert.equal(orch.planner.currentValue, 'Gemini 4 Carbon (High)');
+	assert.equal(orch.executor.currentValue, 'Gemini 4 Hydrogen (XHigh)');
+
+	const saved = JSON.parse(readFileSync(settingsFile, 'utf8'));
+	assert.equal(saved.colorScheme, 'solarized dark', 'unrelated settings.json keys are preserved');
+	assert.deepEqual(saved.orchestrator, {
+		planner: 'Gemini 4 Carbon (High)',
+		executor: 'Gemini 4 Hydrogen (XHigh)',
+	});
+
+	await service.setModel('acp:antigravity', 'gemini-pro-orchestrator-argon');
+	assert.equal(service.getSnapshot().agent.orchestrator.planner.currentValue, 'Gemini 4 Argon (High)');
+
+	await service.setModel('acp:antigravity', 'gemini-4-neon');
+	assert.equal(service.getSnapshot().agent.orchestrator, undefined, 'leaving Orchestrator hides orchestrator config');
+
+	await service.prompt('please run');
+	await until(() => service.getSnapshot().status === 'idle' && service.getSnapshot().messages.some((message) => message.text === 'Done.'), 'turn settles after orchestrator config changes');
 });

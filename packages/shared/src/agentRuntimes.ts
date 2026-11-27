@@ -55,6 +55,36 @@ export const AGENT_APPROVAL_OPTION = '__desktop_approval';
 export type UiAgentApprovalMode = 'bypass' | 'agent';
 export const AGENT_APPROVAL_DEFAULT: UiAgentApprovalMode = 'bypass';
 
+/** Synthetic option IDs for Antigravity Orchestrator planner/executor model + strength choices. */
+export const ANTIGRAVITY_ORCHESTRATOR_PLANNER_OPTION = '__antigravity_orchestrator_planner';
+export const ANTIGRAVITY_ORCHESTRATOR_EXECUTOR_OPTION = '__antigravity_orchestrator_executor';
+
+export interface UiAgentOrchestratorVariant {
+	/** Full label written to Antigravity settings.json (e.g. "Gemini 4 Neon (XHigh)"). */
+	value: string;
+	/** Canonical effort key (`low`, `medium`, `high`, `xhigh`, `max`, or empty when fixed). */
+	effort: string;
+	/** Display label for the effort level (e.g. "Low", "Medium", "High", "Extra"). */
+	effortName: string;
+}
+
+export interface UiAgentOrchestratorModel {
+	/** Base model name (e.g. "Gemini 4 Neon"). */
+	name: string;
+	variants: UiAgentOrchestratorVariant[];
+}
+
+export interface UiAgentOrchestratorRole {
+	currentValue: string;
+	defaultValue: string;
+}
+
+export interface UiAgentOrchestratorConfig {
+	planner: UiAgentOrchestratorRole;
+	executor: UiAgentOrchestratorRole;
+	models: UiAgentOrchestratorModel[];
+}
+
 export interface UiAgentDescriptor {
 	id: string;
 	kind: UiAgentKind;
@@ -66,6 +96,8 @@ export interface UiAgentDescriptor {
 	currentModelId?: string | null;
 	/** Other session settings the agent exposes (reasoning effort, mode, ...). */
 	options?: UiAgentOption[];
+	/** Planner / executor model and strength choices when the active model is an Orchestrator. */
+	orchestrator?: UiAgentOrchestratorConfig;
 	/** The agent's account plan limits can be read (`readAgentQuota`). */
 	quota?: boolean;
 }

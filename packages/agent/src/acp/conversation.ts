@@ -20,6 +20,8 @@ export interface AcpConversationHooks {
 	onPlan(entries: AcpPlanEntry[]): void;
 	onCommands(commands: AcpAvailableCommand[]): void;
 	onModels(models: UiAgentModel[], currentModelId: string | null): void;
+	/** Full `(model + effort)` variant list from `session.models.availableModels`, even when `configOptions` is present. */
+	onVariantModels?(models: UiAgentModel[]): void;
 	/** Session settings other than the model (reasoning effort, mode, speed, ...). */
 	onConfigOptions(options: UiAgentOption[]): void;
 	onNativeSession(sessionId: string): void;
@@ -398,17 +400,20 @@ export class AcpConversation {
 			values: modes.availableModes.filter((mode) => mode && typeof mode.id === 'string').slice(0, 50)
 				.map((mode) => ({ value: mode.id, name: mode.name || mode.id, ...(mode.description ? { description: mode.description } : {}) })),
 		} : null;
+		const models = session.models;
+		const variantList = models && Array.isArray(models.availableModels)
+			? models.availableModels.filter((model) => model && typeof model.modelId === 'string')
+				.map((model) => ({ id: model.modelId, name: model.name || model.modelId, ...(model.description ? { description: model.description } : {}) }))
+			: null;
+		if (variantList) this.hooks.onVariantModels?.(variantList);
 		if (Array.isArray(session.configOptions) && this.applyConfigOptions(session.configOptions)) return;
 		this.modelOptionId = null;
-		const models = session.models;
-		if (models && Array.isArray(models.availableModels)) {
-			const list = models.availableModels.filter((model) => model && typeof model.modelId === 'string')
-				.map((model) => ({ id: model.modelId, name: model.name || model.modelId, ...(model.description ? { description: model.description } : {}) }));
-			const current = typeof models.currentModelId === 'string' ? models.currentModelId : null;
+		if (variantList) {
+			const current = typeof models!.currentModelId === 'string' ? models!.currentModelId : null;
 			if (current) this.assembler.model = current;
-			this.models = list;
+			this.models = variantList;
 			this.currentModel = current;
-			this.hooks.onModels(list, current);
+			this.hooks.onModels(variantList, current);
 		}
 		this.publishOptions([]);
 	}

@@ -21,11 +21,51 @@ const codexVersion = process.env.FAKE_ACP_CODEX_VERSION;
 // FAKE_ACP_ACCEPT_EDITS=1: the mode lists also offer an "accept edits" mode.
 const acceptEdits = process.env.FAKE_ACP_ACCEPT_EDITS === '1' ? [{ value: 'acceptEdits', name: 'Accept edits' }] : [];
 // FAKE_ACP_SETTINGS=options: config options (grouped model values, reasoning effort, mode);
-// FAKE_ACP_SETTINGS=modes: only the older `modes` list.
+// FAKE_ACP_SETTINGS=modes: only the older `modes` list;
+// FAKE_ACP_SETTINGS=antigravity-orchestrator: mimics agy acp with Orchestrator models + variants.
 const settings = process.env.FAKE_ACP_SETTINGS ?? '';
 // FAKE_ACP_START_MODE: the mode a new session starts in (default `ask`).
-const option = { model: 'fake-large', effort: 'medium', mode: process.env.FAKE_ACP_START_MODE || 'ask' };
-const configOptions = () => [
+const option = {
+	model: settings === 'antigravity-orchestrator' ? 'gemini-4-neon' : 'fake-large',
+	effort: settings === 'antigravity-orchestrator' ? 'high' : 'medium',
+	mode: process.env.FAKE_ACP_START_MODE || 'ask',
+};
+const agyVariantModels = [
+	{ modelId: 'gemini-4-neon-low', name: 'Gemini 4 Neon (Low)' },
+	{ modelId: 'gemini-4-neon-medium', name: 'Gemini 4 Neon (Medium)' },
+	{ modelId: 'gemini-4-neon-high', name: 'Gemini 4 Neon (High)' },
+	{ modelId: 'gemini-4-neon-xhigh', name: 'Gemini 4 Neon (XHigh)' },
+	{ modelId: 'gemini-4-carbon-low', name: 'Gemini 4 Carbon (Low)' },
+	{ modelId: 'gemini-4-carbon-medium', name: 'Gemini 4 Carbon (Medium)' },
+	{ modelId: 'gemini-4-carbon-high', name: 'Gemini 4 Carbon (High)' },
+	{ modelId: 'gemini-4-argon-low', name: 'Gemini 4 Argon (Low)' },
+	{ modelId: 'gemini-4-argon-high', name: 'Gemini 4 Argon (High)' },
+	{ modelId: 'gemini-4-hydrogen-low', name: 'Gemini 4 Hydrogen (Low)' },
+	{ modelId: 'gemini-4-hydrogen-medium', name: 'Gemini 4 Hydrogen (Medium)' },
+	{ modelId: 'gemini-4-hydrogen-high', name: 'Gemini 4 Hydrogen (High)' },
+	{ modelId: 'gemini-4-hydrogen-xhigh', name: 'Gemini 4 Hydrogen (XHigh)' },
+	{ modelId: 'gemini-pro-orchestrator-neon', name: 'Orchestrator (Neon)' },
+	{ modelId: 'gemini-pro-orchestrator', name: 'Orchestrator (Carbon)' },
+	{ modelId: 'gemini-pro-orchestrator-argon', name: 'Orchestrator (Argon)' },
+	{ modelId: 'claude-opus-5-5-high', name: 'Claude Opus 5.5 (High)' },
+	{ modelId: 'gpt-oss-120b-medium', name: 'GPT-OSS 120B (Medium)' },
+];
+const configOptions = () => settings === 'antigravity-orchestrator' ? [
+	{ id: 'model', name: 'Model', category: 'model', type: 'select', currentValue: option.model, options: [
+		{ value: 'gemini-4-neon', name: 'Gemini 4 Neon' },
+		{ value: 'gemini-4-carbon', name: 'Gemini 4 Carbon' },
+		{ value: 'gemini-4-hydrogen', name: 'Gemini 4 Hydrogen' },
+		{ value: 'gemini-pro-orchestrator-neon', name: 'Orchestrator (Neon)' },
+		{ value: 'gemini-pro-orchestrator', name: 'Orchestrator (Carbon)' },
+		{ value: 'gemini-pro-orchestrator-argon', name: 'Orchestrator (Argon)' },
+	] },
+	...(/^gemini-pro-orchestrator(?:-|$)/.test(option.model) ? [] : [
+		{ id: 'thought_level', name: 'Thinking Level', category: 'thought_level', type: 'select', currentValue: option.effort, options: [
+			{ value: 'low', name: 'Low' }, { value: 'medium', name: 'Medium' }, { value: 'high', name: 'High' }, { value: 'xhigh', name: 'Extra' },
+		] },
+	]),
+	{ id: 'mode', name: 'Mode', category: 'mode', type: 'select', currentValue: option.mode, options: [{ value: 'default', name: 'Default' }, { value: 'accept-edits', name: 'Accept edits' }] },
+] : [
 	{ id: 'model', name: 'Model', category: 'model', type: 'select', currentValue: option.model, options: [
 		{ group: 'current', name: 'Current', options: [{ value: 'fake-large', name: 'Fake Large', description: 'Most capable' }, { value: 'fake-small', name: 'Fake Small' }] },
 		{ group: 'legacy', name: 'Legacy', options: [{ value: 'fake-old', name: 'Fake Old' }] },
@@ -35,8 +75,10 @@ const configOptions = () => [
 	{ id: 'toggle', name: 'Unsupported toggle', type: 'boolean', currentValue: true },
 ];
 const sessionSettings = () => ({
-	models: { currentModelId: option.model, availableModels: [{ modelId: 'fake-large', name: 'Fake Large' }, { modelId: 'fake-small', name: 'Fake Small' }] },
-	...(settings === 'options' ? { configOptions: configOptions() } : {}),
+	models: settings === 'antigravity-orchestrator'
+		? { currentModelId: 'gemini-4-neon-high', availableModels: agyVariantModels }
+		: { currentModelId: option.model, availableModels: [{ modelId: 'fake-large', name: 'Fake Large' }, { modelId: 'fake-small', name: 'Fake Small' }] },
+	...(settings === 'options' || settings === 'antigravity-orchestrator' ? { configOptions: configOptions() } : {}),
 	...(settings === 'modes' ? { modes: { currentModeId: option.mode, availableModes: [{ id: 'ask', name: 'Ask' }, ...acceptEdits.map((mode) => ({ id: mode.value, name: mode.name })), { id: 'auto', name: 'Auto', description: 'No questions' }] } } : {}),
 });
 let nextId = 1000;
