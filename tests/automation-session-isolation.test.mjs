@@ -106,6 +106,22 @@ test('automation model and thinking overrides preserve the saved defaults while 
     assert.equal(manualDefaults.defaultModel, overrideModel.id);
     assert.equal(manualDefaults.defaultProvider, overrideModel.provider);
     assert.equal(manualDefaults.defaultThinkingLevel, 'high');
+
+    // Automation runs must stay on Pi even when the user's last used agent is external,
+    // and must not overwrite the remembered last agent preference.
+    await worker.saveAgent({ id: 'codex', displayName: 'Codex', command: process.execPath, args: ['-e', ''], enabled: true });
+    await worker.setSessionAgent('codex');
+    assert.equal(worker.getSnapshot().defaultAgentId, 'codex');
+    const automation = new AgentService();
+    try {
+      await automation.init({ cwd: workspace, fresh: true, agentId: 'pi', persistAgentPreference: false });
+      assert.equal(automation.getSnapshot().agent.id, 'pi', 'automation stays on Pi');
+      assert.equal(automation.getSnapshot().defaultAgentId, 'codex', 'remembered external agent is preserved');
+    } finally {
+      await automation.dispose();
+    }
+    await subsequent.init({ cwd: workspace, fresh: true });
+    assert.equal(subsequent.getSnapshot().agent.id, 'codex', 'subsequent interactive new sessions still inherit the last used external agent');
   } finally {
     await Promise.allSettled([worker?.dispose(), subsequent?.dispose()]);
     for (const [key, value] of previous) {

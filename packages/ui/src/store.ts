@@ -76,6 +76,8 @@ interface ChatState {
 	modelProvider: string;
 	/** Runtime of the open conversation (Pi or an external ACP agent); null before the first ready. */
 	agent: UiAgentDescriptor | null;
+	/** Agent a fresh interactive conversation starts with (`pi` or an enabled external agent id). */
+	defaultAgentId: string | null;
 	/** Configured external agents with their passive readiness. */
 	agents: UiAgentStatus[];
 	thinkingLevel: UiThinkingLevel | '';
@@ -371,6 +373,7 @@ const store = createStore<ChatState>((set, get) => ({
 	modelName: null,
 	modelProvider: '',
 	agent: null,
+	defaultAgentId: null,
 	agents: [],
 	thinkingLevel: '',
 	availableThinkingLevels: [],
@@ -505,6 +508,7 @@ const store = createStore<ChatState>((set, get) => ({
 					modelName: snapshot.modelName ?? null,
 					modelProvider: snapshot.modelProvider,
 					agent: snapshot.agent ?? null,
+					defaultAgentId: snapshot.defaultAgentId ?? null,
 					thinkingLevel: snapshot.thinkingLevel,
 					availableThinkingLevels: snapshot.availableThinkingLevels,
 					contextUsage: snapshot.contextUsage ? { ...snapshot.contextUsage } : null,
@@ -682,6 +686,7 @@ modelProviders: [...get().modelProviders],
 						modelName: event.modelName ?? null,
 						modelProvider: event.modelProvider,
 						agent: event.agent ?? null,
+						...(event.defaultAgentId ? { defaultAgentId: event.defaultAgentId } : {}),
 						thinkingLevel: event.thinkingLevel,
 						availableThinkingLevels: event.availableThinkingLevels,
 						contextUsage: event.contextUsage ? { ...event.contextUsage } : null,
@@ -722,6 +727,7 @@ modelProviders: [...get().modelProviders],
 					modelName: event.modelName ?? null,
 					modelProvider: event.modelProvider,
 					...(event.agent ? { agent: event.agent } : {}),
+					...(event.defaultAgentId ? { defaultAgentId: event.defaultAgentId } : {}),
 					thinkingLevel: event.thinkingLevel,
 					availableThinkingLevels: event.availableThinkingLevels,
 					contextUsage: event.contextUsage ? { ...event.contextUsage } : null,
@@ -1335,12 +1341,19 @@ if (!get().modelProviders.length) void get().refreshModelProviders().catch(() =>
 			// Pi model / thinking picks do not apply to an external agent.
 			preparing.deferred.agentId = agentId;
 			if (agentId !== PI_AGENT_ID) { delete preparing.deferred.model; delete preparing.deferred.thinkingLevel; }
-			set({ agent: draftAgentDescriptor(agentId, get().agents), settingsError: null });
+			const switching = agentId !== (get().agent?.id ?? PI_AGENT_ID);
+			set({
+				agent: draftAgentDescriptor(agentId, get().agents),
+				defaultAgentId: agentId,
+				settingsError: null,
+				...(switching ? draftModelState(agentId) : {}),
+			});
 			return;
 		}
 		const generation = beginSettingsRequest();
 		try {
 			await bridge.setSessionAgent(agentId);
+			if (get().bridge === bridge) set({ defaultAgentId: agentId });
 		} catch (error) {
 			if (generation === settingsGeneration) set({ settingsError: errorMessage(error) });
 			throw error;
@@ -1369,6 +1382,7 @@ if (!get().modelProviders.length) void get().refreshModelProviders().catch(() =>
 		const cwd = get().cwd;
 		try {
 			await bridge.handoffToAgent(agentId);
+			if (get().bridge === bridge) set({ defaultAgentId: agentId });
 		} catch (error) {
 			set({ settingsError: errorMessage(error) });
 			throw error;
@@ -1602,10 +1616,12 @@ if (!get().modelProviders.length) void get().refreshModelProviders().catch(() =>
 			throw error;
 		}
 		set({ error: null });
+		const editedAgent = get().agent;
 		try {
 			const message = get().messages.find((entry) => entry.id === entryId);
 			// An incomplete history preview is not an edited attachment list.
 			await bridge.editMessage(entryId, trimmed, message?.attachmentsOmitted ? undefined : attachments, ...(fileMode ? [fileMode] : []));
+			if (get().bridge === bridge && editedAgent) set({ defaultAgentId: editedAgent.id });
 		} catch (error) {
 			if (get().bridge === bridge && get().cwd === cwd && get().sessionId === sessionId) set({ error: errorMessage(error) });
 			throw error;
@@ -1853,6 +1869,11 @@ function prepareConversation(kind: SessionPreparation['kind'], options?: { cwd?:
 		: { cwd: options?.cwd ?? '', sessionPath: `draft:${crypto.randomUUID()}` });
 	// A retry of the same draft keeps the model / thinking already picked for it.
 	const inherited = sessionPreparation && sameInputScope(sessionPreparation.draftScope, draftScope) ? { ...sessionPreparation.deferred } : {};
+	const draftAgentId = inherited.agentId ?? preferredNewAgentId(previous);
+	const draftAgentUpdate = draftAgentId !== null ? {
+		agent: draftAgentDescriptor(draftAgentId, previous.agents),
+		...(draftAgentId !== (previous.agent?.id ?? PI_AGENT_ID) ? draftModelState(draftAgentId) : {}),
+	} : {};
 	const preparing: SessionPreparation = { bridge, requestId: request, kind, options, draftScope, failed: false,
 		ready: null, reset: false, promise: Promise.resolve(), deferred: inherited, settingsApplied: false, agentRejected: null, receipt: null, handedOff: false };
 	const preserveBackgroundDraft = (receipt: UiInputScope | void): void => {
@@ -1917,6 +1938,7 @@ function prepareConversation(kind: SessionPreparation['kind'], options?: { cwd?:
 	});
 	sessionPreparation = preparing;
 	store.setState(state => ({ sessionPreparation: { requestId: request, draftScope }, cwd: options?.cwd ?? '', sessionId: null, sessionPath: null,
+		...draftAgentUpdate,
 		status: 'idle', statusMessage: undefined, retryAttempt: undefined, retryMaxAttempts: undefined,
 		messages: [], activities: [], runs: [], fileChanges: [], fileChangeTurns: [], fileChangeActiveRunId: null, contextUsage: null,
 		subagentFleet: null, subagentInspect: null, backgroundTasks: [],
@@ -2021,6 +2043,7 @@ async function sendInput(text: string, behavior?: 'steer' | 'followUp', attachme
 		throw error;
 	}
 	store.setState({ error: null });
+	const sentAgent = store.getState().agent;
 	let navigationRequest: number | undefined;
 	try {
 		const delivery = inputId ? behavior : behavior ?? (status === 'busy' ? 'followUp' : undefined);
@@ -2029,10 +2052,17 @@ async function sendInput(text: string, behavior?: 'steer' | 'followUp', attachme
 			if (command.name === 'new') navigationRequest = beginSessionNavigation();
 			await bridge.executeSlashCommand({ cwd, sessionId, ...command, behavior: delivery, attachments });
 			if (navigationRequest !== undefined) sessionOpenMetrics.rpc(navigationRequest);
+			if (!['new', 'compact', 'name', 'reload'].includes(command.name) && store.getState().bridge === bridge && sentAgent) {
+				store.setState({ defaultAgentId: sentAgent.id });
+			}
 		} else if (inputId && 'submitInput' in bridge && typeof bridge.submitInput === 'function') {
 			const receipt = await bridge.submitInput({ id: inputId, sessionId: sessionId ?? '', text: trimmed, behavior: delivery, attachments });
 			if (receipt.state === 'recovered' || receipt.state === 'failed' || receipt.state === 'reserved') throw new Error(receipt.message ?? translate('store.inputNeedsConfirmation'));
-		} else await bridge.prompt(trimmed, delivery, attachments);
+			if (store.getState().bridge === bridge && sentAgent) store.setState({ defaultAgentId: sentAgent.id });
+		} else {
+			await bridge.prompt(trimmed, delivery, attachments);
+			if (store.getState().bridge === bridge && sentAgent) store.setState({ defaultAgentId: sentAgent.id });
+		}
 	} catch (error) {
 		if (store.getState().bridge === bridge && store.getState().cwd === cwd && store.getState().sessionId === sessionId
 			&& (navigationRequest === undefined || currentSessionNavigation(bridge, navigationRequest))) store.setState({ error: errorMessage(error) });
@@ -2045,6 +2075,25 @@ function draftAgentDescriptor(agentId: string, agents: UiAgentStatus[]): UiAgent
 	if (agentId === PI_AGENT_ID) return piAgentDescriptor();
 	const config = agents.find((agent) => agent.id === agentId);
 	return { id: agentId, kind: 'acp', displayName: config?.displayName ?? agentId, accentColor: config?.accentColor ?? null, capabilities: ACP_AGENT_CAPABILITIES };
+}
+
+/** Agent a newly prepared draft should display before the backend creates it (null when unknown). */
+function preferredNewAgentId(state: ChatState): string | null {
+	const candidate = state.defaultAgentId;
+	if (!candidate) return null;
+	if (candidate === PI_AGENT_ID) return PI_AGENT_ID;
+	if (state.agents.length) {
+		const config = state.agents.find((agent) => agent.id === candidate);
+		if (!config || !config.enabled) return PI_AGENT_ID;
+	}
+	return candidate;
+}
+
+/** Reset stale model/thinking fields when a preparing draft changes agent. */
+function draftModelState(agentId: string): Pick<ChatState, 'model' | 'modelName' | 'modelProvider' | 'thinkingLevel' | 'availableThinkingLevels'> {
+	return agentId === PI_AGENT_ID
+		? { model: '', modelName: null, modelProvider: '', thinkingLevel: '', availableThinkingLevels: [] }
+		: { model: '', modelName: null, modelProvider: `acp:${agentId}`, thinkingLevel: 'off', availableThinkingLevels: ['off'] };
 }
 
 function activePreparation(): SessionPreparation | null {
@@ -2079,11 +2128,11 @@ async function applyDeferredSettings(preparing: SessionPreparation): Promise<str
 function conversationView(state: ChatState): Partial<ChatState> {
 	const { cwd, sessionId, sessionPath, status, statusMessage, messages, activities, runs, fileChanges,
 		fileChangeTurns, fileChangeActiveRunId,
-		contextUsage, queuedMessages, queuedCount, historyTotal, model, modelName, modelProvider, thinkingLevel,
+		contextUsage, queuedMessages, queuedCount, historyTotal, agent, model, modelName, modelProvider, thinkingLevel,
 		availableThinkingLevels, sessions, retryAttempt, retryMaxAttempts } = state;
 	return { cwd, sessionId, sessionPath, status, statusMessage, messages, activities, runs, fileChanges,
 		fileChangeTurns, fileChangeActiveRunId,
-		contextUsage, queuedMessages, queuedCount, historyTotal, model, modelName, modelProvider, thinkingLevel,
+		contextUsage, queuedMessages, queuedCount, historyTotal, agent, model, modelName, modelProvider, thinkingLevel,
 		availableThinkingLevels, sessions, retryAttempt, retryMaxAttempts };
 }
 

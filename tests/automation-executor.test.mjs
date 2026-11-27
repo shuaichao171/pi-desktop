@@ -45,7 +45,7 @@ test('automation waits for actual completion after prompt acknowledgement and is
   await settle();
   assert.equal(finished, false);
   assert.deepEqual(f.calls.slice(0, 4), [
-    ['init', { cwd: task.cwd, fresh: true }], ['model', 'test', 'model', false], ['thinking', 'high', false], ['prompt', task.prompt],
+    ['init', { cwd: task.cwd, fresh: true, agentId: 'pi', persistAgentPreference: false }], ['model', 'test', 'model', false], ['thinking', 'high', false], ['prompt', task.prompt],
   ]);
   assert.equal(f.executor.isSessionRunning('/sessions/new.jsonl'), true);
   assert.equal(f.executor.hasActiveWorkers(), true);

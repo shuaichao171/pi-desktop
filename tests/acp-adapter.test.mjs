@@ -312,6 +312,13 @@ test('registry merges builtins with user edits, validates input and probes passi
 		assert.equal(reopened.get('codex').command, 'codex-acp', 'builtins reset to defaults');
 		reopened.remove('my-agent');
 		assert.equal(reopened.get('my-agent'), undefined);
+		// Cross-process defaultAgentId refreshes desktop-agents.json so split panes follow adds/disables.
+		const paneRegistry = new AgentRegistry(file);
+		registry.save({ displayName: 'Pane Agent', command: process.execPath, args: [FAKE_AGENT], enabled: true });
+		registry.preferences.rememberLastAgent('pane-agent');
+		assert.equal(paneRegistry.defaultAgentId(), 'pane-agent', 'another host picks up a newly added remembered agent');
+		registry.save({ id: 'pane-agent', displayName: 'Pane Agent', command: process.execPath, args: [FAKE_AGENT], enabled: false });
+		assert.equal(paneRegistry.defaultAgentId(), 'pi', 'another host falls back to Pi once the agent is disabled');
 		await writeFile(file, '{broken');
 		assert.equal(new AgentRegistry(file).list().length, BUILTIN_AGENTS.length);
 		assert.equal(resolveCommand(process.execPath), process.execPath);

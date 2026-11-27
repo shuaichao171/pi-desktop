@@ -5,14 +5,17 @@ import { parseAgentSettings, type AgentSettingsRecord } from './handoff.ts';
 
 interface StoredPreferences {
 	version: 1;
+	/** Last agent chosen or used for interactive conversations (`pi` or an external agent id). */
+	lastAgent?: string;
 	/** Agent id → the model and settings last chosen in any of its conversations. */
 	agents: Record<string, AgentSettingsRecord>;
 }
 
 /**
- * The last model and settings the user chose for each external agent, so a new
- * conversation with that agent starts from them instead of the agent's default.
- * A conversation's own choices (its session record) always come first.
+ * The last agent used and the last model and settings the user chose for each
+ * external agent, so a new conversation starts from them instead of falling back
+ * to built-in defaults. A conversation's own choices (its session record) always
+ * come first.
  *
  * Permission modes are never stored here: one conversation set to skip approvals
  * must not make every later conversation start that way.
@@ -25,6 +28,21 @@ export class AgentPreferences {
 
 	constructor(file: string) {
 		this.file = file;
+	}
+
+	getLastAgent(): string | null {
+		return this.read().lastAgent ?? null;
+	}
+
+	/** Record the last agent the user chose or sent a prompt to. */
+	rememberLastAgent(agentId: string): void {
+		if (!isValidAgentId(agentId)) return;
+		try {
+			const stored = this.read();
+			if (stored.lastAgent === agentId) return;
+			stored.lastAgent = agentId;
+			this.write(stored);
+		} catch { /* a remembered default is a convenience */ }
 	}
 
 	get(agentId: string): AgentSettingsRecord | null {
@@ -48,12 +66,13 @@ export class AgentPreferences {
 
 	private read(): StoredPreferences {
 		try {
-			const parsed = JSON.parse(readFileSync(this.file, 'utf8')) as { version?: unknown; agents?: unknown };
+			const parsed = JSON.parse(readFileSync(this.file, 'utf8')) as { version?: unknown; lastAgent?: unknown; agents?: unknown };
 			if (parsed?.version === 1 && parsed.agents && typeof parsed.agents === 'object' && !Array.isArray(parsed.agents)) {
+				const lastAgent = isValidAgentId(parsed.lastAgent) ? parsed.lastAgent : undefined;
 				const agents = Object.fromEntries(Object.entries(parsed.agents)
 					.filter(([id]) => isValidAgentId(id) && id !== PI_AGENT_ID)
 					.map(([id, value]) => [id, parseAgentSettings(value)]));
-				return { version: 1, agents };
+				return { version: 1, ...(lastAgent ? { lastAgent } : {}), agents };
 			}
 		} catch { /* missing or malformed: nothing remembered */ }
 		return { version: 1, agents: {} };

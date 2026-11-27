@@ -538,3 +538,100 @@ test('stopIdleAgents stops idle external ACP processes without disrupting busy t
 	await until(() => service.listSlashCommands().some((command) => command.name === 'prod'), 'async answer delivered');
 	assert.equal(await service.stopIdleAgents(), 1, 'once answered, idle ACP process stops');
 });
+
+test('new conversations start with the last used agent and fall back to Pi when unavailable', async (t) => {
+	const root = mkdtempSync(join(tmpdir(), 'pi-acp-last-agent-'));
+	const workspace = join(root, 'workspace');
+	mkdirSync(workspace);
+	const environment = new Map(['PI_CODING_AGENT_DIR', 'PI_OFFLINE'].map((name) => [name, process.env[name]]));
+	process.env.PI_CODING_AGENT_DIR = join(root, 'agent');
+	process.env.PI_OFFLINE = '1';
+	const services = [];
+	t.after(async () => {
+		for (const item of services) await item.dispose().catch(() => {});
+		for (const [name, value] of environment) { if (value === undefined) delete process.env[name]; else process.env[name] = value; }
+		try { rmSync(root, { recursive: true, force: true, maxRetries: 50, retryDelay: 100 }); }
+		catch (error) { console.warn('temp cleanup skipped:', error.message); }
+	});
+	const { AgentService } = await import('../packages/agent/src/index.ts');
+	const service = new AgentService(undefined, async () => true);
+	services.push(service);
+	await service.saveAgent({ displayName: 'Fake One', command: process.execPath, args: [FAKE_AGENT], env: { FAKE_ACP_LOAD: '1' }, enabled: true });
+	await service.saveAgent({ displayName: 'Fake Two', command: process.execPath, args: [FAKE_AGENT], env: { FAKE_ACP_LOAD: '1' }, enabled: true });
+
+	// Brand-new profile starts on Pi.
+	await service.init({ cwd: workspace, fresh: true });
+	assert.equal(service.getSnapshot().agent.id, 'pi');
+	assert.equal(service.getSnapshot().defaultAgentId, 'pi');
+
+	// Picking Fake One remembers it (along with its chosen model) for subsequent new conversations.
+	await service.setSessionAgent('fake-one');
+	await until(() => service.getSnapshot().agent.models?.length === 2, 'fake-one models load');
+	await service.setModel('acp:fake-one', 'fake-small');
+	await service.prompt('hello one');
+	await until(() => service.getSnapshot().status === 'idle' && service.getSnapshot().messages.some((message) => message.text === 'Done.'), 'fake-one turn settles');
+	const onePath = service.getSnapshot().sessionPath;
+	assert.equal(service.getSnapshot().defaultAgentId, 'fake-one');
+
+	await service.newSession();
+	assert.equal(service.getSnapshot().agent.id, 'fake-one', 'newSession inherits the last used agent');
+	assert.equal(service.getSnapshot().model, 'fake-small', 'remembered model still applies immediately');
+
+	// /new slash command inherits the last used agent too.
+	await service.executeSlashCommand({ cwd: workspace, sessionId: service.getSnapshot().sessionId, name: 'new' });
+	assert.equal(service.getSnapshot().agent.id, 'fake-one', '/new inherits the last used agent');
+
+	// Switching to Fake Two and chatting updates the remembered agent.
+	await service.setSessionAgent('fake-two');
+	await service.prompt('hello two');
+	await until(() => service.getSnapshot().status === 'idle' && service.getSnapshot().messages.some((message) => message.text === 'Done.'), 'fake-two turn settles');
+	await service.init({ cwd: workspace, fresh: true });
+	assert.equal(service.getSnapshot().agent.id, 'fake-two', 'init({ fresh: true }) inherits the last used agent');
+
+	// Merely viewing an older Fake One conversation without sending keeps Fake Two as default.
+	await service.switchSession(onePath);
+	assert.equal(service.getSnapshot().agent.id, 'fake-one');
+	assert.equal(service.getSnapshot().defaultAgentId, 'fake-two');
+	await service.newSession();
+	assert.equal(service.getSnapshot().agent.id, 'fake-two', 'reading an older conversation does not change the default agent');
+
+	// Sending a prompt in the older Fake One conversation makes Fake One the last used agent again.
+	await service.switchSession(onePath);
+	await service.prompt('follow up one');
+	await until(() => service.getSnapshot().status === 'idle' && service.getSnapshot().messages.filter((message) => message.role === 'user').length === 2, 'follow-up on fake-one settles');
+	await service.newSession();
+	assert.equal(service.getSnapshot().agent.id, 'fake-one', 'sending in an existing conversation updates the last used agent');
+
+	// Survives restart across a fresh AgentService instance.
+	await service.dispose();
+	const reopened = new AgentService(undefined, async () => true);
+	services.push(reopened);
+	await reopened.init({ cwd: workspace, fresh: true });
+	assert.equal(reopened.getSnapshot().agent.id, 'fake-one', 'remembered agent survives restart');
+	assert.equal(reopened.getSnapshot().defaultAgentId, 'fake-one');
+
+	// An unattended Pi run (automation) never inherits Fake One and never overwrites it.
+	await reopened.init({ cwd: workspace, fresh: true, agentId: 'pi', persistAgentPreference: false });
+	assert.equal(reopened.getSnapshot().agent.id, 'pi');
+	assert.equal(reopened.getSnapshot().defaultAgentId, 'fake-one');
+	await reopened.newSession();
+	assert.equal(reopened.getSnapshot().agent.id, 'fake-one');
+
+	// Disabling or removing the remembered agent gracefully falls back to Pi instead of failing.
+	const fakeOne = (await reopened.listAgents()).find((agent) => agent.id === 'fake-one');
+	await reopened.saveAgent({ id: 'fake-one', displayName: fakeOne.displayName, command: fakeOne.command, args: fakeOne.args, env: fakeOne.env, enabled: false });
+	await reopened.newSession();
+	assert.equal(reopened.getSnapshot().agent.id, 'pi', 'disabled remembered agent falls back to Pi');
+	assert.equal(reopened.getSnapshot().defaultAgentId, 'pi');
+
+	// Handoff to an enabled agent makes it the remembered agent, and switching back to Pi restores Pi.
+	await reopened.switchSession(onePath);
+	await reopened.handoffToAgent('fake-two');
+	assert.equal(reopened.getSnapshot().agent.id, 'fake-two');
+	assert.equal(reopened.getSnapshot().defaultAgentId, 'fake-two');
+	await reopened.newSession();
+	assert.equal(reopened.getSnapshot().agent.id, 'fake-two', 'handoff target becomes the last used agent');
+	await reopened.setSessionAgent('pi');
+	await reopened.newSession();
+	assert.equal(reopened.getSnapshot().agent.id, 'pi', 'switching back to Pi makes Pi the last used agent');
+});

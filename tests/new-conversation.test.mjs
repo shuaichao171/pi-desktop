@@ -518,3 +518,62 @@ test('a rejected deferred model choice is reported without failing the new conve
   assert.equal(useChatStore.getState().model,'model','the session keeps the model the runtime actually uses');
   assert.equal(useChatStore.getState().settingsError,'Model unavailable');
 });
+
+test('new conversation draft immediately reflects the remembered agent and clears stale model state', async () => {
+  const host = fixture();
+  const calls = [];
+  const claudeAgent = { id: 'claude-code', kind: 'acp', displayName: 'Claude Code', accentColor: '#D97757', capabilities: { streamsThinking: true, interrupt: true, steer: false, thinkingLevels: false, slashCommands: true, extensions: false, images: false, session: { branch: false, fork: false, editUserMessage: false, rewind: false } } };
+  const piAgent = { id: 'pi', kind: 'pi', displayName: 'Pi', accentColor: null, capabilities: { streamsThinking: true, interrupt: true, steer: true, thinkingLevels: true, slashCommands: true, extensions: true, images: true, session: { branch: true, fork: true, editUserMessage: true, rewind: true } } };
+  host.bridge.setSessionAgent = async (agentId) => { calls.push(['agent', agentId]); };
+  host.bridge.getAgentSnapshot = async () => ({ ...ready(), agent: piAgent, defaultAgentId: 'pi', status: 'idle', sequence: 1 });
+  useChatStore.setState({
+    agent: piAgent,
+    defaultAgentId: 'claude-code',
+    agents: [{ id: 'claude-code', displayName: 'Claude Code', command: 'claude-agent-acp', args: [], enabled: true, builtin: true, accentColor: '#D97757', readiness: 'ready', version: '1.0.0', resolvedCommand: 'claude-agent-acp' }],
+    model: 'gpt-5',
+    modelName: 'GPT-5',
+    modelProvider: 'openai',
+    thinkingLevel: 'high',
+    availableThinkingLevels: ['off', 'high'],
+  });
+
+  // Opening a new conversation while viewing an old Pi chat immediately shows Claude Code in the draft.
+  const opening = useChatStore.getState().newSession();
+  let draft = useChatStore.getState();
+  assert.equal(draft.agent.id, 'claude-code', 'draft reflects the last used agent immediately');
+  assert.equal(draft.agent.displayName, 'Claude Code');
+  assert.equal(draft.model, '', 'stale Pi model is cleared for the external agent draft');
+  assert.equal(draft.modelProvider, 'acp:claude-code');
+  assert.equal(draft.thinkingLevel, 'off');
+
+  // Switching the preparing draft back to Pi queues the agent change before the first input.
+  await useChatStore.getState().selectAgent('pi');
+  draft = useChatStore.getState();
+  assert.equal(draft.agent.id, 'pi');
+  assert.equal(draft.modelProvider, '');
+  const sending = useChatStore.getState().send('Use Pi instead', undefined, [], 'switch-back-input');
+  await tick();
+  useChatStore.getState().handleEvent({ ...ready(), agent: claudeAgent, defaultAgentId: 'claude-code' });
+  host.activations[0].resolve();
+  await Promise.all([opening, sending]);
+  assert.deepEqual(calls, [['agent', 'pi']]);
+  assert.equal(useChatStore.getState().agent.id, 'pi');
+  assert.equal(useChatStore.getState().defaultAgentId, 'pi');
+
+  // A disabled remembered agent falls back to Pi immediately in the draft.
+  useChatStore.setState({
+    agent: claudeAgent,
+    defaultAgentId: 'claude-code',
+    model: 'opus',
+    modelProvider: 'acp:claude-code',
+    agents: [{ id: 'claude-code', displayName: 'Claude Code', command: 'claude-agent-acp', args: [], enabled: false, builtin: true, accentColor: '#D97757', readiness: 'disabled', version: null, resolvedCommand: null }],
+  });
+  const fallbackOpening = useChatStore.getState().newSession();
+  assert.equal(useChatStore.getState().agent.id, 'pi', 'disabled agent falls back to Pi in the draft');
+  assert.equal(useChatStore.getState().model, '', 'stale external model is cleared when falling back to Pi');
+  assert.equal(useChatStore.getState().modelProvider, '');
+  await tick();
+  useChatStore.getState().handleEvent({ ...ready(), agent: piAgent, defaultAgentId: 'pi' });
+  host.activations[1].resolve();
+  await fallbackOpening;
+});

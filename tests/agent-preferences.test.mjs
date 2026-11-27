@@ -47,3 +47,29 @@ test('a malformed preferences file means nothing is remembered, and oversized va
 	assert.deepEqual(preferences.get('codex'), { options: { effort: 'high' } });
 	assert.equal(preferences.get('pi'), null);
 });
+
+test('agent preferences remember the last used agent across processes without losing per-agent settings', (t) => {
+	const root = mkdtempSync(join(tmpdir(), 'pi-agent-preferences-last-'));
+	t.after(() => rmSync(root, { recursive: true, force: true }));
+	const file = join(root, 'desktop-agent-preferences.json');
+	const preferences = new AgentPreferences(file);
+	assert.equal(preferences.getLastAgent(), null, 'no agent remembered yet');
+
+	preferences.remember('claude-code', { model: 'opus' });
+	preferences.rememberLastAgent('claude-code');
+	assert.equal(preferences.getLastAgent(), 'claude-code');
+	assert.deepEqual(preferences.get('claude-code'), { model: 'opus', options: {} });
+
+	// Updating per-agent settings keeps lastAgent intact, and another process sees it immediately.
+	new AgentPreferences(file).remember('codex', { model: 'gpt-5' });
+	assert.equal(preferences.getLastAgent(), 'claude-code');
+	new AgentPreferences(file).rememberLastAgent('pi');
+	assert.equal(preferences.getLastAgent(), 'pi', 'switching back to pi is remembered too');
+
+	// Invalid ids are ignored, and malformed lastAgent fields are dropped without breaking agents.
+	preferences.rememberLastAgent('../escape');
+	assert.equal(preferences.getLastAgent(), 'pi');
+	writeFileSync(file, JSON.stringify({ version: 1, lastAgent: 'INVALID!', agents: { codex: { model: 'gpt-5', options: {} } } }), 'utf8');
+	assert.equal(preferences.getLastAgent(), null);
+	assert.deepEqual(preferences.get('codex'), { model: 'gpt-5', options: {} });
+});

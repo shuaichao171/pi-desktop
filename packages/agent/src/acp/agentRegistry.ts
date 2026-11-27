@@ -123,6 +123,16 @@ export class AgentRegistry {
 		return this.list().find((agent) => agent.id === id);
 	}
 
+	/** Agent a fresh interactive conversation starts with: the last used one while still enabled, else Pi. */
+	defaultAgentId(): string {
+		const remembered = this.preferences.getLastAgent();
+		if (!remembered || remembered === PI_AGENT_ID) return PI_AGENT_ID;
+		// Re-read desktop-agents.json so split panes and pai windows see agents added or disabled in Settings.
+		this.stored = this.read();
+		const config = this.get(remembered);
+		return config?.enabled ? remembered : PI_AGENT_ID;
+	}
+
 	save(input: UiAgentSaveRequest): UiAgentConfig {
 		const request = requireAgentSaveRequest(input);
 		const id = request.id ?? this.newId(request.displayName);

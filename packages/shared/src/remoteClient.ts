@@ -791,6 +791,7 @@ export function applyRemoteAgentEvent(snapshot: AgentSnapshot | null, envelope: 
       ...(snapshot?.subagentFleet !== undefined ? { subagentFleet: snapshot.subagentFleet } : {}),
       ...(snapshot?.backgroundTasks ? { backgroundTasks: snapshot.backgroundTasks } : {}),
       ...(event.agent ? { agent: event.agent } : {}),
+      ...(event.defaultAgentId ? { defaultAgentId: event.defaultAgentId } : snapshot?.defaultAgentId ? { defaultAgentId: snapshot.defaultAgentId } : {}),
       status: snapshot?.status === 'busy' ? 'busy' : 'idle',
       model: event.model,
       modelName: event.modelName ?? null,

@@ -1,4 +1,4 @@
-import type { AgentSnapshot, UiAutomation } from '@pidesktop/shared';
+import { PI_AGENT_ID, type AgentSnapshot, type UiAutomation } from '@pidesktop/shared';
 import { createIsolatedAgentService } from './agentClient';
 
 export interface AutomationExecutionResult {
@@ -105,7 +105,7 @@ export function createAutomationExecutor(options: {
 			};
 			try {
 				const setup = async () => {
-					await step(() => agent.init({ cwd: task.cwd, fresh: true }));
+					await step(() => agent.init({ cwd: task.cwd, fresh: true, agentId: PI_AGENT_ID, persistAgentPreference: false }));
 					remember(await step(() => agent.getSnapshot()));
 					if (result.sessionPath) await options.onSessionCreated?.(result.sessionPath, task);
 				};

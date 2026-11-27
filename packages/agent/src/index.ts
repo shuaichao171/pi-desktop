@@ -94,7 +94,7 @@ import type {
 	UiSessionPeek,
 } from '@pidesktop/shared';
 import { createAgentError, normalizeAgentError } from '../../shared/src/agentErrors.ts';
-import { ACP_AGENT_CAPABILITIES, AGENT_APPROVAL_DEFAULT, AGENT_APPROVAL_OPTION, PI_AGENT_ID, piAgentDescriptor, type UiAgentApprovalMode, type UiAgentConfig, type UiAgentDescriptor, type UiAgentModel, type UiAgentOption, type UiAgentQuota, type UiAgentSaveRequest, type UiAgentStatus } from '../../shared/src/agentRuntimes.ts';
+import { ACP_AGENT_CAPABILITIES, AGENT_APPROVAL_DEFAULT, AGENT_APPROVAL_OPTION, isValidAgentId, PI_AGENT_ID, piAgentDescriptor, type UiAgentApprovalMode, type UiAgentConfig, type UiAgentDescriptor, type UiAgentModel, type UiAgentOption, type UiAgentQuota, type UiAgentSaveRequest, type UiAgentStatus } from '../../shared/src/agentRuntimes.ts';
 import { AgentRegistry } from './acp/agentRegistry.ts';
 import { AgentQuotaService } from './acp/agentQuota.ts';
 import { requireApprovalDetails, requireDialogResponse, type UiApprovalDetails, type UiApprovalScope } from '../../shared/src/approval.ts';
@@ -149,10 +149,12 @@ export interface AgentInitOptions {
 	fresh?: boolean;
 	/** Sessions currently owned by another worker must not be restored. */
 	excludeSessionPaths?: string[];
-	/** Agent of a fresh conversation (absent = Pi). */
+	/** Agent of a fresh conversation (absent = last used agent, or Pi). */
 	agentId?: string;
 	/** Context carried into a fresh conversation from another one. */
 	handoff?: Omit<HandoffRecord, 'direction'>;
+	/** Whether prompts/choices in this session update remembered agent preferences (default true; false for automations). */
+	persistAgentPreference?: boolean;
 }
 
 export interface ProjectTrustDecision {
@@ -584,6 +586,8 @@ class SingleAgentService {
 	private firstPersistHook: { file: string; run: () => void } | null = null;
 	/** The bound agent's configuration changed during a turn: restart its process once the turn ends. */
 	private acpConfigStale = false;
+	/** False for unattended runs (automations) so they never overwrite the user's last used agent. */
+	private persistAgentPreference = true;
 	private readonly agents: AgentRegistry;
 	private state: Omit<AgentSnapshot, 'sequence'> = {
 		status: 'uninitialized',
@@ -1384,8 +1388,9 @@ class SingleAgentService {
 	}
 
 	/** Create (or re-create) the agent session bound to a working directory. */
-	async init({ cwd, sessionPath, fresh, agentId, handoff }: AgentInitOptions): Promise<void> {
+	async init({ cwd, sessionPath, fresh, agentId, handoff, persistAgentPreference }: AgentInitOptions): Promise<void> {
 		await this.runLifecycle(() => {
+			this.persistAgentPreference = persistAgentPreference ?? true;
 			const timer = new InitPhaseTimer(sessionPath || !fresh ? 'restore' : 'fresh');
 			return initTimingContext.run(timer, () => this.initSession(cwd, sessionPath, fresh, { agentId, handoff })).then(
 				() => { this.reportInitTiming(timer.finish('success')); },
@@ -1428,6 +1433,9 @@ class SingleAgentService {
 			this.runtime = runtime;
 			await this.bindSession();
 			markInitPhase('bind');
+			if (!restorePath && start.agentId && this.persistAgentPreference) {
+				this.agents.preferences.rememberLastAgent(start.agentId);
+			}
 			this.fireReady();
 			this.fire({ type: 'status', status: 'idle', message: runtime.modelFallbackMessage });
 			markInitPhase('ready');
@@ -1522,7 +1530,9 @@ class SingleAgentService {
 	async prompt(text: string, behavior?: 'steer' | 'followUp', attachments: UiAttachment[] = [], expandPromptTemplates = true): Promise<void> {
 		// Real user input resets the background-task auto-wake chain guard; synthetic wakes call sendPrompt directly.
 		backgroundTaskManager.noteUserActivity(this.runtime?.session?.sessionId ?? '');
-		return this.sendPrompt(text, behavior, attachments, expandPromptTemplates);
+		const usedAgentId = this.agentBinding?.agentId ?? PI_AGENT_ID;
+		await this.sendPrompt(text, behavior, attachments, expandPromptTemplates);
+		if (this.persistAgentPreference) this.agents.preferences.rememberLastAgent(usedAgentId);
 	}
 
 	private async sendPrompt(text: string, behavior: 'steer' | 'followUp' | undefined, attachments: UiAttachment[], expandPromptTemplates: boolean): Promise<void> {
@@ -1889,13 +1899,19 @@ class SingleAgentService {
 
 	/** Agent and incoming handoff of a brand-new conversation, written before its runtime loads. */
 	private seedFreshSession(manager: SessionManager, start: Pick<AgentInitOptions, 'agentId' | 'handoff'>): void {
-		const agentId = start.agentId && start.agentId !== PI_AGENT_ID ? start.agentId : null;
-		if (agentId) {
-			const config = this.agents.get(agentId);
-			if (!config) throw new Error('Agent 不存在：' + agentId);
-			if (!config.enabled) throw new Error(config.displayName + ' 已停用，请在设置中启用');
-			manager.appendCustomEntry(AGENT_BINDING_CUSTOM_TYPE, { agentId });
+		let agentId: string | null = null;
+		if (start.agentId !== undefined) {
+			if (start.agentId !== PI_AGENT_ID) {
+				const config = this.agents.get(start.agentId);
+				if (!config) throw new Error('Agent 不存在：' + start.agentId);
+				if (!config.enabled) throw new Error(config.displayName + ' 已停用，请在设置中启用');
+				agentId = start.agentId;
+			}
+		} else {
+			const preferred = this.agents.defaultAgentId();
+			if (preferred !== PI_AGENT_ID) agentId = preferred;
 		}
+		if (agentId) manager.appendCustomEntry(AGENT_BINDING_CUSTOM_TYPE, { agentId });
 		const handoff = start.handoff;
 		if (handoff) {
 			const record: HandoffRecord = { ...handoff, direction: 'from' };
@@ -2009,7 +2025,13 @@ class SingleAgentService {
 		const session = this.runtime?.session;
 		if (!session || this.lifecycleOperation) throw new Error('会话正在切换，请稍后再试');
 		const current = this.agentBinding?.agentId ?? PI_AGENT_ID;
-		if (current === agentId) return;
+		if (current === agentId) {
+			if (!hasConversation(session.sessionManager.getEntries())) {
+				if (this.persistAgentPreference) this.agents.preferences.rememberLastAgent(agentId);
+				if (this.agentBinding && !this.acp) this.warmupAgent();
+			}
+			return;
+		}
 		if (hasConversation(session.sessionManager.getEntries())) throw new Error('对话已开始，Agent 已锁定；如需换用其他 Agent，请使用“交接到新会话”');
 		if (this.activePromptCalls > 0 || this.acp?.busy) throw new Error('会话正在运行，请稍后再试');
 		if (agentId !== PI_AGENT_ID) {
@@ -2020,6 +2042,7 @@ class SingleAgentService {
 		session.sessionManager.appendCustomEntry(AGENT_BINDING_CUSTOM_TYPE, { agentId });
 		this.agentBindingSession = null;
 		await this.bindAgent();
+		if (this.persistAgentPreference) this.agents.preferences.rememberLastAgent(agentId);
 		this.fireReady();
 		// An explicit choice: start right away so a missing install or sign-in surfaces now.
 		this.warmupAgent();
@@ -2679,6 +2702,7 @@ class SingleAgentService {
 			// navigation that re-runs reading-position restore (zcode scroll anchor).
 			...(resync ? { resync: true } : {}),
 			...this.selection(session),
+			defaultAgentId: this.agents.defaultAgentId(),
 			cwd: this.cwd,
 			sessionId: session.sessionId,
 			sessionPath: session.sessionFile ?? null,
@@ -3277,8 +3301,9 @@ export class AgentService {
 	getSnapshot(): AgentSnapshot {
 		const snapshot = this.active?.getSnapshot();
 		const sessionRuntimes = [...this.contexts.values()].flatMap((service) => this.runtimeSummary(service) ?? []);
-		return snapshot ? { ...snapshot, sequence: this.sequence, sessionRuntimes } : {
-			sequence: this.sequence, status: 'uninitialized', model: '', modelName: null, modelProvider: '',
+		const defaultAgentId = this.agents.defaultAgentId();
+		return snapshot ? { ...snapshot, defaultAgentId, sequence: this.sequence, sessionRuntimes } : {
+			sequence: this.sequence, defaultAgentId, status: 'uninitialized', model: '', modelName: null, modelProvider: '',
 			thinkingLevel: 'off', availableThinkingLevels: ['off'], contextUsage: null, cwd: '', sessionId: null,
 			sessionPath: null, messages: [], activities: [], queuedCount: 0, queuedMessages: [], fileChanges: [], fileChangeTurns: [], fileChangeActiveRunId: null, error: null,
 		};
@@ -3391,9 +3416,10 @@ export class AgentService {
 		return result;
 	}
 
-	async init({ cwd, sessionPath, fresh, excludeSessionPaths }: AgentInitOptions): Promise<void> {
+	async init({ cwd, sessionPath, fresh, excludeSessionPaths, agentId, persistAgentPreference }: AgentInitOptions): Promise<void> {
 		if (typeof cwd !== 'string' || !cwd.trim()) throw new Error('工作区路径无效');
 		if (sessionPath && fresh) throw new Error('不能同时指定已有会话和新会话');
+		if (agentId !== undefined && !isValidAgentId(agentId)) throw new Error('Agent 参数无效');
 		if (!sessionPath && !fresh) return this.runTransition(() => this.transitionSwitchWorkspace(cwd, excludeSessionPaths ?? []));
 		await this.runTransition(async () => {
 			if (sessionPath) {
@@ -3406,7 +3432,11 @@ export class AgentService {
 					return;
 				}
 			}
-			await this.openContext({ cwd, sessionPath, fresh });
+			await this.openContext({
+				cwd, sessionPath, fresh,
+				...(agentId !== undefined ? { agentId } : {}),
+				...(persistAgentPreference !== undefined ? { persistAgentPreference } : {}),
+			});
 			this.fire({ type: 'sessions-changed', cwd });
 		});
 	}
@@ -4582,7 +4612,7 @@ export class AgentService {
 		const snapshot = service.getSnapshot();
 		this.fire({ type: 'reset', cwd: snapshot.cwd });
 		if (snapshot.sessionId) this.fire({
-			type: 'ready', resumeKind: 'warm', agent: snapshot.agent, model: snapshot.model, modelName: snapshot.modelName ?? null, modelProvider: snapshot.modelProvider,
+			type: 'ready', resumeKind: 'warm', agent: snapshot.agent, defaultAgentId: this.agents.defaultAgentId(), model: snapshot.model, modelName: snapshot.modelName ?? null, modelProvider: snapshot.modelProvider,
 			thinkingLevel: snapshot.thinkingLevel, availableThinkingLevels: snapshot.availableThinkingLevels,
 			contextUsage: snapshot.contextUsage,
 			cwd: snapshot.cwd, sessionId: snapshot.sessionId, sessionPath: snapshot.sessionPath,

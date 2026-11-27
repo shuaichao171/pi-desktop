@@ -709,7 +709,7 @@ export interface UiSubagentActivity {
 export type AgentUiEvent =
   | { type: 'reset'; cwd: string }
   | { type: 'status'; status: AgentStatus; message?: string; attempt?: number; maxAttempts?: number }
-  | { type: 'ready'; /** Runtime that owns the conversation; absent means Pi (older hosts). */ agent?: UiAgentDescriptor; /** Same branch re-published as-is (settled-turn id swap, idle notice): a content change, not navigation — reading positions are not restored. */ resync?: boolean; resumeKind?: 'cold' | 'warm'; model: string; modelName?: string | null; modelProvider: string; thinkingLevel: UiThinkingLevel; availableThinkingLevels: UiThinkingLevel[]; contextUsage: UiContextUsage | null; cwd: string; sessionId: string; sessionPath: string | null; messages: UiMessage[]; activities: UiToolActivity[]; fileChanges: UiFileChange[]; fileChangeTurns?: UiFileChangeTurn[]; fileChangeActiveRunId?: string | null; historyTotal?: number; runs?: UiConversationRun[] }
+  | { type: 'ready'; /** Runtime that owns the conversation; absent means Pi (older hosts). */ agent?: UiAgentDescriptor; /** Agent a fresh interactive conversation will start with (`pi` or an enabled external agent id). */ defaultAgentId?: string; /** Same branch re-published as-is (settled-turn id swap, idle notice): a content change, not navigation — reading positions are not restored. */ resync?: boolean; resumeKind?: 'cold' | 'warm'; model: string; modelName?: string | null; modelProvider: string; thinkingLevel: UiThinkingLevel; availableThinkingLevels: UiThinkingLevel[]; contextUsage: UiContextUsage | null; cwd: string; sessionId: string; sessionPath: string | null; messages: UiMessage[]; activities: UiToolActivity[]; fileChanges: UiFileChange[]; fileChangeTurns?: UiFileChangeTurn[]; fileChangeActiveRunId?: string | null; historyTotal?: number; runs?: UiConversationRun[] }
   | { type: 'model'; agent?: UiAgentDescriptor; model: string; modelName?: string | null; modelProvider: string; thinkingLevel: UiThinkingLevel; availableThinkingLevels: UiThinkingLevel[]; contextUsage: UiContextUsage | null }
   | { type: 'context-usage'; contextUsage: UiContextUsage | null }
   | { type: 'thinking-level'; level: UiThinkingLevel }
@@ -755,6 +755,8 @@ export interface AgentSnapshot {
   backgroundTasks?: UiBackgroundTask[];
   /** Runtime that owns the loaded conversation; absent means Pi. */
   agent?: UiAgentDescriptor;
+  /** Agent a fresh interactive conversation will start with (`pi` or an enabled external agent id). */
+  defaultAgentId?: string;
   status: AgentStatus;
   statusMessage?: string;
   /** Auto-retry progress while the agent retries a failed model call (4.4). */
