@@ -37,6 +37,7 @@ export * from './cloudSync.ts';
 export * from './debugApi.ts';
 export * from './remoteAccess.ts';
 export * from './qrMatrix.ts';
+export * from './mobileApp.ts';
 export * from './remoteClient.ts';
 import type { RemoteAccessFeaturesBridge } from './remoteAccess';
 export * from './agentRuntimes.ts';

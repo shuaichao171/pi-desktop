@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
 	encodeQrMatrix,
+	mobileAppDownload,
 	renderQrSvgPath,
 	type RemoteAccessRole,
 	type RemoteCloudflareMode,
@@ -15,11 +16,20 @@ import { SettingsGroup, SettingsRow, SettingsSwitch } from './SettingsRows';
 import { formatDate } from '../dateFormat';
 import './remoteAccessPanel.css';
 
-function QrCodeSvg({ qr, label }: { qr: { size: number; path: string }; label: string }) {
+function encodeQr(text: string): { size: number; path: string } | null {
+	try {
+		const matrix = encodeQrMatrix(text);
+		return { size: matrix.size, path: renderQrSvgPath(matrix) };
+	} catch {
+		return null;
+	}
+}
+
+function QrCodeSvg({ qr, label, compact = false }: { qr: { size: number; path: string }; label: string; compact?: boolean }) {
 	const quiet = 4;
 	const viewSize = qr.size + quiet * 2;
 	return (
-		<div className="pd-remote-qr-frame">
+		<div className={`pd-remote-qr-frame${compact ? ' is-compact' : ''}`}>
 			<svg
 				role="img"
 				aria-label={label}
@@ -36,11 +46,14 @@ function QrCodeSvg({ qr, label }: { qr: { size: number; path: string }; label: s
 /**
  * Remote-access controls. `settings` (default) is the Settings → 远程访问 page;
  * `page` is the activity-bar 手机远控 view, which leads with the service status,
- * pairing QR and devices and keeps network/tunnel settings below them.
+ * then installing the phone app next to pairing, then devices, and keeps
+ * network/tunnel settings below them.
  */
 export function RemoteAccessPanel({ variant = 'settings' }: { variant?: 'settings' | 'page' } = {}) {
 	const { t, locale } = useT();
 	const bridge = useChatStore((s) => s.bridge);
+	const appVersion = useChatStore((s) => s.appInfo?.appVersion ?? null);
+	const isPage = variant === 'page';
 	const [state, setState] = useState<UiRemoteAccessState | null>(null);
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState<string | null>(null);
@@ -119,15 +132,11 @@ export function RemoteAccessPanel({ variant = 'settings' }: { variant?: 'setting
 		}
 	}, [createdPairing, state?.pairingGrants]);
 
-	const createdQr = useMemo(() => {
-		if (!createdPairing) return null;
-		try {
-			const matrix = encodeQrMatrix(createdPairing.pairingUrl);
-			return { size: matrix.size, path: renderQrSvgPath(matrix) };
-		} catch {
-			return null;
-		}
-	}, [createdPairing]);
+	const createdQr = useMemo(() => (createdPairing ? encodeQr(createdPairing.pairingUrl) : null), [createdPairing]);
+
+	// The phone app built from the same release as this desktop (the latest release for dev builds).
+	const appDownload = useMemo(() => mobileAppDownload(appVersion), [appVersion]);
+	const appDownloadQr = useMemo(() => (isPage ? encodeQr(appDownload.downloadUrl) : null), [isPage, appDownload.downloadUrl]);
 
 	useEffect(() => {
 		if (!state?.endpoints.length) return;
@@ -267,7 +276,6 @@ export function RemoteAccessPanel({ variant = 'settings' }: { variant?: 'setting
 	const cf = state?.cloudflare;
 	const ts = state?.tailscale;
 
-	const isPage = variant === 'page';
 	const statusCard = (
 		<div className="pd-remote-status-card">
 			<div className="pd-remote-status-main">
@@ -311,6 +319,58 @@ export function RemoteAccessPanel({ variant = 'settings' }: { variant?: 'setting
 				/>
 			</div>
 		</div>
+	);
+	// Running but only reachable from this computer: say why a phone cannot connect and how to fix it.
+	const localOnly = state?.config.exposureMode === 'local-only';
+	const unreachableNote = state?.running && !state.endpoints.some((ep) => ep.kind !== 'loopback') ? (
+		<div className="pd-remote-unreachable" role="note" data-role="unreachable-note">
+			<p>{t(localOnly ? 'settings.remote.unreachableLocalOnly' : 'settings.remote.unreachableNoLan')}</p>
+			{localOnly && (
+				<button
+					type="button"
+					className="pd-btn"
+					data-action="remote-use-lan"
+					disabled={busy}
+					onClick={() => void saveConfig({ exposureMode: 'lan' })}
+				>
+					{t('settings.remote.useLan')}
+				</button>
+			)}
+		</div>
+	) : null;
+	const appGroup = (
+		<SettingsGroup title={t('remote.page.groupApp')} description={t('remote.page.groupAppDesc')}>
+			<div className="pd-remote-app-card" data-testid="remote-app-download">
+				{appDownloadQr && <QrCodeSvg qr={appDownloadQr} label={t('remote.page.appQrAlt')} compact />}
+				<div className="pd-remote-app-copy">
+					<strong>Pi Desktop Remote</strong>
+					<span className="pd-remote-app-meta">
+						{appDownload.version
+							? t('remote.page.appVersion', { version: appDownload.version })
+							: t('remote.page.appLatest')}
+					</span>
+					<p>{t('remote.page.appScanHint')}</p>
+					<div className="pd-remote-qr-actions">
+						<button
+							type="button"
+							className="pd-btn"
+							data-action="copy-app-download"
+							onClick={() => void copyText('app-download', appDownload.downloadUrl)}
+						>
+							{copiedKey === 'app-download' ? t('settings.remote.copied') : t('remote.page.appCopyLink')}
+						</button>
+						<button
+							type="button"
+							className="pd-btn"
+							data-action="open-app-download"
+							onClick={() => window.open(appDownload.pageUrl, '_blank', 'noopener')}
+						>
+							{t('remote.page.appOpenPage')}
+						</button>
+					</div>
+				</div>
+			</div>
+		</SettingsGroup>
 	);
 	const networkRows = (
 		<>
@@ -740,11 +800,18 @@ export function RemoteAccessPanel({ variant = 'settings' }: { variant?: 'setting
 	return (
 		<div className={`pd-remote-panel${isPage ? ' is-page' : ''}`} data-setting={isPage ? undefined : 'remote-access'} data-remote-variant={variant}>
 			{isPage ? (
-				// Remote-control page: status, pairing QR and devices first; network and tunnel settings below.
+				// Remote-control page: status first, then installing the app beside pairing (the two steps of
+				// connecting a phone), then devices; network and tunnel settings below.
 				<>
-					<SettingsGroup title={t('remote.page.groupStatus')}>{statusCard}</SettingsGroup>
+					<SettingsGroup title={t('remote.page.groupStatus')}>
+						{statusCard}
+						{unreachableNote}
+					</SettingsGroup>
 					{feedback}
-					{pairingGroup}
+					<div className="pd-remote-connect">
+						{appGroup}
+						{pairingGroup}
+					</div>
 					{devicesGroup}
 					<SettingsGroup title={t('remote.page.groupNetwork')} description={t('remote.page.groupNetworkDesc')}>{networkRows}</SettingsGroup>
 					{tunnelsGroup}
@@ -757,6 +824,7 @@ export function RemoteAccessPanel({ variant = 'settings' }: { variant?: 'setting
 					</div>
 					<SettingsGroup title={t('settings.remote.groupService')}>
 						{statusCard}
+						{unreachableNote}
 						{networkRows}
 					</SettingsGroup>
 					{tunnelsGroup}

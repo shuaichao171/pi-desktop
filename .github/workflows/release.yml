@@ -33,6 +33,7 @@ jobs:
       sha: ${{ steps.plan.outputs.sha }}
       windows_signed: ${{ steps.plan.outputs.windows_signed }}
       macos: ${{ steps.plan.outputs.macos }}
+      android: ${{ steps.plan.outputs.android }}
     env:
       RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
       WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
@@ -42,6 +43,10 @@ jobs:
       APPLE_ID: ${{ secrets.APPLE_ID }}
       APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
       APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+      ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+      ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+      ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
     steps:
       - uses: actions/setup-node@v4
         with:
@@ -288,13 +293,91 @@ jobs:
             release/latest-linux.yml
           if-no-files-found: error
 
+  # The phone app ships with each desktop release, signed with the upload key from Actions Secrets.
+  build-android:
+    needs: prerequisites
+    if: needs.prerequisites.outputs.android == 'true'
+    runs-on: ubuntu-24.04
+    env:
+      RELEASE_VERSION: ${{ needs.prerequisites.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prerequisites.outputs.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.19.0'
+          cache: npm
+          cache-dependency-path: apps/mobile/package-lock.json
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Install mobile dependencies
+        working-directory: apps/mobile
+        run: npm ci
+      - name: Typecheck mobile app
+        working-directory: apps/mobile
+        run: npm run typecheck
+      - name: Generate the native Android project
+        working-directory: apps/mobile
+        run: npx expo prebuild --platform android --no-install
+      - name: Build the release APK with the upload key
+        working-directory: apps/mobile/android
+        shell: bash
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          PIDESKTOP_ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          PIDESKTOP_ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          PIDESKTOP_ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          umask 077
+          KEYSTORE_PATH="$RUNNER_TEMP/pi-desktop-remote-upload.jks"
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode --ignore-garbage > "$KEYSTORE_PATH"
+          test -s "$KEYSTORE_PATH"
+          PIDESKTOP_ANDROID_KEYSTORE="$KEYSTORE_PATH" ./gradlew assembleRelease -PreactNativeArchitectures=arm64-v8a --no-daemon --console=plain
+      - name: Verify upload-key signature, version and ABI
+        shell: bash
+        env:
+          PIDESKTOP_ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          PIDESKTOP_ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: |
+          set -euo pipefail
+          KEYSTORE_PATH="$RUNNER_TEMP/pi-desktop-remote-upload.jks"
+          apk=apps/mobile/android/app/build/outputs/apk/release/app-release.apk
+          test -s "$apk"
+          tools="$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -n 1)"
+          expected="$(keytool -list -v -keystore "$KEYSTORE_PATH" -alias "$PIDESKTOP_ANDROID_KEY_ALIAS" -storepass:env PIDESKTOP_ANDROID_KEYSTORE_PASSWORD |
+            sed -n 's/^[[:space:]]*SHA256: //p' | tr -d ':' | tr 'A-F' 'a-f')"
+          actual="$("$tools/apksigner" verify --print-certs "$apk" | sed -n 's/^Signer #1 certificate SHA-256 digest: //p')"
+          if [[ -z "$expected" || "$expected" != "$actual" ]]; then echo 'APK is not signed with the configured upload key' >&2; exit 1; fi
+          badging="$("$tools/aapt2" dump badging "$apk")"
+          code="$(node -p "require('./apps/mobile/plugins/releaseSigning.js').versionCodeFor(process.env.RELEASE_VERSION)")"
+          grep -F "package: name='com.pidesktop.remote' versionCode='$code' versionName='$RELEASE_VERSION'" <<< "$badging" >/dev/null ||
+            { echo "APK package or version differs from com.pidesktop.remote $RELEASE_VERSION ($code)" >&2; exit 1; }
+          grep -Fx "native-code: 'arm64-v8a'" <<< "$badging" >/dev/null || { echo 'APK must contain only arm64-v8a native code' >&2; exit 1; }
+          mkdir -p release
+          cp "$apk" "release/Pi-Desktop-Remote-$RELEASE_VERSION-android-arm64.apk"
+      - name: Remove the decoded upload key
+        if: always()
+        shell: bash
+        run: rm -f "$RUNNER_TEMP/pi-desktop-remote-upload.jks"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pi-desktop-android
+          path: release/Pi-Desktop-Remote-${{ needs.prerequisites.outputs.version }}-android-arm64.apk
+          if-no-files-found: error
+
   release:
-    needs: [prerequisites, build-windows, build-macos, build-linux]
+    needs: [prerequisites, build-windows, build-macos, build-linux, build-android]
     if: >-
       ${{ !cancelled() && needs.prerequisites.result == 'success' &&
       needs.build-windows.result == 'success' && needs.build-linux.result == 'success' &&
       (needs.build-macos.result == 'success' ||
-      (needs.prerequisites.outputs.macos == 'false' && needs.build-macos.result == 'skipped')) }}
+      (needs.prerequisites.outputs.macos == 'false' && needs.build-macos.result == 'skipped')) &&
+      (needs.build-android.result == 'success' ||
+      (needs.prerequisites.outputs.android == 'false' && needs.build-android.result == 'skipped')) }}
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -302,6 +385,7 @@ jobs:
       RELEASE_TAG: ${{ needs.prerequisites.outputs.tag }}
       RELEASE_VERSION: ${{ needs.prerequisites.outputs.version }}
       RELEASE_MACOS: ${{ needs.prerequisites.outputs.macos }}
+      RELEASE_ANDROID: ${{ needs.prerequisites.outputs.android }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -329,6 +413,7 @@ jobs:
           set -euo pipefail
           args=(release --version "$RELEASE_VERSION")
           if [[ "$RELEASE_MACOS" == true ]]; then args+=(--macos); fi
+          if [[ "$RELEASE_ANDROID" == true ]]; then args+=(--android); fi
           node .github/scripts/verify-release-artifacts.mjs "${args[@]}"
       - name: Refuse to replace an already published version
         uses: actions/github-script@v7

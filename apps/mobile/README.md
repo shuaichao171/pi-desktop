@@ -36,8 +36,34 @@ npx expo prebuild --platform android --no-install
 cd android
 ./gradlew assembleRelease -PreactNativeArchitectures=arm64-v8a          # real phones
 ./gradlew assembleRelease "-PreactNativeArchitectures=arm64-v8a,x86_64"  # + x86_64 emulators
-# -> android/app/build/outputs/apk/release/app-release.apk (signed with the debug key)
+# -> android/app/build/outputs/apk/release/app-release.apk
 ```
+
+### Version and signing
+
+- The app version is the desktop version from the repository's root `package.json` (`app.config.js`); the
+  release script bumps that one file for both. `versionCode` = X·1,000,000 + Y·1,000 + Z (0.5.14 → 5014), so each
+  desktop release installs over the previous APK.
+- `plugins/withReleaseSigning.js` makes the generated `android/app/build.gradle` sign release builds with the upload
+  key named by these Gradle properties or environment variables. Without them, release builds fall back to the debug
+  key: fine for testing, but Android refuses to update a debug-signed install with an upload-key build (uninstall
+  first, then pair again).
+
+| Variable | Value |
+| --- | --- |
+| `PIDESKTOP_ANDROID_KEYSTORE` | Absolute path of the upload keystore (`.jks`), kept outside the repository |
+| `PIDESKTOP_ANDROID_KEYSTORE_PASSWORD` | Keystore password |
+| `PIDESKTOP_ANDROID_KEY_ALIAS` | Key alias |
+| `PIDESKTOP_ANDROID_KEY_PASSWORD` | Key password (the same as the keystore password for PKCS12 keystores) |
+
+```bash
+export PIDESKTOP_ANDROID_KEYSTORE=/secure/place/pi-desktop-remote-upload.jks
+export PIDESKTOP_ANDROID_KEYSTORE_PASSWORD=… PIDESKTOP_ANDROID_KEY_ALIAS=pidesktop PIDESKTOP_ANDROID_KEY_PASSWORD=…
+./gradlew assembleRelease -PreactNativeArchitectures=arm64-v8a
+```
+
+Published releases build the APK in GitHub Actions with the key from Actions Secrets (see `docs/RELEASE.md`) and
+attach `Pi-Desktop-Remote-<version>-android-arm64.apk` to the desktop release.
 
 Notes:
 

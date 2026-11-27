@@ -53,3 +53,21 @@
 .pd-remote-badge.is-plaintext { background: color-mix(in srgb, var(--pd-warning, #f59e0b) 16%, transparent); color: var(--pd-warning, #d97706); }
 .pd-remote-plaintext-note { margin: 10px 0 0; padding: 8px 10px; border: 1px solid color-mix(in srgb, var(--pd-warning, #f59e0b) 35%, transparent); border-radius: var(--pd-radius-sm); background: color-mix(in srgb, var(--pd-warning, #f59e0b) 8%, transparent); color: var(--pd-text-subtle); font-size: var(--pd-font-sm); line-height: 1.5; }
 .pd-remote-hint { margin: 0; padding: 10px 14px; color: var(--pd-text-subtle); font-size: var(--pd-font-sm); line-height: 1.5; background: color-mix(in srgb, var(--pd-text) 2.5%, transparent); }
+.pd-remote-unreachable { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 14px; background: color-mix(in srgb, var(--pd-warning, #f59e0b) 8%, transparent); }
+.pd-remote-unreachable p { flex: 1 1 260px; margin: 0; color: var(--pd-text-subtle); font-size: var(--pd-font-sm); line-height: 1.5; }
+
+/* 手机远控 page: "install the app" beside "pairing" when there is room, stacked otherwise. */
+.pd-remote-panel.is-page { container-type: inline-size; }
+.pd-remote-connect { display: contents; }
+@container (min-width: 820px) {
+	.pd-remote-connect { display: grid; grid-template-columns: minmax(0, 400px) minmax(0, 1fr); column-gap: 18px; row-gap: 8px; align-items: start; margin-top: 22px; }
+	/* Subgrid rows line up both group heads and both cards. */
+	.pd-remote-connect > .pd-settings-group { display: grid; grid-row: span 2; grid-template-rows: subgrid; align-items: start; margin-top: 0; }
+}
+.pd-remote-app-card { display: flex; align-items: flex-start; gap: 14px; padding: 14px; }
+.pd-remote-qr-frame.is-compact { padding: 8px; }
+.pd-remote-qr-frame.is-compact svg { width: 144px; height: 144px; }
+.pd-remote-app-copy { display: flex; flex: 1 1 0; flex-direction: column; gap: 4px; min-width: 0; }
+.pd-remote-app-copy strong { color: var(--pd-text); font-size: var(--pd-font-caption); }
+.pd-remote-app-meta { color: var(--pd-text-subtle); font-size: var(--pd-font-sm); font-variant-numeric: tabular-nums; }
+.pd-remote-app-copy p { margin: 2px 0 6px; color: var(--pd-text-subtle); font-size: var(--pd-font-sm); line-height: 1.5; }

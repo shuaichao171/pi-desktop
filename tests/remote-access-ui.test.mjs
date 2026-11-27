@@ -84,10 +84,20 @@ test('Activity bar 手机远控 entry and the remote-control page layout (SSR)',
     assert.equal(page.includes('data-setting="remote-access-enabled"'), false, 'page switches do not duplicate Settings data-setting hooks');
     assert.equal(page.includes('data-setting="remote-tailscale"'), false);
     const groups = (html) => [...html.matchAll(/<section class="pd-settings-group" aria-label="([^"]+)"/g)].map((match) => match[1]);
-    assert.deepEqual(groups(page), ['remote.page.groupStatus', 'settings.remote.groupPairing', 'settings.remote.groupDevices', 'remote.page.groupNetwork', 'settings.remote.groupTunnels'].map((key) => translate(key)));
-    assert.deepEqual(groups(renderToStaticMarkup(createElement(RemoteAccessPanel))), ['settings.remote.groupService', 'settings.remote.groupTunnels', 'settings.remote.groupPairing', 'settings.remote.groupDevices'].map((key) => translate(key)), 'Settings keeps its original order');
+    assert.deepEqual(groups(page), ['remote.page.groupStatus', 'remote.page.groupApp', 'settings.remote.groupPairing', 'settings.remote.groupDevices', 'remote.page.groupNetwork', 'settings.remote.groupTunnels'].map((key) => translate(key)));
+    assert.match(page, /<div class="pd-remote-connect"><section class="pd-settings-group" aria-label="安装手机 App">/, 'installing the app sits beside pairing');
+    const settingsHtml = renderToStaticMarkup(createElement(RemoteAccessPanel));
+    assert.deepEqual(groups(settingsHtml), ['settings.remote.groupService', 'settings.remote.groupTunnels', 'settings.remote.groupPairing', 'settings.remote.groupDevices'].map((key) => translate(key)), 'Settings keeps its original order');
+    assert.equal(settingsHtml.includes('remote-app-download'), false, 'the download card is only on the 手机远控 page');
 
-    for (const key of ['activity.remoteView', 'remote.page.eyebrow', 'remote.page.title', 'remote.page.description', 'remote.page.groupStatus', 'remote.page.groupNetwork', 'remote.page.groupNetworkDesc', 'settings.remote.pairNeedsServer']) {
+    // Download card (SSR renders the store's initial state: no app version yet). The version → URL
+    // mapping is covered by the mobileAppDownload test in mobile-release-signing.test.mjs.
+    const card = (html) => html.match(/data-testid="remote-app-download"[\s\S]*?<\/section>/)?.[0] ?? '';
+    assert.match(card(page), /<svg role="img" aria-label="Pi Desktop Remote 下载二维码"/);
+    assert.ok(card(page).includes('Android · 最新版本'), 'no app version yet → latest release');
+    assert.ok(card(page).includes('data-action="copy-app-download"') && card(page).includes('data-action="open-app-download"'));
+
+    for (const key of ['activity.remoteView', 'remote.page.eyebrow', 'remote.page.title', 'remote.page.description', 'remote.page.groupStatus', 'remote.page.groupNetwork', 'remote.page.groupNetworkDesc', 'settings.remote.pairNeedsServer', 'remote.page.groupApp', 'remote.page.groupAppDesc', 'remote.page.appQrAlt', 'remote.page.appVersion', 'remote.page.appLatest', 'remote.page.appScanHint', 'remote.page.appCopyLink', 'remote.page.appOpenPage', 'settings.remote.unreachableLocalOnly', 'settings.remote.unreachableNoLan', 'settings.remote.useLan']) {
       assert.notEqual(translate(key, undefined, 'zh-CN'), key);
       assert.notEqual(translate(key, undefined, 'en-US'), key);
     }

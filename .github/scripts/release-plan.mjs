@@ -8,6 +8,7 @@ import { parseUpdateFeedUrl } from '../../packages/desktop/src/main/updateFeed.t
 const stableTag = /^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 const windowsSecrets = ['WIN_CSC_LINK', 'WIN_CSC_KEY_PASSWORD'];
 const macSecrets = ['MAC_CSC_LINK', 'MAC_CSC_KEY_PASSWORD', 'APPLE_ID', 'APPLE_APP_SPECIFIC_PASSWORD', 'APPLE_TEAM_ID'];
+const androidSecrets = ['ANDROID_KEYSTORE_BASE64', 'ANDROID_KEYSTORE_PASSWORD', 'ANDROID_KEY_ALIAS', 'ANDROID_KEY_PASSWORD'];
 const defaultFeed = 'https://github.com/shuaichao171/pi-desktop/releases/latest/download/';
 
 export function createReleasePlan({ tag, rootVersion, desktopVersion, env = {} }) {
@@ -20,10 +21,16 @@ export function createReleasePlan({ tag, rootVersion, desktopVersion, env = {} }
     throw new Error(`Windows signing requires both variables; missing: ${windowsSecrets.filter((name) => !present(name)).join(', ')}`);
   }
   const missingMac = macSecrets.filter((name) => !present(name));
+  // The phone app is only published signed with the upload key; a partial set is a configuration mistake.
+  const androidConfigured = androidSecrets.filter(present);
+  if (androidConfigured.length > 0 && androidConfigured.length < androidSecrets.length) {
+    throw new Error(`Android signing requires all four secrets; missing: ${androidSecrets.filter((name) => !present(name)).join(', ')}`);
+  }
   const feed = parseUpdateFeedUrl(env.PI_DESKTOP_UPDATE_URL || defaultFeed);
   if (!feed) throw new Error('PI_DESKTOP_UPDATE_URL must be a public HTTPS directory URL ending in /.');
   return { tag, version, feed, signWindows: windowsConfigured.length === windowsSecrets.length,
-    buildMac: missingMac.length === 0, partialMac: missingMac.length > 0 && missingMac.length < macSecrets.length, missingMac };
+    buildMac: missingMac.length === 0, partialMac: missingMac.length > 0 && missingMac.length < macSecrets.length, missingMac,
+    buildAndroid: androidConfigured.length === androidSecrets.length };
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
@@ -38,9 +45,9 @@ if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1]
   const taggedSha = execFileSync('git', ['rev-parse', `refs/tags/${plan.tag}^{commit}`], { encoding: 'utf8' }).trim();
   if (sha !== taggedSha) throw new Error('Checkout does not match the requested release tag.');
   if (process.env.GITHUB_OUTPUT) appendFileSync(process.env.GITHUB_OUTPUT,
-    `tag=${plan.tag}\nversion=${plan.version}\nsha=${sha}\nfeed=${plan.feed}\nwindows_signed=${plan.signWindows}\nmacos=${plan.buildMac}\n`);
+    `tag=${plan.tag}\nversion=${plan.version}\nsha=${sha}\nfeed=${plan.feed}\nwindows_signed=${plan.signWindows}\nmacos=${plan.buildMac}\nandroid=${plan.buildAndroid}\n`);
   if (plan.partialMac) console.warn(`::warning::macOS is skipped because credentials are incomplete. Missing: ${plan.missingMac.join(', ')}`);
-  const summary = `${plan.tag}: Windows ${plan.signWindows ? 'signed' : 'unsigned'}, Linux enabled, macOS ${plan.buildMac ? 'signed and notarized' : 'skipped'}.`;
+  const summary = `${plan.tag}: Windows ${plan.signWindows ? 'signed' : 'unsigned'}, Linux enabled, macOS ${plan.buildMac ? 'signed and notarized' : 'skipped'}, Android ${plan.buildAndroid ? 'signed APK' : 'skipped (no upload key)'}.`;
   console.log(summary);
   if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY,
     `${summary}\n\nUpdate feed: ${plan.feed}\n\nArtifacts remain a draft unless the manual publish option is selected.\n`);

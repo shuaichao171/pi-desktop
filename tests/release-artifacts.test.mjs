@@ -71,6 +71,22 @@ test('macOS requires both native ZIPs and DMGs and includes only optional ZIP bl
   await assert.rejects(f.verify(), /Required update artifact missing.*arm64\.zip/);
 });
 
+test('the phone APK is required only for releases built with the upload key', async (t) => {
+  const f = await fixture(t);
+  const apk = `Pi-Desktop-Remote-${version}-android-arm64.apk`;
+  await assert.rejects(verifyReleaseArtifacts(f.dir, { version, android: true }), /Missing release artifact: Pi-Desktop-Remote-/);
+  await f.artifact(apk);
+  assert.ok(!(await f.verify()).map((path) => basename(path)).includes(apk), 'an APK from a build without the key is not published');
+  const files = (await verifyReleaseArtifacts(f.dir, { version, android: true })).map((path) => basename(path));
+  assert.equal(files.at(-1), apk);
+  await writeFile(join(f.dir, apk), '');
+  await assert.rejects(verifyReleaseArtifacts(f.dir, { version, android: true }), /nonempty regular file/);
+  await f.artifact(apk);
+  const result = spawnSync(process.execPath, [script, f.dir, '--version', version, '--android'], { encoding: 'utf8' });
+  assert.equal(result.status, 0, result.stderr);
+  assert.ok(result.stdout.trim().split('\n').map((path) => basename(path)).includes(apk));
+});
+
 test('every required binary, blockmap and manifest must exist as a nonempty regular file', async (t) => {
   const f = await fixture(t, { macos: true });
   for (const path of await f.verify()) {

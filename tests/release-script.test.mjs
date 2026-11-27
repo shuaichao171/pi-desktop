@@ -16,7 +16,7 @@ const ASSET_AT = '2026-09-25T01:00:09Z';
 const LATER_AT = '2026-09-25T02:00:00Z';
 const manifests = ['package.json', 'packages/desktop/package.json'];
 
-function buildRun(version = VERSION, { macos = false } = {}) {
+function buildRun(version = VERSION, { macos = false, android = false } = {}) {
   const job = (name, conclusion = 'success', steps = []) => ({ name, status: 'completed', conclusion,
     startedAt: '2026-09-25T00:00:00Z', completedAt: VERIFIED_AT, steps });
   return { databaseId: RUN_ID, headSha: RELEASE_SHA, headBranch: `v${version}`, event: 'push',
@@ -25,17 +25,19 @@ function buildRun(version = VERSION, { macos = false } = {}) {
     jobs: [job('prerequisites'), job('build-windows'), job('build-linux'),
       ...(macos ? [job('build-macos (macos-15-intel, x64, x86_64)'), job('build-macos (macos-15, arm64, arm64)')]
         : [job('build-macos', 'skipped')]),
+      job('build-android', android ? 'success' : 'skipped'),
       job('release', 'success', [{ name: 'Verify draft contains exactly this release batch', number: 10,
         status: 'completed', conclusion: 'success', startedAt: ASSET_AT, completedAt: VERIFIED_AT }])],
   };
 }
 
-function draftRelease(version = VERSION, { macos = false } = {}) {
+function draftRelease(version = VERSION, { macos = false, android = false } = {}) {
   const names = [`Pi-Desktop-Setup-${version}-x64.exe`, `Pi-Desktop-Portable-${version}-x64.exe`,
     `Pi-Desktop-Setup-${version}-x64.exe.blockmap`, 'latest.yml', `Pi-Desktop-${version}-x64.AppImage`,
     `Pi-Desktop-${version}-x64.deb`, 'latest-linux.yml'];
   if (macos) names.push('latest-mac.yml', ...['x64', 'arm64'].flatMap((arch) =>
     ['dmg', 'zip'].map((ext) => `Pi-Desktop-${version}-${arch}.${ext}`)));
+  if (android) names.push(`Pi-Desktop-Remote-${version}-android-arm64.apk`);
   return { id: 73, tag_name: `v${version}`, draft: true, prerelease: false,
     html_url: `https://github.com/${REPOSITORY}/releases/tag/v${version}`,
     assets: names.map((name, index) => ({ id: index + 1, name, size: 100 + index, state: 'uploaded', updated_at: ASSET_AT })),
@@ -291,6 +293,21 @@ test('draft validation requires complete successful jobs and exactly the support
   assert.throws(() => verifyDraft(draftRelease(), withMac, VERSION));
   withMac.jobs.find((job) => job.name.startsWith('build-macos (')).conclusion = 'skipped';
   assert.throws(() => verifyDraft(draftRelease(VERSION, { macos: true }), withMac, VERSION));
+});
+
+test('draft validation requires the phone APK exactly when the Android job built it', () => {
+  const withAndroid = buildRun(VERSION, { android: true });
+  assert.doesNotThrow(() => verifyDraft(draftRelease(VERSION, { android: true }), withAndroid, VERSION));
+  assert.throws(() => verifyDraft(draftRelease(), withAndroid, VERSION), /缺少/);
+  assert.throws(() => verifyDraft(draftRelease(VERSION, { android: true }), buildRun(), VERSION), /草稿产物无效/);
+  for (const mutate of [
+    (run) => { run.jobs = run.jobs.filter((job) => job.name !== 'build-android'); },
+    (run) => { run.jobs.find((job) => job.name === 'build-android').conclusion = 'failure'; },
+    (run) => { run.jobs.push({ ...run.jobs.find((job) => job.name === 'build-android') }); },
+  ]) {
+    const run = buildRun(); mutate(run);
+    assert.throws(() => verifyDraft(draftRelease(), run, VERSION), /Android/);
+  }
 });
 
 test('asset verification uses the successful batch verification step time, not the later run update time', () => {

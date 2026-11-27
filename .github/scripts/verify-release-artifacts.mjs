@@ -9,7 +9,7 @@ import YAML from 'yaml';
 const STABLE_VERSION = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 
 /** Validate the complete batch before returning the exact assets to publish. */
-export async function verifyReleaseArtifacts(directory, { version, macos = false } = {}) {
+export async function verifyReleaseArtifacts(directory, { version, macos = false, android = false } = {}) {
   if (typeof version !== 'string' || version !== version.trim() || !STABLE_VERSION.test(version)) {
     throw new Error('Release version must be a stable version such as 0.2.0');
   }
@@ -20,8 +20,10 @@ export async function verifyReleaseArtifacts(directory, { version, macos = false
   const appImage = `Pi-Desktop-${version}-x64.AppImage`;
   const deb = `Pi-Desktop-${version}-x64.deb`;
   const macFiles = ['x64', 'arm64'].flatMap((arch) => ['dmg', 'zip'].map((ext) => `Pi-Desktop-${version}-${arch}.${ext}`));
+  // The phone APK has no update manifest; its build job already checked the upload-key signature and version.
+  const apk = `Pi-Desktop-Remote-${version}-android-arm64.apk`;
   const required = [setup, portable, `${setup}.blockmap`, 'latest.yml', appImage, deb, 'latest-linux.yml',
-    ...(macos ? [...macFiles, 'latest-mac.yml'] : [])];
+    ...(macos ? [...macFiles, 'latest-mac.yml'] : []), ...(android ? [apk] : [])];
   const optional = [`${portable}.blockmap`, `${appImage}.blockmap`,
     ...(macos ? macFiles.filter((name) => name.endsWith('.zip')).map((name) => `${name}.blockmap`) : [])];
   const artifacts = new Map();
@@ -95,10 +97,10 @@ export async function verifyReleaseArtifacts(directory, { version, macos = false
 async function main() {
   const { values, positionals } = parseArgs({
     allowPositionals: true,
-    options: { version: { type: 'string' }, macos: { type: 'boolean', default: false } },
+    options: { version: { type: 'string' }, macos: { type: 'boolean', default: false }, android: { type: 'boolean', default: false } },
   });
   if (positionals.length !== 1 || !values.version) {
-    throw new Error('Usage: node .github/scripts/verify-release-artifacts.mjs release --version 0.2.0 [--macos]');
+    throw new Error('Usage: node .github/scripts/verify-release-artifacts.mjs release --version 0.2.0 [--macos] [--android]');
   }
   const files = await verifyReleaseArtifacts(positionals[0], values);
   const output = `${files.join('\n')}\n`;

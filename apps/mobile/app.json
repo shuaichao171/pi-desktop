@@ -2,7 +2,6 @@
   "expo": {
     "name": "Pi Desktop Remote",
     "slug": "pi-desktop-remote",
-    "version": "0.1.0",
     "orientation": "portrait",
     "scheme": "pidesktop",
     "userInterfaceStyle": "automatic",
@@ -63,7 +62,8 @@
         }
       ],
       "expo-asset",
-      "expo-font"
+      "expo-font",
+      "./plugins/withReleaseSigning"
     ]
   }
 }

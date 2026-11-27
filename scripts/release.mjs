@@ -80,11 +80,15 @@ export function verifyDraft(release, run, version) {
       (mac.some((job) => job.conclusion === 'success') && (mac.length !== 2 || mac.some((job) => job.conclusion !== 'success')))) {
     throw new Error('macOS 作业状态不完整。');
   }
+  // The phone APK is built only when the upload key is configured; otherwise the job is skipped.
+  const android = jobs.filter((job) => job.name === 'build-android');
+  if (android.length !== 1 || !['success', 'skipped'].includes(android[0].conclusion)) throw new Error('Android 作业状态不完整。');
   const setup = `Pi-Desktop-Setup-${version}-x64.exe`;
   const portable = `Pi-Desktop-Portable-${version}-x64.exe`;
   const linux = `Pi-Desktop-${version}-x64.AppImage`;
   const required = [setup, portable, `${setup}.blockmap`, 'latest.yml', linux, `Pi-Desktop-${version}-x64.deb`, 'latest-linux.yml'];
   const optional = [`${portable}.blockmap`, `${linux}.blockmap`];
+  if (android[0].conclusion === 'success') required.push(`Pi-Desktop-Remote-${version}-android-arm64.apk`);
   if (mac.every((job) => job.conclusion === 'success')) {
     required.push('latest-mac.yml');
     for (const arch of ['x64', 'arm64']) {

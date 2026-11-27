@@ -12,6 +12,19 @@ test('release defaults allow Windows and Linux without signing credentials', () 
   assert.equal(plan.signWindows, false);
   assert.equal(plan.buildMac, false);
   assert.equal(plan.feed, 'https://github.com/shuaichao171/pi-desktop/releases/latest/download/');
+  assert.equal(plan.buildAndroid, false, 'no upload key: the phone APK is skipped, the desktop release continues');
+});
+
+test('the phone APK is built only with the complete upload-key set; a partial set fails without exposing values', () => {
+  const names = ['ANDROID_KEYSTORE_BASE64', 'ANDROID_KEYSTORE_PASSWORD', 'ANDROID_KEY_ALIAS', 'ANDROID_KEY_PASSWORD'];
+  const env = Object.fromEntries(names.map((name) => [name, 'test-secret-value']));
+  assert.equal(createReleasePlan({ ...input, env }).buildAndroid, true);
+  assert.equal(JSON.stringify(createReleasePlan({ ...input, env })).includes('test-secret-value'), false);
+  for (const name of names) {
+    const partial = { ...env, [name]: '  ' };
+    assert.throws(() => createReleasePlan({ ...input, env: partial }), (error) =>
+      /Android signing/.test(error.message) && error.message.includes(name) && !error.message.includes('test-secret-value'));
+  }
 });
 
 test('release signing is enabled only for complete credential sets and never exposes their values', () => {
@@ -57,14 +70,15 @@ test('release plan pins the checked-out tag commit and rejects a different commi
   const output = join(dir, 'github-output.txt');
   const env = { ...process.env, GITHUB_OUTPUT: output, GITHUB_STEP_SUMMARY: '', PI_DESKTOP_UPDATE_URL: '',
     WIN_CSC_LINK: '', WIN_CSC_KEY_PASSWORD: '', MAC_CSC_LINK: '', MAC_CSC_KEY_PASSWORD: '',
-    APPLE_ID: '', APPLE_APP_SPECIFIC_PASSWORD: '', APPLE_TEAM_ID: '' };
+    APPLE_ID: '', APPLE_APP_SPECIFIC_PASSWORD: '', APPLE_TEAM_ID: '',
+    ANDROID_KEYSTORE_BASE64: '', ANDROID_KEYSTORE_PASSWORD: '', ANDROID_KEY_ALIAS: '', ANDROID_KEY_PASSWORD: '' };
   const script = resolve('.github/scripts/release-plan.mjs');
   const invoke = () => spawnSync(process.execPath, [script, '--tag', 'v0.1.1'], { cwd: dir, env, encoding: 'utf8' });
   const first = invoke();
   assert.equal(first.status, 0, first.stderr);
   const outputs = await readFile(output, 'utf8');
   assert.ok(outputs.includes(`sha=${sha}\n`));
-  assert.match(outputs, /windows_signed=false\nmacos=false\n/);
+  assert.match(outputs, /windows_signed=false\nmacos=false\nandroid=false\n/);
   git('commit', '--allow-empty', '-m', 'Unrelated later commit');
   const rejected = invoke();
   assert.notEqual(rejected.status, 0);

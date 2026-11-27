@@ -14,6 +14,7 @@ https://github.com/shuaichao171/pi-desktop/releases/latest/download/
 - Windows Portable：仍需下载新版并手动替换，不使用 Setup 的自动安装流程。
 - Linux AppImage：支持软件内更新；DEB 由系统包管理器更新。
 - macOS：只有配置完整签名与公证凭据后，发布流程才构建正式 DMG／ZIP；未配置时跳过，Windows／Linux 继续发布。
+- 安卓手机端：配置上传密钥（见下文「安卓手机端签名」）后，同一个 Release 附带 `Pi-Desktop-Remote-X.Y.Z-android-arm64.apk`；未配置时跳过，其他平台继续发布。手机端没有软件内更新，用户从 Release 页下载新版覆盖安装。桌面端「手机远控」页的下载二维码直接指向同版本 Release 里的这个 APK（开发版指向最新 Release 页，见 `packages/shared/src/mobileApp.ts`），所以改文件名或跳过安卓构建都会让该版本的二维码下载失败。
 
 Windows 更新安装器识别 `--updated` 并进入静默模式，因此旧版客户端升级到包含该改动的安装包时同样生效。手动双击 Setup 仍显示安装向导并可选择安装目录。若原安装位置需要管理员权限，Windows 的 UAC 授权仍需用户确认。
 
@@ -66,7 +67,7 @@ node scripts/release.mjs 0.2.0
 1. 检查工具、GitHub 登录、分支和远程仓库，同步根目录 `package.json` 与 `packages/desktop/package.json` 的应用版本。
 2. 使用冻结锁文件安装依赖，校验 Pi SDK 版本，运行类型检查、测试和生产构建。
 3. 暂存整个工作区并创建发布提交，创建匹配的 `vX.Y.Z` 标签，再原子推送 `main` 和本次标签，确保两者一起成功或一起失败。
-4. 跟踪本次标签对应的 `Desktop release` 工作流。GitHub Actions 始终构建 Windows／Linux；macOS 仅在完整签名与公证凭据可用时构建。
+4. 跟踪本次标签对应的 `Desktop release` 工作流。GitHub Actions 始终构建 Windows／Linux；macOS 仅在完整签名与公证凭据可用时构建；安卓 APK 仅在上传密钥配置齐全时构建。
 5. 工作流成功后，校验草稿 Release 的产物，再自动公开并设为 Latest，供软件内更新使用。
 
 Windows 签名凭据可选；macOS 的条件见下文“签名配置”。双击启动的发布窗口在成功或失败后都会暂停，方便查看结果。`--dry-run` 只读取并预览发布计划，不安装依赖、不更新版本、不提交或推送，也不修改 Release。
@@ -128,6 +129,31 @@ macOS 正式发布需完整配置以下 Secrets：
 | `APPLE_TEAM_ID` | Apple 团队 ID |
 
 未配置或仅部分配置时跳过 macOS，并在工作流中说明原因。有完整配置时，签名和公证失败会阻止该次发布。
+
+### 安卓手机端签名
+
+手机端版本号跟随桌面端（根目录 `package.json`），`versionCode` 按 X·1,000,000 + Y·1,000 + Z 计算（如 `0.5.14` → 5014），一键发布无需另外改版本。APK 必须用固定的上传密钥签名：以后的每个版本都要用同一把密钥，否则用户无法覆盖安装。**密钥和密码丢失后无法再给已安装的用户推送更新，请离线备份，不要放进仓库。**
+
+1. 在仓库以外的位置生成密钥（按提示设置密码；PKCS12 密钥库的密钥密码与密钥库密码相同）：
+   ```powershell
+   keytool -genkeypair -v -keystore pi-desktop-remote-upload.jks -alias pidesktop -keyalg RSA -keysize 2048 -validity 10000
+   ```
+2. 配置 Actions Secrets（`gh secret set` 不带 `--body` 时会提示粘贴，值不进入命令历史）：
+   ```powershell
+   [Convert]::ToBase64String([IO.File]::ReadAllBytes("pi-desktop-remote-upload.jks")) | gh secret set ANDROID_KEYSTORE_BASE64 --repo shuaichao171/pi-desktop
+   gh secret set ANDROID_KEYSTORE_PASSWORD --repo shuaichao171/pi-desktop
+   gh secret set ANDROID_KEY_ALIAS --repo shuaichao171/pi-desktop --body pidesktop
+   gh secret set ANDROID_KEY_PASSWORD --repo shuaichao171/pi-desktop
+   ```
+
+| Secret | 内容 |
+| --- | --- |
+| `ANDROID_KEYSTORE_BASE64` | 上传密钥库 `.jks` 的 base64 |
+| `ANDROID_KEYSTORE_PASSWORD` | 密钥库密码 |
+| `ANDROID_KEY_ALIAS` | 密钥别名 |
+| `ANDROID_KEY_PASSWORD` | 密钥密码 |
+
+四项都未配置时跳过安卓；只配置部分时发布在准备阶段报错。`build-android` 作业生成 arm64 Release APK，并校验签名证书与该密钥一致、包名、`versionName`／`versionCode` 与本次版本一致后才上传，解码出的密钥在作业结束时删除。此前用 debug 签名自行安装的手机需先卸载一次再安装正式包，并重新配对。
 
 ## 自定义更新服务器
 
