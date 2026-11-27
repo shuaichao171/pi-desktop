@@ -41,6 +41,15 @@
 .pd-fleet-node-preview { color: var(--pd-text-weak); font-size: var(--pd-font-xs); }
 .pd-fleet-node-meta { display: flex; flex: 0 0 auto; flex-direction: column; align-items: flex-end; gap: 5px; font-size: var(--pd-font-xs); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .pd-fleet-node-state { color: var(--pd-fleet-tone); }
+/* One dispatch of several agents: a light heading over its lanes, not another agent row. */
+.pd-fleet-batch-row { display: flex; align-items: center; gap: 7px; width: 100%; min-height: 30px; padding: 4px 6px; border: 0; border-radius: var(--pd-radius-md); background: transparent; text-align: start; color: var(--pd-text-weak); font: inherit; font-size: var(--pd-font-xs); cursor: pointer; }
+.pd-fleet-batch-row:hover { background: var(--pd-surface-hover); }
+.pd-fleet-batch-row:focus-visible { outline: 2px solid var(--pd-focus-border); outline-offset: -2px; }
+.pd-fleet-batch-row > svg:first-child { flex: 0 0 auto; color: var(--pd-fleet-tone); }
+.pd-fleet-batch-label { overflow: hidden; color: var(--pd-text-subtle); font-weight: var(--pd-weight-medium); text-overflow: ellipsis; white-space: nowrap; }
+.pd-fleet-batch-count { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pd-fleet-batch-row time { flex: 0 0 auto; font-variant-numeric: tabular-nums; }
+.pd-fleet-batch > .pd-fleet-children { margin-inline-start: 12px; }
 .pd-fleet-detail-nav { display: flex; justify-content: space-between; gap: 8px; padding: 10px 10px 6px; }
 .pd-fleet-detail-heading { display: flex; align-items: center; gap: 7px; padding: 6px 16px; }
 .pd-fleet-detail-heading h4 { flex: 1; min-width: 0; margin: 0; overflow-wrap: anywhere; font-size: var(--pd-font-sm); }

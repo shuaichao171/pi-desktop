@@ -38,6 +38,42 @@ function containsLive(node: UiSubagentFleetNode): boolean {
 	return isLive(node) || Boolean(node.children?.some(containsLive));
 }
 
+/**
+ * The plugin reports one dispatch (parallel, chain or workflow) as a run whose
+ * `step` children are the agents doing the work, labelled with every agent name
+ * joined ("analyst, analyst"). That run is a batch head, not one more agent.
+ */
+const isBatch = (node: UiSubagentFleetNode) => node.kind !== 'host-step' && Boolean(node.children?.some((child) => child.kind === 'step'));
+
+/** The agents a node stands for: batch heads only through their lanes; host monitor rows never count. */
+function agentsOf(node: UiSubagentFleetNode): UiSubagentFleetNode[] {
+	if (node.kind === 'host-step') return [];
+	const nested = (node.children ?? []).flatMap(agentsOf);
+	return isBatch(node) ? nested : [node, ...nested];
+}
+
+/** A batch with a single lane is just that agent; its row shows the lane's own name. */
+function soleLane(node: UiSubagentFleetNode): UiSubagentFleetNode | undefined {
+	return isBatch(node) && node.children?.length === 1 ? node.children[0] : undefined;
+}
+
+/**
+ * "analyst, analyst, reviewer" → "analyst ×2, reviewer"; keeps the plugin's "+N more" tail.
+ * One repeated name stays bare ("analyst"): the agent count shown beside it already says how many.
+ */
+function batchTitle(label: string): string {
+	const parts = label.split(', ');
+	const tail = parts.length > 1 && /^\+\d+ more$/.test(parts.at(-1) ?? '') ? parts.pop() : undefined;
+	const counts = new Map<string, number>();
+	for (const part of parts) counts.set(part, (counts.get(part) ?? 0) + 1);
+	if (counts.size === 1 && !tail) return parts[0] ?? label;
+	return [...[...counts].map(([name, count]) => count > 1 ? `${name} ×${count}` : name), ...(tail ? [tail] : [])].join(', ');
+}
+
+function displayLabel(node: UiSubagentFleetNode): string {
+	return soleLane(node)?.label ?? (isBatch(node) ? batchTitle(node.label) : node.label);
+}
+
 /** Link a transcript record only when its exact run ID is in this session's fleet. */
 export function useSubagentLink(runId: string | null | undefined) {
 	const context = useContext(FleetContext);
@@ -51,13 +87,15 @@ export function FleetCard() {
 	const fleet = useChatStore((s) => s.subagentFleet);
 	const context = useContext(FleetContext);
 	if (!context || !fleet?.runs.length) return null;
-	const running = fleet.runs.filter(containsLive).length;
+	const agents = fleet.runs.flatMap(agentsOf);
+	const shown = agents.length ? agents : fleet.runs;
+	const running = shown.filter(isLive).length;
 	return <div className="pd-fleet-card">
 		<button type="button" className="pd-fleet-strip" onClick={context.toggle} aria-expanded={context.open} aria-controls={context.panelId} aria-label={t(context.open ? 'fleet.collapse' : 'fleet.expand')}>
 			<Icon name="plugins" width="15" height="15" />
 			<span className="pd-fleet-strip-title">{t('fleet.title')}</span>
-			<span className="pd-fleet-summary">{t(running ? 'fleet.activeCount' : 'fleet.total', { count: running || fleet.runs.length })}</span>
-			<span className="pd-fleet-avatars" aria-hidden="true">{fleet.runs.slice(0, 3).map((node) => <span key={`${node.kind}:${node.id}`} data-fleet-state={node.state}>{node.label.slice(0, 1).toUpperCase()}</span>)}</span>
+			<span className="pd-fleet-summary">{t(running ? 'fleet.activeCount' : 'fleet.total', { count: running || shown.length })}</span>
+			<span className="pd-fleet-avatars" aria-hidden="true">{shown.slice(0, 3).map((node) => <span key={`${node.kind}:${node.id}`} data-fleet-state={node.state}>{node.label.slice(0, 1).toUpperCase()}</span>)}</span>
 			<Icon name={context.open ? 'chevronRight' : 'panel'} width="14" height="14" />
 		</button>
 	</div>;
@@ -170,15 +208,40 @@ export function SubagentWorkspace({ children }: { children: ReactNode }) {
 		setSelection(target); setRequest(null); setSteering(false); setMessage('');
 		if (node.kind !== 'host-step') void inspect(target);
 	};
-	const renderRow = (node: UiSubagentFleetNode, rootId: string): ReactNode => <li className="pd-fleet-node" key={`${node.kind}:${node.id}`} data-fleet-state={node.state}>
-		<button type="button" className="pd-fleet-node-row" onClick={() => choose(node, rootId)} disabled={pending}>
-			<span className="pd-fleet-avatar" aria-hidden="true">{node.label.slice(0, 1).toUpperCase()}<StateGlyph state={node.state} /></span>
-			<span className="pd-fleet-node-copy"><span className="pd-fleet-node-label">{node.label}</span><span className="pd-fleet-node-preview" title={activityByRun.get(node.id)?.task ?? undefined}>{activityByRun.get(node.id)?.task ?? node.hostStep?.detail ?? node.activity?.currentTool ?? t(`fleet.state.${node.state}`)}</span></span>
-			<span className="pd-fleet-node-meta"><span className="pd-fleet-node-state">{t(`fleet.state.${node.state}`)}</span><time>{elapsed(node, now)}</time></span>
-			<Icon name="chevronRight" width="12" height="12" />
-		</button>
-		{node.children?.length ? <ul className="pd-fleet-children">{node.children.map((child) => renderRow(child, rootId))}</ul> : null}
-	</li>;
+	const batchCount = (node: UiSubagentFleetNode) => t(node.kind === 'workflow' ? 'fleet.batchSteps' : 'fleet.batchAgents', { count: agentsOf(node).length });
+	const renderRow = (node: UiSubagentFleetNode, rootId: string): ReactNode => {
+		const lane = soleLane(node);
+		const children = lane ? lane.children : node.children;
+		const nested = children?.length ? <ul className="pd-fleet-children">{children.map((child) => renderRow(child, rootId))}</ul> : null;
+		if (isBatch(node) && !lane) {
+			// A dispatch of several agents: a light heading over its lanes, never an agent row of its own.
+			const title = batchTitle(node.label);
+			const count = batchCount(node);
+			return <li className="pd-fleet-node pd-fleet-batch" key={`${node.kind}:${node.id}`} data-fleet-state={node.state}>
+				<button type="button" className="pd-fleet-batch-row" onClick={() => choose(node, rootId)} disabled={pending} aria-label={`${title} · ${count} · ${t(`fleet.state.${node.state}`)}`}>
+					<Icon name="layers" width="13" height="13" aria-hidden="true" />
+					<span className="pd-fleet-batch-label">{title}</span>
+					<span className="pd-fleet-batch-count">{count}</span>
+					<time>{elapsed(node, now)}</time>
+					<Icon name="chevronRight" width="12" height="12" />
+				</button>
+				{nested}
+			</li>;
+		}
+		const activity = node.activity ?? lane?.activity;
+		const label = displayLabel(node);
+		return <li className="pd-fleet-node" key={`${node.kind}:${node.id}`} data-fleet-state={node.state}>
+			<button type="button" className="pd-fleet-node-row" onClick={() => choose(node, rootId)} disabled={pending}>
+				<span className="pd-fleet-avatar" aria-hidden="true">{label.slice(0, 1).toUpperCase()}<StateGlyph state={node.state} /></span>
+				<span className="pd-fleet-node-copy"><span className="pd-fleet-node-label">{label}</span><span className="pd-fleet-node-preview" title={activityByRun.get(node.id)?.task ?? undefined}>{activityByRun.get(node.id)?.task ?? node.hostStep?.detail ?? activity?.currentTool ?? t(`fleet.state.${node.state}`)}</span></span>
+				<span className="pd-fleet-node-meta"><span className="pd-fleet-node-state">{t(`fleet.state.${node.state}`)}</span><time>{elapsed(node, now)}</time></span>
+				<Icon name="chevronRight" width="12" height="12" />
+			</button>
+			{nested}
+		</li>;
+	};
+	// Counts are agents, not dispatches: one parallel call of two agents reads as 2.
+	const agentTotal = runs.flatMap(agentsOf).length || runs.length;
 	const groups: { nodes: UiSubagentFleetNode[]; title: string }[] = [
 		{ nodes: runs.filter(containsLive), title: 'fleet.active' },
 		{ nodes: runs.filter((node) => !containsLive(node)), title: 'fleet.done' },
@@ -187,11 +250,11 @@ export function SubagentWorkspace({ children }: { children: ReactNode }) {
 		<div className={`pd-fleet-workspace${open && runs.length ? ' has-subagents-panel' : ''}`}>
 			{children}
 			{open && runs.length > 0 && <aside id={panelId} className="pd-fleet-sidepanel" ref={panelRef} tabIndex={-1} aria-label={t('fleet.title')} onKeyDown={(event) => { if (event.key === 'Escape') { event.stopPropagation(); close(); } }}>
-				<header className="pd-fleet-panel-header"><Icon name="plugins" width="15" height="15" /><h3>{t('fleet.title')}</h3><span>{runs.length}</span><button type="button" onClick={close} aria-label={t('fleet.close')}><Icon name="close" width="15" height="15" /></button></header>
+				<header className="pd-fleet-panel-header"><Icon name="plugins" width="15" height="15" /><h3>{t('fleet.title')}</h3><span>{agentTotal}</span><button type="button" onClick={close} aria-label={t('fleet.close')}><Icon name="close" width="15" height="15" /></button></header>
 				{selection ? <>
 					<div className="pd-fleet-detail-nav"><button type="button" onClick={() => { setSelection(null); setRequest(null); }}><Icon name="arrowLeft" width="13" height="13" />{t('fleet.back')}</button>{selected && selected.kind !== 'host-step' && commands.has('subagents-inspect-rpc') && <button type="button" disabled={pending} onClick={() => void inspect(selection)} aria-label={t('fleet.refresh')}><Icon name="refresh" width="14" height="14" /></button>}</div>
 					{selected ? <>
-						<div className="pd-fleet-detail-heading" data-fleet-state={selected.state}><StateGlyph state={selected.state} /><h4>{selected.label}</h4><span>{t(`fleet.state.${selected.state}`)}</span></div>
+						<div className="pd-fleet-detail-heading" data-fleet-state={selected.state}><StateGlyph state={selected.state} /><h4>{displayLabel(selected)}{isBatch(selected) && !soleLane(selected) ? ` · ${batchCount(selected)}` : ''}</h4><span>{t(`fleet.state.${selected.state}`)}</span></div>
 						<div className="pd-fleet-detail-meta">{activityByRun.get(selected.id)?.model && <code>{activityByRun.get(selected.id)?.model}</code>}{selected.activity?.currentTool && <code>{selected.activity.currentTool}</code>}{selected.activity?.turnCount != null && <span>{t('fleet.turns', { count: selected.activity.turnCount })}</span>}{selected.activity?.toolCount != null && <span>{t('fleet.tools', { count: selected.activity.toolCount })}</span>}<time>{elapsed(selected, now)}</time></div>
 						<div className="pd-fleet-detail-scroll" aria-busy={Boolean(request && !reply && !request.error)}>
 							{reply ? <InspectContent reply={reply} /> : request?.error ? <p className="pd-fleet-inspect-error" role="alert">{request.error}</p> : <p className="pd-fleet-empty" role="status">{t(request ? 'fleet.loading' : selected.kind === 'host-step' ? 'fleet.hostStep' : 'fleet.inspectUnavailable')}</p>}
@@ -205,7 +268,7 @@ export function SubagentWorkspace({ children }: { children: ReactNode }) {
 						</div>}
 					</> : <p className="pd-fleet-empty">{t('fleet.runRemoved')}</p>}
 				</> : <div className="pd-fleet-panel-scroll">
-					{groups.map(({ nodes, title }) => nodes.length > 0 && <section className="pd-fleet-group" key={title}><h4>{t(title)}<span>{nodes.length}</span></h4><ul className="pd-fleet-runs">{nodes.map((node) => renderRow(node, node.id))}</ul></section>)}
+					{groups.map(({ nodes, title }) => nodes.length > 0 && <section className="pd-fleet-group" key={title}><h4>{t(title)}<span>{nodes.flatMap(agentsOf).length || nodes.length}</span></h4><ul className="pd-fleet-runs">{nodes.map((node) => renderRow(node, node.id))}</ul></section>)}
 					{fleet && fleet.omittedRuns + fleet.omittedChildren > 0 && <p className="pd-fleet-empty">{t('fleet.omitted', { count: fleet.omittedRuns + fleet.omittedChildren })}</p>}
 				</div>}
 			</aside>}

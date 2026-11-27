@@ -701,6 +701,8 @@ export const translations: Record<string, { 'zh-CN': string; 'en-US': string }> 
   'fleet.total': { 'zh-CN': '{count} 个代理', 'en-US': '{count} agents' },
   'fleet.active': { 'zh-CN': '进行中', 'en-US': 'Active' },
   'fleet.activeCount': { 'zh-CN': '{count} 个进行中', 'en-US': '{count} active' },
+  'fleet.batchAgents': { 'zh-CN': '{count} 个子代理', 'en-US': '{count} agents' },
+  'fleet.batchSteps': { 'zh-CN': '{count} 个步骤', 'en-US': '{count} steps' },
   'fleet.done': { 'zh-CN': '已结束', 'en-US': 'Done' },
   'fleet.back': { 'zh-CN': '返回子代理列表', 'en-US': 'Back to subagents' },
   'fleet.openAgent': { 'zh-CN': '查看 {name} 的对话', 'en-US': 'View {name} transcript' },

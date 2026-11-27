@@ -33,8 +33,17 @@ export default async function subagentScenarios(review) {
         { id: 'step-a', kind: 'step', label: '组件审查', state: 'complete', startedAt: now - 8000, endedAt: now - 1000 },
         { id: 'step-b', kind: 'step', label: '窄屏检查', state: 'queued' },
       ] },
+      // One parallel dispatch of two agents: the plugin labels the run with every agent name joined.
+      { id: 'analysts', kind: 'subagent', label: 'rea-analyst, rea-analyst', state: 'running', startedAt: now - 20000, children: [
+        { id: 'lane-supplement', kind: 'step', label: 'analyst-supplement-1', state: 'running', startedAt: now - 20000, activity: { currentTool: 'bash' } },
+        { id: 'lane-fix', kind: 'step', label: 'analyst-fix-1', state: 'running', startedAt: now - 20000 },
+      ] },
       { id: 'review', kind: 'subagent', label: 'reviewer', state: 'complete', startedAt: now - 90000, endedAt: now - 20000 },
       { id: 'failed', kind: 'subagent', label: 'tester', state: 'failed', startedAt: now - 45000, endedAt: now - 5000 },
+      // A run with a single lane is that one agent.
+      { id: 'solo', kind: 'subagent', label: 'rea-analyst', state: 'complete', startedAt: now - 70000, endedAt: now - 30000, children: [
+        { id: 'solo-lane', kind: 'step', label: 'analyst-solo-1', state: 'complete', startedAt: now - 70000, endedAt: now - 30000 },
+      ] },
     ] };
     f.snapshot.historyTotal = 2;
     f.snapshot.status = 'busy';
@@ -45,11 +54,19 @@ export default async function subagentScenarios(review) {
   await review.assert('!document.querySelector(".pd-fleet-sidepanel")', 'Agents keep a compact entry point until opened');
   await review.assert('document.querySelector(".pd-subagent-head .pd-activity-head")?.getAttribute("aria-expanded") === "false"', 'Delegation records stay compact while running');
   await review.click('.pd-fleet-strip');
-  await review.waitFor('document.querySelectorAll(".pd-fleet-node-row").length === 7');
-  await review.assert('[...document.querySelectorAll(".pd-fleet-group > h4")].map(x=>x.textContent).join("|") === "进行中3|已结束2"', 'The side panel separates active and finished runs');
+  await review.waitFor('document.querySelectorAll(".pd-fleet-node-row").length === 9');
+  await review.assert('[...document.querySelectorAll(".pd-fleet-group > h4")].map(x=>x.textContent).join("|") === "进行中6|已结束3"', 'Groups count the agents doing the work, not the dispatches');
+  await review.assert('document.querySelector(".pd-fleet-panel-header span")?.textContent === "9" && document.querySelector(".pd-fleet-summary")?.textContent === "5 个进行中"', 'The panel and entry strip count agents, so one parallel call of two reads as two');
+  await review.assert('(() => { const batch=[...document.querySelectorAll(".pd-fleet-batch")].find(x=>x.querySelector(".pd-fleet-batch-label")?.textContent === "rea-analyst"); return Boolean(batch) && !batch.querySelector(":scope > .pd-fleet-node-row") && batch.querySelector(".pd-fleet-batch-count").textContent === "2 个子代理" && [...batch.querySelectorAll(".pd-fleet-children .pd-fleet-node-label")].map(x=>x.textContent).join("|") === "analyst-supplement-1|analyst-fix-1"; })()', 'A parallel dispatch is a heading over its two agents; a repeated name is shown once beside the count');
+  await review.assert('(() => { const labels=[...document.querySelectorAll(".pd-fleet-node-label")].map(x=>x.textContent); return labels.includes("analyst-solo-1") && !labels.includes("rea-analyst"); })()', 'A single-lane run shows as one agent row named after its lane');
   await review.assert('document.querySelector(".pd-fleet-node-preview")?.textContent.includes("检查代理状态")', 'Exact run IDs connect the task preview with its delegation record');
   await review.assert('(() => { const p=document.querySelector(".pd-fleet-sidepanel").getBoundingClientRect(), c=document.querySelector(".pd-conversation-body").getBoundingClientRect(); return c.right <= p.left+1 && p.width === 360; })()', 'Wide layout keeps chat and agents side by side');
   await review.screenshot('subagents-overview');
+  await review.click('.pd-fleet-batch-row[aria-label^="rea-analyst ·"]');
+  await review.waitFor('document.querySelector(".pd-fleet-detail-heading h4")?.textContent === "rea-analyst · 2 个子代理"');
+  await review.assert('window.__fleetCalls.at(-1).args.endsWith(" analysts --lines 60") && Boolean(document.querySelector(".pd-fleet-detail-actions"))', 'The batch heading opens the whole dispatch, which keeps its stop and steer controls');
+  await review.clickText('.pd-fleet-detail-nav button', '返回子代理列表');
+  await review.waitFor('document.querySelectorAll(".pd-fleet-node-row").length === 9');
   await review.evaluate(`(() => { const f=window.__modelReview; window.__fleetFirstRow=document.querySelector('.pd-fleet-node-row'); f.snapshot.subagentFleet.runs[0].updatedAt=Date.now(); f.snapshot.subagentFleet.runs[0].activity.currentTool='grep'; f.emitAgent({type:'subagent-fleet',fleet:structuredClone(f.snapshot.subagentFleet)}); })()`);
   await review.assert('window.__fleetFirstRow === document.querySelector(".pd-fleet-node-row")', 'Progress updates preserve the identity and position of an agent row');
   await review.evaluate('window.__fleetBefore = document.querySelector(".pd-fleet-node-meta time").textContent');
@@ -57,7 +74,7 @@ export default async function subagentScenarios(review) {
   await review.click('.pd-fleet-node-row');
   await review.waitFor('Boolean(document.querySelector(".pd-fleet-inspect-task"))');
   await review.assert('document.querySelector(".pd-fleet-detail-heading h4")?.textContent === "researcher" && document.querySelector(".pd-fleet-detail-meta").textContent.includes("review-model")', 'Detail retains identity, model and live state');
-  await review.assert('window.__fleetCalls[0].name === "subagents-inspect-rpc" && window.__fleetCalls[0].args.includes(" research --lines 60")', 'Inspection addresses the selected run');
+  await review.assert('window.__fleetCalls.at(-1).name === "subagents-inspect-rpc" && window.__fleetCalls.at(-1).args.includes(" research --lines 60")', 'Inspection addresses the selected run');
   await review.assert('window.__fleetCalls.every(call => call.control === true)', 'Panel commands are controls, not conversation turns');
   await review.screenshot('subagents-detail');
   await review.clickText('.pd-fleet-detail-actions button', '引导');
