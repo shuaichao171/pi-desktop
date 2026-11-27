@@ -78,6 +78,22 @@ jobs:
             if (Test-Path -LiteralPath $smokeStderr) { Get-Content -LiteralPath $smokeStderr }
           }
 
+  # The Expo app lives outside the pnpm workspace (npm-installed, see apps/mobile/README.md),
+  # so `pnpm typecheck` never sees it; it shares the remote protocol code with packages/shared.
+  mobile-typecheck:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.19.0'
+          cache: npm
+          cache-dependency-path: apps/mobile/package-lock.json
+      - run: npm ci --no-audit --no-fund --ignore-scripts
+        working-directory: apps/mobile
+      - run: npm run typecheck
+        working-directory: apps/mobile
+
   package-macos:
     # Full packaging stays on main and pull requests; feature branches use the verify job.
     if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'

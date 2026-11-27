@@ -3,6 +3,8 @@
  *
  * Persists configuration in `userData/remote-access.json` and auth credentials
  * in `userData/remote-access-auth.json` (keeping secrets out of desktopSettings.json).
+ * The Cloudflare tunnel token is stored encrypted with Electron safeStorage; only
+ * the in-memory config holds it in clear.
  * Coordinates the HTTP/WS RemoteServer, LAN interface discovery, Tailscale Serve,
  * and managed `cloudflared` tunnel subprocess.
  */
@@ -28,6 +30,7 @@ import {
 } from '@pidesktop/shared/remoteAccess';
 import type { AgentEventEnvelope, AgentSnapshot, UiExtensionDialogRequest } from '@pidesktop/shared';
 import { broadcastToRenderers, handleRendererInvoke } from '../rendererIpc.ts';
+import { decryptSecret, encryptSecret, isEncodedSecret } from '../secretStorage.ts';
 import { readStateFile, writeStateFileAsync } from '../stateFiles.ts';
 import { RemoteAuthStore } from './authStore.ts';
 import { CloudflaredManager } from './cloudflaredService.ts';
@@ -79,6 +82,11 @@ function isPersistedConfig(value: unknown): value is PersistedRemoteAccessConfig
     typeof c.cloudflareTunnelToken === 'string' &&
     typeof c.cloudflarePublicHostname === 'string'
   );
+}
+
+/** On-disk form: the tunnel token is never written in clear. */
+function toStoredConfig(config: PersistedRemoteAccessConfig): PersistedRemoteAccessConfig {
+  return { ...config, cloudflareTunnelToken: encryptSecret(config.cloudflareTunnelToken) };
 }
 
 function sanitizeMachineLabel(raw: string | undefined, fallback: string): string {
@@ -159,8 +167,15 @@ export function registerRemoteAccessIpc(options: {
   const managedBinDir = join(options.userDataDir, 'bin');
 
   let config: PersistedRemoteAccessConfig;
+  let legacyPlainToken = false;
   try {
-    config = readStateFile(configPath, DEFAULT_CONFIG, isPersistedConfig);
+    const stored = readStateFile(configPath, DEFAULT_CONFIG, isPersistedConfig);
+    // Files written before encryption hold the raw token; read it once, then rewrite it encrypted.
+    legacyPlainToken = stored.cloudflareTunnelToken.length > 0 && !isEncodedSecret(stored.cloudflareTunnelToken);
+    config = {
+      ...stored,
+      cloudflareTunnelToken: legacyPlainToken ? stored.cloudflareTunnelToken : decryptSecret(stored.cloudflareTunnelToken),
+    };
   } catch {
     config = DEFAULT_CONFIG();
   }
@@ -186,6 +201,12 @@ export function registerRemoteAccessIpc(options: {
     opQueue = next;
     return next;
   };
+  if (legacyPlainToken) {
+    // Queued with config writes so a later settings change can never be overwritten by the migration.
+    void serialize(() => writeStateFileAsync(configPath, toStoredConfig(config))).catch((error: unknown) => {
+      console.error('远程访问配置加密迁移失败 / failed to encrypt the stored tunnel token:', error);
+    });
+  }
 
   const emitState = () => {
     if (disposed) return;
@@ -267,7 +288,7 @@ export function registerRemoteAccessIpc(options: {
   async function applyConfigInternal(next: PersistedRemoteAccessConfig): Promise<UiRemoteAccessState> {
     const previous = config;
     config = next;
-    await writeStateFileAsync(configPath, next);
+    await writeStateFileAsync(configPath, toStoredConfig(next));
     lastError = null;
 
     const bindHost = next.exposureMode === 'lan' ? '0.0.0.0' : '127.0.0.1';

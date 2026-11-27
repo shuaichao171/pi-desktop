@@ -291,6 +291,14 @@ export async function createRemoteServer(
         return;
       }
 
+      // The socket only lives as long as its session: an expired or revoked session
+      // stops here even if the revocation callback has not closed the socket yet.
+      if (!deps.authStore.touchSession(session.sessionId)) {
+        sendRpcError(msg.id, 'unauthorized', 'Session expired or revoked');
+        ws.close(4401, 'Session expired');
+        return;
+      }
+
       const method = msg.method as RemoteRpcMethod;
       if (!Object.hasOwn(REMOTE_RPC_REQUIRED_SCOPE, method)) {
         sendRpcError(msg.id, 'unknown_method', `Unknown RPC method: ${msg.method}`);
@@ -366,6 +374,8 @@ export async function createRemoteServer(
   server.on('upgrade', handleUpgrade);
 
   const heartbeatTimer = setInterval(() => {
+    // Expired sessions close their sockets through the revocation callback.
+    deps.authStore.sweepExpired();
     const now = Date.now();
     for (const entry of [...connectedSockets]) {
       if (!entry.ws.isOpen()) {

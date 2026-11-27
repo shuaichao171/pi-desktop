@@ -147,3 +147,38 @@ test('Pairing URL builder/parser and QR code matrix encoder work across realisti
   const path = renderQrSvgPath(qr);
   assert.ok(path.startsWith('M0,0h1v1h-1z'));
 });
+
+test('RemoteAuthStore expires connected sessions too and slides expiry on WebSocket RPC use', async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'pi-remote-auth-expiry-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  t.mock.timers.enable({ apis: ['Date'], now: Date.parse('2026-01-01T00:00:00Z') });
+  const day = 24 * 60 * 60 * 1000;
+
+  const { RemoteAuthStore } = await import('../packages/desktop/src/main/remote/authStore.ts');
+  const store = new RemoteAuthStore(join(dir, 'remote-access-auth.json'));
+  const pair = async (label) => {
+    const { code } = await store.createPairingGrant({ label, role: 'full' });
+    const exchanged = await store.exchangePairingCode({ code });
+    assert.ok(exchanged);
+    return exchanged.session.sessionId;
+  };
+  const idle = await pair('Idle phone');
+  const active = await pair('Active phone');
+  const revoked = [];
+  store.onSessionRevoked((id) => revoked.push(id));
+  // Both devices hold a live socket: being connected must not keep a session alive.
+  store.markConnected(idle, '10.0.0.2');
+  store.markConnected(active, '10.0.0.3');
+
+  // RPC traffic is activity and slides the 30-day window; the idle one never slides.
+  t.mock.timers.tick(20 * day);
+  assert.equal(store.touchSession(active), true);
+  t.mock.timers.tick(11 * day);
+  store.sweepExpired();
+  assert.deepEqual(revoked, [idle], 'the expired session is revoked so its sockets close');
+  assert.equal(store.touchSession(idle), false, 'an expired session fails the per-RPC check');
+  assert.deepEqual(store.listSessions().map((s) => s.sessionId), [active]);
+  assert.equal(store.mintWebSocketTicket(idle), null);
+  assert.equal(store.touchSession(active), true);
+  await store.flush();
+});

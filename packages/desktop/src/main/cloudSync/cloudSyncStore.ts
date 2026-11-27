@@ -6,9 +6,9 @@
  * marker records which format is in use. Secrets never travel to the renderer.
  */
 
-import * as electron from 'electron';
 import { access } from 'node:fs/promises';
 import { join } from 'node:path';
+import { decryptSecret, encryptSecret } from '../secretStorage.ts';
 import { backupCorruptStateFileAsync, CorruptStateFileError, readStateFileAsync, writeStateFileAsync } from '../stateFiles.ts';
 import type { UiCloudSyncKind } from '@pidesktop/shared';
 
@@ -77,28 +77,6 @@ export function isValidCloudSyncConfig(value: unknown): value is StoredCloudSync
 	} catch {
 		return false;
 	}
-}
-
-// Test stubs provide only part of Electron's surface; access safeStorage defensively.
-const safeStorage = electron.safeStorage;
-
-function encryptSecret(value: string): string {
-	if (!value) return '';
-	if (typeof safeStorage?.isEncryptionAvailable === 'function' && safeStorage.isEncryptionAvailable()) {
-		try { return `enc:${Buffer.from(safeStorage.encryptString(value)).toString('base64')}`; } catch { /* fall through to plain */ }
-	}
-	return `plain:${Buffer.from(value, 'utf8').toString('base64')}`;
-}
-
-function decryptSecret(stored: string): string {
-	if (!stored) return '';
-	if (stored.startsWith('enc:')) {
-		try { return safeStorage?.decryptString(Buffer.from(stored.slice(4), 'base64')) ?? ''; } catch { return ''; }
-	}
-	if (stored.startsWith('plain:')) {
-		try { return Buffer.from(stored.slice(6), 'base64').toString('utf8'); } catch { return ''; }
-	}
-	return '';
 }
 
 export interface CloudSyncStore {

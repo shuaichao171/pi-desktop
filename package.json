@@ -19,6 +19,7 @@
     "dist:linux": "pnpm --filter @pidesktop/desktop dist:linux",
     "test": "node scripts/run-tests.mjs",
     "typecheck": "pnpm -r --if-present typecheck",
+    "typecheck:mobile": "npm --prefix apps/mobile run typecheck",
     "clean": "pnpm -r --if-present clean",
     "test:model-settings-ui": "pnpm build && node tests/fixtures/model-settings/preflight.mjs && node tests/fixtures/model-settings/run.mjs --run"
   },

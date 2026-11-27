@@ -6,7 +6,9 @@
  * - Pairing codes are high-entropy, hashed with SHA-256 on disk, single-use,
  *   and time-bounded; raw secrets are returned ONLY at creation time.
  * - Client sessions carry explicit role/scopes, slide-expire after 30 days of
- *   inactivity, and immediately emit revocation callbacks to close live sockets.
+ *   inactivity (HTTP calls and WebSocket RPCs both count as activity), and emit
+ *   revocation callbacks to close live sockets — on explicit revocation and when
+ *   a session expires, so an open socket never outlives its session.
  * - WebSocket tickets are in-memory, 60-second TTL, single-use, and cleared on
  *   session revocation so long-lived access tokens never appear in WS URLs.
  */
@@ -26,6 +28,8 @@ const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const WS_TICKET_TTL_MS = 60 * 1000;
 const MAX_PAIRING_GRANTS = 32;
 const MAX_SESSIONS = 64;
+/** Sliding-expiry writes are throttled so a busy client does not rewrite the auth file per request. */
+const SESSION_SLIDE_THROTTLE_MS = 5 * 60_000;
 
 interface StoredPairingGrant {
   readonly id: string;
@@ -258,6 +262,7 @@ export class RemoteAuthStore {
     this.state.sessions.unshift(stored);
     if (this.state.sessions.length > MAX_SESSIONS) {
       const removed = this.state.sessions.splice(MAX_SESSIONS);
+      for (const old of removed) this.dropSessionRuntime(old.sessionId);
       for (const old of removed) this.notifySessionRevoked(old.sessionId);
     }
     await this.persist();
@@ -279,13 +284,7 @@ export class RemoteAuthStore {
     for (const session of this.state.sessions) {
       if (Date.parse(session.expiresAt) <= now) continue;
       if (constantTimeHexEqual(session.tokenHash, candidateHash)) {
-        // Slide session expiry on active use (throttled writes)
-        const lastSeenMs = Date.parse(session.lastSeenAt);
-        if (!Number.isFinite(lastSeenMs) || now - lastSeenMs > 5 * 60_000) {
-          session.lastSeenAt = new Date(now).toISOString();
-          session.expiresAt = new Date(now + SESSION_TTL_MS).toISOString();
-          void this.persist();
-        }
+        this.slideExpiry(session, now);
         return this.toAuthenticated(session);
       }
     }
@@ -293,6 +292,7 @@ export class RemoteAuthStore {
   }
 
   mintWebSocketTicket(sessionId: string): { readonly ticket: string; readonly expiresAt: string } | null {
+    this.pruneExpired();
     const exists = this.state.sessions.some((s) => s.sessionId === sessionId);
     if (!exists) return null;
     this.pruneExpiredTickets();
@@ -315,10 +315,25 @@ export class RemoteAuthStore {
     if (entry.expiresAtMs <= Date.now()) return null;
     const session = this.state.sessions.find((s) => s.sessionId === entry.sessionId);
     if (!session || Date.parse(session.expiresAt) <= Date.now()) return null;
-    session.lastSeenAt = new Date().toISOString();
-    session.expiresAt = new Date(Date.now() + SESSION_TTL_MS).toISOString();
-    void this.persist();
+    this.slideExpiry(session, Date.now());
     return this.toAuthenticated(session);
+  }
+
+  /**
+   * Live WebSocket check for one RPC: false once the session was revoked or has
+   * expired. An RPC is active use, so it slides the expiry like an HTTP call.
+   */
+  touchSession(sessionId: string): boolean {
+    this.pruneExpired();
+    const session = this.state.sessions.find((s) => s.sessionId === sessionId);
+    if (!session) return false;
+    this.slideExpiry(session, Date.now());
+    return true;
+  }
+
+  /** Drops expired sessions and closes their sockets; the server calls this on its heartbeat. */
+  sweepExpired(): void {
+    this.pruneExpired();
   }
 
   markConnected(sessionId: string, remoteAddress: string | null): void {
@@ -350,8 +365,7 @@ export class RemoteAuthStore {
     const before = this.state.sessions.length;
     this.state.sessions = this.state.sessions.filter((s) => s.sessionId !== sessionId);
     if (this.state.sessions.length === before) return false;
-    this.deleteTicketsForSession(sessionId);
-    this.activeConnections.delete(sessionId);
+    this.dropSessionRuntime(sessionId);
     await this.persist();
     this.notifySessionRevoked(sessionId);
     this.emitChanged();
@@ -385,10 +399,21 @@ export class RemoteAuthStore {
     };
   }
 
-  private deleteTicketsForSession(sessionId: string): void {
+  /** Sliding expiry on active use, with throttled writes. */
+  private slideExpiry(session: StoredSession, now: number): void {
+    const lastSeenMs = Date.parse(session.lastSeenAt);
+    if (Number.isFinite(lastSeenMs) && now - lastSeenMs <= SESSION_SLIDE_THROTTLE_MS) return;
+    session.lastSeenAt = new Date(now).toISOString();
+    session.expiresAt = new Date(now + SESSION_TTL_MS).toISOString();
+    void this.persist();
+  }
+
+  /** In-memory state tied to a session that no longer exists: pending tickets and live-connection counts. */
+  private dropSessionRuntime(sessionId: string): void {
     for (const [hash, ticket] of this.tickets.entries()) {
       if (ticket.sessionId === sessionId) this.tickets.delete(hash);
     }
+    this.activeConnections.delete(sessionId);
   }
 
   private pruneExpiredTickets(): void {
@@ -403,9 +428,16 @@ export class RemoteAuthStore {
     this.state.pairingGrants = this.state.pairingGrants.filter(
       (g) => g.consumedAt === null && Date.parse(g.expiresAt) > now,
     );
-    this.state.sessions = this.state.sessions.filter(
-      (s) => Date.parse(s.expiresAt) > now || this.activeConnections.has(s.sessionId),
-    );
+    // Expiry applies to connected devices too: an expired session is removed and
+    // its live sockets are closed, exactly like an explicit revocation.
+    const expired = this.state.sessions.filter((s) => !(Date.parse(s.expiresAt) > now));
+    if (expired.length === 0) return;
+    this.state.sessions = this.state.sessions.filter((s) => Date.parse(s.expiresAt) > now);
+    for (const session of expired) this.dropSessionRuntime(session.sessionId);
+    void this.persist();
+    for (const session of expired) this.notifySessionRevoked(session.sessionId);
+    // pruneExpired runs inside list/read paths; announce the change after the caller finishes.
+    queueMicrotask(() => this.emitChanged());
   }
 
   private notifySessionRevoked(sessionId: string): void {
