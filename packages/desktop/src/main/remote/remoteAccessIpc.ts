@@ -94,6 +94,70 @@ function sanitizeMachineLabel(raw: string | undefined, fallback: string): string
   return cleaned || fallback;
 }
 
+function normalizeCloudflarePublicHostname(raw: string): string {
+  const cleaned = raw.replace(/[\u0000-\u001f\u007f\s]/g, '').replace(/\/+$/, '').slice(0, 253);
+  if (!cleaned) return '';
+  const hasScheme = /^https?:\/\//i.test(cleaned);
+  let parsed: URL;
+  try {
+    parsed = new URL(hasScheme ? cleaned : `https://${cleaned}`);
+  } catch {
+    throw new Error('Cloudflare 公网域名格式无效 / Invalid Cloudflare public hostname');
+  }
+  if (
+    (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') ||
+    !parsed.hostname ||
+    parsed.username ||
+    parsed.password ||
+    (parsed.pathname !== '/' && parsed.pathname !== '') ||
+    parsed.search ||
+    parsed.hash
+  ) {
+    throw new Error('Cloudflare 公网域名格式无效 / Invalid Cloudflare public hostname');
+  }
+  return hasScheme ? `${parsed.protocol}//${parsed.host}` : parsed.host;
+}
+
+const PAIRING_QR_TARGET_MAX_BYTES = 320;
+
+/**
+ * Builds a pairing URL whose UTF-8 byte length stays compact for QR scanning even
+ * when `machineLabel` contains many non-ASCII characters (each percent-encodes to 9 bytes).
+ * The full desktop label is still delivered in the pairing response descriptor.
+ */
+function buildCompactRemotePairingUrl(input: {
+  readonly endpointUrl: string;
+  readonly code: string;
+  readonly environmentId: string;
+  readonly label?: string;
+}): string {
+  const full = buildRemotePairingUrl(input);
+  if (Buffer.byteLength(full, 'utf8') <= PAIRING_QR_TARGET_MAX_BYTES || !input.label?.trim()) {
+    return full;
+  }
+  const chars = [...input.label.trim()];
+  let lo = 0;
+  let hi = chars.length;
+  let best = buildRemotePairingUrl({ endpointUrl: input.endpointUrl, code: input.code, environmentId: input.environmentId });
+  while (lo <= hi) {
+    const mid = (lo + hi) >>> 1;
+    const candidateLabel = mid > 0 ? chars.slice(0, mid).join('') : undefined;
+    const candidate = buildRemotePairingUrl({
+      endpointUrl: input.endpointUrl,
+      code: input.code,
+      environmentId: input.environmentId,
+      ...(candidateLabel ? { label: candidateLabel } : {}),
+    });
+    if (Buffer.byteLength(candidate, 'utf8') <= PAIRING_QR_TARGET_MAX_BYTES) {
+      best = candidate;
+      lo = mid + 1;
+    } else {
+      hi = mid - 1;
+    }
+  }
+  return best;
+}
+
 function normalizeConfigPatch(
   current: PersistedRemoteAccessConfig,
   patch: unknown,
@@ -119,13 +183,16 @@ function normalizeConfigPatch(
     input.cloudflareMode === 'off' || input.cloudflareMode === 'quick' || input.cloudflareMode === 'named'
       ? input.cloudflareMode
       : current.cloudflareMode;
-  const cloudflareTunnelToken =
-    typeof input.cloudflareTunnelToken === 'string'
-      ? input.cloudflareTunnelToken.trim()
-      : current.cloudflareTunnelToken;
+  let cloudflareTunnelToken = current.cloudflareTunnelToken;
+  if (typeof input.cloudflareTunnelToken === 'string') {
+    if (/[\u0000-\u001f\u007f]/.test(input.cloudflareTunnelToken)) {
+      throw new Error('Cloudflare Tunnel Token 包含非法控制字符 / Invalid control character in tunnel token');
+    }
+    cloudflareTunnelToken = input.cloudflareTunnelToken.trim();
+  }
   const cloudflarePublicHostname =
     typeof input.cloudflarePublicHostname === 'string'
-      ? input.cloudflarePublicHostname.replace(/[\u0000-\u001f\u007f\s]/g, '').slice(0, 253)
+      ? normalizeCloudflarePublicHostname(input.cloudflarePublicHostname)
       : current.cloudflarePublicHostname;
 
   return {
@@ -286,9 +353,11 @@ export function registerRemoteAccessIpc(options: {
   });
 
   async function applyConfigInternal(next: PersistedRemoteAccessConfig): Promise<UiRemoteAccessState> {
+    if (disposed) return buildState();
     const previous = config;
     config = next;
     await writeStateFileAsync(configPath, toStoredConfig(next));
+    if (disposed) return buildState();
     lastError = null;
 
     const bindHost = next.exposureMode === 'lan' ? '0.0.0.0' : '127.0.0.1';
@@ -313,6 +382,7 @@ export function registerRemoteAccessIpc(options: {
       return buildState();
     }
 
+    let serverStartedNow = false;
     if (!server) {
       try {
         server = await createRemoteServer(
@@ -325,37 +395,69 @@ export function registerRemoteAccessIpc(options: {
             handlers: options.handlers,
           },
         );
+        serverStartedNow = true;
       } catch (error) {
         lastError = error instanceof Error ? error.message : String(error);
         await cloudflared.stop();
+        if (tailscaleStatus.active || previous.tailscaleServeEnabled) {
+          await disableTailscaleServe({ servePort: previous.tailscaleServePort }).catch(() => {});
+          tailscaleStatus = await probeTailscaleStatus().catch(() => ({ ...tailscaleStatus, active: false, url: null }));
+        }
         emitState();
         return buildState();
       }
     }
 
-    // Reconcile Tailscale Serve
+    if (disposed) return buildState();
+
+    // Reconcile Tailscale Serve (only when settings changed, server restarted, or active state drifted)
+    const tailscaleChanged =
+      serverStartedNow ||
+      previous.enabled !== next.enabled ||
+      previous.port !== next.port ||
+      previous.tailscaleServeEnabled !== next.tailscaleServeEnabled ||
+      previous.tailscaleServePort !== next.tailscaleServePort;
+
     if (next.tailscaleServeEnabled) {
-      if (previous.tailscaleServeEnabled && previous.tailscaleServePort !== next.tailscaleServePort) {
-        await disableTailscaleServe({ servePort: previous.tailscaleServePort });
+      if (tailscaleChanged || !tailscaleStatus.active) {
+        if (previous.tailscaleServeEnabled && previous.tailscaleServePort !== next.tailscaleServePort) {
+          await disableTailscaleServe({ servePort: previous.tailscaleServePort });
+        }
+        tailscaleStatus = await enableTailscaleServe({
+          localPort: server.port,
+          servePort: next.tailscaleServePort,
+        });
       }
-      tailscaleStatus = await enableTailscaleServe({
-        localPort: server.port,
-        servePort: next.tailscaleServePort,
-      });
-    } else {
+    } else if (tailscaleChanged || tailscaleStatus.active) {
       if (tailscaleStatus.active || previous.tailscaleServeEnabled) {
         await disableTailscaleServe({ servePort: previous.tailscaleServePort });
       }
       tailscaleStatus = await probeTailscaleStatus();
     }
 
-    // Reconcile Cloudflare Tunnel
-    await cloudflared.applyConfig({
-      mode: next.cloudflareMode,
-      localPort: server.port,
-      tunnelToken: next.cloudflareTunnelToken,
-      publicHostname: next.cloudflarePublicHostname,
-    });
+    if (disposed) return buildState();
+
+    // Reconcile Cloudflare Tunnel only when tunnel config or local server port changed,
+    // so unrelated edits (like machineLabel or Tailscale toggles) do not tear down a live Quick Tunnel.
+    const cfStatus = cloudflared.getStatus();
+    const cfConfigChanged =
+      serverStartedNow ||
+      previous.enabled !== next.enabled ||
+      previous.port !== next.port ||
+      previous.cloudflareMode !== next.cloudflareMode ||
+      previous.cloudflareTunnelToken !== next.cloudflareTunnelToken ||
+      previous.cloudflarePublicHostname !== next.cloudflarePublicHostname ||
+      cfStatus.mode !== next.cloudflareMode ||
+      (next.cloudflareMode !== 'off' && cfStatus.status === 'off');
+
+    if (cfConfigChanged) {
+      await cloudflared.applyConfig({
+        mode: next.cloudflareMode,
+        localPort: server.port,
+        tunnelToken: next.cloudflareTunnelToken,
+        publicHostname: next.cloudflarePublicHostname,
+      });
+    }
 
     emitState();
     return buildState();
@@ -365,10 +467,13 @@ export function registerRemoteAccessIpc(options: {
     options.requireTrustedSender(event);
     await Promise.all([
       cloudflared.refreshBinaryInfo().catch(() => {}),
-      tailscaleStatus.active
+      tailscaleStatus.active || config.tailscaleServeEnabled
         ? Promise.resolve()
         : probeTailscaleStatus().then((status) => {
-            tailscaleStatus = status;
+            // Re-check after awaiting so an overlapping enableTailscaleServe cannot be clobbered.
+            if (!disposed && !tailscaleStatus.active && !config.tailscaleServeEnabled) {
+              tailscaleStatus = status;
+            }
           }).catch(() => {}),
     ]);
     return buildState();
@@ -376,14 +481,17 @@ export function registerRemoteAccessIpc(options: {
 
   handleRendererInvoke(REMOTE_ACCESS_CHANNELS.setConfig, (event, patch: unknown) => {
     options.requireTrustedSender(event);
-    const next = normalizeConfigPatch(config, patch);
-    return serialize(() => applyConfigInternal(next));
+    return serialize(() => {
+      if (disposed) return Promise.resolve(buildState());
+      const next = normalizeConfigPatch(config, patch);
+      return applyConfigInternal(next);
+    });
   });
 
   handleRendererInvoke(REMOTE_ACCESS_CHANNELS.createPairing, (event, input: unknown) => {
     options.requireTrustedSender(event);
     return serialize(async (): Promise<RemotePairingCreated> => {
-      if (!server) {
+      if (disposed || !server) {
         throw new Error('请先启动远程访问服务 / Enable Remote Access before creating a pairing code');
       }
       const req = (typeof input === 'object' && input !== null ? input : {}) as Partial<CreateRemotePairingInput>;
@@ -407,7 +515,7 @@ export function registerRemoteAccessIpc(options: {
         grant,
         code,
         endpointUrl: chosenEndpoint,
-        pairingUrl: buildRemotePairingUrl({
+        pairingUrl: buildCompactRemotePairingUrl({
           endpointUrl: chosenEndpoint,
           code,
           environmentId: authStore.environmentId,
@@ -417,45 +525,43 @@ export function registerRemoteAccessIpc(options: {
     });
   });
 
-  handleRendererInvoke(REMOTE_ACCESS_CHANNELS.revokePairing, (event, grantId: unknown) => {
+  // Auth revocations run immediately outside the tunnel opQueue so a slow tunnel
+  // operation or cloudflared download can never delay kicking out a revoked device.
+  handleRendererInvoke(REMOTE_ACCESS_CHANNELS.revokePairing, async (event, grantId: unknown) => {
     options.requireTrustedSender(event);
     if (typeof grantId !== 'string' || !grantId) throw new Error('配对码 ID 无效');
-    return serialize(async () => {
-      await authStore.revokePairingGrant(grantId);
-      return buildState();
-    });
+    await authStore.revokePairingGrant(grantId);
+    return buildState();
   });
 
-  handleRendererInvoke(REMOTE_ACCESS_CHANNELS.revokeSession, (event, sessionId: unknown) => {
+  handleRendererInvoke(REMOTE_ACCESS_CHANNELS.revokeSession, async (event, sessionId: unknown) => {
     options.requireTrustedSender(event);
     if (typeof sessionId !== 'string' || !sessionId) throw new Error('会话 ID 无效');
-    return serialize(async () => {
-      await authStore.revokeSession(sessionId);
-      return buildState();
-    });
+    await authStore.revokeSession(sessionId);
+    return buildState();
   });
 
-  handleRendererInvoke(REMOTE_ACCESS_CHANNELS.revokeAllSessions, (event) => {
+  handleRendererInvoke(REMOTE_ACCESS_CHANNELS.revokeAllSessions, async (event) => {
     options.requireTrustedSender(event);
-    return serialize(async () => {
-      await authStore.revokeAllSessions();
-      return buildState();
-    });
+    await authStore.revokeAllSessions();
+    return buildState();
   });
 
-  handleRendererInvoke(REMOTE_ACCESS_CHANNELS.installCloudflared, (event) => {
+  // Downloads run outside opQueue with their own single-flight + AbortController so
+  // they cannot deadlock config edits, revocations, or app quit.
+  handleRendererInvoke(REMOTE_ACCESS_CHANNELS.installCloudflared, async (event) => {
     options.requireTrustedSender(event);
-    return serialize(async () => {
-      await cloudflared.install();
-      return buildState();
-    });
+    if (disposed) return buildState();
+    await cloudflared.install();
+    return buildState();
   });
 
   handleRendererInvoke(REMOTE_ACCESS_CHANNELS.refreshNetwork, (event) => {
     options.requireTrustedSender(event);
     return serialize(async () => {
+      if (disposed) return buildState();
       await cloudflared.refreshBinaryInfo();
-      if (!tailscaleStatus.active) {
+      if (!disposed && !tailscaleStatus.active && !config.tailscaleServeEnabled) {
         tailscaleStatus = await probeTailscaleStatus();
       }
       emitState();
@@ -484,10 +590,11 @@ export function registerRemoteAccessIpc(options: {
     async dispose() {
       disposed = true;
       unsubscribeAuth();
+      cloudflared.abortInstall();
       await serialize(async () => {
         await cloudflared.stop();
         if (tailscaleStatus.active) {
-          await disableTailscaleServe({ servePort: config.tailscaleServePort });
+          await disableTailscaleServe({ servePort: config.tailscaleServePort }).catch(() => {});
         }
         if (server) {
           await server.stop();

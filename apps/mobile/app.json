@@ -14,12 +14,13 @@
         "NSCameraUsageDescription": "Scan Pi Desktop pairing QR codes to connect to your computer.",
         "NSLocalNetworkUsageDescription": "Connect directly to Pi Desktop running on your local Wi-Fi network.",
         "NSAppTransportSecurity": {
-          "NSAllowsArbitraryLoads": true
+          "NSAllowsLocalNetworking": true
         }
       }
     },
     "android": {
       "package": "com.pidesktop.remote",
+      "softwareKeyboardLayoutMode": "resize",
       "permissions": [
         "android.permission.CAMERA",
         "android.permission.INTERNET",

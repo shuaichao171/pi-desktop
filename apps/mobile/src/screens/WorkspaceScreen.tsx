@@ -1,22 +1,48 @@
-import React, { useCallback, useEffect, useState } from 'react';
-import {
-  Modal,
-  Pressable,
-  RefreshControl,
-  ScrollView,
-  StyleSheet,
-  Text,
-  View,
-} from 'react-native';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { BackHandler, FlatList, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 import type { UiFileDiff, WorkspaceEntry, WorkspaceGitStatus } from '@pidesktop/shared';
+import { isRemoteConversationWorkspace } from '@pidesktop/shared/remoteClient';
 import { useRemote } from '../runtime/remoteStore';
-import { useTheme } from '../theme';
+import { font, radius, space, useTheme } from '../theme';
+import { t } from '../i18n';
+import { Banner, EmptyState, Header, Segmented, Separator } from '../components/ui';
+
+interface WorkspaceScreenProps {
+  onBack: () => void;
+}
 
 type TabKind = 'files' | 'git' | 'changes';
 
-export function WorkspaceScreen() {
+const MAX_VIEWER_LINES = 2000;
+
+function folderBasename(path: string): string {
+  const parts = path.replace(/[\\/]+$/, '').split(/[\\/]/);
+  return parts[parts.length - 1] || path;
+}
+
+/** Splits "src/app/main.ts" into a bold file name and a muted folder. */
+function PathLabel({ path }: { path: string }) {
   const theme = useTheme();
-  const { connection, snapshot, listFiles, readFile, getGitStatus, getGitDiff, getFileChangeDiffs } = useRemote();
+  const index = path.lastIndexOf('/');
+  const name = index >= 0 ? path.slice(index + 1) : path;
+  const dir = index >= 0 ? path.slice(0, index) : '';
+  return (
+    <View style={styles.pathLabel}>
+      <Text style={[styles.rowText, { color: theme.text }]} numberOfLines={1}>
+        {name}
+      </Text>
+      {dir ? (
+        <Text style={[styles.rowDir, { color: theme.textMuted }]} numberOfLines={1}>
+          {dir}
+        </Text>
+      ) : null}
+    </View>
+  );
+}
+
+export function WorkspaceScreen({ onBack }: WorkspaceScreenProps) {
+  const theme = useTheme();
+  const { connection, snapshot, conversationWorkspaces, listFiles, readFile, getGitStatus, getGitDiff, getFileChangeDiffs } = useRemote();
   const [tab, setTab] = useState<TabKind>('git');
   const [currentDir, setCurrentDir] = useState('');
   const [entries, setEntries] = useState<WorkspaceEntry[]>([]);
@@ -26,248 +52,344 @@ export function WorkspaceScreen() {
   const [viewer, setViewer] = useState<{ title: string; body: string; isDiff: boolean } | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  const snapshotCwd = snapshot?.cwd ?? '';
+  const sessionId = snapshot?.sessionId ?? '';
+  const sessionPath = snapshot?.sessionPath ?? '';
+  const fileChanges = snapshot?.fileChanges;
+
+  const loadReqIdRef = useRef(0);
+  const viewerReqIdRef = useRef(0);
+  const lastCwdRef = useRef(snapshotCwd);
+
+  // Immediately treat directory as root when workspace changes so loadCurrent never fetches a stale subdir.
+  const effectiveDir = lastCwdRef.current === snapshotCwd ? currentDir : '';
+
+  useEffect(() => {
+    loadReqIdRef.current += 1;
+    viewerReqIdRef.current += 1;
+    lastCwdRef.current = snapshotCwd;
+    setCurrentDir('');
+    setEntries([]);
+    setGitStatus(null);
+    setChangeDiffs([]);
+    setViewer(null);
+    setError(null);
+    setLoading(false);
+  }, [snapshotCwd]);
+
+  useEffect(() => {
+    setChangeDiffs([]);
+  }, [sessionId, sessionPath]);
+
+  useEffect(() => {
+    if (connection.phase !== 'connected') {
+      loadReqIdRef.current += 1;
+      viewerReqIdRef.current += 1;
+      setLoading(false);
+    }
+  }, [connection.phase]);
+
   const loadCurrent = useCallback(async () => {
     if (connection.phase !== 'connected') return;
+    const reqId = ++loadReqIdRef.current;
     setLoading(true);
     setError(null);
     try {
       if (tab === 'files') {
-        setEntries(await listFiles(currentDir));
+        const nextEntries = await listFiles(effectiveDir);
+        if (reqId !== loadReqIdRef.current) return;
+        setEntries(nextEntries);
       } else if (tab === 'git') {
-        setGitStatus(await getGitStatus());
+        const nextStatus = await getGitStatus();
+        if (reqId !== loadReqIdRef.current) return;
+        setGitStatus(nextStatus);
       } else {
-        setChangeDiffs(await getFileChangeDiffs({ kind: 'conversation' }));
+        const nextDiffs = await getFileChangeDiffs({ kind: 'conversation' });
+        if (reqId !== loadReqIdRef.current) return;
+        setChangeDiffs(nextDiffs);
       }
     } catch (err) {
+      if (reqId !== loadReqIdRef.current) return;
       setError(err instanceof Error ? err.message : String(err));
     } finally {
-      setLoading(false);
+      if (reqId === loadReqIdRef.current) {
+        setLoading(false);
+      }
     }
-  }, [connection.phase, tab, currentDir, listFiles, getGitStatus, getFileChangeDiffs]);
+  }, [connection.phase, tab, effectiveDir, listFiles, getGitStatus, getFileChangeDiffs]);
+
+  // Only react to session / fileChanges updates while viewing the Thread Diffs tab.
+  const changesFileTrigger = tab === 'changes' ? fileChanges : null;
+  const changesSessionTrigger = tab === 'changes' ? `${sessionId}|${sessionPath}` : '';
 
   useEffect(() => {
     void loadCurrent();
-  }, [loadCurrent, snapshot?.cwd]);
+  }, [loadCurrent, snapshotCwd, changesFileTrigger, changesSessionTrigger]);
+
+  const closeViewer = useCallback(() => {
+    viewerReqIdRef.current += 1;
+    setViewer(null);
+  }, []);
+
+  // The viewer is an inner page: Android back closes it before leaving the files page.
+  useEffect(() => {
+    if (!viewer) return undefined;
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      closeViewer();
+      return true;
+    });
+    return () => sub.remove();
+  }, [viewer, closeViewer]);
 
   const openFile = async (relativePath: string) => {
+    const reqId = ++viewerReqIdRef.current;
+    setError(null);
     try {
       const content = await readFile(relativePath);
+      if (reqId !== viewerReqIdRef.current) return;
       setViewer({ title: relativePath, body: content, isDiff: false });
     } catch (err) {
+      if (reqId !== viewerReqIdRef.current) return;
       setError(err instanceof Error ? err.message : String(err));
     }
   };
 
   const openGitDiff = async (relativePath: string) => {
+    const reqId = ++viewerReqIdRef.current;
+    setError(null);
     try {
       const diff = await getGitDiff(relativePath, 'all');
-      setViewer({ title: relativePath, body: diff || '(No diff output)', isDiff: true });
+      if (reqId !== viewerReqIdRef.current) return;
+      setViewer({ title: relativePath, body: diff || t('files.noDiff'), isDiff: true });
     } catch (err) {
+      if (reqId !== viewerReqIdRef.current) return;
       setError(err instanceof Error ? err.message : String(err));
     }
   };
 
+  const viewerData = useMemo(() => {
+    if (!viewer) return { lines: [] as string[], truncated: false, totalLines: 0 };
+    const allLines = viewer.body.split('\n');
+    if (allLines.length <= MAX_VIEWER_LINES) {
+      return { lines: allLines, truncated: false, totalLines: allLines.length };
+    }
+    return {
+      lines: allLines.slice(0, MAX_VIEWER_LINES),
+      truncated: true,
+      totalLines: allLines.length,
+    };
+  }, [viewer]);
+
+  const renderViewerLine = useCallback(
+    ({ item: line }: { item: string }) => {
+      const isAdd = Boolean(viewer?.isDiff && line.startsWith('+') && !line.startsWith('+++'));
+      const isDel = Boolean(viewer?.isDiff && line.startsWith('-') && !line.startsWith('---'));
+      const isHunk = Boolean(viewer?.isDiff && line.startsWith('@@'));
+      return (
+        <Text
+          style={[
+            styles.codeLine,
+            {
+              color: isAdd ? theme.diffAddText : isDel ? theme.diffDelText : isHunk ? theme.brand : theme.text,
+              backgroundColor: isAdd ? theme.diffAddBg : isDel ? theme.diffDelBg : 'transparent',
+            },
+          ]}
+        >
+          {line || ' '}
+        </Text>
+      );
+    },
+    [viewer?.isDiff, theme],
+  );
+
   if (connection.phase !== 'connected') {
     return (
-      <View style={[styles.center, { backgroundColor: theme.bg }]}>
-        <Text style={{ color: theme.textSubtle }}>Connect to a desktop host to inspect files and Git diffs.</Text>
+      <View style={[styles.container, { backgroundColor: theme.bg }]}>
+        <Header title={t('files.title')} onBack={onBack} />
+        <EmptyState title={t('chat.notConnected')} />
       </View>
     );
   }
 
+  if (viewer) {
+    const slash = viewer.title.lastIndexOf('/');
+    return (
+      <View style={[styles.container, { backgroundColor: theme.bg }]}>
+        <Header
+          title={slash >= 0 ? viewer.title.slice(slash + 1) : viewer.title}
+          subtitle={slash >= 0 ? viewer.title.slice(0, slash) : undefined}
+          onBack={closeViewer}
+        />
+        <FlatList<string>
+          data={viewerData.lines}
+          keyExtractor={(_line, index) => String(index)}
+          renderItem={renderViewerLine}
+          initialNumToRender={40}
+          maxToRenderPerBatch={40}
+          windowSize={11}
+          removeClippedSubviews
+          style={[styles.viewer, { backgroundColor: theme.surface }]}
+          contentContainerStyle={styles.viewerContent}
+          ListFooterComponent={
+            viewerData.truncated ? (
+              <Text style={[styles.truncated, { color: theme.textMuted }]}>
+                {t('files.truncated', { shown: MAX_VIEWER_LINES.toLocaleString(), total: viewerData.totalLines.toLocaleString() })}
+              </Text>
+            ) : null
+          }
+        />
+      </View>
+    );
+  }
+
+  const gitEntries = gitStatus?.entries ?? [];
+  const refresh = <RefreshControl refreshing={loading} onRefresh={() => void loadCurrent()} colors={[theme.brand]} progressBackgroundColor={theme.surface} />;
+
   return (
     <View style={[styles.container, { backgroundColor: theme.bg }]}>
-      <View style={[styles.tabBar, { backgroundColor: theme.surface, borderBottomColor: theme.border }]}>
-        {(['git', 'changes', 'files'] as TabKind[]).map((item) => {
-          const active = tab === item;
-          return (
-            <Pressable
-              key={item}
-              onPress={() => setTab(item)}
-              style={[
-                styles.tabBtn,
-                { borderBottomColor: active ? theme.brand : 'transparent' },
-              ]}
-            >
-              <Text style={{ color: active ? theme.brand : theme.textSubtle, fontWeight: '700', fontSize: 13 }}>
-                {item === 'git' ? 'Git Status' : item === 'changes' ? 'Thread Diffs' : 'Files'}
-              </Text>
-            </Pressable>
-          );
-        })}
+      <Header title={t('files.title')} subtitle={
+          snapshotCwd && !isRemoteConversationWorkspace(snapshotCwd, conversationWorkspaces) ? folderBasename(snapshotCwd) : undefined
+        } onBack={onBack} />
+
+      <View style={styles.segmentWrap}>
+        <Segmented<TabKind>
+          value={tab}
+          onChange={setTab}
+          options={[
+            { key: 'git', label: t('files.tab.git') },
+            { key: 'changes', label: t('files.tab.thread') },
+            { key: 'files', label: t('files.tab.browse') },
+          ]}
+        />
       </View>
 
-      {error ? <Text style={{ color: theme.danger, padding: 12, fontSize: 13 }}>{error}</Text> : null}
+      {error ? <Banner tone="danger" text={error} actionLabel={t('common.dismiss')} onPress={() => setError(null)} /> : null}
 
-      <ScrollView
-        refreshControl={<RefreshControl refreshing={loading} onRefresh={() => void loadCurrent()} />}
-        contentContainerStyle={styles.body}
-      >
-        {tab === 'files' && (
+      <ScrollView refreshControl={refresh} contentContainerStyle={styles.body}>
+        {tab === 'files' ? (
           <>
-            {currentDir !== '' && (
-              <Pressable
-                onPress={() => {
-                  const parts = currentDir.split('/').filter(Boolean);
-                  parts.pop();
-                  setCurrentDir(parts.join('/'));
-                }}
-                style={[styles.row, { backgroundColor: theme.surface, borderColor: theme.border }]}
-              >
-                <Text style={{ color: theme.brand, fontWeight: '600' }}>← Up (/{currentDir})</Text>
-              </Pressable>
-            )}
-            {entries.map((entry) => (
-              <Pressable
-                key={entry.path}
-                onPress={() => {
-                  if (entry.kind === 'directory') setCurrentDir(entry.path);
-                  else void openFile(entry.path);
-                }}
-                style={[styles.row, { backgroundColor: theme.surface, borderColor: theme.border }]}
-              >
-                <Text style={{ color: theme.text, fontWeight: entry.kind === 'directory' ? '700' : '500' }}>
-                  {entry.kind === 'directory' ? '📁 ' : '📄 '}
-                  {entry.name}
-                </Text>
-              </Pressable>
-            ))}
-          </>
-        )}
-
-        {tab === 'git' && (
-          <>
-            {gitStatus && !gitStatus.isRepository ? (
-              <Text style={{ color: theme.textMuted }}>Active workspace is not a Git repository.</Text>
-            ) : (
+            {effectiveDir !== '' ? (
               <>
-                <Text style={[styles.branchLabel, { color: theme.textSubtle }]}>
-                  Branch: {gitStatus?.branch ?? '—'} · {gitStatus?.entries.length ?? 0} changed file(s)
-                </Text>
-                {(gitStatus?.entries ?? []).map((entry) => (
-                  <Pressable
-                    key={entry.path}
-                    onPress={() => void openGitDiff(entry.path)}
-                    style={[styles.row, { backgroundColor: theme.surface, borderColor: theme.border }]}
-                  >
-                    <Text style={{ color: theme.text, flex: 1, fontFamily: 'monospace', fontSize: 12 }}>
-                      {entry.path}
-                    </Text>
-                    <Text style={{ color: theme.warning, fontWeight: '700', fontSize: 11 }}>
-                      {entry.status || 'M'}
-                    </Text>
-                  </Pressable>
-                ))}
-              </>
-            )}
-          </>
-        )}
-
-        {tab === 'changes' && (
-          <>
-            {changeDiffs.length === 0 ? (
-              <Text style={{ color: theme.textMuted }}>No file changes recorded in this conversation.</Text>
-            ) : (
-              changeDiffs.map((item) => (
                 <Pressable
-                  key={item.path}
-                  onPress={() =>
-                    setViewer({
-                      title: item.path,
-                      body: item.diff ?? `(${item.preview ?? 'Diff unavailable'})`,
-                      isDiff: true,
-                    })
-                  }
-                  style={[styles.row, { backgroundColor: theme.surface, borderColor: theme.border }]}
+                  onPress={() => {
+                    const parts = effectiveDir.split('/').filter(Boolean);
+                    parts.pop();
+                    setCurrentDir(parts.join('/'));
+                  }}
+                  style={({ pressed }) => [styles.row, pressed && { backgroundColor: theme.surface }]}
                 >
-                  <Text style={{ color: theme.text, fontFamily: 'monospace', fontSize: 12 }}>
-                    {item.path}
+                  <Text style={[styles.rowText, { color: theme.brand }]}>‹ {t('files.up')}</Text>
+                  <Text style={[styles.rowDir, styles.flexShrink, { color: theme.textMuted }]} numberOfLines={1}>
+                    /{effectiveDir}
                   </Text>
                 </Pressable>
+                <Separator />
+              </>
+            ) : null}
+            {entries.length === 0 && !loading ? (
+              <EmptyState title={t('files.emptyDir')} />
+            ) : (
+              entries.map((entry, index) => (
+                <React.Fragment key={entry.path}>
+                  {index > 0 ? <Separator /> : null}
+                  <Pressable
+                    onPress={() => {
+                      if (entry.kind === 'directory') setCurrentDir(entry.path);
+                      else void openFile(entry.path);
+                    }}
+                    style={({ pressed }) => [styles.row, pressed && { backgroundColor: theme.surface }]}
+                  >
+                    <Text style={[styles.rowText, styles.flex, { color: theme.text, fontWeight: entry.kind === 'directory' ? '600' : '400' }]} numberOfLines={1}>
+                      {entry.name}
+                      {entry.kind === 'directory' ? '/' : ''}
+                    </Text>
+                    {entry.kind === 'directory' ? <Text style={[styles.chevron, { color: theme.textMuted }]}>›</Text> : null}
+                  </Pressable>
+                </React.Fragment>
               ))
             )}
           </>
-        )}
-      </ScrollView>
+        ) : null}
 
-      <Modal visible={viewer !== null} animationType="slide" onRequestClose={() => setViewer(null)}>
-        <View style={[styles.viewerWrap, { backgroundColor: theme.bg }]}>
-          <View style={[styles.viewerHeader, { backgroundColor: theme.surface, borderBottomColor: theme.border }]}>
-            <Text style={[styles.viewerTitle, { color: theme.text }]} numberOfLines={1}>
-              {viewer?.title}
-            </Text>
-            <Pressable onPress={() => setViewer(null)}>
-              <Text style={{ color: theme.brand, fontWeight: '700', fontSize: 15 }}>Close</Text>
-            </Pressable>
-          </View>
-          <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 12 }}>
-            <ScrollView horizontal>
-              <View>
-                {(viewer?.body ?? '').split('\n').map((line, index) => {
-                  const isAdd = viewer?.isDiff && line.startsWith('+') && !line.startsWith('+++');
-                  const isDel = viewer?.isDiff && line.startsWith('-') && !line.startsWith('---');
-                  const isHunk = viewer?.isDiff && line.startsWith('@@');
-                  return (
-                    <Text
-                      key={index}
-                      style={[
-                        styles.codeLine,
-                        {
-                          color: isAdd
-                            ? theme.diffAddText
-                            : isDel
-                              ? theme.diffDelText
-                              : isHunk
-                                ? theme.brand
-                                : theme.text,
-                          backgroundColor: isAdd
-                            ? theme.diffAddBg
-                            : isDel
-                              ? theme.diffDelBg
-                              : 'transparent',
-                        },
-                      ]}
+        {tab === 'git' ? (
+          gitStatus && !gitStatus.isRepository ? (
+            <EmptyState title={t('files.notRepo')} />
+          ) : (
+            <>
+              <Text style={[styles.caption, { color: theme.textMuted }]}>
+                {t('files.branch', { branch: gitStatus?.branch ?? '—', n: gitEntries.length })}
+              </Text>
+              {gitEntries.length === 0 && !loading ? (
+                <EmptyState title={t('files.clean')} />
+              ) : (
+                gitEntries.map((entry, index) => (
+                  <React.Fragment key={entry.path}>
+                    {index > 0 ? <Separator /> : null}
+                    <Pressable
+                      onPress={() => void openGitDiff(entry.path)}
+                      style={({ pressed }) => [styles.row, pressed && { backgroundColor: theme.surface }]}
                     >
-                      {line || ' '}
-                    </Text>
-                  );
-                })}
-              </View>
-            </ScrollView>
-          </ScrollView>
-        </View>
-      </Modal>
+                      <PathLabel path={entry.path} />
+                      <Text style={[styles.badge, { color: theme.warning, backgroundColor: theme.warningSoft }]}>{entry.status || 'M'}</Text>
+                    </Pressable>
+                  </React.Fragment>
+                ))
+              )}
+            </>
+          )
+        ) : null}
+
+        {tab === 'changes' ? (
+          changeDiffs.length === 0 ? (
+            <EmptyState title={t('files.noThreadChanges')} />
+          ) : (
+            changeDiffs.map((item, index) => (
+              <React.Fragment key={item.path}>
+                {index > 0 ? <Separator /> : null}
+                <Pressable
+                  onPress={() => {
+                    viewerReqIdRef.current += 1;
+                    setViewer({
+                      title: item.path,
+                      body: item.diff ?? `(${item.preview ?? t('files.diffUnavailable')})`,
+                      isDiff: true,
+                    });
+                  }}
+                  style={({ pressed }) => [styles.row, pressed && { backgroundColor: theme.surface }]}
+                >
+                  <PathLabel path={item.path} />
+                  <Text style={[styles.chevron, { color: theme.textMuted }]}>›</Text>
+                </Pressable>
+              </React.Fragment>
+            ))
+          )
+        ) : null}
+      </ScrollView>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  center: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 24 },
-  tabBar: { flexDirection: 'row', borderBottomWidth: StyleSheet.hairlineWidth },
-  tabBtn: { flex: 1, alignItems: 'center', paddingVertical: 12, borderBottomWidth: 2 },
-  body: { padding: 12, gap: 8, paddingBottom: 28 },
-  branchLabel: { fontSize: 12, fontWeight: '600', marginBottom: 4 },
+  flex: { flex: 1 },
+  flexShrink: { flexShrink: 1 },
+  segmentWrap: { paddingHorizontal: space.lg, paddingBottom: space.sm },
+  body: { paddingBottom: space.xl },
+  caption: { fontSize: font.caption, paddingHorizontal: space.lg, paddingVertical: space.sm },
   row: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    padding: 12,
-    borderRadius: 10,
-    borderWidth: 1,
-    gap: 8,
+    gap: space.md,
+    paddingHorizontal: space.lg,
+    paddingVertical: space.md,
   },
-  viewerWrap: { flex: 1 },
-  viewerHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingTop: 52,
-    paddingBottom: 14,
-    paddingHorizontal: 14,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    gap: 12,
-  },
-  viewerTitle: { flex: 1, fontSize: 14, fontWeight: '700', fontFamily: 'monospace' },
-  codeLine: { fontFamily: 'monospace', fontSize: 12, lineHeight: 18, paddingHorizontal: 4 },
+  pathLabel: { flex: 1, gap: 1 },
+  rowText: { fontSize: font.body },
+  rowDir: { fontSize: font.caption },
+  chevron: { fontSize: 20, lineHeight: 22 },
+  badge: { fontSize: 11, fontWeight: '700', paddingHorizontal: 6, paddingVertical: 2, borderRadius: radius.sm, overflow: 'hidden' },
+  viewer: { flex: 1, marginHorizontal: space.md, marginBottom: space.md, borderRadius: radius.md },
+  viewerContent: { padding: space.md },
+  codeLine: { fontFamily: 'monospace', fontSize: font.caption, lineHeight: 18, paddingHorizontal: space.xs },
+  truncated: { fontSize: font.caption, paddingTop: space.md },
 });

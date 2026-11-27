@@ -527,7 +527,7 @@ function extensionDialogFor(owner: BrowserWindow, request: UiExtensionDialogRequ
 			pendingDialogs.delete(request.id);
 			cleanup();
 			if (!owner.isDestroyed() && !owner.webContents.isDestroyed()) owner.webContents.send(IPC_CHANNELS.agentExtensionDialogClosed, request.id);
-			remoteAccess?.broadcastExtensionDialogClosed(request.id);
+			if (!isPaiWindow(owner)) remoteAccess?.broadcastExtensionDialogClosed(request.id);
 			resolve(value);
 		};
 		const onAbort = (): void => finish(null);
@@ -543,7 +543,7 @@ function extensionDialogFor(owner: BrowserWindow, request: UiExtensionDialogRequ
 		owner.once('closed', onClosed);
 		if (request.timeout && request.timeout > 0) timer = setTimeout(() => finish(null), request.timeout);
 		owner.webContents.send(IPC_CHANNELS.agentExtensionDialog, request);
-		remoteAccess?.broadcastExtensionDialog(request);
+		if (!isPaiWindow(owner)) remoteAccess?.broadcastExtensionDialog(request);
 		// A window that was never revealed is still behind the splash; startup
 		// requests reveal it themselves instead of notifying.
 		if (notificationReadyWindows.has(owner)) notifyInputRequest?.(request);
@@ -1673,7 +1673,7 @@ export function registerIpc(options: {
 		'agent.listModels': () => agentService.listModels(),
 		'agent.listAgents': () => agentService.listAgents(),
 		'agent.getInputQueue': (params) => agentService.getInputQueue(requireInputQueueScope(params?.scope)),
-		'agent.getPendingExtensionDialogs': () => [...pendingDialogs.values()].map(({ request }) => request),
+		'agent.getPendingExtensionDialogs': () => [...pendingDialogs.values()].filter(({ owner }) => !isPaiWindow(owner)).map(({ request }) => request),
 		'agent.getFileChangeDiffs': (params) => {
 			const scope = isRecord(params) && isRecord(params.scope) ? params.scope : null;
 			if (!scope || (scope.kind !== 'conversation' && !(scope.kind === 'turn' && typeof scope.runId === 'string' && scope.runId && scope.runId.length <= 512))) {
@@ -1768,7 +1768,7 @@ export function registerIpc(options: {
 		'agent.respondExtensionDialog': (params) => {
 			if (!isRecord(params) || typeof params.id !== 'string') throw new Error('交互结果无效');
 			const pending = pendingDialogs.get(params.id);
-			if (!pending) throw new Error('该交互请求已结束或不存在');
+			if (!pending || isPaiWindow(pending.owner)) throw new Error('该交互请求已结束或不存在');
 			pending.resolve(requireDialogResponse(pending.request, params.value));
 			return { ok: true as const };
 		},
@@ -1803,7 +1803,7 @@ export function registerIpc(options: {
 		userDataDir: app.getPath('userData'),
 		appVersion: () => app.getVersion(),
 		getInitialSnapshot: () => agentService.getSnapshot(),
-		getPendingDialogs: () => [...pendingDialogs.values()].map(({ request }) => request),
+		getPendingDialogs: () => [...pendingDialogs.values()].filter(({ owner }) => !isPaiWindow(owner)).map(({ request }) => request),
 		handlers: remoteRpcHandlers,
 		requireTrustedSender: (event) => { requireTrustedSender(event); },
 		isMainWindow: (win) => !isPaiWindow(win),
@@ -2812,9 +2812,9 @@ export function disposeServices(): Promise<void> {
 		cloudSync = null;
 		await debugApi?.dispose();
 		debugApi = null;
-		await remoteAccess?.dispose();
+		const remoteToDispose = remoteAccess;
 		remoteAccess = null;
-		const results = await Promise.allSettled([agentService.dispose(), workbenchService?.dispose(), workbenchFeatures?.dispose(), automationService?.dispose()]);
+		const results = await Promise.allSettled([remoteToDispose?.dispose(), agentService.dispose(), workbenchService?.dispose(), workbenchFeatures?.dispose(), automationService?.dispose()]);
 		// A failed service must not let app.quit interrupt another service's
 		// cleanup or metadata that was queued by its final activity events.
 		await sessionMetaQueue;

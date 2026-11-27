@@ -183,6 +183,62 @@ test('Pairing URL builder/parser and QR code matrix encoder work across realisti
   assert.equal(qr.modules[4 * qr.version + 9][8], true);
   const path = renderQrSvgPath(qr);
   assert.ok(path.startsWith('M0,0h1v1h-1z'));
+
+  // Regression (C1/M5): Version 7-16 alignment patterns centered on timing row/col 6 MUST be drawn
+  // (never skipped because timing patterns were placed first), and long payloads up to V16 encode cleanly.
+  const v7Payload = 'https://demo-machine.trycloudflare.com/pair?' + 'a'.repeat(100);
+  const qrV7 = encodeQrMatrix(v7Payload);
+  assert.equal(qrV7.version, 7);
+  // V7 centers are [6, 22, 38]; check the 5x5 alignment patterns centered at (6, 22) and (22, 6).
+  // Alignment modules are function modules so they are never masked.
+  for (const [cr, cc] of [[6, 22], [22, 6], [22, 22], [22, 38], [38, 22], [38, 38]]) {
+    for (let dr = -2; dr <= 2; dr += 1) {
+      for (let dc = -2; dc <= 2; dc += 1) {
+        const expectedDark = Math.max(Math.abs(dr), Math.abs(dc)) !== 1;
+        assert.equal(qrV7.modules[cr + dr][cc + dc], expectedDark, `V7 alignment (${cr},${cc}) offset (${dr},${dc})`);
+      }
+    }
+  }
+  const qrV15 = encodeQrMatrix('x'.repeat(500));
+  assert.ok(qrV15.version >= 15 && qrV15.version <= 16);
+  for (const [cr, cc] of [[6, 26], [6, 48], [26, 6], [48, 6]]) {
+    for (let dr = -2; dr <= 2; dr += 1) {
+      for (let dc = -2; dc <= 2; dc += 1) {
+        const expectedDark = Math.max(Math.abs(dr), Math.abs(dc)) !== 1;
+        assert.equal(qrV15.modules[cr + dr][cc + dc], expectedDark, `V15 alignment (${cr},${cc}) offset (${dr},${dc})`);
+      }
+    }
+  }
+});
+
+test('RemoteAuthStore guards NaN TTL, caps WS tickets, and notifies revocation synchronously', async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'pi-remote-auth-hardening-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const { RemoteAuthStore } = await import('../packages/desktop/src/main/remote/authStore.ts');
+  const store = new RemoteAuthStore(join(dir, 'auth.json'));
+
+  const { grant, code } = await store.createPairingGrant({ role: 'full', expiresInMinutes: Number.NaN });
+  assert.ok(Number.isFinite(Date.parse(grant.expiresAt)), 'NaN expiresInMinutes falls back to default TTL');
+
+  const exchanged = await store.exchangePairingCode({ code });
+  assert.ok(exchanged);
+  const sid = exchanged.session.sessionId;
+
+  // Minting more than per-session cap evicts the oldest tickets
+  const minted = [];
+  for (let i = 0; i < 20; i += 1) {
+    minted.push(store.mintWebSocketTicket(sid).ticket);
+  }
+  assert.equal(store.consumeWebSocketTicket(minted[0]), null, 'oldest ticket evicted by per-session cap');
+  assert.ok(store.consumeWebSocketTicket(minted.at(-1)), 'newest ticket remains valid');
+
+  // Revocation callback fires synchronously before disk persistence finishes
+  const revoked = [];
+  store.onSessionRevoked((id) => revoked.push(id));
+  const revokePromise = store.revokeSession(sid);
+  assert.deepEqual(revoked, [sid], 'revoke listeners run synchronously before awaiting persist()');
+  await revokePromise;
+  await store.flush();
 });
 
 test('RemoteAuthStore expires connected sessions too and slides expiry on WebSocket RPC use', async (t) => {

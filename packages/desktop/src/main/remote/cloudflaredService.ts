@@ -31,6 +31,8 @@ const QUIC_STALL_WINDOW_MS = 5 * 60_000;
 const RESTART_BASE_MS = 1_500;
 const RESTART_MAX_MS = 30_000;
 const STABLE_UPTIME_MS = 30_000;
+const DOWNLOAD_TIMEOUT_MS = 120_000;
+const MAX_DOWNLOAD_BYTES = 128 * 1024 * 1024;
 
 export interface ResolvedCloudflaredBinary {
   readonly executablePath: string;
@@ -166,10 +168,25 @@ export async function resolveCloudflaredBinary(
   return null;
 }
 
+function parseNamedPublicUrl(raw: string | undefined): string | null {
+  const trimmed = raw?.trim() ?? '';
+  if (!trimmed) return null;
+  const candidate = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+  try {
+    const parsed = new URL(candidate);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null;
+    if (!parsed.hostname) return null;
+    return parsed.origin;
+  } catch {
+    return null;
+  }
+}
+
 export async function installCloudflaredBinary(
   managedDir: string,
   platform: NodeJS.Platform = process.platform,
   arch: string = process.arch,
+  signal?: AbortSignal,
 ): Promise<ResolvedCloudflaredBinary> {
   const asset = cloudflaredDownloadAsset(platform, arch);
   if (!asset) {
@@ -179,11 +196,45 @@ export async function installCloudflaredBinary(
   const targetPath = join(managedDir, asset.binaryName);
   const tmpPath = `${targetPath}.download-${Date.now()}`;
 
-  const response = await fetch(asset.url, { redirect: 'follow' });
+  const timeoutSignal = AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS);
+  const combinedSignal = signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
+
+  const response = await fetch(asset.url, { redirect: 'follow', signal: combinedSignal });
   if (!response.ok) {
     throw new Error(`Failed to download cloudflared (${response.status})`);
   }
-  const bytes = Buffer.from(await response.arrayBuffer());
+  const contentLength = Number(response.headers.get('content-length') ?? '0');
+  if (Number.isFinite(contentLength) && contentLength > MAX_DOWNLOAD_BYTES) {
+    throw new Error(`Downloaded cloudflared exceeds size limit (${contentLength} bytes)`);
+  }
+  let bytes: Buffer;
+  if (response.body) {
+    const reader = response.body.getReader();
+    const parts: Uint8Array[] = [];
+    let received = 0;
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (!value) continue;
+        received += value.byteLength;
+        if (received > MAX_DOWNLOAD_BYTES) {
+          await reader.cancel().catch(() => {});
+          throw new Error(`Downloaded cloudflared exceeds size limit (${MAX_DOWNLOAD_BYTES} bytes)`);
+        }
+        parts.push(value);
+      }
+    } catch (error) {
+      await reader.cancel().catch(() => {});
+      throw error;
+    }
+    bytes = Buffer.concat(parts.map((part) => Buffer.from(part.buffer, part.byteOffset, part.byteLength)), received);
+  } else {
+    bytes = Buffer.from(await response.arrayBuffer());
+    if (bytes.length > MAX_DOWNLOAD_BYTES) {
+      throw new Error(`Downloaded cloudflared exceeds size limit (${MAX_DOWNLOAD_BYTES} bytes)`);
+    }
+  }
   verifyCloudflaredDownload(bytes, asset.sha256);
 
   try {
@@ -246,6 +297,9 @@ export class CloudflaredManager {
   private forceHttp2 = false;
   private quicStalls: number[] = [];
   private generation = 0;
+  private installAbortController: AbortController | null = null;
+  private installPromise: Promise<UiRemoteCloudflareStatus> | null = null;
+  private stopPromise: Promise<void> | null = null;
 
   constructor(managedDir: string, onStatusChanged: (status: UiRemoteCloudflareStatus) => void) {
     this.managedDir = managedDir;
@@ -254,6 +308,10 @@ export class CloudflaredManager {
 
   getStatus(): UiRemoteCloudflareStatus {
     return this.status;
+  }
+
+  abortInstall(): void {
+    this.installAbortController?.abort();
   }
 
   async refreshBinaryInfo(): Promise<UiRemoteCloudflareStatus> {
@@ -268,28 +326,48 @@ export class CloudflaredManager {
   }
 
   async install(): Promise<UiRemoteCloudflareStatus> {
-    this.updateStatus({ ...this.status, status: 'installing', error: null });
-    try {
-      const installed = await installCloudflaredBinary(this.managedDir);
-      this.updateStatus({
-        ...this.status,
-        status: this.desired && this.desired.mode !== 'off' ? 'starting' : 'off',
-        binaryPath: installed.executablePath,
-        binarySource: installed.source,
-        version: installed.version,
-        error: null,
-      });
-      if (this.desired && this.desired.mode !== 'off') {
-        await this.applyConfig(this.desired);
+    if (this.installPromise) return this.installPromise;
+    const run = (async (): Promise<UiRemoteCloudflareStatus> => {
+      const controller = new AbortController();
+      this.installAbortController = controller;
+      this.updateStatus({ ...this.status, status: 'installing', error: null });
+      try {
+        // Stop any running managed binary before replacing it (Windows locks open executables).
+        await this.stopChild();
+        const installed = await installCloudflaredBinary(this.managedDir, process.platform, process.arch, controller.signal);
+        this.updateStatus({
+          ...this.status,
+          status: this.desired && this.desired.mode !== 'off' ? 'starting' : 'off',
+          binaryPath: installed.executablePath,
+          binarySource: installed.source,
+          version: installed.version,
+          error: null,
+        });
+        if (this.desired && this.desired.mode !== 'off') {
+          await this.applyConfig(this.desired);
+        }
+        return this.status;
+      } catch (error) {
+        const aborted = controller.signal.aborted;
+        this.updateStatus({
+          ...this.status,
+          status: aborted ? 'off' : 'error',
+          error: aborted ? null : (error instanceof Error ? error.message : String(error)),
+        });
+        throw error;
+      } finally {
+        if (this.installAbortController === controller) {
+          this.installAbortController = null;
+        }
       }
-      return this.status;
-    } catch (error) {
-      this.updateStatus({
-        ...this.status,
-        status: 'error',
-        error: error instanceof Error ? error.message : String(error),
-      });
-      throw error;
+    })();
+    this.installPromise = run;
+    try {
+      return await run;
+    } finally {
+      if (this.installPromise === run) {
+        this.installPromise = null;
+      }
     }
   }
 
@@ -297,9 +375,11 @@ export class CloudflaredManager {
     const nextGen = ++this.generation;
     this.desired = config;
     await this.stopChild();
+    if (nextGen !== this.generation) return this.status;
 
     if (config.mode === 'off') {
       const resolved = await resolveCloudflaredBinary(this.managedDir);
+      if (nextGen !== this.generation) return this.status;
       this.updateStatus({
         mode: 'off',
         status: 'off',
@@ -315,6 +395,7 @@ export class CloudflaredManager {
 
     if (config.mode === 'named' && !config.tunnelToken?.trim()) {
       const resolved = await resolveCloudflaredBinary(this.managedDir);
+      if (nextGen !== this.generation) return this.status;
       this.updateStatus({
         mode: 'named',
         status: 'error',
@@ -344,12 +425,7 @@ export class CloudflaredManager {
       return this.status;
     }
 
-    const namedUrl =
-      config.mode === 'named' && config.publicHostname?.trim()
-        ? /^https?:\/\//i.test(config.publicHostname.trim())
-          ? config.publicHostname.trim().replace(/\/+$/, '')
-          : `https://${config.publicHostname.trim().replace(/\/+$/, '')}`
-        : null;
+    const namedUrl = config.mode === 'named' ? parseNamedPublicUrl(config.publicHostname) : null;
 
     this.updateStatus({
       mode: config.mode,
@@ -369,6 +445,7 @@ export class CloudflaredManager {
   async stop(): Promise<void> {
     this.generation += 1;
     this.desired = null;
+    this.abortInstall();
     await this.stopChild();
     this.updateStatus({
       ...this.status,
@@ -391,10 +468,11 @@ export class CloudflaredManager {
       localPort: config.localPort,
       http2: this.forceHttp2,
     });
+    const trimmedToken = config.tunnelToken?.trim() ?? '';
     const env: NodeJS.ProcessEnv = { ...process.env };
-    if (mode === 'named' && config.tunnelToken) {
+    if (mode === 'named' && trimmedToken) {
       // Never pass TUNNEL_TOKEN on argv so process listings never expose it.
-      env.TUNNEL_TOKEN = config.tunnelToken.trim();
+      env.TUNNEL_TOKEN = trimmedToken;
     }
 
     const child = spawn(binary.executablePath, args, {
@@ -407,30 +485,41 @@ export class CloudflaredManager {
     this.metricsAddress = null;
     this.notReadyCount = 0;
 
-    const redact = (text: string) =>
-      config.tunnelToken ? text.replaceAll(config.tunnelToken, '<redacted>') : text;
-
-    let pendingLine = '';
-    const handleChunk = (chunk: Buffer) => {
-      if (gen !== this.generation) return;
-      pendingLine += chunk.toString('utf8');
-      const lines = pendingLine.split(/\r?\n/);
-      pendingLine = lines.pop() ?? '';
-      for (const raw of lines) {
-        const line = redact(raw.trim());
-        if (!line) continue;
-        this.observeOutputLine(line, gen);
+    const redact = (text: string) => {
+      let out = text;
+      if (trimmedToken) out = out.replaceAll(trimmedToken, '<redacted>');
+      if (config.tunnelToken && config.tunnelToken !== trimmedToken) {
+        out = out.replaceAll(config.tunnelToken, '<redacted>');
       }
+      return out;
     };
 
-    child.stdout?.on('data', handleChunk);
-    child.stderr?.on('data', handleChunk);
+    const createLineHandler = () => {
+      let pendingLine = '';
+      return (chunk: Buffer) => {
+        if (gen !== this.generation) return;
+        pendingLine += chunk.toString('utf8');
+        const lines = pendingLine.split(/\r?\n/);
+        pendingLine = lines.pop() ?? '';
+        for (const raw of lines) {
+          const line = redact(raw.trim());
+          if (!line) continue;
+          this.observeOutputLine(line, gen);
+        }
+      };
+    };
+
+    child.stdout?.on('data', createLineHandler());
+    child.stderr?.on('data', createLineHandler());
 
     child.on('error', (error) => {
       if (gen !== this.generation) return;
+      this.clearWatchers();
+      if (this.child === child) this.child = null;
       this.updateStatus({
         ...this.status,
         status: 'error',
+        ...(mode === 'quick' ? { url: null } : {}),
         error: redact(error.message || 'Failed to spawn cloudflared'),
       });
     });
@@ -438,7 +527,7 @@ export class CloudflaredManager {
     child.on('exit', (code) => {
       if (gen !== this.generation) return;
       this.clearWatchers();
-      this.child = null;
+      if (this.child === child) this.child = null;
       if (!this.desired || this.desired.mode === 'off') return;
 
       const uptime = Date.now() - this.startedAtMs;
@@ -452,6 +541,8 @@ export class CloudflaredManager {
       this.updateStatus({
         ...this.status,
         status: 'starting',
+        // A Quick Tunnel's trycloudflare.com URL dies with the process; never keep advertising it.
+        ...(mode === 'quick' ? { url: null } : {}),
         error: `cloudflared exited (code ${code ?? 'unknown'}), reconnecting…`,
       });
       const currentDesired = this.desired;
@@ -493,7 +584,7 @@ export class CloudflaredManager {
       if (this.quicStalls.length >= QUIC_STALLS_BEFORE_HTTP2 && this.desired) {
         this.forceHttp2 = true;
         this.quicStalls = [];
-        void this.applyConfig(this.desired);
+        void this.applyConfig(this.desired).catch(() => {});
       }
     }
   }
@@ -537,14 +628,21 @@ export class CloudflaredManager {
 
   private async stopChild(): Promise<void> {
     this.clearWatchers();
+    if (this.stopPromise) {
+      await this.stopPromise;
+    }
     const active = this.child;
-    this.child = null;
     if (!active) return;
-    await new Promise<void>((resolve) => {
+    if (active.exitCode !== null || active.signalCode !== null || !active.pid) {
+      this.child = null;
+      return;
+    }
+    const stopping = new Promise<void>((resolve) => {
       let done = false;
       const finish = () => {
         if (done) return;
         done = true;
+        if (this.child === active) this.child = null;
         resolve();
       };
       const killTimer = setTimeout(() => {
@@ -555,7 +653,12 @@ export class CloudflaredManager {
         }
         finish();
       }, 3_000);
+      killTimer.unref?.();
       active.once('exit', () => {
+        clearTimeout(killTimer);
+        finish();
+      });
+      active.once('error', () => {
         clearTimeout(killTimer);
         finish();
       });
@@ -566,6 +669,14 @@ export class CloudflaredManager {
         finish();
       }
     });
+    this.stopPromise = stopping;
+    try {
+      await stopping;
+    } finally {
+      if (this.stopPromise === stopping) {
+        this.stopPromise = null;
+      }
+    }
   }
 
   private updateStatus(next: UiRemoteCloudflareStatus): void {

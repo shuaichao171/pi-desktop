@@ -28,6 +28,9 @@ const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const WS_TICKET_TTL_MS = 60 * 1000;
 const MAX_PAIRING_GRANTS = 32;
 const MAX_SESSIONS = 64;
+const MAX_TICKETS_PER_SESSION = 16;
+const MAX_TOTAL_TICKETS = 256;
+const TICKET_PRUNE_THROTTLE_MS = 5_000;
 /** Sliding-expiry writes are throttled so a busy client does not rewrite the auth file per request. */
 const SESSION_SLIDE_THROTTLE_MS = 5 * 60_000;
 
@@ -115,6 +118,7 @@ export class RemoteAuthStore {
   private state: PersistedAuthState;
   private writeQueue: Promise<void> = Promise.resolve();
   private readonly tickets = new Map<string, PendingWsTicket>();
+  private lastTicketPruneAt = 0;
   private readonly activeConnections = new Map<string, { count: number; connectedAt: string; remoteAddress: string | null }>();
   private readonly revokeListeners = new Set<(sessionId: string) => void>();
   private readonly changeListeners = new Set<() => void>();
@@ -188,7 +192,10 @@ export class RemoteAuthStore {
     readonly expiresInMinutes?: number;
   }): Promise<{ readonly grant: RemotePairingGrant; readonly code: string }> {
     this.pruneExpired();
-    const ttlMinutes = Math.max(1, Math.min(60, Math.round(input.expiresInMinutes ?? REMOTE_PAIRING_DEFAULT_TTL_MINUTES)));
+    const rawTtl = typeof input.expiresInMinutes === 'number' && Number.isFinite(input.expiresInMinutes)
+      ? input.expiresInMinutes
+      : REMOTE_PAIRING_DEFAULT_TTL_MINUTES;
+    const ttlMinutes = Math.max(1, Math.min(60, Math.round(rawTtl)));
     const now = Date.now();
     const id = randomUUID();
     const code = randomBytes(24).toString('base64url');
@@ -303,10 +310,30 @@ export class RemoteAuthStore {
     this.pruneExpired();
     const exists = this.state.sessions.some((s) => s.sessionId === sessionId);
     if (!exists) return null;
-    this.pruneExpiredTickets();
+    const now = Date.now();
+    if (this.tickets.size >= MAX_TOTAL_TICKETS || now - this.lastTicketPruneAt >= TICKET_PRUNE_THROTTLE_MS) {
+      this.pruneExpiredTickets(now);
+    }
+    // Bound pending tickets per session and globally (evicting oldest entries first)
+    let sessionTicketCount = 0;
+    let oldestSessionTicketHash: string | null = null;
+    for (const [hash, entry] of this.tickets.entries()) {
+      if (entry.sessionId === sessionId) {
+        if (oldestSessionTicketHash === null) oldestSessionTicketHash = hash;
+        sessionTicketCount += 1;
+      }
+    }
+    if (sessionTicketCount >= MAX_TICKETS_PER_SESSION && oldestSessionTicketHash !== null) {
+      this.tickets.delete(oldestSessionTicketHash);
+    }
+    while (this.tickets.size >= MAX_TOTAL_TICKETS) {
+      const oldest = this.tickets.keys().next().value;
+      if (oldest === undefined) break;
+      this.tickets.delete(oldest);
+    }
     const ticket = randomBytes(24).toString('base64url');
     const ticketHash = sha256Hex(ticket);
-    const expiresAtMs = Date.now() + WS_TICKET_TTL_MS;
+    const expiresAtMs = now + WS_TICKET_TTL_MS;
     this.tickets.set(ticketHash, { ticketHash, sessionId, expiresAtMs });
     return { ticket, expiresAt: new Date(expiresAtMs).toISOString() };
   }
@@ -314,16 +341,19 @@ export class RemoteAuthStore {
   consumeWebSocketTicket(ticket: string): AuthenticatedRemoteSession | null {
     const trimmed = ticket.trim();
     if (!trimmed || trimmed.length > 256) return null;
-    this.pruneExpiredTickets();
+    const now = Date.now();
+    if (this.tickets.size > 0 && now - this.lastTicketPruneAt >= TICKET_PRUNE_THROTTLE_MS) {
+      this.pruneExpiredTickets(now);
+    }
     const ticketHash = sha256Hex(trimmed);
     const entry = this.tickets.get(ticketHash);
     if (!entry) return null;
     // Always delete immediately — strictly single-use
     this.tickets.delete(ticketHash);
-    if (entry.expiresAtMs <= Date.now()) return null;
+    if (entry.expiresAtMs <= now) return null;
     const session = this.state.sessions.find((s) => s.sessionId === entry.sessionId);
-    if (!session || Date.parse(session.expiresAt) <= Date.now()) return null;
-    this.slideExpiry(session, Date.now());
+    if (!session || Date.parse(session.expiresAt) <= now) return null;
+    this.slideExpiry(session, now);
     return this.toAuthenticated(session);
   }
 
@@ -374,9 +404,10 @@ export class RemoteAuthStore {
     this.state.sessions = this.state.sessions.filter((s) => s.sessionId !== sessionId);
     if (this.state.sessions.length === before) return false;
     this.dropSessionRuntime(sessionId);
-    await this.persist();
+    // Notify immediately before disk I/O so live sockets always close even if persist fails or stalls.
     this.notifySessionRevoked(sessionId);
     this.emitChanged();
+    await this.persist();
     return true;
   }
 
@@ -386,9 +417,9 @@ export class RemoteAuthStore {
     this.state.sessions = [];
     this.tickets.clear();
     this.activeConnections.clear();
-    await this.persist();
     for (const id of ids) this.notifySessionRevoked(id);
     this.emitChanged();
+    await this.persist();
     return ids.length;
   }
 
@@ -424,8 +455,8 @@ export class RemoteAuthStore {
     this.activeConnections.delete(sessionId);
   }
 
-  private pruneExpiredTickets(): void {
-    const now = Date.now();
+  private pruneExpiredTickets(now = Date.now()): void {
+    this.lastTicketPruneAt = now;
     for (const [hash, ticket] of this.tickets.entries()) {
       if (ticket.expiresAtMs <= now) this.tickets.delete(hash);
     }

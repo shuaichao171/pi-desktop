@@ -1,29 +1,26 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import {
-  FlatList,
-  Pressable,
-  RefreshControl,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-} from 'react-native';
+import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ActivityIndicator, FlatList, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 import type { UiSessionSummary } from '@pidesktop/shared';
-import {
-  groupRemoteWorkspaces,
-  isRemoteConversationWorkspace,
-  mergeRemoteSessionLists,
-} from '@pidesktop/shared/remoteClient';
+import { groupRemoteWorkspaces, isRemoteConversationWorkspace } from '@pidesktop/shared/remoteClient';
 import { useRemote } from '../runtime/remoteStore';
-import { useTheme } from '../theme';
+import { font, radius, space, useTheme, type MobileTheme } from '../theme';
+import { relativeTime, t } from '../i18n';
+import { Banner, Button, Chip, EmptyState, Header, Separator, StatusDot, TextField } from '../components/ui';
 
 interface SessionsScreenProps {
   onOpenChat: () => void;
+  onOpenHosts: () => void;
 }
 
 /** A project folder, or every conversation folder together (the desktop's "Unassigned sessions"). */
 type WorkspaceTab = { readonly kind: 'project'; readonly cwd: string } | { readonly kind: 'unassigned' };
+
+type SessionPhase = 'idle' | 'running' | 'waiting-input' | 'waiting-approval' | 'failed';
+
+interface SessionEntry {
+  readonly cwd: string;
+  readonly session: UiSessionSummary;
+}
 
 const UNASSIGNED_TAB: WorkspaceTab = { kind: 'unassigned' };
 
@@ -32,25 +29,93 @@ function folderBasename(path: string): string {
   return parts[parts.length - 1] || path;
 }
 
-export function SessionsScreen({ onOpenChat }: SessionsScreenProps) {
+function sessionModifiedMs(session: UiSessionSummary): number {
+  const time = Date.parse(session.modified);
+  return Number.isFinite(time) ? time : 0;
+}
+
+function phaseColor(theme: MobileTheme, phase: SessionPhase): string {
+  if (phase === 'waiting-approval' || phase === 'waiting-input') return theme.warning;
+  if (phase === 'running') return theme.brand;
+  if (phase === 'failed') return theme.danger;
+  return theme.textMuted;
+}
+
+const SessionRow = memo(function SessionRow({
+  entry,
+  active,
+  phase,
+  disabled,
+  onPress,
+}: {
+  entry: SessionEntry;
+  active: boolean;
+  phase: SessionPhase;
+  disabled: boolean;
+  onPress: (entry: SessionEntry) => void;
+}) {
+  const theme = useTheme();
+  const item = entry.session;
+  return (
+    <Pressable
+      disabled={disabled}
+      onPress={() => onPress(entry)}
+      style={({ pressed }) => [styles.row, { backgroundColor: pressed ? theme.surfaceAlt : active ? theme.surface : theme.bg }]}
+    >
+      <View style={styles.rowTop}>
+        <Text style={[styles.rowTitle, { color: theme.text, fontWeight: item.unread ? '700' : '600' }]} numberOfLines={1}>
+          {item.name || item.firstMessage || t('home.untitled')}
+        </Text>
+        <Text style={[styles.rowTime, { color: theme.textMuted }]}>{relativeTime(item.modified)}</Text>
+      </View>
+      <View style={styles.rowBottom}>
+        {phase !== 'idle' ? (
+          <View style={styles.phase}>
+            <StatusDot color={phaseColor(theme, phase)} size={6} />
+            <Text style={[styles.rowMeta, { color: phaseColor(theme, phase) }]}>{t(`phase.${phase}`)}</Text>
+          </View>
+        ) : (
+          <Text style={[styles.rowMeta, { color: theme.textMuted }]}>
+            {active ? `${t('home.current')} · ` : ''}
+            {t('home.messages', { n: item.messageCount })}
+          </Text>
+        )}
+        {item.unread ? <StatusDot color={theme.brand} /> : null}
+      </View>
+    </Pressable>
+  );
+});
+
+export function SessionsScreen({ onOpenChat, onOpenHosts }: SessionsScreenProps) {
   const theme = useTheme();
   const {
+    environments,
+    activeEnvironment,
     connection,
     canOperate,
     snapshot,
+    pendingDialogs,
     workspaces,
     conversationWorkspaces,
     sessionsByCwd,
+    connectHost,
     refreshNavigationData,
     refreshSessionsForCwds,
-    switchWorkspace,
-    switchSession,
+    selectSession,
     createNewSession,
   } = useRemote();
 
   const [selectedTab, setSelectedTab] = useState<WorkspaceTab | null>(null);
   const [query, setQuery] = useState('');
   const [refreshing, setRefreshing] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [opening, setOpening] = useState(false);
+  const openingRef = useRef(false);
+
+  useEffect(() => {
+    setSelectedTab(null);
+    setActionError(null);
+  }, [connection.environmentId]);
 
   const groups = useMemo(
     () => groupRemoteWorkspaces(workspaces, conversationWorkspaces),
@@ -78,29 +143,42 @@ export function SessionsScreen({ onOpenChat }: SessionsScreenProps) {
   }, [activeFolders, connection.phase, sessionsByCwd, refreshSessionsForCwds]);
 
   const runtimeByPath = useMemo(() => {
-    const map = new Map<string, string>();
+    const map = new Map<string, SessionPhase>();
     for (const item of snapshot?.sessionRuntimes ?? []) {
       map.set(item.path, item.runtime.phase);
     }
     return map;
   }, [snapshot?.sessionRuntimes]);
 
-  const sessions = useMemo(() => {
-    const list =
-      activeTab?.kind === 'unassigned'
-        ? mergeRemoteSessionLists(activeFolders.map((cwd) => sessionsByCwd[cwd]))
-        : (sessionsByCwd[activeFolders[0] ?? ''] ?? []);
+  const sessions = useMemo<SessionEntry[]>(() => {
+    const seen = new Set<string>();
+    const merged: SessionEntry[] = [];
+    for (const cwd of activeFolders) {
+      for (const session of sessionsByCwd[cwd] ?? []) {
+        if (seen.has(session.path)) continue;
+        seen.add(session.path);
+        merged.push({ cwd, session });
+      }
+    }
+    merged.sort(
+      (a, b) =>
+        Number(b.session.pinned === true) - Number(a.session.pinned === true) ||
+        sessionModifiedMs(b.session) - sessionModifiedMs(a.session),
+    );
     const q = query.trim().toLowerCase();
-    return list
-      .filter((s) => !s.archived)
-      .filter((s) => !q || `${s.name ?? ''} ${s.firstMessage}`.toLowerCase().includes(q));
-  }, [sessionsByCwd, activeTab, activeFolders, query]);
+    return merged
+      .filter((entry) => !entry.session.archived)
+      .filter((entry) => !q || `${entry.session.name ?? ''} ${entry.session.firstMessage}`.toLowerCase().includes(q));
+  }, [sessionsByCwd, activeFolders, query]);
 
   const handleRefresh = async () => {
     setRefreshing(true);
+    setActionError(null);
     try {
       await refreshNavigationData();
       await refreshSessionsForCwds(activeFolders);
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : String(err));
     } finally {
       setRefreshing(false);
     }
@@ -108,153 +186,221 @@ export function SessionsScreen({ onOpenChat }: SessionsScreenProps) {
 
   const selectTab = (tab: WorkspaceTab) => {
     setSelectedTab(tab);
-    // Unassigned is a view over many folders, so it never moves the desktop to one of them.
+    setActionError(null);
+    // Browsing tabs only lists sessions; it never mutates the desktop's active workspace.
     if (tab.kind === 'unassigned') {
       void refreshSessionsForCwds(groups.conversations);
       return;
     }
     void refreshSessionsForCwds([tab.cwd]);
-    if (canOperate && tab.cwd !== snapshotCwd) {
-      void switchWorkspace(tab.cwd).catch(() => {});
+  };
+
+  const handleSelectSession = useCallback(
+    async (entry: SessionEntry) => {
+      if (!canOperate) {
+        onOpenChat();
+        return;
+      }
+      if (openingRef.current) return;
+      openingRef.current = true;
+      setOpening(true);
+      setActionError(null);
+      try {
+        await selectSession(entry.cwd, entry.session.path);
+        onOpenChat();
+      } catch (err) {
+        setActionError(err instanceof Error ? err.message : String(err));
+      } finally {
+        openingRef.current = false;
+        setOpening(false);
+      }
+    },
+    [canOperate, onOpenChat, selectSession],
+  );
+  const pressSession = useCallback((entry: SessionEntry) => void handleSelectSession(entry), [handleSelectSession]);
+
+  const handleCreateSession = async () => {
+    if (!canOperate || openingRef.current) return;
+    openingRef.current = true;
+    setOpening(true);
+    setActionError(null);
+    try {
+      // Under Unassigned the desktop creates a fresh conversation folder, as its own "New chat" does.
+      await createNewSession(activeTab?.kind === 'project' ? activeTab.cwd : undefined);
+      onOpenChat();
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : String(err));
+    } finally {
+      openingRef.current = false;
+      setOpening(false);
     }
   };
 
-  const renderTab = (key: string, label: string, tab: WorkspaceTab, selected: boolean) => (
+  const phase = connection.phase;
+  const hostLabel = activeEnvironment?.label ?? environments[0]?.label ?? t('hosts.title');
+  const statusColor =
+    phase === 'connected' ? theme.success : phase === 'auth-error' ? theme.danger : phase === 'disconnected' ? theme.textMuted : theme.warning;
+
+  const hostPill = (
     <Pressable
-      key={key}
-      onPress={() => selectTab(tab)}
-      style={[
-        styles.wsChip,
-        {
-          borderColor: selected ? theme.brand : theme.border,
-          backgroundColor: selected ? theme.brand : theme.surfaceAlt,
-        },
-      ]}
+      onPress={onOpenHosts}
+      accessibilityLabel={t('conn.manage')}
+      style={({ pressed }) => [styles.hostPill, { backgroundColor: theme.surface, opacity: pressed ? 0.7 : 1 }]}
     >
-      <Text style={{ color: selected ? theme.brandInk : theme.text, fontSize: 12, fontWeight: '600' }}>{label}</Text>
+      <StatusDot color={statusColor} />
+      <Text style={[styles.hostLabel, { color: theme.textSubtle }]} numberOfLines={1}>
+        {hostLabel}
+      </Text>
     </Pressable>
   );
 
-  if (connection.phase !== 'connected') {
+  if (phase !== 'connected') {
+    const target = activeEnvironment ?? environments[0] ?? null;
     return (
-      <View style={[styles.center, { backgroundColor: theme.bg }]}>
-        <Text style={{ color: theme.textSubtle, fontSize: 15 }}>
-          Connect to a desktop host in the Hosts tab to view conversations.
-        </Text>
+      <View style={[styles.container, { backgroundColor: theme.bg }]}>
+        <Header title={t('home.title')} large right={hostPill} />
+        {phase === 'connecting' || phase === 'reconnecting' ? (
+          <EmptyState
+            title={phase === 'reconnecting' ? t('conn.reconnecting', { n: connection.attempt }) : t('conn.connecting')}
+            action={<ActivityIndicator color={theme.brand} />}
+          />
+        ) : (
+          <EmptyState
+            title={phase === 'auth-error' ? t('conn.authError') : t('conn.disconnected')}
+            hint={phase === 'auth-error' ? undefined : (connection.error ?? t('home.notConnectedHint'))}
+            action={
+              <View style={styles.emptyActions}>
+                {phase !== 'auth-error' && target ? <Button label={t('hosts.connect')} onPress={() => connectHost(target)} /> : null}
+                <Button label={t('conn.manage')} variant="ghost" onPress={onOpenHosts} />
+              </View>
+            }
+          />
+        )}
       </View>
     );
   }
 
+  const listEmpty =
+    query.trim() !== ''
+      ? t('home.emptySearch')
+      : activeTab?.kind === 'unassigned'
+        ? t('home.emptyUnassigned')
+        : t('home.emptyProject');
+  const tabCount = groups.projects.length + (groups.conversations.length > 0 ? 1 : 0);
+  const currentPath = snapshot?.sessionPath ?? null;
+
   return (
     <View style={[styles.container, { backgroundColor: theme.bg }]}>
-      <View style={[styles.topBar, { borderBottomColor: theme.border, backgroundColor: theme.surface }]}>
-        <View style={styles.titleRow}>
-          <Text style={[styles.heading, { color: theme.text }]}>Conversations</Text>
-          {canOperate && (
-            <Pressable
-              style={[styles.newBtn, { backgroundColor: theme.brand }]}
-              onPress={() =>
-                // Under Unassigned the desktop creates a fresh conversation folder, as its own "New chat" does.
-                void createNewSession(activeTab?.kind === 'project' ? activeTab.cwd : undefined).then(onOpenChat)
-              }
-            >
-              <Text style={{ color: theme.brandInk, fontWeight: '700', fontSize: 13 }}>+ New</Text>
-            </Pressable>
-          )}
-        </View>
+      <Header title={t('home.title')} large right={hostPill} />
 
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.wsChips}>
-          {groups.projects.map((ws) =>
-            renderTab(ws, folderBasename(ws), { kind: 'project', cwd: ws }, activeTab?.kind === 'project' && activeTab.cwd === ws),
-          )}
-          {groups.conversations.length > 0 &&
-            renderTab('unassigned', 'Unassigned', UNASSIGNED_TAB, activeTab?.kind === 'unassigned')}
+      {pendingDialogs.length > 0 ? (
+        <Banner text={t('home.pending', { n: pendingDialogs.length })} actionLabel="›" onPress={onOpenChat} />
+      ) : null}
+
+      {tabCount > 1 ? (
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.chipScroll} contentContainerStyle={styles.chips}>
+          {groups.projects.map((ws) => (
+            <Chip
+              key={ws}
+              label={folderBasename(ws)}
+              selected={activeTab?.kind === 'project' && activeTab.cwd === ws}
+              onPress={() => selectTab({ kind: 'project', cwd: ws })}
+            />
+          ))}
+          {groups.conversations.length > 0 ? (
+            <Chip label={t('home.unassigned')} selected={activeTab?.kind === 'unassigned'} onPress={() => selectTab(UNASSIGNED_TAB)} />
+          ) : null}
         </ScrollView>
+      ) : null}
 
-        <TextInput
-          value={query}
-          onChangeText={setQuery}
-          placeholder="Filter conversations…"
-          placeholderTextColor={theme.textMuted}
-          style={[styles.search, { borderColor: theme.border, backgroundColor: theme.surfaceAlt, color: theme.text }]}
-        />
+      <View style={styles.searchWrap}>
+        <TextField value={query} onChangeText={setQuery} placeholder={t('home.search')} returnKeyType="search" />
       </View>
 
-      <FlatList<UiSessionSummary>
-        data={sessions}
-        keyExtractor={(item) => item.path}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => void handleRefresh()} />}
-        contentContainerStyle={styles.listContent}
-        ListEmptyComponent={
-          <Text style={{ color: theme.textMuted, textAlign: 'center', marginTop: 40 }}>
-            {activeTab?.kind === 'unassigned' ? 'No conversations outside projects yet.' : 'No conversations in this workspace yet.'}
-          </Text>
-        }
-        renderItem={({ item }) => {
-          const isActive = snapshot?.sessionPath === item.path;
-          const phase = runtimeByPath.get(item.path) ?? item.runtime?.phase ?? 'idle';
-          const phaseColor =
-            phase === 'waiting-approval' || phase === 'waiting-input'
-              ? theme.warning
-              : phase === 'running'
-                ? theme.brand
-                : phase === 'failed'
-                  ? theme.danger
-                  : item.unread
-                    ? theme.success
-                    : 'transparent';
+      {actionError ? (
+        <Banner tone="danger" text={actionError} actionLabel={t('common.dismiss')} onPress={() => setActionError(null)} />
+      ) : null}
 
-          return (
-            <Pressable
-              onPress={() => {
-                if (canOperate) {
-                  void switchSession(item.path).then(onOpenChat);
-                } else {
-                  onOpenChat();
-                }
-              }}
-              style={[
-                styles.row,
-                {
-                  backgroundColor: theme.surface,
-                  borderColor: isActive ? theme.brand : theme.border,
-                },
-              ]}
-            >
-              <View style={styles.rowHeader}>
-                <View style={[styles.dot, { backgroundColor: phaseColor }]} />
-                <Text style={[styles.rowTitle, { color: theme.text }]} numberOfLines={1}>
-                  {item.name || item.firstMessage || 'Untitled conversation'}
-                </Text>
-              </View>
-              <View style={styles.rowMeta}>
-                <Text style={{ color: theme.textMuted, fontSize: 11 }}>
-                  {item.messageCount} msgs · {phase !== 'idle' ? phase : new Date(item.modified).toLocaleDateString()}
-                </Text>
-                {isActive && <Text style={{ color: theme.brand, fontSize: 11, fontWeight: '700' }}>ACTIVE</Text>}
-              </View>
-            </Pressable>
-          );
-        }}
+      <FlatList<SessionEntry>
+        data={sessions}
+        keyExtractor={(entry) => entry.session.path}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={() => void handleRefresh()}
+            colors={[theme.brand]}
+            progressBackgroundColor={theme.surface}
+          />
+        }
+        contentContainerStyle={styles.listContent}
+        ItemSeparatorComponent={Separator}
+        keyboardShouldPersistTaps="handled"
+        ListEmptyComponent={<EmptyState title={listEmpty} />}
+        renderItem={({ item: entry }) => (
+          <SessionRow
+            entry={entry}
+            active={currentPath === entry.session.path}
+            phase={runtimeByPath.get(entry.session.path) ?? entry.session.runtime?.phase ?? 'idle'}
+            disabled={opening}
+            onPress={pressSession}
+          />
+        )}
       />
+
+      {canOperate ? (
+        <Pressable
+          onPress={() => void handleCreateSession()}
+          disabled={opening}
+          style={({ pressed }) => [styles.fab, { backgroundColor: theme.brand, opacity: opening ? 0.6 : pressed ? 0.85 : 1 }]}
+        >
+          {opening ? <ActivityIndicator size="small" color={theme.brandInk} /> : <Text style={[styles.fabPlus, { color: theme.brandInk }]}>＋</Text>}
+          <Text style={[styles.fabLabel, { color: theme.brandInk }]}>{t('home.new')}</Text>
+        </Pressable>
+      ) : null}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  center: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 24 },
-  topBar: { padding: 12, gap: 10, borderBottomWidth: StyleSheet.hairlineWidth },
-  titleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  heading: { fontSize: 20, fontWeight: '700' },
-  newBtn: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8 },
-  wsChips: { gap: 8 },
-  wsChip: { paddingHorizontal: 11, paddingVertical: 6, borderRadius: 8, borderWidth: 1 },
-  search: { borderWidth: 1, borderRadius: 9, paddingHorizontal: 10, paddingVertical: 8, fontSize: 13 },
-  listContent: { padding: 12, gap: 8, paddingBottom: 24 },
-  row: { padding: 12, borderRadius: 12, borderWidth: 1, gap: 6 },
-  rowHeader: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  dot: { width: 8, height: 8, borderRadius: 4 },
-  rowTitle: { flex: 1, fontSize: 15, fontWeight: '600' },
-  rowMeta: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingLeft: 16 },
+  hostPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: space.md,
+    paddingVertical: 6,
+    borderRadius: radius.pill,
+    maxWidth: 170,
+  },
+  hostLabel: { fontSize: font.small, fontWeight: '500', flexShrink: 1 },
+  emptyActions: { alignSelf: 'stretch', gap: space.xs, marginTop: space.sm },
+  chipScroll: { flexGrow: 0 },
+  chips: { gap: space.sm, paddingHorizontal: space.lg, paddingBottom: space.sm },
+  searchWrap: { paddingHorizontal: space.lg, paddingBottom: space.sm },
+  listContent: { paddingBottom: 96 },
+  row: { paddingHorizontal: space.lg, paddingVertical: space.md, gap: 3 },
+  rowTop: { flexDirection: 'row', alignItems: 'center', gap: space.md },
+  rowTitle: { flex: 1, fontSize: font.body },
+  rowTime: { fontSize: font.caption },
+  rowBottom: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', minHeight: 16 },
+  phase: { flexDirection: 'row', alignItems: 'center', gap: 5 },
+  rowMeta: { fontSize: font.caption },
+  fab: {
+    position: 'absolute',
+    right: space.lg,
+    bottom: space.lg,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 18,
+    height: 48,
+    borderRadius: radius.pill,
+    elevation: 4,
+    shadowColor: '#000',
+    shadowOpacity: 0.15,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 3 },
+  },
+  fabPlus: { fontSize: 18, fontWeight: '600', marginTop: -1 },
+  fabLabel: { fontSize: font.body, fontWeight: '600' },
 });

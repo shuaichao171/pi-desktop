@@ -2359,6 +2359,7 @@ export const translations: Record<string, { 'zh-CN': string; 'en-US': string }> 
   'settings.remote.pairLabelPlaceholder': { 'zh-CN': '设备备注（可选，例如：我的 iPhone）', 'en-US': 'Device label (optional, e.g. My iPhone)' },
   'settings.remote.generateQr': { 'zh-CN': '生成二维码', 'en-US': 'Generate QR' },
   'settings.remote.qrAlt': { 'zh-CN': 'Pi Desktop 手机配对二维码', 'en-US': 'Pi Desktop mobile pairing QR code' },
+  'settings.remote.qrUnavailable': { 'zh-CN': '配对链接过长，无法生成二维码，请直接复制下方的配对链接或配对码。', 'en-US': 'Pairing link is too long for a QR code. Copy the pairing URL or code below directly.' },
   'settings.remote.scanPrompt': { 'zh-CN': '使用 Pi Desktop 手机 App 扫描此二维码', 'en-US': 'Scan with the Pi Desktop mobile app' },
   'settings.remote.oneTimeHint': { 'zh-CN': '配对链接视同密码，仅在当前页面显示一次，切走后不可再次查看。', 'en-US': 'Treat this pairing link like a password. It is only shown here once.' },
   'settings.remote.copyPairingUrl': { 'zh-CN': '复制配对链接', 'en-US': 'Copy pairing URL' },

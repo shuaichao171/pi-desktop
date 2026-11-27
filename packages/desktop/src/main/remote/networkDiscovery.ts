@@ -62,6 +62,20 @@ export function discoverHostAddresses(
   };
 }
 
+function parseHttpEndpointOrigin(raw: string | null | undefined): { readonly origin: string; readonly isHttps: boolean } | null {
+  if (!raw) return null;
+  const trimmed = raw.trim().replace(/\/+$/, '');
+  if (!trimmed) return null;
+  try {
+    const parsed = new URL(trimmed);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null;
+    if (!parsed.hostname) return null;
+    return { origin: parsed.origin, isHttps: parsed.protocol === 'https:' };
+  } catch {
+    return null;
+  }
+}
+
 export function buildAdvertisedEndpoints(input: {
   readonly port: number;
   readonly exposureMode: 'local-only' | 'lan';
@@ -71,28 +85,28 @@ export function buildAdvertisedEndpoints(input: {
 }): RemoteAdvertisedEndpoint[] {
   const endpoints: RemoteAdvertisedEndpoint[] = [];
 
-  if (input.cloudflareUrl) {
-    const httpBaseUrl = input.cloudflareUrl.replace(/\/+$/, '');
+  const cloudflare = parseHttpEndpointOrigin(input.cloudflareUrl);
+  if (cloudflare) {
     endpoints.push({
-      id: `cloudflare:${httpBaseUrl}`,
+      id: `cloudflare:${cloudflare.origin}`,
       kind: 'cloudflare',
       label: 'Cloudflare Tunnel',
-      httpBaseUrl,
-      wsBaseUrl: httpToWsUrl(httpBaseUrl),
-      isHttps: httpBaseUrl.startsWith('https://'),
+      httpBaseUrl: cloudflare.origin,
+      wsBaseUrl: httpToWsUrl(cloudflare.origin),
+      isHttps: cloudflare.isHttps,
       isDefault: true,
     });
   }
 
-  if (input.tailscaleHttpsUrl) {
-    const httpBaseUrl = input.tailscaleHttpsUrl.replace(/\/+$/, '');
+  const tailscale = parseHttpEndpointOrigin(input.tailscaleHttpsUrl);
+  if (tailscale) {
     endpoints.push({
-      id: `tailscale-https:${httpBaseUrl}`,
+      id: `tailscale-https:${tailscale.origin}`,
       kind: 'tailscale',
       label: 'Tailscale HTTPS',
-      httpBaseUrl,
-      wsBaseUrl: httpToWsUrl(httpBaseUrl),
-      isHttps: true,
+      httpBaseUrl: tailscale.origin,
+      wsBaseUrl: httpToWsUrl(tailscale.origin),
+      isHttps: tailscale.isHttps,
       isDefault: endpoints.length === 0,
     });
   }

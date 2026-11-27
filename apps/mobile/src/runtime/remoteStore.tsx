@@ -53,10 +53,11 @@ interface RemoteContextValue {
   readonly forgetHost: (environmentId: string) => Promise<void>;
   readonly addRouteToHost: (environmentId: string, rawUrl: string) => Promise<void>;
   readonly refreshNavigationData: () => Promise<void>;
-  /** Lists sessions of these folders in one batch; a folder that fails to list shows as empty. */
+  /** Lists sessions of these folders in one batch; folders that fail to list remain unset for retry. */
   readonly refreshSessionsForCwds: (cwds: readonly string[]) => Promise<void>;
   readonly switchWorkspace: (cwd: string, fresh?: boolean) => Promise<void>;
   readonly switchSession: (path: string) => Promise<void>;
+  readonly selectSession: (cwd: string, path: string) => Promise<void>;
   readonly createNewSession: (cwd?: string) => Promise<void>;
   readonly sendPrompt: (text: string, behavior?: 'steer' | 'followUp') => Promise<void>;
   readonly abortTurn: () => Promise<void>;
@@ -67,6 +68,7 @@ interface RemoteContextValue {
   readonly setModel: (provider: string, id: string) => Promise<void>;
   readonly setThinkingLevel: (level: UiThinkingLevel) => Promise<void>;
   readonly setSessionAgent: (agentId: string) => Promise<void>;
+  readonly setAgentOption: (optionId: string, value: string) => Promise<void>;
   readonly listFiles: (relativePath?: string) => Promise<WorkspaceEntry[]>;
   readonly readFile: (relativePath: string) => Promise<string>;
   readonly getGitStatus: () => Promise<WorkspaceGitStatus>;
@@ -128,48 +130,90 @@ export function RemoteProvider({ children }: { children: React.ReactNode }) {
   const clientRef = useRef<RemoteConnectionClient | null>(null);
   const workspaceKeysRef = useRef(new Set<string>());
   const sessionLoadsRef = useRef(new Set<string>());
+  const connectionGenRef = useRef(0);
+  const navRefreshGenRef = useRef(0);
+  const busyCountRef = useRef(0);
+  const snapshotRef = useRef<AgentSnapshot | null>(null);
+  const environmentsRef = useRef<SavedRemoteEnvironment[]>([]);
+  const activeEnvIdRef = useRef<string | null>(null);
+  const forgottenIdsRef = useRef(new Set<string>());
+
+  environmentsRef.current = environments;
+  activeEnvIdRef.current = activeEnvId;
+  snapshotRef.current = snapshot;
+
+  const setSnapshotSynced = useCallback(
+    (updater: AgentSnapshot | null | ((prev: AgentSnapshot | null) => AgentSnapshot | null)) => {
+      setSnapshot((prev) => {
+        const next = typeof updater === 'function' ? updater(prev) : updater;
+        snapshotRef.current = next;
+        return next;
+      });
+    },
+    [],
+  );
 
   // The Sessions screen loads the folders behind the tab it shows; no folder is preloaded here.
   const refreshNavigationData = useCallback(async () => {
     const client = clientRef.current;
     if (!client || client.getState().phase !== 'connected') return;
+    const connGen = connectionGenRef.current;
+    const navGen = ++navRefreshGenRef.current;
     const [wsList, conversationList, modelList, agentList] = await Promise.all([
-      client.call('agent.listWorkspaces').catch(() => [] as string[]),
-      client.call('agent.listConversationWorkspaces').catch(() => [] as string[]),
-      client.call('agent.listModels').catch(() => [] as UiModelSummary[]),
-      client.call('agent.listAgents').catch(() => [] as UiAgentStatus[]),
+      client.call('agent.listWorkspaces').catch(() => null),
+      client.call('agent.listConversationWorkspaces').catch(() => null),
+      client.call('agent.listModels').catch(() => null),
+      client.call('agent.listAgents').catch(() => null),
     ]);
-    workspaceKeysRef.current = new Set(wsList.map(remoteWorkspaceKey));
-    setWorkspaces(wsList);
-    setConversationWorkspaces(conversationList);
-    setModels(modelList);
-    setAgents(agentList);
+    if (connGen !== connectionGenRef.current || navGen !== navRefreshGenRef.current) return;
+    if (wsList !== null) {
+      workspaceKeysRef.current = new Set(wsList.map(remoteWorkspaceKey));
+      setWorkspaces(wsList);
+    }
+    if (conversationList !== null) {
+      setConversationWorkspaces(conversationList);
+    }
+    if (modelList !== null) {
+      setModels(modelList);
+    }
+    if (agentList !== null) {
+      setAgents(agentList);
+    }
   }, []);
 
   if (!clientRef.current) {
     clientRef.current = new RemoteConnectionClient(nativeTransport, {
       onStateChange: (next) => setConnection(next),
       onHello: (hello) => {
-        setSnapshot(hello.snapshot);
+        const connGen = connectionGenRef.current;
+        setSnapshotSynced(hello.snapshot);
         setPendingDialogs([...hello.pendingDialogs]);
         void refreshNavigationData();
         if (hello.snapshot.cwd) {
+          const cwd = hello.snapshot.cwd;
           void clientRef.current
-            ?.call('agent.listSessions', { cwd: hello.snapshot.cwd })
-            .then((list) => setSessionsByCwd((prev) => ({ ...prev, [hello.snapshot.cwd]: list })))
+            ?.call('agent.listSessions', { cwd })
+            .then((list) => {
+              if (connGen !== connectionGenRef.current) return;
+              setSessionsByCwd((prev) => ({ ...prev, [cwd]: list }));
+            })
             .catch(() => {});
         }
       },
       onEvent: (event) => {
         if (event.channel === 'agent-event') {
-          setSnapshot((prev) => applyRemoteAgentEvent(prev, event.payload));
+          setSnapshotSynced((prev) => applyRemoteAgentEvent(prev, event.payload));
           if (event.payload.event.type === 'sessions-changed') {
+            const connGen = connectionGenRef.current;
             const changedCwd = event.payload.event.cwd;
             // A conversation started without a project lives in a folder this phone has not listed yet.
             if (!workspaceKeysRef.current.has(remoteWorkspaceKey(changedCwd))) void refreshNavigationData();
             void clientRef.current
               ?.call('agent.listSessions', { cwd: changedCwd })
-              .then((list) => setSessionsByCwd((prev) => ({ ...prev, [changedCwd]: list })))
+              .then((list) => {
+                if (connGen !== connectionGenRef.current) return;
+                setSessionsByCwd((prev) => ({ ...prev, [changedCwd]: list }));
+              })
               .catch(() => {});
           }
           return;
@@ -183,27 +227,81 @@ export function RemoteProvider({ children }: { children: React.ReactNode }) {
         }
       },
       onEnvironmentUpdated: (updated) => {
-        void saveEnvironment(updated).then((list) => setEnvironments(list)).catch(() => {});
+        if (
+          forgottenIdsRef.current.has(updated.environmentId) ||
+          !environmentsRef.current.some((item) => item.environmentId === updated.environmentId)
+        ) {
+          return;
+        }
+        void saveEnvironment(updated)
+          .then((list) => {
+            if (forgottenIdsRef.current.has(updated.environmentId)) return;
+            environmentsRef.current = list;
+            setEnvironments(list);
+          })
+          .catch(() => {});
       },
     });
   }
 
+  const connectHost = useCallback(
+    (env: SavedRemoteEnvironment) => {
+      connectionGenRef.current += 1;
+      navRefreshGenRef.current += 1;
+      activeEnvIdRef.current = env.environmentId;
+      setActiveEnvId(env.environmentId);
+      setSnapshotSynced(null);
+      setPendingDialogs([]);
+      setWorkspaces([]);
+      setConversationWorkspaces([]);
+      workspaceKeysRef.current = new Set();
+      sessionLoadsRef.current.clear();
+      setSessionsByCwd({});
+      setModels([]);
+      setAgents([]);
+      clientRef.current?.connect(env);
+    },
+    [setSnapshotSynced],
+  );
+
+  const disconnectHost = useCallback(() => {
+    connectionGenRef.current += 1;
+    navRefreshGenRef.current += 1;
+    clientRef.current?.disconnect();
+    setSnapshotSynced(null);
+    setPendingDialogs([]);
+    setWorkspaces([]);
+    setConversationWorkspaces([]);
+    workspaceKeysRef.current = new Set();
+    sessionLoadsRef.current.clear();
+    setSessionsByCwd({});
+    setModels([]);
+    setAgents([]);
+  }, [setSnapshotSynced]);
+
   useEffect(() => {
     let active = true;
-    void loadSavedEnvironments().then((saved) => {
-      if (!active) return;
-      setEnvironments(saved);
-      setHydrated(true);
-      if (saved[0]) {
-        setActiveEnvId(saved[0].environmentId);
-        clientRef.current?.connect(saved[0]);
-      }
-    });
+    void loadSavedEnvironments()
+      .then((saved) => {
+        if (!active) return;
+        environmentsRef.current = saved;
+        setEnvironments(saved);
+        setHydrated(true);
+        if (saved[0]) {
+          connectHost(saved[0]);
+        }
+      })
+      .catch(() => {
+        if (!active) return;
+        setHydrated(true);
+      });
     return () => {
       active = false;
+      connectionGenRef.current += 1;
+      navRefreshGenRef.current += 1;
       clientRef.current?.disconnect();
     };
-  }, []);
+  }, [connectHost]);
 
   // Re-probe routes when returning to foreground or switching Wi-Fi / Cellular (LAN promotion)
   useEffect(() => {
@@ -231,23 +329,6 @@ export function RemoteProvider({ children }: { children: React.ReactNode }) {
     }
   }, [snapshotCwd, connection.phase, refreshNavigationData]);
 
-  const connectHost = useCallback((env: SavedRemoteEnvironment) => {
-    setActiveEnvId(env.environmentId);
-    setSnapshot(null);
-    setPendingDialogs([]);
-    setWorkspaces([]);
-    setConversationWorkspaces([]);
-    workspaceKeysRef.current = new Set();
-    setSessionsByCwd({});
-    clientRef.current?.connect(env);
-  }, []);
-
-  const disconnectHost = useCallback(() => {
-    clientRef.current?.disconnect();
-    setSnapshot(null);
-    setPendingDialogs([]);
-  }, []);
-
   const pairHost = useCallback(
     async (input: { pairingUrlOrAddress: string; code?: string }): Promise<SavedRemoteEnvironment> => {
       const os = currentMobileOs();
@@ -259,7 +340,9 @@ export function RemoteProvider({ children }: { children: React.ReactNode }) {
         deviceType: 'mobile',
         os,
       });
+      forgottenIdsRef.current.delete(env.environmentId);
       const updatedList = await saveEnvironment(env);
+      environmentsRef.current = updatedList;
       setEnvironments(updatedList);
       connectHost(env);
       return env;
@@ -269,27 +352,44 @@ export function RemoteProvider({ children }: { children: React.ReactNode }) {
 
   const forgetHost = useCallback(
     async (environmentId: string) => {
-      if (activeEnvId === environmentId) {
+      forgottenIdsRef.current.add(environmentId);
+      if (activeEnvIdRef.current === environmentId) {
         disconnectHost();
+        activeEnvIdRef.current = null;
         setActiveEnvId(null);
       }
       const next = await removeSavedEnvironment(environmentId);
+      environmentsRef.current = next;
       setEnvironments(next);
     },
-    [activeEnvId, disconnectHost],
+    [disconnectHost],
   );
 
   const addRouteToHost = useCallback(
     async (environmentId: string, rawUrl: string) => {
-      const target = environments.find((e) => e.environmentId === environmentId);
+      const target = environmentsRef.current.find((e) => e.environmentId === environmentId);
       if (!target) throw new Error('Environment not found');
-      const normalized = /^https?:\/\//i.test(rawUrl.trim()) ? rawUrl.trim() : `http://${rawUrl.trim()}`;
+      const trimmed = rawUrl.trim();
+      if (!trimmed) throw new Error('Route URL is required');
+      const normalized = /^https?:\/\//i.test(trimmed) ? trimmed : `http://${trimmed}`;
       const origin = new URL(normalized).origin;
+      if (target.pairedOverHttps && !origin.startsWith('https://')) {
+        throw new Error(
+          'This host was paired over HTTPS and requires an https:// route. Plain HTTP routes are blocked to protect your session token.',
+        );
+      }
       const kind = classifyEndpointKind(origin);
       const route: SavedRemoteRoute = {
         id: `manual:${kind}:${origin}`,
         kind,
-        label: kind === 'lan' ? 'LAN' : kind === 'tailscale' ? 'Tailscale' : kind === 'cloudflare' ? 'Cloudflare' : new URL(origin).host,
+        label:
+          kind === 'lan'
+            ? 'LAN'
+            : kind === 'tailscale'
+              ? 'Tailscale'
+              : kind === 'cloudflare'
+                ? 'Cloudflare'
+                : new URL(origin).host,
         httpBaseUrl: origin,
         wsBaseUrl: httpToWsUrl(origin),
         learned: false,
@@ -299,46 +399,180 @@ export function RemoteProvider({ children }: { children: React.ReactNode }) {
         routes: sortRemoteRoutes([...target.routes.filter((r) => r.httpBaseUrl !== origin), route]),
       };
       const list = await saveEnvironment(updated);
+      environmentsRef.current = list;
       setEnvironments(list);
-      if (activeEnvId === environmentId) {
-        clientRef.current?.connect(updated);
+      const phase = clientRef.current?.getState().phase;
+      if (
+        activeEnvIdRef.current === environmentId &&
+        (phase === 'connected' || phase === 'connecting' || phase === 'reconnecting')
+      ) {
+        connectHost(updated);
       }
     },
-    [environments, activeEnvId],
+    [connectHost],
   );
 
   const refreshSessionsForCwds = useCallback(async (cwds: readonly string[]) => {
     const client = clientRef.current;
     if (!client || client.getState().phase !== 'connected') return;
+    const connGen = connectionGenRef.current;
     // Skip folders already loading, so re-renders during a batch never repeat its requests.
     const targets = [...new Set(cwds)].filter((cwd) => cwd && !sessionLoadsRef.current.has(cwd));
     if (targets.length === 0) return;
     for (const cwd of targets) sessionLoadsRef.current.add(cwd);
     try {
       const results = await Promise.allSettled(targets.map((cwd) => client.call('agent.listSessions', { cwd })));
+      if (connGen !== connectionGenRef.current) return;
       setSessionsByCwd((prev) => {
+        let changed = false;
         const next = { ...prev };
         targets.forEach((cwd, index) => {
           const result = results[index];
-          next[cwd] = result.status === 'fulfilled' ? result.value : (prev[cwd] ?? []);
+          if (result.status === 'fulfilled') {
+            next[cwd] = result.value;
+            changed = true;
+          }
         });
-        return next;
+        return changed ? next : prev;
       });
     } finally {
-      for (const cwd of targets) sessionLoadsRef.current.delete(cwd);
+      if (connGen === connectionGenRef.current) {
+        for (const cwd of targets) sessionLoadsRef.current.delete(cwd);
+      }
     }
   }, []);
 
-  const runAction = useCallback(async <T,>(work: (client: RemoteConnectionClient) => Promise<T>): Promise<T> => {
+  const requireClient = useCallback((): RemoteConnectionClient => {
     const client = clientRef.current;
-    if (!client) throw new Error('Remote client unavailable');
-    setBusyAction(true);
+    if (!client) throw new Error('Not connected');
+    return client;
+  }, []);
+
+  const runAction = useCallback(async <T,>(work: (client: RemoteConnectionClient) => Promise<T>): Promise<T> => {
+    const client = requireClient();
+    busyCountRef.current += 1;
+    if (busyCountRef.current === 1) setBusyAction(true);
     try {
       return await work(client);
     } finally {
-      setBusyAction(false);
+      busyCountRef.current = Math.max(0, busyCountRef.current - 1);
+      if (busyCountRef.current === 0) setBusyAction(false);
     }
-  }, []);
+  }, [requireClient]);
+
+  const switchWorkspace = useCallback(
+    (cwd: string, fresh?: boolean) =>
+      runAction((c) => c.call('agent.switchWorkspace', { cwd, fresh }).then(() => undefined)),
+    [runAction],
+  );
+
+  const switchSession = useCallback(
+    (path: string) => runAction((c) => c.call('agent.switchSession', { path }).then(() => undefined)),
+    [runAction],
+  );
+
+  const selectSession = useCallback(
+    async (cwd: string, path: string): Promise<void> => {
+      if (!cwd || !path) return;
+      const gen = connectionGenRef.current;
+      await runAction(async (client) => {
+        const currentCwd = snapshotRef.current?.cwd ?? '';
+        if (remoteWorkspaceKey(currentCwd) !== remoteWorkspaceKey(cwd)) {
+          await client.call('agent.switchWorkspace', { cwd });
+          if (gen !== connectionGenRef.current) return;
+        }
+        await client.call('agent.switchSession', { path });
+      });
+    },
+    [runAction],
+  );
+
+  const createNewSession = useCallback(
+    (cwd?: string) => runAction((c) => c.call('agent.newSession', cwd ? { cwd } : undefined).then(() => undefined)),
+    [runAction],
+  );
+
+  const sendPrompt = useCallback(
+    (text: string, behavior?: 'steer' | 'followUp') =>
+      runAction((c) => c.call('agent.prompt', { text, behavior }).then(() => undefined)),
+    [runAction],
+  );
+
+  const abortTurn = useCallback(
+    () => runAction((c) => c.call('agent.abort').then(() => undefined)),
+    [runAction],
+  );
+
+  const interruptShellTools = useCallback(
+    (toolCallId?: string) =>
+      runAction((c) =>
+        c.call('agent.interruptShellTools', toolCallId ? { toolCallId } : undefined).then(() => undefined),
+      ),
+    [runAction],
+  );
+
+  const stopBackgroundTask = useCallback(
+    (taskId: string) => runAction((c) => c.call('agent.stopBackgroundTask', { taskId }).then(() => undefined)),
+    [runAction],
+  );
+
+  const updateQueuedMessage = useCallback(
+    (id: string, action: 'edit' | 'remove' | 'steer', text?: string) =>
+      runAction((c) => c.call('agent.updateQueuedMessage', { id, action, text }).then(() => undefined)),
+    [runAction],
+  );
+
+  const respondDialog = useCallback(
+    (id: string, responseValue: UiExtensionDialogResponse) =>
+      runAction((c) => c.call('agent.respondExtensionDialog', { id, value: responseValue }).then(() => undefined)),
+    [runAction],
+  );
+
+  const setModel = useCallback(
+    (provider: string, id: string) => runAction((c) => c.call('agent.setModel', { provider, id }).then(() => undefined)),
+    [runAction],
+  );
+
+  const setThinkingLevel = useCallback(
+    (level: UiThinkingLevel) => runAction((c) => c.call('agent.setThinkingLevel', { level }).then(() => undefined)),
+    [runAction],
+  );
+
+  const setSessionAgent = useCallback(
+    (agentId: string) => runAction((c) => c.call('agent.setSessionAgent', { agentId }).then(() => undefined)),
+    [runAction],
+  );
+
+  const setAgentOption = useCallback(
+    (optionId: string, value: string) =>
+      runAction((c) => c.call('agent.setAgentOption', { optionId, value }).then(() => undefined)),
+    [runAction],
+  );
+
+  const listFiles = useCallback(
+    (relativePath?: string) => requireClient().call('workspace.listEntries', relativePath ? { relativePath } : undefined),
+    [requireClient],
+  );
+
+  const readFile = useCallback(
+    (relativePath: string) => requireClient().call('workspace.readFile', { relativePath }).then((r) => r.content),
+    [requireClient],
+  );
+
+  const getGitStatus = useCallback(() => requireClient().call('workspace.gitStatus'), [requireClient]);
+
+  const getGitDiff = useCallback(
+    (relativePath: string, source?: 'staged' | 'unstaged' | 'all') =>
+      requireClient().call('workspace.gitDiff', { relativePath, source }).then((r) => r.diff),
+    [requireClient],
+  );
+
+  const getBranches = useCallback(() => requireClient().call('workspace.branches'), [requireClient]);
+
+  const getFileChangeDiffs = useCallback(
+    (scope: UiFileDiffScope) => requireClient().call('agent.getFileChangeDiffs', { scope }),
+    [requireClient],
+  );
 
   const activeEnvironment = useMemo(
     () => environments.find((item) => item.environmentId === activeEnvId) ?? null,
@@ -368,25 +602,26 @@ export function RemoteProvider({ children }: { children: React.ReactNode }) {
       addRouteToHost,
       refreshNavigationData,
       refreshSessionsForCwds,
-      switchWorkspace: (cwd, fresh) => runAction((c) => c.call('agent.switchWorkspace', { cwd, fresh }).then(() => undefined)),
-      switchSession: (path) => runAction((c) => c.call('agent.switchSession', { path }).then(() => undefined)),
-      createNewSession: (cwd) => runAction((c) => c.call('agent.newSession', cwd ? { cwd } : undefined).then(() => undefined)),
-      sendPrompt: (text, behavior) => runAction((c) => c.call('agent.prompt', { text, behavior }).then(() => undefined)),
-      abortTurn: () => runAction((c) => c.call('agent.abort').then(() => undefined)),
-      interruptShellTools: (toolCallId) => runAction((c) => c.call('agent.interruptShellTools', toolCallId ? { toolCallId } : undefined).then(() => undefined)),
-      stopBackgroundTask: (taskId) => runAction((c) => c.call('agent.stopBackgroundTask', { taskId }).then(() => undefined)),
-      updateQueuedMessage: (id, action, text) => runAction((c) => c.call('agent.updateQueuedMessage', { id, action, text }).then(() => undefined)),
-      respondDialog: (id, responseValue) =>
-        runAction((c) => c.call('agent.respondExtensionDialog', { id, value: responseValue }).then(() => undefined)),
-      setModel: (provider, id) => runAction((c) => c.call('agent.setModel', { provider, id }).then(() => undefined)),
-      setThinkingLevel: (level) => runAction((c) => c.call('agent.setThinkingLevel', { level }).then(() => undefined)),
-      setSessionAgent: (agentId) => runAction((c) => c.call('agent.setSessionAgent', { agentId }).then(() => undefined)),
-      listFiles: (relativePath) => clientRef.current!.call('workspace.listEntries', relativePath ? { relativePath } : undefined),
-      readFile: (relativePath) => clientRef.current!.call('workspace.readFile', { relativePath }).then((r) => r.content),
-      getGitStatus: () => clientRef.current!.call('workspace.gitStatus'),
-      getGitDiff: (relativePath, source) => clientRef.current!.call('workspace.gitDiff', { relativePath, source }).then((r) => r.diff),
-      getBranches: () => clientRef.current!.call('workspace.branches'),
-      getFileChangeDiffs: (scope) => clientRef.current!.call('agent.getFileChangeDiffs', { scope }),
+      switchWorkspace,
+      switchSession,
+      selectSession,
+      createNewSession,
+      sendPrompt,
+      abortTurn,
+      interruptShellTools,
+      stopBackgroundTask,
+      updateQueuedMessage,
+      respondDialog,
+      setModel,
+      setThinkingLevel,
+      setSessionAgent,
+      setAgentOption,
+      listFiles,
+      readFile,
+      getGitStatus,
+      getGitDiff,
+      getBranches,
+      getFileChangeDiffs,
     }),
     [
       hydrated,
@@ -409,7 +644,26 @@ export function RemoteProvider({ children }: { children: React.ReactNode }) {
       addRouteToHost,
       refreshNavigationData,
       refreshSessionsForCwds,
-      runAction,
+      switchWorkspace,
+      switchSession,
+      selectSession,
+      createNewSession,
+      sendPrompt,
+      abortTurn,
+      interruptShellTools,
+      stopBackgroundTask,
+      updateQueuedMessage,
+      respondDialog,
+      setModel,
+      setThinkingLevel,
+      setSessionAgent,
+      setAgentOption,
+      listFiles,
+      readFile,
+      getGitStatus,
+      getGitDiff,
+      getBranches,
+      getFileChangeDiffs,
     ],
   );
 

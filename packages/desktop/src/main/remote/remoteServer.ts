@@ -34,6 +34,9 @@ import { acceptWebSocketUpgrade, rejectHttpUpgrade, type RemoteWebSocketConnecti
 const MAX_HTTP_BODY_BYTES = 1024 * 1024;
 const HEARTBEAT_INTERVAL_MS = 25_000;
 const HEARTBEAT_STALE_MS = 70_000;
+const MAX_TOTAL_SOCKETS = 32;
+const MAX_SOCKETS_PER_SESSION = 6;
+const MAX_PRE_HELLO_EVENTS = 500;
 
 export type RemoteRpcHandlers = {
   [M in RemoteRpcMethod]: (
@@ -103,6 +106,8 @@ interface ConnectedSocketEntry {
   readonly ws: RemoteWebSocketConnection;
   readonly session: AuthenticatedRemoteSession;
   lastActivityAt: number;
+  helloSent: boolean;
+  pendingEvents: string[];
 }
 
 export async function createRemoteServer(
@@ -122,7 +127,13 @@ export async function createRemoteServer(
 
   const handleHttp = async (request: IncomingMessage, response: ServerResponse): Promise<void> => {
     const method = (request.method ?? 'GET').toUpperCase();
-    const url = new URL(request.url ?? '/', 'http://127.0.0.1');
+    let url: URL;
+    try {
+      url = new URL(request.url ?? '/', 'http://127.0.0.1');
+    } catch {
+      sendJson(response, 400, { error: 'Invalid request URL' });
+      return;
+    }
 
     if (method === 'OPTIONS') {
       response.writeHead(204, CORS_HEADERS);
@@ -218,9 +229,29 @@ export async function createRemoteServer(
   };
 
   const handleUpgrade = (request: IncomingMessage, socket: Duplex, head: Buffer): void => {
-    const url = new URL(request.url ?? '/', 'http://127.0.0.1');
+    // Node does not attach an 'error' listener to upgrade sockets; bind one immediately
+    // so mid-handshake TCP resets cannot throw uncaught exceptions in the main process.
+    socket.on('error', () => {
+      try {
+        if (!socket.destroyed) socket.destroy();
+      } catch {
+        // ignore
+      }
+    });
+
+    let url: URL;
+    try {
+      url = new URL(request.url ?? '/', 'http://127.0.0.1');
+    } catch {
+      rejectHttpUpgrade(socket, 400, 'Bad Request');
+      return;
+    }
     if (url.pathname !== '/ws') {
       rejectHttpUpgrade(socket, 404, 'Not Found');
+      return;
+    }
+    if (connectedSockets.size >= MAX_TOTAL_SOCKETS) {
+      rejectHttpUpgrade(socket, 503, 'Too Many Connections');
       return;
     }
     const ticket = url.searchParams.get('ticket') ?? '';
@@ -229,14 +260,24 @@ export async function createRemoteServer(
       rejectHttpUpgrade(socket, 401, 'Unauthorized');
       return;
     }
+    let sessionSocketCount = 0;
+    for (const existing of connectedSockets) {
+      if (existing.session.sessionId === session.sessionId) sessionSocketCount += 1;
+    }
+    if (sessionSocketCount >= MAX_SOCKETS_PER_SESSION) {
+      rejectHttpUpgrade(socket, 429, 'Too Many Session Connections');
+      return;
+    }
 
     const ws = acceptWebSocketUpgrade(request, socket, head);
-    if (!ws) return;
+    if (!ws || !ws.isOpen()) return;
 
     const entry: ConnectedSocketEntry = {
       ws,
       session,
       lastActivityAt: Date.now(),
+      helloSent: false,
+      pendingEvents: [],
     };
     connectedSockets.add(entry);
     deps.authStore.markConnected(session.sessionId, ws.remoteAddress);
@@ -355,6 +396,15 @@ export async function createRemoteServer(
           snapshot,
           pendingDialogs: deps.getPendingDialogs(),
         });
+        entry.helloSent = true;
+        if (entry.pendingEvents.length > 0) {
+          const queued = entry.pendingEvents;
+          entry.pendingEvents = [];
+          for (const frame of queued) {
+            if (!ws.isOpen()) break;
+            ws.sendText(frame);
+          }
+        }
       })
       .catch((error: unknown) => {
         ws.close(1011, error instanceof Error ? error.message.slice(0, 100) : 'Snapshot unavailable');
@@ -391,14 +441,20 @@ export async function createRemoteServer(
     }
   }, HEARTBEAT_INTERVAL_MS);
 
-  await new Promise<void>((resolve, reject) => {
-    const onError = (error: Error) => reject(error);
-    server.once('error', onError);
-    server.listen(options.port, options.bindHost, () => {
-      server.off('error', onError);
-      resolve();
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const onError = (error: Error) => reject(error);
+      server.once('error', onError);
+      server.listen(options.port, options.bindHost, () => {
+        server.off('error', onError);
+        resolve();
+      });
     });
-  });
+  } catch (error) {
+    clearInterval(heartbeatTimer);
+    unsubscribeRevoke();
+    throw error;
+  }
 
   const addr = server.address();
   const actualPort = typeof addr === 'object' && addr ? addr.port : options.port;
@@ -412,6 +468,12 @@ export async function createRemoteServer(
       for (const entry of connectedSockets) {
         if (!entry.ws.isOpen()) continue;
         if (!entry.session.scopes.has('chat:read')) continue;
+        if (!entry.helloSent) {
+          if (entry.pendingEvents.length < MAX_PRE_HELLO_EVENTS) {
+            entry.pendingEvents.push(frame);
+          }
+          continue;
+        }
         entry.ws.sendText(frame);
       }
     },

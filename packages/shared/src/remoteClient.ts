@@ -137,7 +137,7 @@ export function classifyEndpointKind(httpBaseUrl: string): RemoteEndpointKind {
   try {
     const url = new URL(httpBaseUrl);
     const host = url.hostname.toLowerCase();
-    if (host === 'localhost' || host === '127.0.0.1' || host === '::1') return 'loopback';
+    if (host === 'localhost' || host === '127.0.0.1' || host === '::1' || host === '[::1]') return 'loopback';
     if (host.endsWith('.ts.net')) return 'tailscale';
     if (host.endsWith('.trycloudflare.com')) return 'cloudflare';
     if (/^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.\d+\.\d+$/.test(host)) return 'tailscale';
@@ -191,7 +191,7 @@ export function mergeLearnedRemoteRoutes(
     }
     if (manualOrigins.has(origin)) continue;
     // Security invariant (matches T3 Code): never downgrade an HTTPS-paired token to plain HTTP
-    if (env.pairedOverHttps && !endpoint.isHttps) continue;
+    if (env.pairedOverHttps && (!endpoint.isHttps || !origin.startsWith('https://'))) continue;
     learned.push({
       id: `learned:${endpoint.kind}:${origin}`,
       kind: endpoint.kind,
@@ -250,8 +250,12 @@ export async function pairWithDesktop(input: {
   readonly deviceType: RemoteClientSession['deviceType'];
   readonly os: RemoteClientSession['os'];
 }): Promise<SavedRemoteEnvironment> {
-  const parsed = parseRemotePairingUrl(input.pairingUrlOrAddress);
-  const endpointUrl = parsed?.endpointUrl ?? input.pairingUrlOrAddress.trim().replace(/\/+$/, '');
+  const trimmedInput = input.pairingUrlOrAddress.trim();
+  const parsed = parseRemotePairingUrl(trimmedInput);
+  if (!parsed && /^pidesktop:/i.test(trimmedInput)) {
+    throw new Error('Invalid pairing URL or code');
+  }
+  const endpointUrl = parsed?.endpointUrl ?? trimmedInput.replace(/\/+$/, '');
   const code = parsed?.code ?? input.code?.trim() ?? '';
   if (!endpointUrl || !code) {
     throw new Error('Invalid pairing URL or code');
@@ -352,6 +356,7 @@ export class RemoteConnectionClient {
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   private betterRouteTimer: ReturnType<typeof setInterval> | null = null;
   private connectGeneration = 0;
+  private checkingBetterRoute = false;
   private rpcSeq = 0;
   private readonly pendingRpcs = new Map<string, {
     resolve: (value: unknown) => void;
@@ -421,6 +426,7 @@ export class RemoteConnectionClient {
     if (!this.desired || !this.env) return;
     if (this.state.phase === 'reconnecting') {
       this.clearTimers();
+      this.teardownSocket(1000, 'reconnect triggered');
       void this.runConnectAttempt(++this.connectGeneration);
       return;
     }
@@ -507,30 +513,6 @@ export class RemoteConnectionClient {
     }
   }
 
-  private async resolveReachableRoute(
-    env: SavedRemoteEnvironment,
-  ): Promise<{ route: SavedRemoteRoute; descriptor: RemotePublicEnvironmentDescriptor }> {
-    const routes = sortRemoteRoutes(env.routes);
-    let lastError: Error | null = null;
-    for (const route of routes) {
-      if (env.pairedOverHttps && !route.httpBaseUrl.startsWith('https://')) {
-        continue;
-      }
-      const timeoutMs = route.kind === 'lan' || route.kind === 'loopback' ? 2_500 : 8_000;
-      try {
-        const descriptor = await fetchEnvironmentDescriptor(this.transport, route.httpBaseUrl, timeoutMs);
-        if (descriptor.environmentId !== env.environmentId) {
-          lastError = new Error(`Different desktop answered at ${route.httpBaseUrl}`);
-          continue;
-        }
-        return { route, descriptor };
-      } catch (error) {
-        lastError = error instanceof Error ? error : new Error(String(error));
-      }
-    }
-    throw lastError ?? new Error('No reachable route to desktop');
-  }
-
   private async mintWsTicket(route: SavedRemoteRoute, accessToken: string): Promise<RemoteWsTicketResponse> {
     const response = await fetchWithTimeout(
       this.transport.fetch,
@@ -553,74 +535,123 @@ export class RemoteConnectionClient {
     return (await response.json()) as RemoteWsTicketResponse;
   }
 
+  private async connectViaRoute(
+    env: SavedRemoteEnvironment,
+    route: SavedRemoteRoute,
+    generation: number,
+  ): Promise<void> {
+    const timeoutMs = route.kind === 'lan' || route.kind === 'loopback' ? 2_500 : 8_000;
+    const descriptor = await fetchEnvironmentDescriptor(this.transport, route.httpBaseUrl, timeoutMs);
+    if (!this.desired || generation !== this.connectGeneration) return;
+    if (descriptor.environmentId !== env.environmentId) {
+      throw new Error(`Different desktop answered at ${route.httpBaseUrl}`);
+    }
+    const ticketRes = await this.mintWsTicket(route, env.accessToken);
+    if (!this.desired || generation !== this.connectGeneration) return;
+
+    const wsUrl = new URL('/ws', route.wsBaseUrl);
+    wsUrl.searchParams.set('ticket', ticketRes.ticket);
+    const socket = this.transport.createWebSocket(wsUrl.toString());
+    this.socket = socket;
+
+    await new Promise<void>((resolve, reject) => {
+      let settled = false;
+      const preHelloEvents: RemoteWsPushEvent[] = [];
+      const openTimeout = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        reject(new Error('WebSocket handshake timed out'));
+      }, 10_000);
+
+      socket.onmessage = (event) => {
+        if (generation !== this.connectGeneration) return;
+        const raw = typeof event.data === 'string' ? event.data : String(event.data ?? '');
+        let msg: RemoteWsServerMessage;
+        try {
+          msg = JSON.parse(raw) as RemoteWsServerMessage;
+        } catch {
+          return;
+        }
+        if (msg.type === 'hello') {
+          if (!settled) {
+            settled = true;
+            clearTimeout(openTimeout);
+            this.onHelloReceived(env, route, msg);
+            for (const buffered of preHelloEvents) {
+              if (
+                buffered.channel === 'agent-event' &&
+                buffered.payload.sequence <= msg.snapshot.sequence
+              ) {
+                continue;
+              }
+              this.handleSocketMessage({ type: 'event', ...buffered });
+            }
+            preHelloEvents.length = 0;
+            resolve();
+          }
+          return;
+        }
+        if (!settled) {
+          if (msg.type === 'event' && preHelloEvents.length < 500) {
+            const { type: _type, ...pushEvent } = msg;
+            preHelloEvents.push(pushEvent as RemoteWsPushEvent);
+          }
+          return;
+        }
+        this.handleSocketMessage(msg);
+      };
+
+      socket.onerror = () => {
+        if (!settled) {
+          settled = true;
+          clearTimeout(openTimeout);
+          reject(new Error('WebSocket connection error'));
+        }
+      };
+
+      socket.onclose = (closeEvent) => {
+        const code = closeEvent?.code ?? 1006;
+        if (!settled) {
+          settled = true;
+          clearTimeout(openTimeout);
+          if (code === 4401) {
+            reject(new RemoteAuthRevokedError('Session revoked by desktop'));
+          } else {
+            reject(new Error(`WebSocket closed before hello (${code})`));
+          }
+          return;
+        }
+        if (generation !== this.connectGeneration) return;
+        this.handleLiveSocketClose(code);
+      };
+    });
+  }
+
   private async runConnectAttempt(generation: number): Promise<void> {
     const env = this.env;
     if (!this.desired || !env || generation !== this.connectGeneration) return;
 
+    const routes = sortRemoteRoutes(env.routes).filter(
+      (route) => !env.pairedOverHttps || route.httpBaseUrl.startsWith('https://'),
+    );
+    let lastError: Error | null = null;
+
     try {
-      const { route } = await this.resolveReachableRoute(env);
-      if (!this.desired || generation !== this.connectGeneration) return;
-      const ticketRes = await this.mintWsTicket(route, env.accessToken);
-      if (!this.desired || generation !== this.connectGeneration) return;
-
-      const wsUrl = new URL('/ws', route.wsBaseUrl);
-      wsUrl.searchParams.set('ticket', ticketRes.ticket);
-      const socket = this.transport.createWebSocket(wsUrl.toString());
-      this.socket = socket;
-
-      await new Promise<void>((resolve, reject) => {
-        let settled = false;
-        const openTimeout = setTimeout(() => {
-          if (settled) return;
-          settled = true;
-          reject(new Error('WebSocket handshake timed out'));
-        }, 10_000);
-
-        socket.onmessage = (event) => {
-          if (generation !== this.connectGeneration) return;
-          const raw = typeof event.data === 'string' ? event.data : String(event.data ?? '');
-          let msg: RemoteWsServerMessage;
-          try {
-            msg = JSON.parse(raw) as RemoteWsServerMessage;
-          } catch {
-            return;
+      for (const route of routes) {
+        if (!this.desired || generation !== this.connectGeneration) return;
+        try {
+          await this.connectViaRoute(env, route, generation);
+          return;
+        } catch (error) {
+          if (error instanceof RemoteAuthRevokedError) {
+            throw error;
           }
-          if (msg.type === 'hello') {
-            if (!settled) {
-              settled = true;
-              clearTimeout(openTimeout);
-              this.onHelloReceived(env, route, msg);
-              resolve();
-            }
-            return;
-          }
-          this.handleSocketMessage(msg);
-        };
-
-        socket.onerror = () => {
-          if (!settled) {
-            settled = true;
-            clearTimeout(openTimeout);
-            reject(new Error('WebSocket connection error'));
-          }
-        };
-
-        socket.onclose = (closeEvent) => {
-          const code = closeEvent?.code ?? 1006;
-          if (!settled) {
-            settled = true;
-            clearTimeout(openTimeout);
-            if (code === 4401) {
-              reject(new RemoteAuthRevokedError('Session revoked by desktop'));
-            } else {
-              reject(new Error(`WebSocket closed before hello (${code})`));
-            }
-            return;
-          }
-          if (generation !== this.connectGeneration) return;
-          this.handleLiveSocketClose(code);
-        };
-      });
+          if (!this.desired || generation !== this.connectGeneration) return;
+          this.teardownSocket();
+          lastError = error instanceof Error ? error : new Error(String(error));
+        }
+      }
+      throw lastError ?? new Error('No reachable route to desktop');
     } catch (error) {
       if (!this.desired || generation !== this.connectGeneration) return;
       this.teardownSocket();
@@ -754,26 +785,48 @@ export class RemoteConnectionClient {
   }
 
   private async checkForBetterRoute(): Promise<void> {
+    if (this.checkingBetterRoute) return;
     const env = this.env;
     const active = this.state.activeRoute;
-    if (!env || !active || this.state.phase !== 'connected') return;
-    const sorted = sortRemoteRoutes(env.routes);
-    const activeRank = ROUTE_PRIORITY[active.kind];
-    for (const candidate of sorted) {
-      if (ROUTE_PRIORITY[candidate.kind] >= activeRank) break;
-      if (env.pairedOverHttps && !candidate.httpBaseUrl.startsWith('https://')) continue;
-      try {
-        const descriptor = await fetchEnvironmentDescriptor(this.transport, candidate.httpBaseUrl, 2_000);
-        if (descriptor.environmentId === env.environmentId) {
-          // Faster route is reachable (e.g. phone returned to home Wi-Fi) — switch over!
-          this.clearTimers();
-          this.teardownSocket(1000, 'switching to faster route');
-          void this.runConnectAttempt(++this.connectGeneration);
-          return;
+    const gen = this.connectGeneration;
+    if (!this.desired || !env || !active || this.state.phase !== 'connected') return;
+    this.checkingBetterRoute = true;
+    try {
+      const sorted = sortRemoteRoutes(env.routes);
+      const activeRank = ROUTE_PRIORITY[active.kind];
+      for (const candidate of sorted) {
+        if (ROUTE_PRIORITY[candidate.kind] >= activeRank) break;
+        if (env.pairedOverHttps && !candidate.httpBaseUrl.startsWith('https://')) continue;
+        try {
+          const descriptor = await fetchEnvironmentDescriptor(this.transport, candidate.httpBaseUrl, 2_000);
+          if (
+            !this.desired ||
+            gen !== this.connectGeneration ||
+            this.env?.environmentId !== env.environmentId ||
+            this.state.phase !== 'connected'
+          ) {
+            return;
+          }
+          if (descriptor.environmentId === env.environmentId) {
+            // Faster route is reachable (e.g. phone returned to home Wi-Fi) — switch over!
+            this.clearTimers();
+            this.teardownSocket(1000, 'switching to faster route');
+            this.rejectAllPending(new Error('Switching to faster route'));
+            this.setState({
+              ...this.state,
+              phase: 'reconnecting',
+              activeRoute: null,
+              error: null,
+            });
+            void this.runConnectAttempt(++this.connectGeneration);
+            return;
+          }
+        } catch {
+          // Not reachable yet; keep current route
         }
-      } catch {
-        // Not reachable yet; keep current route
       }
+    } finally {
+      this.checkingBetterRoute = false;
     }
   }
 }
@@ -784,15 +837,27 @@ export class RemoteConnectionClient {
 
 export function applyRemoteAgentEvent(snapshot: AgentSnapshot | null, envelope: { sequence: number; event: import('./index.ts').AgentUiEvent }): AgentSnapshot | null {
   const { event, sequence } = envelope;
+  if (snapshot && sequence <= snapshot.sequence) {
+    return snapshot;
+  }
   if (event.type === 'ready') {
+    const sameSession = Boolean(
+      snapshot &&
+      snapshot.cwd === event.cwd &&
+      snapshot.sessionId === event.sessionId &&
+      snapshot.sessionPath === event.sessionPath,
+    );
     return {
       sequence,
       ...(snapshot?.sessionRuntimes ? { sessionRuntimes: snapshot.sessionRuntimes } : {}),
-      ...(snapshot?.subagentFleet !== undefined ? { subagentFleet: snapshot.subagentFleet } : {}),
-      ...(snapshot?.backgroundTasks ? { backgroundTasks: snapshot.backgroundTasks } : {}),
+      subagentFleet: sameSession ? (snapshot?.subagentFleet ?? null) : null,
+      backgroundTasks: sameSession ? (snapshot?.backgroundTasks ?? []) : [],
       ...(event.agent ? { agent: event.agent } : {}),
       ...(event.defaultAgentId ? { defaultAgentId: event.defaultAgentId } : snapshot?.defaultAgentId ? { defaultAgentId: snapshot.defaultAgentId } : {}),
-      status: snapshot?.status === 'busy' ? 'busy' : 'idle',
+      status: sameSession && snapshot?.status === 'busy' ? 'busy' : 'idle',
+      statusMessage: undefined,
+      retryAttempt: undefined,
+      retryMaxAttempts: undefined,
       model: event.model,
       modelName: event.modelName ?? null,
       modelProvider: event.modelProvider,
@@ -804,29 +869,81 @@ export function applyRemoteAgentEvent(snapshot: AgentSnapshot | null, envelope: 
       sessionPath: event.sessionPath,
       messages: event.messages,
       activities: event.activities,
-      ...(event.runs ? { runs: event.runs } : {}),
-      queuedCount: snapshot?.queuedCount ?? 0,
-      queuedMessages: snapshot?.queuedMessages ?? [],
+      runs: event.runs ?? [],
+      queuedCount: 0,
+      queuedMessages: [],
       fileChanges: event.fileChanges,
       fileChangeTurns: event.fileChangeTurns ?? [],
       fileChangeActiveRunId: event.fileChangeActiveRunId ?? null,
       ...(event.historyTotal !== undefined ? { historyTotal: event.historyTotal } : {}),
       error: null,
+      errorInfo: null,
     };
   }
   if (!snapshot) return null;
 
   switch (event.type) {
     case 'reset':
-      return { ...snapshot, sequence, cwd: event.cwd, messages: [], activities: [], fileChanges: [], fileChangeTurns: [], backgroundTasks: [] };
+      return {
+        ...snapshot,
+        sequence,
+        status: 'uninitialized',
+        statusMessage: undefined,
+        retryAttempt: undefined,
+        retryMaxAttempts: undefined,
+        model: '',
+        modelName: null,
+        modelProvider: '',
+        agent: undefined,
+        thinkingLevel: 'off',
+        availableThinkingLevels: [],
+        contextUsage: null,
+        cwd: event.cwd,
+        sessionId: null,
+        sessionPath: null,
+        messages: [],
+        activities: [],
+        runs: [],
+        queuedCount: 0,
+        queuedMessages: [],
+        fileChanges: [],
+        fileChangeTurns: [],
+        fileChangeActiveRunId: null,
+        subagentFleet: null,
+        backgroundTasks: [],
+        historyTotal: 0,
+        error: null,
+        errorInfo: null,
+      };
     case 'status':
       return {
         ...snapshot,
         sequence,
         status: event.status,
         statusMessage: event.message,
-        ...(event.attempt !== undefined ? { retryAttempt: event.attempt } : {}),
-        ...(event.maxAttempts !== undefined ? { retryMaxAttempts: event.maxAttempts } : {}),
+        retryAttempt: event.attempt,
+        retryMaxAttempts: event.maxAttempts,
+        ...(event.status === 'busy' ? { error: null, errorInfo: null } : {}),
+        ...(event.status === 'error'
+          ? {
+              runs: (snapshot.runs ?? []).map((run) =>
+                run.status === 'running' ? { ...run, status: 'interrupted' as const, finishedAt: null } : run,
+              ),
+              messages: snapshot.messages.map((message) =>
+                message.status === 'streaming'
+                  ? {
+                      ...message,
+                      status: 'error' as const,
+                      errorMessage: event.message ?? message.errorMessage,
+                      thinkingStatus: message.thinkingStatus === 'streaming' ? ('error' as const) : message.thinkingStatus,
+                    }
+                  : message,
+              ),
+              activities: snapshot.activities.map((activity) =>
+                activity.status === 'running' ? { ...activity, status: 'interrupted' as const } : activity,
+              ),
+            }
+          : {}),
       };
     case 'model':
       return {
@@ -844,6 +961,14 @@ export function applyRemoteAgentEvent(snapshot: AgentSnapshot | null, envelope: 
       return { ...snapshot, sequence, thinkingLevel: event.level };
     case 'context-usage':
       return { ...snapshot, sequence, contextUsage: event.contextUsage };
+    case 'run': {
+      const existing = snapshot.runs ?? [];
+      const idx = existing.findIndex((r) => r.id === event.run.id);
+      const runs = idx >= 0
+        ? existing.map((r, i) => (i === idx ? event.run : r))
+        : [...existing, event.run];
+      return { ...snapshot, sequence, runs };
+    }
     case 'user-message':
       return {
         ...snapshot,
@@ -858,6 +983,8 @@ export function applyRemoteAgentEvent(snapshot: AgentSnapshot | null, envelope: 
             status: 'done',
             ...(event.runId ? { runId: event.runId } : {}),
             ...(event.attachments ? { attachments: event.attachments } : {}),
+            ...(event.attachmentsOmitted !== undefined ? { attachmentsOmitted: event.attachmentsOmitted } : {}),
+            ...(event.attachmentReferences ? { attachmentReferences: event.attachmentReferences } : {}),
           },
         ],
       };
@@ -882,6 +1009,8 @@ export function applyRemoteAgentEvent(snapshot: AgentSnapshot | null, envelope: 
       return {
         ...snapshot,
         sequence,
+        error: null,
+        errorInfo: null,
         messages: [
           ...snapshot.messages.filter((m) => m.id !== event.id),
           {
@@ -907,7 +1036,7 @@ export function applyRemoteAgentEvent(snapshot: AgentSnapshot | null, envelope: 
         ...snapshot,
         sequence,
         messages: snapshot.messages.map((m) =>
-          m.id === event.id
+          m.id === event.id && m.status === 'streaming'
             ? { ...m, thinking: event.thinking, thinkingStatus: event.thinkingStatus, thinkingTruncated: event.thinkingTruncated }
             : m,
         ),
@@ -920,14 +1049,25 @@ export function applyRemoteAgentEvent(snapshot: AgentSnapshot | null, envelope: 
           m.id === event.id
             ? {
                 ...m,
-                text: event.text,
-                status: event.errorMessage ? 'error' : 'done',
+                text: event.text || m.text,
+                thinking: event.thinking ?? m.thinking,
+                thinkingTruncated: event.thinkingTruncated ?? m.thinkingTruncated,
+                thinkingStatus:
+                  event.thinkingStatus ??
+                  (m.thinkingStatus
+                    ? event.errorMessage
+                      ? 'error'
+                      : event.aborted
+                        ? 'interrupted'
+                        : 'done'
+                    : undefined),
                 ...(event.errorMessage ? { errorMessage: event.errorMessage } : {}),
-                ...(event.thinking !== undefined ? { thinking: event.thinking } : {}),
-                ...(event.thinkingStatus ? { thinkingStatus: event.thinkingStatus } : {}),
+                ...(event.error ? { error: event.error } : {}),
+                status: event.aborted || event.errorMessage ? 'error' : 'done',
               }
             : m,
         ),
+        ...(event.errorMessage ? { error: event.errorMessage, errorInfo: event.error ?? null } : {}),
       };
     case 'tool': {
       const exists = snapshot.activities.some((a) => a.id === event.activity.id);
@@ -949,14 +1089,25 @@ export function applyRemoteAgentEvent(snapshot: AgentSnapshot | null, envelope: 
         fileChangeTurns: event.turns,
         fileChangeActiveRunId: event.activeRunId,
       };
+    case 'subagent-fleet':
+      if (event.sessionPath !== undefined && event.sessionPath !== snapshot.sessionPath) {
+        return { ...snapshot, sequence };
+      }
+      return { ...snapshot, sequence, subagentFleet: event.fleet };
     case 'background-tasks':
-      if (event.sessionId && snapshot.sessionId && event.sessionId !== snapshot.sessionId) {
+      if (event.sessionPath !== undefined && event.sessionPath !== snapshot.sessionPath) {
+        return { ...snapshot, sequence };
+      }
+      if (event.sessionId !== undefined && event.sessionId !== snapshot.sessionId) {
         return { ...snapshot, sequence };
       }
       return { ...snapshot, sequence, backgroundTasks: event.tasks };
     case 'session-runtime': {
       const existing = snapshot.sessionRuntimes ?? [];
-      const filtered = existing.filter((item) => item.path !== event.path);
+      const eventCwdKey = remoteWorkspaceKey(event.cwd);
+      const filtered = existing.filter(
+        (item) => !(remoteWorkspaceKey(item.cwd) === eventCwdKey && item.path === event.path),
+      );
       return {
         ...snapshot,
         sequence,

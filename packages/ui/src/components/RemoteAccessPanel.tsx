@@ -15,17 +15,7 @@ import { SettingsGroup, SettingsRow, SettingsSwitch } from './SettingsRows';
 import { formatDate } from '../dateFormat';
 import './remoteAccessPanel.css';
 
-function QrCodeSvg({ value, label }: { value: string; label: string }) {
-	const qr = useMemo(() => {
-		try {
-			const matrix = encodeQrMatrix(value);
-			return { size: matrix.size, path: renderQrSvgPath(matrix) };
-		} catch {
-			return null;
-		}
-	}, [value]);
-
-	if (!qr) return null;
+function QrCodeSvg({ qr, label }: { qr: { size: number; path: string }; label: string }) {
 	const quiet = 4;
 	const viewSize = qr.size + quiet * 2;
 	return (
@@ -69,6 +59,8 @@ export function RemoteAccessPanel({ variant = 'settings' }: { variant?: 'setting
 	const [pairEndpoint, setPairEndpoint] = useState('');
 	const [pairDeviceLabel, setPairDeviceLabel] = useState('');
 	const [createdPairing, setCreatedPairing] = useState<RemotePairingCreated | null>(null);
+	const busyRef = useRef(false);
+	const observedPairingGrantRef = useRef<string | null>(null);
 
 	useEffect(() => {
 		const active = bridge;
@@ -111,6 +103,32 @@ export function RemoteAccessPanel({ variant = 'settings' }: { variant?: 'setting
 		if (serviceRunning === false) setCreatedPairing(null);
 	}, [serviceRunning]);
 
+	// Clear the displayed pairing QR once its grant has been observed in state and later consumed, revoked, or expired.
+	useEffect(() => {
+		if (!createdPairing) {
+			observedPairingGrantRef.current = null;
+			return;
+		}
+		const grantId = createdPairing.grant.id;
+		const exists = state?.pairingGrants.some((grant) => grant.id === grantId) ?? false;
+		if (exists) {
+			observedPairingGrantRef.current = grantId;
+		} else if (observedPairingGrantRef.current === grantId) {
+			observedPairingGrantRef.current = null;
+			setCreatedPairing(null);
+		}
+	}, [createdPairing, state?.pairingGrants]);
+
+	const createdQr = useMemo(() => {
+		if (!createdPairing) return null;
+		try {
+			const matrix = encodeQrMatrix(createdPairing.pairingUrl);
+			return { size: matrix.size, path: renderQrSvgPath(matrix) };
+		} catch {
+			return null;
+		}
+	}, [createdPairing]);
+
 	useEffect(() => {
 		if (!state?.endpoints.length) return;
 		if (!pairEndpoint || !state.endpoints.some((e) => e.httpBaseUrl === pairEndpoint)) {
@@ -132,25 +150,36 @@ export function RemoteAccessPanel({ variant = 'settings' }: { variant?: 'setting
 		}
 	}, []);
 
+	const runAction = useCallback(async (action: () => Promise<void>) => {
+		if (busyRef.current) return;
+		busyRef.current = true;
+		setBusy(true);
+		setError(null);
+		try {
+			await action();
+		} catch (err) {
+			setError(err instanceof Error ? err.message : String(err));
+		} finally {
+			busyRef.current = false;
+			setBusy(false);
+		}
+	}, []);
+
 	const saveConfig = useCallback(
 		async (patch: Partial<UiRemoteAccessConfig>) => {
-			if (!bridge?.setRemoteAccessConfig || busy) return;
-			setBusy(true);
-			setError(null);
-			try {
-				const next = await bridge.setRemoteAccessConfig(patch);
+			const setConfig = bridge?.setRemoteAccessConfig;
+			if (!bridge || !setConfig) return;
+			await runAction(async () => {
+				const next = await setConfig.call(bridge, patch);
 				setState(next);
 				if (patch.cloudflareTunnelToken !== undefined) setCfTokenDraft('');
-			} catch (err) {
-				setError(err instanceof Error ? err.message : String(err));
-			} finally {
-				setBusy(false);
-			}
+			});
 		},
-		[bridge, busy],
+		[bridge, runAction],
 	);
 
 	const applyBasicSettings = useCallback(() => {
+		if (busyRef.current) return;
 		const port = Number(portDraft);
 		if (!Number.isInteger(port) || port < 1 || port > 65535) {
 			setError(t('settings.remote.invalidPort'));
@@ -168,100 +197,71 @@ export function RemoteAccessPanel({ variant = 'settings' }: { variant?: 'setting
 	}, [cfTokenDraft, cfHostnameDraft, saveConfig]);
 
 	const installCloudflared = useCallback(async () => {
-		if (!bridge?.installCloudflared || busy) return;
-		setBusy(true);
-		setError(null);
-		try {
-			const next = await bridge.installCloudflared();
+		const install = bridge?.installCloudflared;
+		if (!bridge || !install) return;
+		await runAction(async () => {
+			const next = await install.call(bridge);
 			setState(next);
-		} catch (err) {
-			setError(err instanceof Error ? err.message : String(err));
-		} finally {
-			setBusy(false);
-		}
-	}, [bridge, busy]);
+		});
+	}, [bridge, runAction]);
 
 	const refreshNetwork = useCallback(async () => {
-		if (!bridge?.refreshRemoteNetwork || busy) return;
-		setBusy(true);
-		setError(null);
-		try {
-			const next = await bridge.refreshRemoteNetwork();
+		const refresh = bridge?.refreshRemoteNetwork;
+		if (!bridge || !refresh) return;
+		await runAction(async () => {
+			const next = await refresh.call(bridge);
 			setState(next);
-		} catch (err) {
-			setError(err instanceof Error ? err.message : String(err));
-		} finally {
-			setBusy(false);
-		}
-	}, [bridge, busy]);
+		});
+	}, [bridge, runAction]);
 
 	const createPairing = useCallback(async () => {
-		if (!bridge?.createRemotePairing || busy) return;
-		setBusy(true);
-		setError(null);
-		try {
-			const created = await bridge.createRemotePairing({
+		const create = bridge?.createRemotePairing;
+		if (!bridge || !create) return;
+		await runAction(async () => {
+			const created = await create.call(bridge, {
 				role: pairRole,
 				...(pairEndpoint ? { endpointUrl: pairEndpoint } : {}),
 				...(pairDeviceLabel.trim() ? { label: pairDeviceLabel.trim() } : {}),
 			});
+			observedPairingGrantRef.current = null;
 			setCreatedPairing(created);
 			setPairDeviceLabel('');
-		} catch (err) {
-			setError(err instanceof Error ? err.message : String(err));
-		} finally {
-			setBusy(false);
-		}
-	}, [bridge, busy, pairRole, pairEndpoint, pairDeviceLabel]);
+		});
+	}, [bridge, runAction, pairRole, pairEndpoint, pairDeviceLabel]);
 
 	const revokeGrant = useCallback(
 		async (grantId: string) => {
-			if (!bridge?.revokeRemotePairing || busy) return;
-			setBusy(true);
-			setError(null);
-			try {
-				const next = await bridge.revokeRemotePairing(grantId);
+			const revoke = bridge?.revokeRemotePairing;
+			if (!bridge || !revoke) return;
+			await runAction(async () => {
+				const next = await revoke.call(bridge, grantId);
 				setState(next);
-				if (createdPairing?.grant.id === grantId) setCreatedPairing(null);
-			} catch (err) {
-				setError(err instanceof Error ? err.message : String(err));
-			} finally {
-				setBusy(false);
-			}
+				setCreatedPairing((current) => (current?.grant.id === grantId ? null : current));
+			});
 		},
-		[bridge, busy, createdPairing],
+		[bridge, runAction],
 	);
 
 	const revokeSession = useCallback(
 		async (sessionId: string) => {
-			if (!bridge?.revokeRemoteSession || busy) return;
-			setBusy(true);
-			setError(null);
-			try {
-				const next = await bridge.revokeRemoteSession(sessionId);
+			const revoke = bridge?.revokeRemoteSession;
+			if (!bridge || !revoke) return;
+			await runAction(async () => {
+				const next = await revoke.call(bridge, sessionId);
 				setState(next);
-			} catch (err) {
-				setError(err instanceof Error ? err.message : String(err));
-			} finally {
-				setBusy(false);
-			}
+			});
 		},
-		[bridge, busy],
+		[bridge, runAction],
 	);
 
 	const revokeAllSessions = useCallback(async () => {
-		if (!bridge?.revokeAllRemoteSessions || busy) return;
-		setBusy(true);
-		setError(null);
-		try {
-			const next = await bridge.revokeAllRemoteSessions();
+		const revokeAll = bridge?.revokeAllRemoteSessions;
+		if (!bridge || !revokeAll) return;
+		await runAction(async () => {
+			const next = await revokeAll.call(bridge);
 			setState(next);
-		} catch (err) {
-			setError(err instanceof Error ? err.message : String(err));
-		} finally {
-			setBusy(false);
-		}
-	}, [bridge, busy]);
+		});
+	}, [bridge, runAction]);
 
 	const onlineCount = state?.sessions.filter((s) => s.connected).length ?? 0;
 	const cf = state?.cloudflare;
@@ -431,9 +431,18 @@ export function RemoteAccessPanel({ variant = 'settings' }: { variant?: 'setting
 						disabled={busy || !state}
 						onChange={(e) => setTailscalePortDraft(e.target.value)}
 						onBlur={() => {
-							const nextPort = Number(tailscalePortDraft);
-							if (Number.isInteger(nextPort) && nextPort >= 1 && nextPort <= 65535 && nextPort !== state?.config.tailscaleServePort) {
+							if (!state) return;
+							const trimmed = tailscalePortDraft.trim();
+							const nextPort = trimmed ? Number(trimmed) : Number.NaN;
+							if (!Number.isInteger(nextPort) || nextPort < 1 || nextPort > 65535) {
+								setTailscalePortDraft(String(state.config.tailscaleServePort));
+								setError(t('settings.remote.invalidPort'));
+								return;
+							}
+							if (nextPort !== state.config.tailscaleServePort) {
 								void saveConfig({ tailscaleServePort: nextPort });
+							} else if (tailscalePortDraft !== String(nextPort)) {
+								setTailscalePortDraft(String(nextPort));
 							}
 						}}
 					/>
@@ -593,10 +602,15 @@ export function RemoteAccessPanel({ variant = 'settings' }: { variant?: 'setting
 			{createdPairing && (
 				<div className="pd-settings-group-pad">
 					<div className="pd-remote-qr-box" data-testid="remote-pairing-qr">
-						<QrCodeSvg value={createdPairing.pairingUrl} label={t('settings.remote.qrAlt')} />
+						{createdQr && <QrCodeSvg qr={createdQr} label={t('settings.remote.qrAlt')} />}
 						<div className="pd-remote-qr-details">
 							<strong>{t('settings.remote.scanPrompt')}</strong>
 							<p>{t('settings.remote.oneTimeHint')}</p>
+							{!createdQr && (
+								<p className="pd-remote-plaintext-note" role="note" data-role="qr-unavailable">
+									{t('settings.remote.qrUnavailable')}
+								</p>
+							)}
 							<div className="pd-remote-code-box">{createdPairing.pairingUrl}</div>
 							<div className="pd-remote-qr-actions">
 								<button

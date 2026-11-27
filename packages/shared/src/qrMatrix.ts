@@ -1,6 +1,6 @@
 /**
  * Zero-dependency ISO/IEC 18004 QR Code encoder (Byte mode, Error Correction Level L,
- * versions 1–12, up to 367 UTF-8 bytes) for rendering scannable SVG pairing codes
+ * versions 1–16, up to 586 UTF-8 bytes) for rendering scannable SVG pairing codes
  * in the desktop Settings panel.
  */
 
@@ -36,6 +36,10 @@ const VERSION_SPECS: readonly VersionSpec[] = [
   { version: 10, totalCodewords: 346, ecPerBlock: 18, group1Blocks: 2, group1Data: 68, group2Blocks: 2, group2Data: 69, alignment: [6, 28, 50] },
   { version: 11, totalCodewords: 404, ecPerBlock: 20, group1Blocks: 4, group1Data: 81, group2Blocks: 0, group2Data: 0, alignment: [6, 30, 54] },
   { version: 12, totalCodewords: 466, ecPerBlock: 24, group1Blocks: 2, group1Data: 92, group2Blocks: 2, group2Data: 93, alignment: [6, 32, 58] },
+  { version: 13, totalCodewords: 532, ecPerBlock: 26, group1Blocks: 4, group1Data: 107, group2Blocks: 0, group2Data: 0, alignment: [6, 34, 62] },
+  { version: 14, totalCodewords: 581, ecPerBlock: 30, group1Blocks: 3, group1Data: 115, group2Blocks: 1, group2Data: 116, alignment: [6, 26, 46, 66] },
+  { version: 15, totalCodewords: 655, ecPerBlock: 22, group1Blocks: 5, group1Data: 87, group2Blocks: 1, group2Data: 88, alignment: [6, 26, 48, 70] },
+  { version: 16, totalCodewords: 733, ecPerBlock: 24, group1Blocks: 5, group1Data: 98, group2Blocks: 1, group2Data: 99, alignment: [6, 26, 50, 74] },
 ];
 
 // GF(256) with primitive polynomial x^8 + x^4 + x^3 + x^2 + 1 (0x11d)
@@ -100,7 +104,7 @@ function selectVersion(byteLength: number): VersionSpec {
     const neededBits = 4 + countBits + byteLength * 8;
     if (neededBits <= capacityBits) return spec;
   }
-  throw new Error(`QR payload too long (${byteLength} bytes; max 367 bytes)`);
+  throw new Error(`QR payload too long (${byteLength} bytes; max 586 bytes)`);
 }
 
 function encodeDataCodewords(bytes: Uint8Array, spec: VersionSpec): Uint8Array {
@@ -290,13 +294,9 @@ export function encodeQrMatrix(text: string): QrMatrix {
   drawFinder(0, size - 7);
   drawFinder(size - 7, 0);
 
-  // Timing patterns
-  for (let i = 8; i < size - 8; i += 1) {
-    setFn(6, i, i % 2 === 0);
-    setFn(i, 6, i % 2 === 0);
-  }
-
-  // Alignment patterns
+  // Alignment patterns MUST be placed before timing patterns: for Version 7+,
+  // centers at (6, mid) and (mid, 6) intentionally overlap timing line 6 and
+  // only the three finder corners (6, 6), (6, size - 7), (size - 7, 6) are skipped.
   const centers = spec.alignment;
   for (const r of centers) {
     for (const c of centers) {
@@ -308,6 +308,12 @@ export function encodeQrMatrix(text: string): QrMatrix {
         }
       }
     }
+  }
+
+  // Timing patterns (skipping modules already drawn by alignment patterns on row/col 6)
+  for (let i = 8; i < size - 8; i += 1) {
+    if (!isFunction[6]![i]) setFn(6, i, i % 2 === 0);
+    if (!isFunction[i]![6]) setFn(i, 6, i % 2 === 0);
   }
 
   // Reserve format info areas & fixed dark module

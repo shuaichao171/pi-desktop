@@ -1,41 +1,73 @@
 /**
- * Secure storage for saved desktop environments on iOS Keychain / Android Keystore.
- * Separates environment metadata from access tokens so each entry stays under
- * SecureStore's 2 KiB per-item recommendation on older Android devices.
+ * Storage for saved desktop environments on iOS / Android:
+ * - Access tokens live exclusively in iOS Keychain / Android Keystore (expo-secure-store).
+ * - Non-secret environment metadata & routes live in app document storage (expo-file-system)
+ *   to avoid SecureStore's 2 KiB per-item limit when hosts accumulate routes.
+ * - All reads/writes are serialized through a single queue so concurrent saves can never
+ *   resurrect a forgotten host or interleave one-time legacy migration.
  */
 
+import * as FileSystem from 'expo-file-system';
 import * as SecureStore from 'expo-secure-store';
 import type { SavedRemoteEnvironment } from '@pidesktop/shared/remoteClient';
 
 const ENV_INDEX_KEY = 'pidesktop_remote_env_index_v1';
+const META_FILE_NAME = 'pidesktop-remote-envs.json';
 const tokenKey = (envId: string) => `pidesktop_remote_tok_${envId.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
 const metaKey = (envId: string) => `pidesktop_remote_meta_${envId.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
 
 type StoredEnvironmentMeta = Omit<SavedRemoteEnvironment, 'accessToken'>;
 
-async function safeGet(key: string): Promise<string | null> {
-  try {
-    return await SecureStore.getItemAsync(key);
-  } catch {
-    return null;
+interface StoredEnvironmentsFile {
+  version: 1;
+  environments: StoredEnvironmentMeta[];
+}
+
+let storageQueue: Promise<unknown> = Promise.resolve();
+
+function enqueueStorageOp<T>(work: () => Promise<T>): Promise<T> {
+  const run = storageQueue.then(work, work);
+  storageQueue = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  return run;
+}
+
+function metaFileUri(): string {
+  if (!FileSystem.documentDirectory) {
+    throw new Error('App document directory is unavailable');
   }
+  return `${FileSystem.documentDirectory}${META_FILE_NAME}`;
 }
 
-async function safeSet(key: string, value: string): Promise<void> {
-  await SecureStore.setItemAsync(key, value);
+function isStoredEnvironmentMeta(value: unknown): value is StoredEnvironmentMeta {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const item = value as Record<string, unknown>;
+  return typeof item.environmentId === 'string' && item.environmentId.length > 0 && Array.isArray(item.routes);
 }
 
-async function safeDelete(key: string): Promise<void> {
+async function safeDeleteSecureItem(key: string): Promise<void> {
   try {
     await SecureStore.deleteItemAsync(key);
   } catch {
-    // ignore missing item
+    // ignore missing or already-deleted item
   }
 }
 
-export async function loadSavedEnvironments(): Promise<SavedRemoteEnvironment[]> {
-  const rawIndex = await safeGet(ENV_INDEX_KEY);
+async function writeMetadataList(items: readonly StoredEnvironmentMeta[]): Promise<void> {
+  const payload: StoredEnvironmentsFile = {
+    version: 1,
+    environments: [...items],
+  };
+  await FileSystem.writeAsStringAsync(metaFileUri(), JSON.stringify(payload));
+}
+
+async function migrateLegacySecureStoreMetadata(): Promise<StoredEnvironmentMeta[]> {
+  // Let unexpected SecureStore I/O errors propagate so we never silently treat them as empty.
+  const rawIndex = await SecureStore.getItemAsync(ENV_INDEX_KEY);
   if (!rawIndex) return [];
+
   let ids: string[];
   try {
     const parsed = JSON.parse(rawIndex);
@@ -43,39 +75,92 @@ export async function loadSavedEnvironments(): Promise<SavedRemoteEnvironment[]>
   } catch {
     return [];
   }
-  const results: SavedRemoteEnvironment[] = [];
+
+  const migrated: StoredEnvironmentMeta[] = [];
   for (const id of ids) {
-    const [rawMeta, accessToken] = await Promise.all([safeGet(metaKey(id)), safeGet(tokenKey(id))]);
-    if (!rawMeta || !accessToken) continue;
+    const rawMeta = await SecureStore.getItemAsync(metaKey(id));
+    if (!rawMeta) continue;
     try {
-      const meta = JSON.parse(rawMeta) as StoredEnvironmentMeta;
-      results.push({ ...meta, accessToken });
+      const parsed = JSON.parse(rawMeta) as unknown;
+      if (isStoredEnvironmentMeta(parsed)) {
+        migrated.push(parsed);
+      }
     } catch {
-      // skip corrupt record
+      // skip corrupt legacy record
     }
+  }
+
+  // Persist migrated file before cleaning up legacy SecureStore metadata entries.
+  await writeMetadataList(migrated);
+  await Promise.all([
+    safeDeleteSecureItem(ENV_INDEX_KEY),
+    ...ids.map((id) => safeDeleteSecureItem(metaKey(id))),
+  ]);
+  return migrated;
+}
+
+async function readMetadataList(): Promise<StoredEnvironmentMeta[]> {
+  const uri = metaFileUri();
+  const info = await FileSystem.getInfoAsync(uri);
+  if (!info.exists) {
+    return migrateLegacySecureStoreMetadata();
+  }
+  const raw = await FileSystem.readAsStringAsync(uri);
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new Error('Saved environments metadata file is unreadable');
+  }
+  const list = Array.isArray(parsed)
+    ? parsed
+    : parsed && typeof parsed === 'object' && Array.isArray((parsed as { environments?: unknown }).environments)
+      ? (parsed as { environments: unknown[] }).environments
+      : null;
+  if (!list) {
+    throw new Error('Saved environments metadata file has an invalid format');
+  }
+  return list.filter(isStoredEnvironmentMeta);
+}
+
+async function hydrateEnvironments(
+  metas: readonly StoredEnvironmentMeta[],
+  knownTokens?: ReadonlyMap<string, string>,
+): Promise<SavedRemoteEnvironment[]> {
+  const results: SavedRemoteEnvironment[] = [];
+  for (const meta of metas) {
+    const known = knownTokens?.get(meta.environmentId);
+    const accessToken = known !== undefined ? known : await SecureStore.getItemAsync(tokenKey(meta.environmentId));
+    if (!accessToken) continue;
+    results.push({ ...meta, accessToken });
   }
   return results;
 }
 
-export async function saveEnvironment(env: SavedRemoteEnvironment): Promise<SavedRemoteEnvironment[]> {
-  const existing = await loadSavedEnvironments();
-  const next = [env, ...existing.filter((item) => item.environmentId !== env.environmentId)];
-  const { accessToken, ...meta } = env;
-  await Promise.all([
-    safeSet(metaKey(env.environmentId), JSON.stringify(meta)),
-    safeSet(tokenKey(env.environmentId), accessToken),
-    safeSet(ENV_INDEX_KEY, JSON.stringify(next.map((item) => item.environmentId))),
-  ]);
-  return next;
+export function loadSavedEnvironments(): Promise<SavedRemoteEnvironment[]> {
+  return enqueueStorageOp(async () => {
+    const metas = await readMetadataList();
+    return hydrateEnvironments(metas);
+  });
 }
 
-export async function removeSavedEnvironment(environmentId: string): Promise<SavedRemoteEnvironment[]> {
-  const existing = await loadSavedEnvironments();
-  const next = existing.filter((item) => item.environmentId !== environmentId);
-  await Promise.all([
-    safeDelete(metaKey(environmentId)),
-    safeDelete(tokenKey(environmentId)),
-    safeSet(ENV_INDEX_KEY, JSON.stringify(next.map((item) => item.environmentId))),
-  ]);
-  return next;
+export function saveEnvironment(env: SavedRemoteEnvironment): Promise<SavedRemoteEnvironment[]> {
+  return enqueueStorageOp(async () => {
+    const existingMeta = await readMetadataList();
+    const { accessToken, ...meta } = env;
+    const nextMeta = [meta, ...existingMeta.filter((item) => item.environmentId !== env.environmentId)];
+    await SecureStore.setItemAsync(tokenKey(env.environmentId), accessToken);
+    await writeMetadataList(nextMeta);
+    return hydrateEnvironments(nextMeta, new Map([[env.environmentId, accessToken]]));
+  });
+}
+
+export function removeSavedEnvironment(environmentId: string): Promise<SavedRemoteEnvironment[]> {
+  return enqueueStorageOp(async () => {
+    const existingMeta = await readMetadataList();
+    const nextMeta = existingMeta.filter((item) => item.environmentId !== environmentId);
+    await writeMetadataList(nextMeta);
+    await Promise.all([safeDeleteSecureItem(tokenKey(environmentId)), safeDeleteSecureItem(metaKey(environmentId))]);
+    return hydrateEnvironments(nextMeta);
+  });
 }

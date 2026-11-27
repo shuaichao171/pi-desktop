@@ -443,10 +443,14 @@ export function parseRemotePairingUrl(raw: string): ParsedRemotePairingUrl | nul
       ...(label ? { label } : {}),
     };
   }
-  // Also accept direct http(s)://host:port/#pair=<code> or ?code=<code>
+  // Also accept direct http(s)://host:port/#code=<code>, #pair=<code>, or ?code=<code>
   if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
     const hashParams = new URLSearchParams(parsed.hash.replace(/^#/, ''));
-    const code = hashParams.get('code')?.trim() || parsed.searchParams.get('code')?.trim() || '';
+    const code =
+      hashParams.get('code')?.trim() ||
+      hashParams.get('pair')?.trim() ||
+      parsed.searchParams.get('code')?.trim() ||
+      '';
     if (!code) return null;
     const environmentId = hashParams.get('env')?.trim() || parsed.searchParams.get('env')?.trim() || undefined;
     const label = hashParams.get('label')?.trim() || parsed.searchParams.get('label')?.trim() || undefined;
@@ -462,6 +466,9 @@ export function parseRemotePairingUrl(raw: string): ParsedRemotePairingUrl | nul
 
 export function httpToWsUrl(httpUrl: string): string {
   const url = new URL(httpUrl);
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+    throw new Error(`Unsupported HTTP endpoint protocol: ${url.protocol}`);
+  }
   url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
   return url.origin;
 }
