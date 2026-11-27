@@ -2,6 +2,7 @@ import type { UiAgentConfig, UiAgentModel, UiAgentOption } from '@pidesktop/shar
 import { agentProxyProbeUrl, resolveAgentSystemProxy } from './agentProxy.ts';
 import { claudeExecutableError } from './claudeExecutable.ts';
 import { AcpConnection } from './connection.ts';
+import { antigravitySettingsPath, isAntigravityOrchestratorModel, readAntigravityOrchestratorSettings, type AntigravityOrchestratorSettings } from './antigravityOrchestrator.ts';
 import { parseElicitationForm, type AcpElicitationResponse, type AcpFormRequest } from './elicitation.ts';
 import {
 	ACP_AUTH_REQUIRED, ACP_PROTOCOL_VERSION, AcpRequestError,
@@ -69,6 +70,7 @@ export class AcpConversation {
 	private sessionId: string | null = null;
 	private nativeSessionId: string | null;
 	private starting: Promise<void> | null = null;
+	private bootOrchestratorSettings: AntigravityOrchestratorSettings | null = null;
 	/** Updates replayed by `session/load` describe history we already hold. */
 	private replaying = false;
 	private contextLost = false;
@@ -252,6 +254,16 @@ export class AcpConversation {
 		if (cancelled()) return this.finish('cancelled');
 		try {
 			await this.ensureSession();
+			if (cancelled()) return this.finish('cancelled');
+			// Other conversations (including separate agent hosts) can change this shared file.
+			// Reload at the turn boundary, after warmup and before sending any new prompt.
+			if (this.bootOrchestratorSettings && this.connection && isAntigravityOrchestratorModel(this.currentModel)) {
+				const latest = readAntigravityOrchestratorSettings(antigravitySettingsPath(this.config));
+				if (latest.planner !== this.bootOrchestratorSettings.planner || latest.executor !== this.bootOrchestratorSettings.executor) {
+					this.starting = this.connection.close().then(() => this.startSession()).finally(() => { this.starting = null; });
+					await this.starting;
+				}
+			}
 		} catch (error) {
 			return this.failTurn(error, cancelled);
 		}
@@ -339,6 +351,9 @@ export class AcpConversation {
 		const probe = agentProxyProbeUrl(this.config);
 		const proxy = probe ? await resolveAgentSystemProxy(probe) : null;
 		if (this.disposed) throw new Error('会话已关闭');
+		if (this.config.id === 'antigravity') {
+			this.bootOrchestratorSettings = readAntigravityOrchestratorSettings(antigravitySettingsPath(this.config));
+		}
 		const connection = AcpConnection.start({
 			command: this.config.command,
 			args: this.config.args,

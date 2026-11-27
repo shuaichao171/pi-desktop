@@ -14,7 +14,7 @@ https://github.com/shuaichao171/pi-desktop/releases/latest/download/
 - Windows Portable：仍需下载新版并手动替换，不使用 Setup 的自动安装流程。
 - Linux AppImage：支持软件内更新；DEB 由系统包管理器更新。
 - macOS：只有配置完整签名与公证凭据后，发布流程才构建正式 DMG／ZIP；未配置时跳过，Windows／Linux 继续发布。
-- 安卓手机端：配置上传密钥（见下文「安卓手机端签名」）后，同一个 Release 附带 `Pi-Desktop-Remote-X.Y.Z-android-arm64.apk`；未配置时跳过，其他平台继续发布。手机端没有软件内更新，用户从 Release 页下载新版覆盖安装。桌面端「手机远控」页的下载二维码直接指向同版本 Release 里的这个 APK（开发版指向最新 Release 页，见 `packages/shared/src/mobileApp.ts`），所以改文件名或跳过安卓构建都会让该版本的二维码下载失败。
+- 安卓手机端：配置上传密钥后，同一个 Release 附带 `Pi-Desktop-Remote-X.Y.Z-android-arm64.apk`，用户可从桌面端「手机远控」页扫码下载新版覆盖安装。各桌面安装包在构建时记录本次发布计划。跳过安卓构建时，页面提示此版本未随附安装包，并提供发布页入口。本地开发构建的二维码指向最新 Release 页。
 
 Windows 更新安装器识别 `--updated` 并进入静默模式，因此旧版客户端升级到包含该改动的安装包时同样生效。手动双击 Setup 仍显示安装向导并可选择安装目录。若原安装位置需要管理员权限，Windows 的 UAC 授权仍需用户确认。
 

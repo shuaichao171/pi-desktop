@@ -87,8 +87,7 @@ export function FleetCard() {
 	const fleet = useChatStore((s) => s.subagentFleet);
 	const context = useContext(FleetContext);
 	if (!context || !fleet?.runs.length) return null;
-	const agents = fleet.runs.flatMap(agentsOf);
-	const shown = agents.length ? agents : fleet.runs;
+	const shown = fleet.runs.flatMap(agentsOf);
 	const running = shown.filter(isLive).length;
 	return <div className="pd-fleet-card">
 		<button type="button" className="pd-fleet-strip" onClick={context.toggle} aria-expanded={context.open} aria-controls={context.panelId} aria-label={t(context.open ? 'fleet.collapse' : 'fleet.expand')}>
@@ -209,48 +208,50 @@ export function SubagentWorkspace({ children }: { children: ReactNode }) {
 		if (node.kind !== 'host-step') void inspect(target);
 	};
 	const batchCount = (node: UiSubagentFleetNode) => t(node.kind === 'workflow' ? 'fleet.batchSteps' : 'fleet.batchAgents', { count: agentsOf(node).length });
-	const renderRow = (node: UiSubagentFleetNode, rootId: string): ReactNode => {
+	const renderRow = (node: UiSubagentFleetNode, rootId: string, live: boolean): ReactNode => {
 		const lane = soleLane(node);
 		const children = lane ? lane.children : node.children;
-		const nested = children?.length ? <ul className="pd-fleet-children">{children.map((child) => renderRow(child, rootId))}</ul> : null;
+		const rows = children?.map((child) => renderRow(child, rootId, live)).filter(Boolean);
+		const nested = rows?.length ? <ul className="pd-fleet-children">{rows}</ul> : null;
 		if (isBatch(node) && !lane) {
+			if (!nested) return null;
 			// A dispatch of several agents: a light heading over its lanes, never an agent row of its own.
 			const title = batchTitle(node.label);
-			const count = batchCount(node);
+			const matchingCount = agentsOf(node).filter((agent) => isLive(agent) === live).length;
+			const count = matchingCount > 0 ? t(node.kind === 'workflow' ? 'fleet.batchSteps' : 'fleet.batchAgents', { count: matchingCount }) : '';
 			return <li className="pd-fleet-node pd-fleet-batch" key={`${node.kind}:${node.id}`} data-fleet-state={node.state}>
-				<button type="button" className="pd-fleet-batch-row" onClick={() => choose(node, rootId)} disabled={pending} aria-label={`${title} · ${count} · ${t(`fleet.state.${node.state}`)}`}>
+				<button type="button" className="pd-fleet-batch-row" onClick={() => choose(node, rootId)} disabled={pending} aria-label={[title, count, t(`fleet.state.${node.state}`)].filter(Boolean).join(' · ')}>
 					<Icon name="layers" width="13" height="13" aria-hidden="true" />
 					<span className="pd-fleet-batch-label">{title}</span>
-					<span className="pd-fleet-batch-count">{count}</span>
+					{count && <span className="pd-fleet-batch-count">{count}</span>}
 					<time>{elapsed(node, now)}</time>
 					<Icon name="chevronRight" width="12" height="12" />
 				</button>
 				{nested}
 			</li>;
 		}
+		const agent = lane ?? node;
+		if (isLive(agent) !== live) return rows?.length ? rows : null;
 		const activity = node.activity ?? lane?.activity;
 		const label = displayLabel(node);
-		return <li className="pd-fleet-node" key={`${node.kind}:${node.id}`} data-fleet-state={node.state}>
+		return <li className="pd-fleet-node" key={`${node.kind}:${node.id}`} data-fleet-state={agent.state}>
 			<button type="button" className="pd-fleet-node-row" onClick={() => choose(node, rootId)} disabled={pending}>
-				<span className="pd-fleet-avatar" aria-hidden="true">{label.slice(0, 1).toUpperCase()}<StateGlyph state={node.state} /></span>
-				<span className="pd-fleet-node-copy"><span className="pd-fleet-node-label">{label}</span><span className="pd-fleet-node-preview" title={activityByRun.get(node.id)?.task ?? undefined}>{activityByRun.get(node.id)?.task ?? node.hostStep?.detail ?? activity?.currentTool ?? t(`fleet.state.${node.state}`)}</span></span>
-				<span className="pd-fleet-node-meta"><span className="pd-fleet-node-state">{t(`fleet.state.${node.state}`)}</span><time>{elapsed(node, now)}</time></span>
+				<span className="pd-fleet-avatar" aria-hidden="true">{label.slice(0, 1).toUpperCase()}<StateGlyph state={agent.state} /></span>
+				<span className="pd-fleet-node-copy"><span className="pd-fleet-node-label">{label}</span><span className="pd-fleet-node-preview" title={activityByRun.get(node.id)?.task ?? undefined}>{activityByRun.get(node.id)?.task ?? node.hostStep?.detail ?? activity?.currentTool ?? t(`fleet.state.${agent.state}`)}</span></span>
+				<span className="pd-fleet-node-meta"><span className="pd-fleet-node-state">{t(`fleet.state.${agent.state}`)}</span><time>{elapsed(agent, now)}</time></span>
 				<Icon name="chevronRight" width="12" height="12" />
 			</button>
 			{nested}
 		</li>;
 	};
 	// Counts are agents, not dispatches: one parallel call of two agents reads as 2.
-	const agentTotal = runs.flatMap(agentsOf).length || runs.length;
-	const groups: { nodes: UiSubagentFleetNode[]; title: string }[] = [
-		{ nodes: runs.filter(containsLive), title: 'fleet.active' },
-		{ nodes: runs.filter((node) => !containsLive(node)), title: 'fleet.done' },
-	];
+	const agents = runs.flatMap(agentsOf);
+	const activeCount = agents.filter(isLive).length;
 	return <FleetContext.Provider value={{ open, panelId, targets, toggle: () => { if (!open) triggerRef.current = document.activeElement as HTMLElement; setOpen(!open); }, openRun: (target) => { triggerRef.current = document.activeElement as HTMLElement; setOpen(true); const rootNode = runs.find((run) => run.id === target.rootId); const node = rootNode && findNode([rootNode], target.nodeId); if (node) choose(node, target.rootId); } }}>
 		<div className={`pd-fleet-workspace${open && runs.length ? ' has-subagents-panel' : ''}`}>
 			{children}
 			{open && runs.length > 0 && <aside id={panelId} className="pd-fleet-sidepanel" ref={panelRef} tabIndex={-1} aria-label={t('fleet.title')} onKeyDown={(event) => { if (event.key === 'Escape') { event.stopPropagation(); close(); } }}>
-				<header className="pd-fleet-panel-header"><Icon name="plugins" width="15" height="15" /><h3>{t('fleet.title')}</h3><span>{agentTotal}</span><button type="button" onClick={close} aria-label={t('fleet.close')}><Icon name="close" width="15" height="15" /></button></header>
+				<header className="pd-fleet-panel-header"><Icon name="plugins" width="15" height="15" /><h3>{t('fleet.title')}</h3><span>{agents.length}</span><button type="button" onClick={close} aria-label={t('fleet.close')}><Icon name="close" width="15" height="15" /></button></header>
 				{selection ? <>
 					<div className="pd-fleet-detail-nav"><button type="button" onClick={() => { setSelection(null); setRequest(null); }}><Icon name="arrowLeft" width="13" height="13" />{t('fleet.back')}</button>{selected && selected.kind !== 'host-step' && commands.has('subagents-inspect-rpc') && <button type="button" disabled={pending} onClick={() => void inspect(selection)} aria-label={t('fleet.refresh')}><Icon name="refresh" width="14" height="14" /></button>}</div>
 					{selected ? <>
@@ -268,7 +269,11 @@ export function SubagentWorkspace({ children }: { children: ReactNode }) {
 						</div>}
 					</> : <p className="pd-fleet-empty">{t('fleet.runRemoved')}</p>}
 				</> : <div className="pd-fleet-panel-scroll">
-					{groups.map(({ nodes, title }) => nodes.length > 0 && <section className="pd-fleet-group" key={title}><h4>{t(title)}<span>{nodes.flatMap(agentsOf).length || nodes.length}</span></h4><ul className="pd-fleet-runs">{nodes.map((node) => renderRow(node, node.id))}</ul></section>)}
+					{[true, false].map((live) => {
+						const rows = runs.map((node) => renderRow(node, node.id, live)).filter(Boolean);
+						const title = live ? 'fleet.active' : 'fleet.done';
+						return rows.length > 0 && <section className="pd-fleet-group" key={title}><h4>{t(title)}<span>{live ? activeCount : agents.length - activeCount}</span></h4><ul className="pd-fleet-runs">{rows}</ul></section>;
+					})}
 					{fleet && fleet.omittedRuns + fleet.omittedChildren > 0 && <p className="pd-fleet-empty">{t('fleet.omitted', { count: fleet.omittedRuns + fleet.omittedChildren })}</p>}
 				</div>}
 			</aside>}

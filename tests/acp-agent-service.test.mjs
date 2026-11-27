@@ -671,7 +671,7 @@ test('Antigravity Orchestrator exposes planner/executor models and strengths and
 		displayName: 'Antigravity',
 		command: process.execPath,
 		args: [FAKE_AGENT, '--gemini-dir', geminiDir],
-		env: { FAKE_ACP_SETTINGS: 'antigravity-orchestrator', FAKE_ACP_LOAD: '1' },
+		env: { FAKE_ACP_SETTINGS: 'antigravity-orchestrator', FAKE_ACP_LOAD: '1', FAKE_ACP_ORCHESTRATOR_FILE: settingsFile },
 		enabled: true,
 	});
 	await service.init({ cwd: workspace, fresh: true });
@@ -684,6 +684,15 @@ test('Antigravity Orchestrator exposes planner/executor models and strengths and
 	assert.ok(orch, 'selecting Orchestrator exposes planner and executor controls');
 	assert.equal(orch.planner.currentValue, 'Gemini 4 Neon (XHigh)');
 	assert.equal(orch.executor.currentValue, 'Gemini 4 Hydrogen (High)');
+
+	// Keep this process warm while another conversation changes the shared executor.
+	await service.prompt('report boot executor');
+	await until(() => service.getSnapshot().status === 'idle' && service.getSnapshot().messages.some((m) => m.text === 'default'), 'first process used its boot settings');
+	const firstPath = service.getSnapshot().sessionPath;
+	await service.newSession();
+	await service.setSessionAgent('antigravity');
+	await until(() => service.getSnapshot().agent.models?.length === 6, 'second conversation warms up');
+	await service.setModel('acp:antigravity', 'gemini-pro-orchestrator-neon');
 
 	await service.setAgentOption(ANTIGRAVITY_ORCHESTRATOR_PLANNER_OPTION, 'Gemini 4 Carbon (High)');
 	await service.setAgentOption(ANTIGRAVITY_ORCHESTRATOR_EXECUTOR_OPTION, 'Gemini 4 Hydrogen (XHigh)');
@@ -707,4 +716,7 @@ test('Antigravity Orchestrator exposes planner/executor models and strengths and
 
 	await service.prompt('please run');
 	await until(() => service.getSnapshot().status === 'idle' && service.getSnapshot().messages.some((message) => message.text === 'Done.'), 'turn settles after orchestrator config changes');
+	await service.switchSession(firstPath);
+	await service.prompt('report boot executor');
+	await until(() => service.getSnapshot().status === 'idle' && service.getSnapshot().messages.some((m) => m.role === 'assistant' && m.text === 'Gemini 4 Hydrogen (XHigh)'), 'the previously warm conversation uses the new executor on its next turn');
 });

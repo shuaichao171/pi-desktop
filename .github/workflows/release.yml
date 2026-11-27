@@ -67,6 +67,8 @@ jobs:
 
   build-windows:
     needs: prerequisites
+    env:
+      PI_DESKTOP_RELEASE_ANDROID: ${{ needs.prerequisites.outputs.android }}
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -170,6 +172,8 @@ jobs:
 
   build-macos:
     needs: prerequisites
+    env:
+      PI_DESKTOP_RELEASE_ANDROID: ${{ needs.prerequisites.outputs.android }}
     if: needs.prerequisites.outputs.macos == 'true'
     strategy:
       fail-fast: false
@@ -248,6 +252,8 @@ jobs:
 
   build-linux:
     needs: prerequisites
+    env:
+      PI_DESKTOP_RELEASE_ANDROID: ${{ needs.prerequisites.outputs.android }}
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4

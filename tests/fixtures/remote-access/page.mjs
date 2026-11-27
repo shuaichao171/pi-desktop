@@ -24,8 +24,18 @@ async function installRunningRemoteAccess() {
     }],
   };
   window.__remoteReview = { state };
+  const lan = state.endpoints[0];
   bridge.getRemoteAccessState = async () => structuredClone(state);
-  bridge.setRemoteAccessConfig = async () => structuredClone(state);
+  bridge.setRemoteAccessConfig = async patch => {
+    Object.assign(state.config, patch);
+    if (patch.exposureMode === 'lan') state.endpoints = [lan, ...state.endpoints.filter(ep => ep.kind === 'loopback')];
+    return structuredClone(state);
+  };
+  const create = bridge.createRemotePairing;
+  bridge.createRemotePairing = async input => ({
+    ...await create(input), endpointUrl: input.endpointUrl,
+    pairingUrl: 'pidesktop://pair?url=' + encodeURIComponent(input.endpointUrl) + '&code=fixture-code',
+  });
   bridge.refreshRemoteNetwork = async () => structuredClone(state);
 }
 
@@ -80,6 +90,12 @@ export default async function remoteControlPageScenarios(review) {
   await review.waitFor("Boolean(document.querySelector('.pd-remote-page [data-role=unreachable-note] [data-action=remote-use-lan]'))");
   await review.evaluate("document.querySelector('.pd-remote-page-scroll').scrollTop = 0");
   await review.screenshot('remote-page-local-only');
+  await review.click('.pd-remote-page [data-action=create-remote-pairing]');
+  await review.waitFor("document.querySelector('.pd-remote-page .pd-remote-code-box')?.textContent.includes('127.0.0.1')");
+  await review.click('.pd-remote-page [data-action=remote-use-lan]');
+  await review.waitFor("!document.querySelector('.pd-remote-page [data-testid=remote-pairing-qr]')");
+  await review.click('.pd-remote-page [data-action=create-remote-pairing]');
+  await review.waitFor("document.querySelector('.pd-remote-page .pd-remote-code-box')?.textContent.includes('192.168.1.23')");
 
   // Service off: pairing explains what to do first.
   await review.evaluate("(() => { const s = window.__remoteReview.state; s.running = false; s.config = { ...s.config, enabled: false }; s.endpoints = []; s.sessions = []; window.__modelReview.emit('onRemoteAccessChanged', structuredClone(s)); })()");
@@ -91,4 +107,12 @@ export default async function remoteControlPageScenarios(review) {
   await review.click('.pd-activity-remote');
   await review.waitFor("!document.querySelector('.pd-chat-view-host').hidden");
   await review.assert("!document.querySelector('.pd-activity-remote').classList.contains('is-active')", 'A second click returns to the chat');
+
+  await review.reloadWithFixture(`(() => {
+    const bridge = window.piDesktop, info = bridge.getAppInfo;
+    bridge.getAppInfo = async () => ({ ...await info(), appVersion: '0.5.14', androidApkAvailable: false });
+  })()`);
+  await review.click('.pd-activity-remote');
+  await review.waitFor("document.querySelector('[data-testid=remote-app-download]')?.textContent.includes('此版本未随附 Android 安装包')");
+  await review.assert("!document.querySelector('[data-testid=remote-app-download] svg, [data-action=copy-app-download]') && Boolean(document.querySelector('[data-action=open-app-download]'))", 'A release without an APK offers its release page without an invalid QR or copy link');
 }

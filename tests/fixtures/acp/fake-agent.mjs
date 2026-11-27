@@ -11,6 +11,7 @@
 // FAKE_ACP_STEER=1: a prompt sent while "slow" runs ends that turn (end_turn) and is
 // handled next, like Antigravity.
 import { createInterface } from 'node:readline';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 const loadSupported = process.env.FAKE_ACP_LOAD === '1';
@@ -24,6 +25,8 @@ const acceptEdits = process.env.FAKE_ACP_ACCEPT_EDITS === '1' ? [{ value: 'accep
 // FAKE_ACP_SETTINGS=modes: only the older `modes` list;
 // FAKE_ACP_SETTINGS=antigravity-orchestrator: mimics agy acp with Orchestrator models + variants.
 const settings = process.env.FAKE_ACP_SETTINGS ?? '';
+const bootExecutor = process.env.FAKE_ACP_ORCHESTRATOR_FILE
+	? JSON.parse(readFileSync(process.env.FAKE_ACP_ORCHESTRATOR_FILE, 'utf8')).orchestrator.executor : null;
 // FAKE_ACP_START_MODE: the mode a new session starts in (default `ask`).
 const option = {
 	model: settings === 'antigravity-orchestrator' ? 'gemini-4-neon' : 'fake-large',
@@ -99,6 +102,11 @@ async function prompt(id, params) {
 	const { sessionId, prompt: blocks } = params;
 	// Keywords come from the user's own text (the last block); earlier blocks carry context.
 	const text = blocks.filter((block) => block.type === 'text').at(-1)?.text ?? '';
+	if (text === 'report boot executor') {
+		update(sessionId, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: bootExecutor ?? 'default' } });
+		send({ id, result: { stopReason: 'end_turn' } });
+		return;
+	}
 	if (text.includes('auth')) { send({ id, error: { code: -32000, message: 'Authentication required' } }); return; }
 	if (text.includes('crash')) { process.exit(3); }
 	if (text.endsWith('question')) {

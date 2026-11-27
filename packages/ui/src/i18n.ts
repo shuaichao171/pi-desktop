@@ -2340,6 +2340,7 @@ export const translations: Record<string, { 'zh-CN': string; 'en-US': string }> 
   'remote.page.appQrAlt': { 'zh-CN': 'Pi Desktop Remote 下载二维码', 'en-US': 'Pi Desktop Remote download QR code' },
   'remote.page.appVersion': { 'zh-CN': 'Android · v{version}', 'en-US': 'Android · v{version}' },
   'remote.page.appLatest': { 'zh-CN': 'Android · 最新版本', 'en-US': 'Android · latest release' },
+  'remote.page.appUnavailable': { 'zh-CN': '此版本未随附 Android 安装包。', 'en-US': 'This release does not include an Android installer.' },
   'remote.page.appScanHint': { 'zh-CN': '用手机相机或浏览器扫码下载，安装时按提示允许安装未知来源应用。', 'en-US': 'Scan with the phone camera or browser to download; allow installing unknown apps when asked.' },
   'remote.page.appCopyLink': { 'zh-CN': '复制链接', 'en-US': 'Copy link' },
   'remote.page.appOpenPage': { 'zh-CN': '打开下载页', 'en-US': 'Open download page' },

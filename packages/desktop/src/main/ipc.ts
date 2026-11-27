@@ -2102,6 +2102,8 @@ export function registerIpc(options: {
 
 	handleRendererInvoke(IPC_CHANNELS.appInfo, (event) => ({
 		appVersion: app.getVersion(),
+		androidApkAvailable: app.isPackaged && process.env.PI_DESKTOP_RELEASE_ANDROID
+			? process.env.PI_DESKTOP_RELEASE_ANDROID === 'true' : undefined,
 		nodeVersion: process.versions.node ?? 'unknown',
 		electronVersion: process.versions.electron ?? 'unknown',
 		platform: process.platform,

@@ -1,5 +1,5 @@
 /**
- * Where the Android companion app is published: each desktop GitHub release carries
+ * Where the Android companion app is published: signed Android builds ship as
  * `Pi-Desktop-Remote-<version>-android-arm64.apk` (see `.github/workflows/release.yml`).
  */
 export const PI_DESKTOP_RELEASES_URL = 'https://github.com/shuaichao171/pi-desktop/releases';
@@ -14,8 +14,8 @@ export function androidApkFileName(version: string): string {
 export interface MobileAppDownload {
   /** Desktop version the APK was built with; `null` when this build points at the latest release instead. */
   readonly version: string | null;
-  /** What the download QR opens on the phone: the APK itself, or the latest release page. */
-  readonly downloadUrl: string;
+  /** APK or latest release page. A release built without Android has no download QR. */
+  readonly downloadUrl: string | null;
   /** Release page for a desktop browser. */
   readonly pageUrl: string;
 }
@@ -25,12 +25,12 @@ export interface MobileAppDownload {
  * protocol. Development and other non-release versions have no matching release and use the
  * latest one.
  */
-export function mobileAppDownload(appVersion: string | null | undefined): MobileAppDownload {
-  if (typeof appVersion === 'string' && STABLE_VERSION.test(appVersion)) {
+export function mobileAppDownload(appVersion: string | null | undefined, androidApkAvailable?: boolean): MobileAppDownload {
+  if (androidApkAvailable !== undefined && typeof appVersion === 'string' && STABLE_VERSION.test(appVersion)) {
     const tag = `v${appVersion}`;
     return {
       version: appVersion,
-      downloadUrl: `${PI_DESKTOP_RELEASES_URL}/download/${tag}/${androidApkFileName(appVersion)}`,
+      downloadUrl: androidApkAvailable ? `${PI_DESKTOP_RELEASES_URL}/download/${tag}/${androidApkFileName(appVersion)}` : null,
       pageUrl: `${PI_DESKTOP_RELEASES_URL}/tag/${tag}`,
     };
   }

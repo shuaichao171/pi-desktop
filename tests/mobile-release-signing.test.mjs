@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { test } from 'node:test';
+import YAML from 'yaml';
 
 const require = createRequire(import.meta.url);
 const { MARKER, SIGNING_VARIABLES, applyReleaseSigning, versionCodeFor } = require('../apps/mobile/plugins/releaseSigning.js');
@@ -93,15 +94,23 @@ test('the 手机远控 download QR points at the APK the release workflow publis
   assert.equal(androidApkFileName('0.5.13'), 'Pi-Desktop-Remote-0.5.13-android-arm64.apk');
   // The same asset name as the workflow's copy step and the draft-release verifier.
   const workflow = readFileSync(new URL('../.github/workflows/release.yml', import.meta.url), 'utf8');
+  const { jobs } = YAML.parse(workflow);
+  for (const name of ['build-windows', 'build-macos', 'build-linux']) {
+    assert.equal(jobs[name].env.PI_DESKTOP_RELEASE_ANDROID, '${{ needs.prerequisites.outputs.android }}', name);
+  }
   assert.ok(workflow.includes('release/Pi-Desktop-Remote-$RELEASE_VERSION-android-arm64.apk'));
   const verifier = readFileSync(new URL('../.github/scripts/verify-release-artifacts.mjs', import.meta.url), 'utf8');
   assert.ok(verifier.includes('`Pi-Desktop-Remote-${version}-android-arm64.apk`'));
 
-  assert.deepEqual(mobileAppDownload('0.5.13'), {
+  assert.deepEqual(mobileAppDownload('0.5.13', true), {
     version: '0.5.13',
     downloadUrl: `${PI_DESKTOP_RELEASES_URL}/download/v0.5.13/Pi-Desktop-Remote-0.5.13-android-arm64.apk`,
     pageUrl: `${PI_DESKTOP_RELEASES_URL}/tag/v0.5.13`,
   });
+  assert.deepEqual(mobileAppDownload('0.5.13', false), {
+    version: '0.5.13', downloadUrl: null, pageUrl: `${PI_DESKTOP_RELEASES_URL}/tag/v0.5.13`,
+  });
+  assert.equal(mobileAppDownload('0.5.13', undefined).downloadUrl, `${PI_DESKTOP_RELEASES_URL}/latest`, 'a local build may carry a stable package version');
   // Dev and other non-release versions have no matching release: use the latest one.
   for (const version of [null, undefined, '', '0.5.13-dev', '0.1.5-review', 'v0.5.13', '05.1.0']) {
     assert.deepEqual(mobileAppDownload(version), { version: null, downloadUrl: `${PI_DESKTOP_RELEASES_URL}/latest`, pageUrl: `${PI_DESKTOP_RELEASES_URL}/latest` }, String(version));

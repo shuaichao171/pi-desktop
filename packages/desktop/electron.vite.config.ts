@@ -27,6 +27,9 @@ const developmentCsp = {
  */
 export default defineConfig({
 	main: {
+		define: {
+			'process.env.PI_DESKTOP_RELEASE_ANDROID': JSON.stringify(process.env.PI_DESKTOP_RELEASE_ANDROID ?? ''),
+		},
 		plugins: [
 			externalizeDepsPlugin({ exclude: ['@pidesktop/agent', '@pidesktop/shared'] }),
 		],

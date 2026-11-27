@@ -52,7 +52,7 @@ function QrCodeSvg({ qr, label, compact = false }: { qr: { size: number; path: s
 export function RemoteAccessPanel({ variant = 'settings' }: { variant?: 'settings' | 'page' } = {}) {
 	const { t, locale } = useT();
 	const bridge = useChatStore((s) => s.bridge);
-	const appVersion = useChatStore((s) => s.appInfo?.appVersion ?? null);
+	const appInfo = useChatStore((s) => s.appInfo);
 	const isPage = variant === 'page';
 	const [state, setState] = useState<UiRemoteAccessState | null>(null);
 	const [busy, setBusy] = useState(false);
@@ -69,7 +69,11 @@ export function RemoteAccessPanel({ variant = 'settings' }: { variant?: 'setting
 
 	// Pairing state (ephemeral: raw code stays only in memory while panel is open)
 	const [pairRole, setPairRole] = useState<RemoteAccessRole>('full');
-	const [pairEndpoint, setPairEndpoint] = useState('');
+	const [selectedEndpoint, setSelectedEndpoint] = useState('');
+	const endpoints = state?.endpoints;
+	const pairEndpoint = (endpoints?.find((ep) => ep.httpBaseUrl === selectedEndpoint)
+		?? endpoints?.find((ep) => ep.isDefault) ?? endpoints?.find((ep) => ep.kind !== 'loopback')
+		?? endpoints?.[0])?.httpBaseUrl ?? '';
 	const [pairDeviceLabel, setPairDeviceLabel] = useState('');
 	const [createdPairing, setCreatedPairing] = useState<RemotePairingCreated | null>(null);
 	const busyRef = useRef(false);
@@ -135,19 +139,13 @@ export function RemoteAccessPanel({ variant = 'settings' }: { variant?: 'setting
 	const createdQr = useMemo(() => (createdPairing ? encodeQr(createdPairing.pairingUrl) : null), [createdPairing]);
 
 	// The phone app built from the same release as this desktop (the latest release for dev builds).
-	const appDownload = useMemo(() => mobileAppDownload(appVersion), [appVersion]);
-	const appDownloadQr = useMemo(() => (isPage ? encodeQr(appDownload.downloadUrl) : null), [isPage, appDownload.downloadUrl]);
+	const appDownload = mobileAppDownload(appInfo?.appVersion, appInfo?.androidApkAvailable);
+	const downloadUrl = appDownload.downloadUrl;
+	const appDownloadQr = useMemo(() => (isPage && downloadUrl ? encodeQr(downloadUrl) : null), [isPage, downloadUrl]);
 
 	useEffect(() => {
-		if (!state?.endpoints.length) return;
-		if (!pairEndpoint || !state.endpoints.some((e) => e.httpBaseUrl === pairEndpoint)) {
-			const preferred =
-				state.endpoints.find((e) => e.isDefault) ??
-				state.endpoints.find((e) => e.kind !== 'loopback') ??
-				state.endpoints[0];
-			if (preferred) setPairEndpoint(preferred.httpBaseUrl);
-		}
-	}, [state?.endpoints, pairEndpoint]);
+		if (createdPairing && createdPairing.endpointUrl !== pairEndpoint) setCreatedPairing(null);
+	}, [createdPairing, pairEndpoint]);
 
 	const copyText = useCallback(async (key: string, text: string) => {
 		try {
@@ -180,6 +178,9 @@ export function RemoteAccessPanel({ variant = 'settings' }: { variant?: 'setting
 			if (!bridge || !setConfig) return;
 			await runAction(async () => {
 				const next = await setConfig.call(bridge, patch);
+				if (patch.exposureMode === 'lan' && next.config.exposureMode === 'lan') {
+					setSelectedEndpoint((current) => (next.endpoints.find((ep) => ep.httpBaseUrl === current)?.kind === 'loopback' ? '' : current));
+				}
 				setState(next);
 				if (patch.cloudflareTunnelToken !== undefined) setCfTokenDraft('');
 			});
@@ -349,16 +350,16 @@ export function RemoteAccessPanel({ variant = 'settings' }: { variant?: 'setting
 							? t('remote.page.appVersion', { version: appDownload.version })
 							: t('remote.page.appLatest')}
 					</span>
-					<p>{t('remote.page.appScanHint')}</p>
+					<p>{t(downloadUrl ? 'remote.page.appScanHint' : 'remote.page.appUnavailable')}</p>
 					<div className="pd-remote-qr-actions">
-						<button
+						{downloadUrl && <button
 							type="button"
 							className="pd-btn"
 							data-action="copy-app-download"
-							onClick={() => void copyText('app-download', appDownload.downloadUrl)}
+							onClick={() => void copyText('app-download', downloadUrl)}
 						>
 							{copiedKey === 'app-download' ? t('settings.remote.copied') : t('remote.page.appCopyLink')}
-						</button>
+						</button>}
 						<button
 							type="button"
 							className="pd-btn"
@@ -630,7 +631,7 @@ export function RemoteAccessPanel({ variant = 'settings' }: { variant?: 'setting
 							aria-label={t('settings.remote.pairEndpoint')}
 							value={pairEndpoint}
 							disabled={busy || !state.running}
-							onChange={(e) => setPairEndpoint(e.target.value)}
+							onChange={(e) => setSelectedEndpoint(e.target.value)}
 						>
 							{state.endpoints.map((ep) => (
 								<option key={ep.id} value={ep.httpBaseUrl}>

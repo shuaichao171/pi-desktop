@@ -97,7 +97,7 @@ test('Activity bar 手机远控 entry and the remote-control page layout (SSR)',
     assert.ok(card(page).includes('Android · 最新版本'), 'no app version yet → latest release');
     assert.ok(card(page).includes('data-action="copy-app-download"') && card(page).includes('data-action="open-app-download"'));
 
-    for (const key of ['activity.remoteView', 'remote.page.eyebrow', 'remote.page.title', 'remote.page.description', 'remote.page.groupStatus', 'remote.page.groupNetwork', 'remote.page.groupNetworkDesc', 'settings.remote.pairNeedsServer', 'remote.page.groupApp', 'remote.page.groupAppDesc', 'remote.page.appQrAlt', 'remote.page.appVersion', 'remote.page.appLatest', 'remote.page.appScanHint', 'remote.page.appCopyLink', 'remote.page.appOpenPage', 'settings.remote.unreachableLocalOnly', 'settings.remote.unreachableNoLan', 'settings.remote.useLan']) {
+    for (const key of ['activity.remoteView', 'remote.page.eyebrow', 'remote.page.title', 'remote.page.description', 'remote.page.groupStatus', 'remote.page.groupNetwork', 'remote.page.groupNetworkDesc', 'settings.remote.pairNeedsServer', 'remote.page.groupApp', 'remote.page.groupAppDesc', 'remote.page.appQrAlt', 'remote.page.appVersion', 'remote.page.appLatest', 'remote.page.appUnavailable', 'remote.page.appScanHint', 'remote.page.appCopyLink', 'remote.page.appOpenPage', 'settings.remote.unreachableLocalOnly', 'settings.remote.unreachableNoLan', 'settings.remote.useLan']) {
       assert.notEqual(translate(key, undefined, 'zh-CN'), key);
       assert.notEqual(translate(key, undefined, 'en-US'), key);
     }

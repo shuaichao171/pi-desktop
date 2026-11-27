@@ -1088,6 +1088,8 @@ export interface WorkspaceCommandEvent {
 /* ------------------------------------------------------------------ */
 
 export interface AppInfo {
+  /** Release plan for this desktop build. Local builds have no matching release plan. */
+  androidApkAvailable?: boolean;
   appVersion: string;
   nodeVersion: string;
   electronVersion: string;
