@@ -8,6 +8,16 @@
 
 ## 已完成
 
+- [x] 侧栏高度优化：「再显示 x 个会话」不再占一行半，底部「无归属会话」不再被挤得看不见（2026-11-27 提出并完成）
+  - 现象：「再显示」按钮上下内边距加外边距共 38px，约等于 1.7 个对话行；三大区按各自保存的高度作 flex 基准等比压缩，本机实际布局（分组 646 / 未分组 148 / 无归属 114，窗口 1089×724）下「无归属会话」只剩 73px，约两行，它的「再显示」完全看不到，而分组区内容下方却留着空白。
+  - 修复（`packages/ui/src/components/sidebarOrganization.css`）：
+    - 「再显示」改为与对话行同高的 22px 行，左侧留出与状态指示同宽的 16px 槽位，文字与对话标题左对齐，弱色，悬停同行高亮。
+    - 展开的大区 `max-height: max-content`：内容不满时不再撑出空白，多出的高度由 flex 分给仍需滚动的大区；同时最低 96px（标题 + 约 3 行，与拖动分隔条的下限一致），被别的大区挤压时仍能看到几行。
+    - 大区级「再显示」（无归属会话）在区内 `position: sticky` 贴底，行列表滚动时它始终可见；贴底时用 `scroll-state(stuck: bottom)` 容器查询在其上方显示 8px 渐隐，盖住被截断的行。标签因此包一层 `<span>`（容器查询不能作用于容器自身的伪元素），`SidebarSessionPanel.tsx` 同步。
+    - 大区列在最低高度之和超出窗口时整体滚动（原为 `overflow: hidden`，底部大区会被裁掉且无法到达）。
+  - 效果：「再显示」38px → 22px；本机布局下「无归属会话」73px → 96px，「再显示」可见可点；宽松窗口下无归属区收缩到内容高度（1440×900 时 316px → 156px），空出的高度给了未分组项目区（386px → 546px）。
+  - 验证：新增截图场景 `tests/fixtures/sidebar-density/scenarios.mjs`（深浅主题 × 1440×900 / 1089×724 实际布局 / 1440×640 / 900×560 / 900×520 最小窗口实际布局，外加 900×400 整列滚动兜底），每档 29 项断言全部通过；侧栏相关截图场景 14 个回归全部 passed（sidebar-runtime ×2、context-menus/sidebar、loaded-sessions、sidebar-projects、chat-header、sidebar-scroll-fade、sidebar-pins、sidebar-titles、sidebar-highlight、sidebar-folder-drop、archive-selection、sidebar-gap、project-auto-assign）；`sidebar-organization` / `sidebar-drag` 单测 34/34；`@pidesktop/ui` typecheck 通过。
+
 - [x] 手机远程访问及审查后加固（2026-11-27 完成）
   - 功能：主进程内置 HTTP + WebSocket 远程服务（`packages/desktop/src/main/remote/`），一次性配对码（SHA-256 落盘、10 分钟）换 30 天滑动过期 Bearer 会话，建 WebSocket 前换 60 秒一次性 wsTicket；`full` / `read-only` 两档角色按 RPC 逐个校验权限；支持局域网、Tailscale Serve、Cloudflare 快速/命名隧道；设置 → 远程访问可生成二维码、吊销配对码与设备；移动端为 Expo 应用 `apps/mobile`（独立于 pnpm 工作区）。
   - 加固：

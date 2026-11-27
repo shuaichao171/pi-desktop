@@ -171,8 +171,13 @@ body.pd-sidebar-dragging * { cursor: grabbing !important; }
 .pd-sidebar-group[data-project-drop='after']::after { bottom: -4px; }
 
 /* zcode workspaceTaskPagination + TaskListLoadingHint. */
-.pd-session-more { display:flex; width:100%; align-items:center; justify-content:center; gap:6px; margin:2px 0 6px; padding:5px 8px; border:0; border-radius:var(--pd-radius-sm); background:transparent; color:inherit; font-size:var(--pd-font-caption); opacity:0.75; cursor:pointer; }
-.pd-session-more:hover, .pd-session-more:focus-visible { background:var(--pd-surface-hover); opacity:1; }
+/* "Show N more" is one 22px list row like the conversations above it; the empty
+   16px slot stands in for the row's leading indicator so the label starts where
+   the titles start. */
+.pd-session-more { display:flex; width:100%; min-height:22px; align-items:center; gap:6px; margin:0; padding:0 6px; border:0; border-radius:var(--pd-radius-sm); background:transparent; color:var(--pd-text-weak); font-size:var(--pd-font-caption); line-height:1.3; text-align:left; cursor:pointer; }
+.pd-session-more::before { flex:0 0 16px; content:''; }
+.pd-session-more:hover, .pd-session-more:focus-visible { background:var(--pd-sidebar-hover); color:var(--pd-text); }
+.pd-organized-list .pd-session-more { padding-left:3px; gap:5px; }
 .pd-session-loading-hint { display:flex; align-items:center; gap:8px; padding:6px 10px; margin:4px 0; font-size:var(--pd-font-caption); opacity:0.8; }
 .pd-session-loading-hint .pd-session-spinner { animation:pd-spin 1s linear infinite; }
 /* Context menus (conversation / project / group): icon, label, accelerator or flyout chevron. */
@@ -207,8 +212,20 @@ body.pd-sidebar-dragging * { cursor: grabbing !important; }
 .pd-sidebar-group-heading:hover .pd-group-add, .pd-sidebar-group-heading .pd-group-add:focus-visible { opacity: 1; }
 .pd-sidebar-region[data-project-group-target=''] { position: relative; }
 
-.pd-sidebar-regions { display: flex; flex: 1 1 auto; flex-direction: column; min-height: 0; overflow: hidden; padding: 2px 0 0; }
+/* Regions normally fit and never scroll as a whole; only when the window is too
+   short for every region's minimum below does the column itself scroll, so the
+   bottom region is never cut off unreachably. */
+.pd-sidebar-regions { display: flex; flex: 1 1 auto; flex-direction: column; min-height: 0; overflow-x: hidden; overflow-y: auto; padding: 2px 0 0; scrollbar-width: thin; }
+.pd-sidebar-regions::-webkit-scrollbar { width: 5px; }
+.pd-sidebar-regions::-webkit-scrollbar-thumb { border-radius: var(--pd-radius-pill); background: var(--pd-scrollbar-thumb); }
 .pd-sidebar-region { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+/* Saved heights are flex bases from whatever window size they were dragged in.
+   An expanded region never grows past its own rows (flexbox hands that spare
+   height to the regions that still scroll instead of leaving it blank inside),
+   and never shrinks below its heading plus about three rows, the same 96px floor
+   the resizer uses, so a small region under a tall one keeps rows visible. */
+.pd-sidebar-region[data-region-id]:not(.is-collapsed) { max-height: max-content; }
+.pd-sidebar-region[data-region-id]:not(.is-collapsed):not(:has(> .pd-sidebar-region-content > .pd-session-empty:only-child)) { min-height: 96px; }
 .pd-sidebar-region + .pd-sidebar-region { border-top: 1px solid var(--pd-sidebar-surface); }
 .pd-sidebar-region-heading { display: flex; flex: 1 1 auto; min-width: 0; align-items: center; gap: 6px; padding: 0 6px; border: 0; background: transparent; color: var(--pd-text-weak); font-size: var(--pd-font-sm); font-weight: var(--pd-weight-semibold); letter-spacing: .02em; text-align: left; }
 /* Region titles are filled bars, so each collapsible region stays distinct from the rows under it. */
@@ -230,10 +247,24 @@ body.pd-sidebar-dragging * { cursor: grabbing !important; }
 .pd-sidebar-region-heading > svg.is-expanded { transform: rotate(90deg); }
 /* Left padding equals the styled 5px scrollbar gutter, so rows sit an equal
    distance from both sidebar edges whether or not the list scrolls. */
-.pd-sidebar-region-content { flex: 1 1 auto; min-height: 80px; overflow-x: hidden; overflow-y: auto; padding: 0 0 6px 5px; scrollbar-gutter: stable; }
+.pd-sidebar-region-content { flex: 1 1 auto; min-height: 0; overflow-x: hidden; overflow-y: auto; padding: 0 0 6px 5px; scrollbar-gutter: stable; }
 .pd-sidebar-region-content::-webkit-scrollbar { width: 5px; }
 .pd-sidebar-region-content::-webkit-scrollbar-thumb { border: 1px solid transparent; border-radius: var(--pd-radius-pill); background: var(--pd-scrollbar-thumb); background-clip: padding-box; }
 .pd-sidebar-region-content > .pd-session-item .pd-session-row { padding-left: 8px; }
+/* A region-level "show more" (unassigned conversations) stays pinned to the
+   bottom edge while the rows above it scroll, so a squeezed bottom region still
+   shows how to reveal the rest. */
+.pd-sidebar-region-content > .pd-session-more { position: sticky; bottom: 0; z-index: 1; padding-left: 8px; background: var(--pd-sidebar); container-type: scroll-state; }
+/* While pinned over scrolled rows, fade the row cut off above it instead of
+   showing a sliver of its glyphs; at rest it sits below its rows and draws no fade.
+   A container query cannot style the container's own pseudo-elements, so the
+   fade hangs off the label span (positioned against the sticky button). */
+.pd-sidebar-region-content > .pd-session-more > span::after { position: absolute; right: 0; bottom: 100%; left: 0; height: 8px; background: linear-gradient(to bottom, transparent, var(--pd-sidebar)); content: ''; opacity: 0; pointer-events: none; }
+@container scroll-state(stuck: bottom) { .pd-sidebar-region-content > .pd-session-more > span::after { opacity: 1; } }
+/* Sticky offsets stop at the scroller's padding, which would leave a strip of
+   scrolling rows showing under the pinned row. */
+.pd-sidebar-region-content:has(> .pd-session-more:last-child) { padding-bottom: 0; }
+.pd-sidebar-region-content > .pd-session-more:is(:hover, :focus-visible) { background: var(--pd-sidebar-hover); }
 /* Rows now end at the scrollbar gutter; keep the hover actions clear of it. */
 .pd-sidebar-region-content .pd-session-actions { top: 50%; right: 8px; transform: translateY(-50%); }
 .pd-sidebar-region-content .pd-session-action { width: 20px; height: 20px; }

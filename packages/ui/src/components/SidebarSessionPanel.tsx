@@ -928,7 +928,8 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 	}
 	function moreButton(key: string, total: number, shown = limitOf(key)) {
 		if (total <= shown) return null;
-		return <button type="button" className="pd-session-more" onClick={() => showMoreSessions(key)}>{t('sidebar.showMore', { count: String(total - shown) })}</button>;
+		// The label is its own element: a pinned region-level button draws its scroll fade from it (sidebarOrganization.css).
+		return <button type="button" className="pd-session-more" onClick={() => showMoreSessions(key)}><span>{t('sidebar.showMore', { count: String(total - shown) })}</span></button>;
 	}
 	function toggleAll() {
 		setSectionLayout(current => ({ ...current, collapsed: allExpanded ? [...new Set([...current.collapsed, ...sectionKeys])] : current.collapsed.filter(key => !sectionKeys.includes(key)) }));
