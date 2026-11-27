@@ -62,7 +62,10 @@ function Modal({ title, children, onClose, busy = false, active = true, classNam
 		const dialog = ref.current;
 		if (!dialog) return;
 		if (active) {
-			if (!dialog.open) dialog.showModal();
+			if (!dialog.open) {
+				dialog.showModal();
+				dialog.querySelector<HTMLElement>('[data-autofocus]:not(:disabled)')?.focus();
+			}
 		} else if (dialog.open) {
 			dialog.close();
 		}
@@ -71,9 +74,10 @@ function Modal({ title, children, onClose, busy = false, active = true, classNam
 	return createPortal(<dialog
 		ref={ref}
 		className={`pd-automation-dialog ${className}`}
-		role="dialog"
+		role={active ? 'dialog' : undefined}
 		aria-labelledby={id}
-		aria-modal="true"
+		aria-modal={active ? 'true' : undefined}
+		hidden={!active}
 		onCancel={(event) => { event.preventDefault(); if (!busy) onClose(); }}
 		onClick={(event) => {
 			if (busy || event.target !== event.currentTarget) return;
@@ -171,7 +175,7 @@ function AutomationEditor({ initial, workspaces, models, busy, active, error, on
 		<form onSubmit={submit} className="pd-automation-form">
 			<div className="pd-automation-form-body">
 				<section className="pd-automation-editor-section" aria-label={copy.taskSection}><h3>{copy.taskSection}</h3>
-					<label className="pd-automation-field"><span>{t('automation.name')}</span><input autoFocus required maxLength={120} value={name} onChange={(event) => setName(event.target.value)} placeholder={t('automation.namePlaceholder')} disabled={busy} /></label>
+					<label className="pd-automation-field"><span>{t('automation.name')}</span><input data-autofocus required maxLength={120} value={name} onChange={(event) => setName(event.target.value)} placeholder={t('automation.namePlaceholder')} disabled={busy} /></label>
 					<label className="pd-automation-field"><span>{t('automation.prompt')}</span><textarea required rows={5} maxLength={32000} value={prompt} onChange={(event) => setPrompt(event.target.value)} placeholder={t('automation.promptPlaceholder')} disabled={busy} /><small>{t('automation.promptHint')}</small></label>
 				</section>
 				<section className="pd-automation-editor-section" aria-label={copy.projectSection}><h3>{copy.projectSection}</h3>

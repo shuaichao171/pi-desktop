@@ -370,8 +370,9 @@ function createWindow(options: CreateMainWindowOptions): BrowserWindow {
 					return;
 				}
 				// Prefer our custom in-app modal once the renderer is visible; fall back to the
-				// native dialog only when the renderer has not painted yet or is unavailable.
-				if (revealed && !win.webContents.isDestroyed() && typeof ipc?.requestWindowClosePrompt === 'function') {
+				// native dialog for pai windows (which do not mount WindowCloseDialog) or when
+				// the renderer has not painted yet or is unavailable.
+				if (launch.windowMode !== 'pai' && revealed && !win.webContents.isDestroyed() && typeof ipc?.requestWindowClosePrompt === 'function') {
 					if (win.isMinimized()) win.restore();
 					if (!win.isVisible()) win.show();
 					win.focus();

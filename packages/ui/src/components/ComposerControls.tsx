@@ -245,7 +245,7 @@ export function ComposerControls({ onOpenModelManagement, hasImages = false }: {
 		}
 		const outside = (event: Event) => {
 			const target = event.target as Node;
-			if (!popoverRef.current?.contains(target) && !modelRef.current?.contains(target) && !contextRef.current?.contains(target) && !thinkingRef.current?.contains(target) && !agentRef.current?.contains(target)) {
+			if (!popoverRef.current?.contains(target) && !modelRef.current?.contains(target) && !contextRef.current?.contains(target) && !thinkingRef.current?.contains(target) && !agentRef.current?.contains(target) && !optionsRef.current?.contains(target)) {
 				pickerRevision.current += 1;
 				setOpen(null);
 			}

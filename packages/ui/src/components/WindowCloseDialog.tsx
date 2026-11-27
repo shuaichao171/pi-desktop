@@ -21,12 +21,14 @@ export function WindowCloseDialog({ prompt, onRespond }: WindowCloseDialogProps)
 	const titleId = useId();
 	const descId = useId();
 	const dialogRef = useRef<HTMLDialogElement>(null);
+	const initialFocusRef = useRef<HTMLButtonElement>(null);
 	const lockRef = useRef(false);
 	const [remember, setRemember] = useState(false);
 
 	useEffect(() => {
 		const node = dialogRef.current;
 		if (node && !node.open && typeof node.showModal === 'function') node.showModal();
+		initialFocusRef.current?.focus();
 		return () => {
 			if (node?.open && typeof node.close === 'function') node.close();
 		};
@@ -60,6 +62,8 @@ export function WindowCloseDialog({ prompt, onRespond }: WindowCloseDialogProps)
 		<dialog
 			ref={dialogRef}
 			className="pd-close-dialog"
+			role="dialog"
+			aria-modal="true"
 			data-close-behavior={prompt.closeBehavior}
 			aria-labelledby={titleId}
 			aria-describedby={descId}
@@ -117,8 +121,8 @@ export function WindowCloseDialog({ prompt, onRespond }: WindowCloseDialogProps)
 					{prompt.allowRemember ? (
 						<>
 							<button
+								ref={isTrayDefault ? undefined : initialFocusRef}
 								type="button"
-								autoFocus={!isTrayDefault}
 								className="pd-btn is-ghost pd-close-dialog-cancel"
 								data-action="cancel"
 								onClick={() => submit('cancel')}
@@ -136,8 +140,8 @@ export function WindowCloseDialog({ prompt, onRespond }: WindowCloseDialogProps)
 										{t('closeDialog.quitAnyway')}
 									</button>
 									<button
+										ref={initialFocusRef}
 										type="button"
-										autoFocus
 										className="pd-btn is-primary"
 										data-action="tray"
 										onClick={() => submit('tray')}
@@ -169,8 +173,8 @@ export function WindowCloseDialog({ prompt, onRespond }: WindowCloseDialogProps)
 					) : (
 						<>
 							<button
+								ref={initialFocusRef}
 								type="button"
-								autoFocus
 								className="pd-btn"
 								data-action="cancel"
 								onClick={() => submit('cancel')}

@@ -72,6 +72,10 @@ function readWorkbenchOpen(): boolean {
 	return !window.matchMedia(NARROW_WINDOW_QUERY).matches && readStoredPreference('pi-desktop.workbench-open') === 'true';
 }
 
+function hasBlockingModal(): boolean {
+	return Boolean(document.querySelector('[role="dialog"][aria-modal="true"], dialog[open]'));
+}
+
 export function AppShell() {
 	const { t } = useT();
 	const windowMode = useChatStore((state) => state.appInfo?.windowMode);
@@ -225,7 +229,7 @@ export function AppShell() {
 		const onKeyDown = (event: KeyboardEvent) => {
 			if (event.defaultPrevented || event.isComposing || event.keyCode === 229 || event.altKey || event.shiftKey || !(event.ctrlKey || event.metaKey)) return;
 			const direction = matchesShortcut(event, bindingKeysFor('historyBack')) ? 'back' : matchesShortcut(event, bindingKeysFor('historyForward')) ? 'forward' : null;
-			if (!direction || document.querySelector('[role="dialog"][aria-modal="true"]')) return;
+			if (!direction || hasBlockingModal()) return;
 			event.preventDefault();
 			setSearchMessageTarget(null);
 			setMainView('chat');
@@ -322,13 +326,13 @@ export function AppShell() {
 	}, []);
 
 	useEffect(() => {
-		if (!narrow || !sidebarOpen || settingsOpen || searchOpen) return;
+		if (!narrow || !sidebarOpen || settingsOpen || searchOpen || windowClosePrompt) return;
 		const onKeyDown = (event: KeyboardEvent) => {
-			if (event.key === 'Escape') setSidebarOpen(false);
+			if (event.key === 'Escape' && !hasBlockingModal()) setSidebarOpen(false);
 		};
 		window.addEventListener('keydown', onKeyDown);
 		return () => window.removeEventListener('keydown', onKeyDown);
-	}, [narrow, sidebarOpen, settingsOpen, searchOpen]);
+	}, [narrow, sidebarOpen, settingsOpen, searchOpen, windowClosePrompt]);
 
 	useLayoutEffect(() => {
 		const media = window.matchMedia('(prefers-color-scheme: dark)');
@@ -379,7 +383,7 @@ export function AppShell() {
 		const onKeyDown = (event: KeyboardEvent) => {
 			if (event.defaultPrevented || event.isComposing) return;
 			if (paiMode) return;
-			if (!document.querySelector('[role="dialog"][aria-modal="true"], dialog[open]') && event.keyCode !== 229) {
+			if (!hasBlockingModal() && event.keyCode !== 229) {
 				const action = matchesShortcut(event, bindingKeysFor('newSession')) ? 'new' : matchesShortcut(event, bindingKeysFor('openProject')) ? 'open' : null;
 				if (action) {
 					event.preventDefault(); setMainView('chat');
@@ -388,7 +392,7 @@ export function AppShell() {
 				}
 			}
 			if (matchesShortcut(event, bindingKeysFor('search')) || matchesShortcut(event, bindingKeysFor('commandPalette'))) {
-				if (document.querySelector('[role="dialog"][aria-modal="true"]')) return;
+				if (hasBlockingModal()) return;
 				event.preventDefault();
 				setSearchOpen(true);
 				return;
@@ -404,7 +408,7 @@ export function AppShell() {
 		const onLoadedCycleKeyDown = (event: KeyboardEvent) => {
 			if (paiMode || event.defaultPrevented || event.isComposing || event.keyCode === 229) return;
 			const direction = matchesShortcut(event, bindingKeysFor('nextLoadedSession')) ? 1 : matchesShortcut(event, bindingKeysFor('previousLoadedSession')) ? -1 : 0;
-			if (!direction || document.querySelector('[role="dialog"][aria-modal="true"], dialog[open]')) return;
+			if (!direction || hasBlockingModal()) return;
 			event.preventDefault(); event.stopPropagation();
 			if (event.repeat) return;
 			if (paneMode) void useChatStore.getState().bridge?.cycleLoadedSessionFromPane?.(direction).catch(() => {});

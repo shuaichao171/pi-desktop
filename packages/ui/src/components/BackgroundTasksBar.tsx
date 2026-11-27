@@ -133,8 +133,16 @@ export function BackgroundTasksBar() {
 
 	const listMode: 'single' | 'multi' = visible.length > 1 ? 'multi' : 'single';
 	useEffect(() => {
-		if (visible.length === 0) setExpandedChoice(null);
+		if (visible.length === 0) {
+			setExpandedChoice(null);
+			setHovered(false);
+			setFocused(false);
+		}
 	}, [visible.length]);
+	useEffect(() => {
+		setHovered(false);
+		setFocused(false);
+	}, [scope]);
 	const userExpanded = expandedChoice?.scope === scope && expandedChoice.mode === listMode ? expandedChoice.value : null;
 	// Multiple tasks expand by default so every task name and status is visible immediately.
 	const expanded = userExpanded ?? visible.length > 1;
