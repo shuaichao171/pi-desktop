@@ -32,7 +32,7 @@ import {
   type RemoteWsServerMessage,
   type RemoteWsTicketResponse,
 } from './remoteAccess.ts';
-import type { AgentSnapshot, UiExtensionDialogRequest } from './index.ts';
+import type { AgentSnapshot, UiExtensionDialogRequest, UiSessionSummary } from './index.ts';
 
 export interface SavedRemoteRoute {
   readonly id: string;
@@ -982,4 +982,63 @@ export function removeRemotePendingDialog(
   id: string,
 ): UiExtensionDialogRequest[] {
   return current.filter((item) => item.id !== id);
+}
+
+/** Same folder identity as the desktop sidebar: Windows drive and UNC paths compare case-insensitively. */
+export function remoteWorkspaceKey(path: string): string {
+  const normalized = path.replace(/\\/g, '/').replace(/\/+$/, '');
+  return /^[a-z]:(?:\/|$)/i.test(normalized) || normalized.startsWith('//')
+    ? normalized.toLowerCase()
+    : normalized;
+}
+
+/** Folders the desktop creates for conversations started without a project. */
+export function isRemoteConversationWorkspace(path: string, conversationWorkspaces: readonly string[]): boolean {
+  const key = remoteWorkspaceKey(path);
+  return conversationWorkspaces.some((item) => remoteWorkspaceKey(item) === key);
+}
+
+export interface RemoteWorkspaceGroups {
+  /** One tab per project, in the desktop's order. */
+  readonly projects: string[];
+  /** Conversation folders; the desktop lists their sessions together as "Unassigned sessions". */
+  readonly conversations: string[];
+}
+
+/** Splits `agent.listWorkspaces` like the desktop sidebar; paths keep the host's spelling for later RPCs. */
+export function groupRemoteWorkspaces(
+  workspaces: readonly string[],
+  conversationWorkspaces: readonly string[],
+): RemoteWorkspaceGroups {
+  const conversationKeys = new Set(conversationWorkspaces.map(remoteWorkspaceKey));
+  const seen = new Set<string>();
+  const projects: string[] = [];
+  const conversations: string[] = [];
+  for (const workspace of workspaces) {
+    const key = remoteWorkspaceKey(workspace);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    (conversationKeys.has(key) ? conversations : projects).push(workspace);
+  }
+  return { projects, conversations };
+}
+
+/** Sessions of several folders as one list: pinned first, then most recently modified. */
+export function mergeRemoteSessionLists(
+  lists: readonly (readonly UiSessionSummary[] | undefined)[],
+): UiSessionSummary[] {
+  const seen = new Set<string>();
+  const merged: UiSessionSummary[] = [];
+  for (const list of lists) {
+    for (const session of list ?? []) {
+      if (seen.has(session.path)) continue;
+      seen.add(session.path);
+      merged.push(session);
+    }
+  }
+  const modifiedAt = (session: UiSessionSummary) => {
+    const time = Date.parse(session.modified);
+    return Number.isFinite(time) ? time : 0;
+  };
+  return merged.sort((a, b) => Number(b.pinned === true) - Number(a.pinned === true) || modifiedAt(b) - modifiedAt(a));
 }

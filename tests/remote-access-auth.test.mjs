@@ -53,7 +53,8 @@ test('RemoteAuthStore enforces one-time pairing, scoped sessions, single-use WS 
     os: 'ios',
   });
   assert.ok(exchanged);
-  assert.equal(exchanged.session.label, 'iPhone 16 Pro');
+  // The note typed on the desktop names the device; the phone's generic model name does not override it.
+  assert.equal(exchanged.session.label, 'My iPhone');
   assert.equal(exchanged.session.role, 'full');
   assert.equal(store.listPairingGrants().length, 0);
 
@@ -92,6 +93,42 @@ test('RemoteAuthStore enforces one-time pairing, scoped sessions, single-use WS 
   assert.deepEqual(revokedIds, [exchanged.session.sessionId]);
   assert.equal(reloaded.authenticateBearer(`Bearer ${exchanged.accessToken}`), null);
   assert.equal(reloaded.consumeWebSocketTicket(pendingTicket.ticket), null);
+});
+
+test('RemoteAuthStore names a device by the phone-reported label only when the desktop left the note empty', async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'pi-remote-auth-label-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const authPath = join(dir, 'remote-access-auth.json');
+
+  const { RemoteAuthStore } = await import('../packages/desktop/src/main/remote/authStore.ts');
+  const store = new RemoteAuthStore(authPath);
+
+  // No desktop note: the grant shows a placeholder until the phone reports its model.
+  const unnamed = await store.createPairingGrant({ label: '   ', role: 'read-only' });
+  assert.equal(unnamed.grant.label, 'Read-only device');
+  assert.equal('labelFromDesktop' in unnamed.grant, false, 'internal flag stays out of public grants');
+  assert.equal('labelFromDesktop' in store.listPairingGrants()[0], false);
+  // The flag survives a restart between minting the QR code and the phone scanning it.
+  await store.flush();
+  const reloaded = new RemoteAuthStore(authPath);
+  const reported = await reloaded.exchangePairingCode({ code: unnamed.code, clientLabel: 'Xiaomi MI 6', os: 'android' });
+  assert.ok(reported);
+  assert.equal(reported.session.label, 'Xiaomi MI 6');
+
+  // No note and nothing reported: the placeholder remains.
+  const silent = await reloaded.createPairingGrant({ role: 'full' });
+  const silentSession = await reloaded.exchangePairingCode({ code: silent.code });
+  assert.ok(silentSession);
+  assert.equal(silentSession.session.label, 'Mobile device');
+
+  // A desktop note survives a restart too and still wins.
+  const named = await reloaded.createPairingGrant({ label: 'Kitchen tablet', role: 'full' });
+  await reloaded.flush();
+  const again = new RemoteAuthStore(authPath);
+  const namedSession = await again.exchangePairingCode({ code: named.code, clientLabel: 'Samsung SM-X200' });
+  assert.ok(namedSession);
+  assert.equal(namedSession.session.label, 'Kitchen tablet');
+  await again.flush();
 });
 
 test('Pairing URL builder/parser and QR code matrix encoder work across realistic payloads', async () => {

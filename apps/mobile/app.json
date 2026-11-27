@@ -24,8 +24,7 @@
         "android.permission.CAMERA",
         "android.permission.INTERNET",
         "android.permission.ACCESS_NETWORK_STATE"
-      ],
-      "usesCleartextTraffic": true
+      ]
     },
     "plugins": [
       [
@@ -34,7 +33,17 @@
           "cameraPermission": "Allow Pi Desktop Remote to scan pairing QR codes from your desktop."
         }
       ],
-      "expo-secure-store"
+      "expo-secure-store",
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "usesCleartextTraffic": true
+          }
+        }
+      ],
+      "expo-asset",
+      "expo-font"
     ]
   }
 }

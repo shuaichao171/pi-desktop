@@ -10,12 +10,22 @@ import {
   View,
 } from 'react-native';
 import type { UiSessionSummary } from '@pidesktop/shared';
+import {
+  groupRemoteWorkspaces,
+  isRemoteConversationWorkspace,
+  mergeRemoteSessionLists,
+} from '@pidesktop/shared/remoteClient';
 import { useRemote } from '../runtime/remoteStore';
 import { useTheme } from '../theme';
 
 interface SessionsScreenProps {
   onOpenChat: () => void;
 }
+
+/** A project folder, or every conversation folder together (the desktop's "Unassigned sessions"). */
+type WorkspaceTab = { readonly kind: 'project'; readonly cwd: string } | { readonly kind: 'unassigned' };
+
+const UNASSIGNED_TAB: WorkspaceTab = { kind: 'unassigned' };
 
 function folderBasename(path: string): string {
   const parts = path.replace(/[\\/]+$/, '').split(/[\\/]/);
@@ -29,25 +39,43 @@ export function SessionsScreen({ onOpenChat }: SessionsScreenProps) {
     canOperate,
     snapshot,
     workspaces,
+    conversationWorkspaces,
     sessionsByCwd,
     refreshNavigationData,
-    refreshSessionsForCwd,
+    refreshSessionsForCwds,
     switchWorkspace,
     switchSession,
     createNewSession,
   } = useRemote();
 
-  const [selectedCwd, setSelectedCwd] = useState<string>('');
+  const [selectedTab, setSelectedTab] = useState<WorkspaceTab | null>(null);
   const [query, setQuery] = useState('');
   const [refreshing, setRefreshing] = useState(false);
 
-  const activeCwd = selectedCwd || snapshot?.cwd || workspaces[0] || '';
+  const groups = useMemo(
+    () => groupRemoteWorkspaces(workspaces, conversationWorkspaces),
+    [workspaces, conversationWorkspaces],
+  );
+  const snapshotCwd = snapshot?.cwd ?? '';
+  const activeTab = useMemo<WorkspaceTab | null>(() => {
+    if (selectedTab) return selectedTab;
+    if (snapshotCwd) {
+      return isRemoteConversationWorkspace(snapshotCwd, conversationWorkspaces) ? UNASSIGNED_TAB : { kind: 'project', cwd: snapshotCwd };
+    }
+    if (groups.projects[0]) return { kind: 'project', cwd: groups.projects[0] };
+    return groups.conversations.length > 0 ? UNASSIGNED_TAB : null;
+  }, [selectedTab, snapshotCwd, conversationWorkspaces, groups]);
+  const activeFolders = useMemo(
+    () => (!activeTab ? [] : activeTab.kind === 'unassigned' ? groups.conversations : [activeTab.cwd]),
+    [activeTab, groups.conversations],
+  );
 
   useEffect(() => {
-    if (activeCwd && connection.phase === 'connected' && !sessionsByCwd[activeCwd]) {
-      void refreshSessionsForCwd(activeCwd);
+    const missing = activeFolders.filter((cwd) => !sessionsByCwd[cwd]);
+    if (missing.length > 0 && connection.phase === 'connected') {
+      void refreshSessionsForCwds(missing);
     }
-  }, [activeCwd, connection.phase, sessionsByCwd, refreshSessionsForCwd]);
+  }, [activeFolders, connection.phase, sessionsByCwd, refreshSessionsForCwds]);
 
   const runtimeByPath = useMemo(() => {
     const map = new Map<string, string>();
@@ -58,22 +86,54 @@ export function SessionsScreen({ onOpenChat }: SessionsScreenProps) {
   }, [snapshot?.sessionRuntimes]);
 
   const sessions = useMemo(() => {
-    const list = sessionsByCwd[activeCwd] ?? [];
+    const list =
+      activeTab?.kind === 'unassigned'
+        ? mergeRemoteSessionLists(activeFolders.map((cwd) => sessionsByCwd[cwd]))
+        : (sessionsByCwd[activeFolders[0] ?? ''] ?? []);
     const q = query.trim().toLowerCase();
     return list
       .filter((s) => !s.archived)
       .filter((s) => !q || `${s.name ?? ''} ${s.firstMessage}`.toLowerCase().includes(q));
-  }, [sessionsByCwd, activeCwd, query]);
+  }, [sessionsByCwd, activeTab, activeFolders, query]);
 
   const handleRefresh = async () => {
     setRefreshing(true);
     try {
       await refreshNavigationData();
-      if (activeCwd) await refreshSessionsForCwd(activeCwd);
+      await refreshSessionsForCwds(activeFolders);
     } finally {
       setRefreshing(false);
     }
   };
+
+  const selectTab = (tab: WorkspaceTab) => {
+    setSelectedTab(tab);
+    // Unassigned is a view over many folders, so it never moves the desktop to one of them.
+    if (tab.kind === 'unassigned') {
+      void refreshSessionsForCwds(groups.conversations);
+      return;
+    }
+    void refreshSessionsForCwds([tab.cwd]);
+    if (canOperate && tab.cwd !== snapshotCwd) {
+      void switchWorkspace(tab.cwd).catch(() => {});
+    }
+  };
+
+  const renderTab = (key: string, label: string, tab: WorkspaceTab, selected: boolean) => (
+    <Pressable
+      key={key}
+      onPress={() => selectTab(tab)}
+      style={[
+        styles.wsChip,
+        {
+          borderColor: selected ? theme.brand : theme.border,
+          backgroundColor: selected ? theme.brand : theme.surfaceAlt,
+        },
+      ]}
+    >
+      <Text style={{ color: selected ? theme.brandInk : theme.text, fontSize: 12, fontWeight: '600' }}>{label}</Text>
+    </Pressable>
+  );
 
   if (connection.phase !== 'connected') {
     return (
@@ -93,7 +153,10 @@ export function SessionsScreen({ onOpenChat }: SessionsScreenProps) {
           {canOperate && (
             <Pressable
               style={[styles.newBtn, { backgroundColor: theme.brand }]}
-              onPress={() => void createNewSession(activeCwd || undefined).then(onOpenChat)}
+              onPress={() =>
+                // Under Unassigned the desktop creates a fresh conversation folder, as its own "New chat" does.
+                void createNewSession(activeTab?.kind === 'project' ? activeTab.cwd : undefined).then(onOpenChat)
+              }
             >
               <Text style={{ color: theme.brandInk, fontWeight: '700', fontSize: 13 }}>+ New</Text>
             </Pressable>
@@ -101,32 +164,11 @@ export function SessionsScreen({ onOpenChat }: SessionsScreenProps) {
         </View>
 
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.wsChips}>
-          {workspaces.map((ws) => {
-            const selected = ws === activeCwd;
-            return (
-              <Pressable
-                key={ws}
-                onPress={() => {
-                  setSelectedCwd(ws);
-                  void refreshSessionsForCwd(ws);
-                  if (canOperate && ws !== snapshot?.cwd) {
-                    void switchWorkspace(ws);
-                  }
-                }}
-                style={[
-                  styles.wsChip,
-                  {
-                    borderColor: selected ? theme.brand : theme.border,
-                    backgroundColor: selected ? theme.brand : theme.surfaceAlt,
-                  },
-                ]}
-              >
-                <Text style={{ color: selected ? theme.brandInk : theme.text, fontSize: 12, fontWeight: '600' }}>
-                  {folderBasename(ws)}
-                </Text>
-              </Pressable>
-            );
-          })}
+          {groups.projects.map((ws) =>
+            renderTab(ws, folderBasename(ws), { kind: 'project', cwd: ws }, activeTab?.kind === 'project' && activeTab.cwd === ws),
+          )}
+          {groups.conversations.length > 0 &&
+            renderTab('unassigned', 'Unassigned', UNASSIGNED_TAB, activeTab?.kind === 'unassigned')}
         </ScrollView>
 
         <TextInput
@@ -145,7 +187,7 @@ export function SessionsScreen({ onOpenChat }: SessionsScreenProps) {
         contentContainerStyle={styles.listContent}
         ListEmptyComponent={
           <Text style={{ color: theme.textMuted, textAlign: 'center', marginTop: 40 }}>
-            No conversations in this workspace yet.
+            {activeTab?.kind === 'unassigned' ? 'No conversations outside projects yet.' : 'No conversations in this workspace yet.'}
           </Text>
         }
         renderItem={({ item }) => {

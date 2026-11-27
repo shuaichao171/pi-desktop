@@ -34,6 +34,8 @@ const SESSION_SLIDE_THROTTLE_MS = 5 * 60_000;
 interface StoredPairingGrant {
   readonly id: string;
   readonly label: string;
+  /** True when the desktop user typed the device note; it then wins over the name the phone reports. */
+  readonly labelFromDesktop?: boolean;
   readonly role: RemoteAccessRole;
   readonly scopes: readonly RemoteAccessScope[];
   readonly codeHash: string;
@@ -104,6 +106,10 @@ function sanitizeLabel(raw: string | undefined, fallback: string): string {
   return cleaned || fallback;
 }
 
+function toPublicGrant({ codeHash: _hash, labelFromDesktop: _fromDesktop, ...grant }: StoredPairingGrant): RemotePairingGrant {
+  return { ...grant };
+}
+
 export class RemoteAuthStore {
   private readonly filePath: string;
   private state: PersistedAuthState;
@@ -160,7 +166,7 @@ export class RemoteAuthStore {
 
   listPairingGrants(): RemotePairingGrant[] {
     this.pruneExpired();
-    return this.state.pairingGrants.map(({ codeHash: _ignored, ...grant }) => ({ ...grant }));
+    return this.state.pairingGrants.map(toPublicGrant);
   }
 
   listSessions(): RemoteClientSession[] {
@@ -187,9 +193,11 @@ export class RemoteAuthStore {
     const id = randomUUID();
     const code = randomBytes(24).toString('base64url');
     const scopes = scopesForRemoteRole(input.role);
+    const desktopLabel = sanitizeLabel(input.label, '');
     const stored: StoredPairingGrant = {
       id,
-      label: sanitizeLabel(input.label, input.role === 'read-only' ? 'Read-only device' : 'Mobile device'),
+      label: desktopLabel || (input.role === 'read-only' ? 'Read-only device' : 'Mobile device'),
+      labelFromDesktop: desktopLabel.length > 0,
       role: input.role,
       scopes,
       codeHash: sha256Hex(code),
@@ -203,8 +211,7 @@ export class RemoteAuthStore {
     }
     await this.persist();
     this.emitChanged();
-    const { codeHash: _ignored, ...grant } = stored;
-    return { grant, code };
+    return { grant: toPublicGrant(stored), code };
   }
 
   async revokePairingGrant(grantId: string): Promise<boolean> {
@@ -249,7 +256,8 @@ export class RemoteAuthStore {
     const expiresAt = new Date(now + SESSION_TTL_MS).toISOString();
     const stored: StoredSession = {
       sessionId,
-      label: sanitizeLabel(input.clientLabel, matched.label),
+      // A note typed on the desktop names the device; otherwise use what the phone reports.
+      label: matched.labelFromDesktop ? matched.label : sanitizeLabel(input.clientLabel, matched.label),
       deviceType: input.deviceType ?? 'mobile',
       os: input.os ?? 'unknown',
       role: matched.role,

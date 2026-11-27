@@ -22,6 +22,7 @@ import {
   classifyEndpointKind,
   mergeRemotePendingDialog,
   pairWithDesktop,
+  remoteWorkspaceKey,
   removeRemotePendingDialog,
   sortRemoteRoutes,
   type RemoteConnectionState,
@@ -40,6 +41,8 @@ interface RemoteContextValue {
   readonly snapshot: AgentSnapshot | null;
   readonly pendingDialogs: readonly UiExtensionDialogRequest[];
   readonly workspaces: readonly string[];
+  /** Folders of conversations started without a project (the desktop's "Unassigned sessions"). */
+  readonly conversationWorkspaces: readonly string[];
   readonly sessionsByCwd: Readonly<Record<string, readonly UiSessionSummary[]>>;
   readonly models: readonly UiModelSummary[];
   readonly agents: readonly UiAgentStatus[];
@@ -50,7 +53,8 @@ interface RemoteContextValue {
   readonly forgetHost: (environmentId: string) => Promise<void>;
   readonly addRouteToHost: (environmentId: string, rawUrl: string) => Promise<void>;
   readonly refreshNavigationData: () => Promise<void>;
-  readonly refreshSessionsForCwd: (cwd: string) => Promise<void>;
+  /** Lists sessions of these folders in one batch; a folder that fails to list shows as empty. */
+  readonly refreshSessionsForCwds: (cwds: readonly string[]) => Promise<void>;
   readonly switchWorkspace: (cwd: string, fresh?: boolean) => Promise<void>;
   readonly switchSession: (path: string) => Promise<void>;
   readonly createNewSession: (cwd?: string) => Promise<void>;
@@ -85,6 +89,19 @@ function currentMobileOs(): 'ios' | 'android' | 'unknown' {
   return 'unknown';
 }
 
+/** Name the desktop shows for this phone when its user left the device note empty, e.g. "Xiaomi MI 6". */
+function currentDeviceLabel(): string {
+  if (Platform.OS === 'ios') return Platform.isPad ? 'iPad' : 'iPhone';
+  if (Platform.OS === 'android') {
+    const maker = (Platform.constants.Manufacturer || Platform.constants.Brand || '').trim();
+    const model = (Platform.constants.Model || '').trim();
+    if (!model) return maker || 'Android device';
+    if (!maker || model.toLowerCase().startsWith(maker.toLowerCase())) return model;
+    return `${maker.charAt(0).toUpperCase()}${maker.slice(1)} ${model}`;
+  }
+  return 'Mobile device';
+}
+
 export function RemoteProvider({ children }: { children: React.ReactNode }) {
   const [hydrated, setHydrated] = useState(false);
   const [environments, setEnvironments] = useState<SavedRemoteEnvironment[]>([]);
@@ -102,29 +119,31 @@ export function RemoteProvider({ children }: { children: React.ReactNode }) {
   const [snapshot, setSnapshot] = useState<AgentSnapshot | null>(null);
   const [pendingDialogs, setPendingDialogs] = useState<UiExtensionDialogRequest[]>([]);
   const [workspaces, setWorkspaces] = useState<string[]>([]);
+  const [conversationWorkspaces, setConversationWorkspaces] = useState<string[]>([]);
   const [sessionsByCwd, setSessionsByCwd] = useState<Record<string, UiSessionSummary[]>>({});
   const [models, setModels] = useState<UiModelSummary[]>([]);
   const [agents, setAgents] = useState<UiAgentStatus[]>([]);
   const [busyAction, setBusyAction] = useState(false);
 
   const clientRef = useRef<RemoteConnectionClient | null>(null);
+  const workspaceKeysRef = useRef(new Set<string>());
+  const sessionLoadsRef = useRef(new Set<string>());
 
+  // The Sessions screen loads the folders behind the tab it shows; no folder is preloaded here.
   const refreshNavigationData = useCallback(async () => {
     const client = clientRef.current;
     if (!client || client.getState().phase !== 'connected') return;
-    const [wsList, modelList, agentList] = await Promise.all([
+    const [wsList, conversationList, modelList, agentList] = await Promise.all([
       client.call('agent.listWorkspaces').catch(() => [] as string[]),
+      client.call('agent.listConversationWorkspaces').catch(() => [] as string[]),
       client.call('agent.listModels').catch(() => [] as UiModelSummary[]),
       client.call('agent.listAgents').catch(() => [] as UiAgentStatus[]),
     ]);
+    workspaceKeysRef.current = new Set(wsList.map(remoteWorkspaceKey));
     setWorkspaces(wsList);
+    setConversationWorkspaces(conversationList);
     setModels(modelList);
     setAgents(agentList);
-    const activeCwd = wsList[0];
-    if (activeCwd) {
-      const list = await client.call('agent.listSessions', { cwd: activeCwd }).catch(() => [] as UiSessionSummary[]);
-      setSessionsByCwd((prev) => ({ ...prev, [activeCwd]: list }));
-    }
   }, []);
 
   if (!clientRef.current) {
@@ -146,6 +165,8 @@ export function RemoteProvider({ children }: { children: React.ReactNode }) {
           setSnapshot((prev) => applyRemoteAgentEvent(prev, event.payload));
           if (event.payload.event.type === 'sessions-changed') {
             const changedCwd = event.payload.event.cwd;
+            // A conversation started without a project lives in a folder this phone has not listed yet.
+            if (!workspaceKeysRef.current.has(remoteWorkspaceKey(changedCwd))) void refreshNavigationData();
             void clientRef.current
               ?.call('agent.listSessions', { cwd: changedCwd })
               .then((list) => setSessionsByCwd((prev) => ({ ...prev, [changedCwd]: list })))
@@ -200,11 +221,23 @@ export function RemoteProvider({ children }: { children: React.ReactNode }) {
     };
   }, []);
 
+  // The desktop (or this phone) switched to a folder created after the last listing, e.g. a new conversation.
+  // An empty key set means the first listing (started by onHello) has not landed yet.
+  const snapshotCwd = snapshot?.cwd ?? '';
+  useEffect(() => {
+    const known = workspaceKeysRef.current;
+    if (snapshotCwd && connection.phase === 'connected' && known.size > 0 && !known.has(remoteWorkspaceKey(snapshotCwd))) {
+      void refreshNavigationData();
+    }
+  }, [snapshotCwd, connection.phase, refreshNavigationData]);
+
   const connectHost = useCallback((env: SavedRemoteEnvironment) => {
     setActiveEnvId(env.environmentId);
     setSnapshot(null);
     setPendingDialogs([]);
     setWorkspaces([]);
+    setConversationWorkspaces([]);
+    workspaceKeysRef.current = new Set();
     setSessionsByCwd({});
     clientRef.current?.connect(env);
   }, []);
@@ -222,7 +255,7 @@ export function RemoteProvider({ children }: { children: React.ReactNode }) {
         transport: nativeTransport,
         pairingUrlOrAddress: input.pairingUrlOrAddress,
         code: input.code,
-        clientLabel: os === 'ios' ? 'iPhone / iPad' : os === 'android' ? 'Android Phone' : 'Mobile',
+        clientLabel: currentDeviceLabel(),
         deviceType: 'mobile',
         os,
       });
@@ -274,11 +307,26 @@ export function RemoteProvider({ children }: { children: React.ReactNode }) {
     [environments, activeEnvId],
   );
 
-  const refreshSessionsForCwd = useCallback(async (cwd: string) => {
+  const refreshSessionsForCwds = useCallback(async (cwds: readonly string[]) => {
     const client = clientRef.current;
     if (!client || client.getState().phase !== 'connected') return;
-    const list = await client.call('agent.listSessions', { cwd });
-    setSessionsByCwd((prev) => ({ ...prev, [cwd]: list }));
+    // Skip folders already loading, so re-renders during a batch never repeat its requests.
+    const targets = [...new Set(cwds)].filter((cwd) => cwd && !sessionLoadsRef.current.has(cwd));
+    if (targets.length === 0) return;
+    for (const cwd of targets) sessionLoadsRef.current.add(cwd);
+    try {
+      const results = await Promise.allSettled(targets.map((cwd) => client.call('agent.listSessions', { cwd })));
+      setSessionsByCwd((prev) => {
+        const next = { ...prev };
+        targets.forEach((cwd, index) => {
+          const result = results[index];
+          next[cwd] = result.status === 'fulfilled' ? result.value : (prev[cwd] ?? []);
+        });
+        return next;
+      });
+    } finally {
+      for (const cwd of targets) sessionLoadsRef.current.delete(cwd);
+    }
   }, []);
 
   const runAction = useCallback(async <T,>(work: (client: RemoteConnectionClient) => Promise<T>): Promise<T> => {
@@ -308,6 +356,7 @@ export function RemoteProvider({ children }: { children: React.ReactNode }) {
       snapshot,
       pendingDialogs,
       workspaces,
+      conversationWorkspaces,
       sessionsByCwd,
       models,
       agents,
@@ -318,7 +367,7 @@ export function RemoteProvider({ children }: { children: React.ReactNode }) {
       forgetHost,
       addRouteToHost,
       refreshNavigationData,
-      refreshSessionsForCwd,
+      refreshSessionsForCwds,
       switchWorkspace: (cwd, fresh) => runAction((c) => c.call('agent.switchWorkspace', { cwd, fresh }).then(() => undefined)),
       switchSession: (path) => runAction((c) => c.call('agent.switchSession', { path }).then(() => undefined)),
       createNewSession: (cwd) => runAction((c) => c.call('agent.newSession', cwd ? { cwd } : undefined).then(() => undefined)),
@@ -348,6 +397,7 @@ export function RemoteProvider({ children }: { children: React.ReactNode }) {
       snapshot,
       pendingDialogs,
       workspaces,
+      conversationWorkspaces,
       sessionsByCwd,
       models,
       agents,
@@ -358,7 +408,7 @@ export function RemoteProvider({ children }: { children: React.ReactNode }) {
       forgetHost,
       addRouteToHost,
       refreshNavigationData,
-      refreshSessionsForCwd,
+      refreshSessionsForCwds,
       runAction,
     ],
   );
