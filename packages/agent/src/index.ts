@@ -93,7 +93,8 @@ import type {
 	UiSessionPeek,
 } from '@pidesktop/shared';
 import { createAgentError, normalizeAgentError } from '../../shared/src/agentErrors.ts';
-import { ACP_AGENT_CAPABILITIES, AGENT_APPROVAL_DEFAULT, AGENT_APPROVAL_OPTION, PI_AGENT_ID, piAgentDescriptor, type UiAgentApprovalMode, type UiAgentConfig, type UiAgentDescriptor, type UiAgentModel, type UiAgentOption, type UiAgentQuota, type UiAgentSaveRequest, type UiAgentStatus } from '../../shared/src/agentRuntimes.ts';
+import { ACP_AGENT_CAPABILITIES, AGENT_APPROVAL_DEFAULT, AGENT_APPROVAL_OPTION, ANTIGRAVITY_ORCHESTRATOR_EXECUTOR_OPTION, ANTIGRAVITY_ORCHESTRATOR_PLANNER_OPTION, PI_AGENT_ID, piAgentDescriptor, type UiAgentApprovalMode, type UiAgentConfig, type UiAgentDescriptor, type UiAgentModel, type UiAgentOption, type UiAgentOrchestratorConfig, type UiAgentQuota, type UiAgentSaveRequest, type UiAgentStatus } from '../../shared/src/agentRuntimes.ts';
+import { antigravitySettingsPath, buildAntigravityOrchestratorConfig, isAntigravityOrchestratorModel, orchestratorPresetForPlanner, plannerForOrchestratorPreset, readAntigravityOrchestratorSettings, writeAntigravityOrchestratorSettings } from './acp/antigravityOrchestrator.ts';
 import { AgentRegistry } from './acp/agentRegistry.ts';
 import { AgentQuotaService } from './acp/agentQuota.ts';
 import { requireApprovalDetails, requireDialogResponse, type UiApprovalDetails, type UiApprovalScope } from '../../shared/src/approval.ts';
@@ -569,6 +570,8 @@ class SingleAgentService {
 	private agentBindingSession: PiRuntime['session'] | null = null;
 	private acpCommands: UiSlashCommand[] = [];
 	private acpModels: UiAgentModel[] = [];
+	/** Full `(model + effort)` entries reported via `session.models.availableModels`. */
+	private acpVariantModels: UiAgentModel[] = [];
 	/** Session settings the agent exposes besides its model (reasoning effort, mode, ...). */
 	private acpOptions: UiAgentOption[] = [];
 	/** This conversation's approval setting (`AGENT_APPROVAL_OPTION`); read from its session record when bound. */
@@ -581,6 +584,7 @@ class SingleAgentService {
 	private firstPersistHook: { file: string; run: () => void } | null = null;
 	/** The bound agent's configuration changed during a turn: restart its process once the turn ends. */
 	private acpConfigStale = false;
+	private acpOrchestratorRestartTimer: ReturnType<typeof setTimeout> | null = null;
 	private readonly agents: AgentRegistry;
 	private state: Omit<AgentSnapshot, 'sequence'> = {
 		status: 'uninitialized',
@@ -1822,6 +1826,7 @@ class SingleAgentService {
 	agentDescriptor(): UiAgentDescriptor {
 		const binding = this.agentBinding;
 		if (!binding) return piAgentDescriptor();
+		const orchestrator = this.antigravityOrchestratorDescriptor();
 		return {
 			id: binding.agentId,
 			kind: 'acp',
@@ -1832,8 +1837,18 @@ class SingleAgentService {
 			currentModelId: this.acpModelId,
 			// The desktop's approval setting leads the menu, available before the agent has started.
 			options: [this.approvalOption(), ...this.acpOptions.map((option) => ({ ...option, values: option.values.map((value) => ({ ...value })) }))],
+			...(orchestrator ? { orchestrator } : {}),
 			...(binding.config?.quota ? { quota: true } : {}),
 		};
+	}
+
+	private antigravityOrchestratorDescriptor(): UiAgentOrchestratorConfig | undefined {
+		const binding = this.agentBinding;
+		if (binding?.agentId !== 'antigravity' || !isAntigravityOrchestratorModel(this.acpModelId) || !this.acpVariantModels.length) return undefined;
+		const config = binding.config ?? this.agents.get(binding.agentId);
+		if (!config) return undefined;
+		const settings = readAntigravityOrchestratorSettings(antigravitySettingsPath(config));
+		return buildAntigravityOrchestratorConfig({ modelId: this.acpModelId, variantModels: this.acpVariantModels, settings }) ?? undefined;
 	}
 
 	/** The desktop's own approval setting, listed with the agent's options; the renderer localizes it by id. */
@@ -1915,13 +1930,32 @@ class SingleAgentService {
 		return preferred;
 	}
 
+	private clearOrchestratorRestartTimer(): void {
+		if (!this.acpOrchestratorRestartTimer) return;
+		clearTimeout(this.acpOrchestratorRestartTimer);
+		this.acpOrchestratorRestartTimer = null;
+	}
+
+	/** Restart the running Antigravity ACP process so `boot.go` reloads `settings.json`. */
+	private scheduleOrchestratorRestart(): void {
+		if (!this.acp) return;
+		if (this.acp.busy || this.activePromptCalls > 0) { this.acpConfigStale = true; return; }
+		this.clearOrchestratorRestartTimer();
+		this.acpOrchestratorRestartTimer = setTimeout(() => {
+			this.acpOrchestratorRestartTimer = null;
+			if (this.acp && !this.acp.busy && this.activePromptCalls === 0) void this.restartAgent(true);
+		}, 150);
+	}
+
 	private async releaseAgent(): Promise<void> {
+		this.clearOrchestratorRestartTimer();
 		const conversation = this.acp;
 		this.acp = null;
 		this.agentBinding = null;
 		this.agentBindingSession = null;
 		this.acpCommands = [];
 		this.acpModels = [];
+		this.acpVariantModels = [];
 		this.acpModelId = null;
 		this.acpOptions = [];
 		this.acpApproval = AGENT_APPROVAL_DEFAULT;
@@ -1944,14 +1978,18 @@ class SingleAgentService {
 		void this.restartAgent();
 	}
 
-	private async restartAgent(): Promise<void> {
+	private async restartAgent(preserveSelection = false): Promise<void> {
+		this.clearOrchestratorRestartTimer();
 		this.acpConfigStale = false;
 		const conversation = this.acp;
 		this.acp = null;
 		this.acpCommands = [];
-		this.acpModels = [];
-		this.acpModelId = null;
-		this.acpOptions = [];
+		if (!preserveSelection) {
+			this.acpModels = [];
+			this.acpVariantModels = [];
+			this.acpModelId = null;
+			this.acpOptions = [];
+		}
 		this.acpToolChanges.clear();
 		await conversation?.dispose().catch(() => {});
 		if (!this.agentBinding || !this.runtime || this.acp || this.lifecycleOperation) return;
@@ -2023,6 +2061,11 @@ class SingleAgentService {
 				if (!owned()) return;
 				this.acpModels = models.slice(0, 100);
 				this.acpModelId = current;
+				this.fire({ type: 'model', ...this.selection(session) });
+			},
+			onVariantModels: (models) => {
+				if (!owned()) return;
+				this.acpVariantModels = models.slice(0, 100);
 				this.fire({ type: 'model', ...this.selection(session) });
 			},
 			onConfigOptions: (options) => {
@@ -2135,9 +2178,22 @@ class SingleAgentService {
 		const session = this.runtime?.session;
 		if (!session || this.lifecycleOperation) throw new Error('会话正在切换，请稍后再试');
 		if (!this.acpModels.some((model) => model.id === id)) throw new Error('模型不可用：' + id);
+		const previousModelId = this.acpModelId;
 		await this.ensureAcp(session).setModel(id);
 		this.acpModelId = id;
 		this.saveAgentSettings(session, { model: id });
+		// Switching between Orchestrator presets syncs the planner family in Antigravity settings.json.
+		if (binding.agentId === 'antigravity' && isAntigravityOrchestratorModel(previousModelId) && isAntigravityOrchestratorModel(id) && previousModelId !== id) {
+			const orchestrator = this.antigravityOrchestratorDescriptor();
+			const config = binding.config ?? this.agents.get(binding.agentId);
+			if (orchestrator && config) {
+				const syncedPlanner = plannerForOrchestratorPreset(id, orchestrator.planner.currentValue, orchestrator.models);
+				if (syncedPlanner && syncedPlanner !== orchestrator.planner.currentValue) {
+					writeAntigravityOrchestratorSettings(antigravitySettingsPath(config), { planner: syncedPlanner });
+					this.scheduleOrchestratorRestart();
+				}
+			}
+		}
 		this.fire({ type: 'model', ...this.selection(session) });
 	}
 
@@ -2170,6 +2226,28 @@ class SingleAgentService {
 			this.fire({ type: 'model', ...this.selection(session) });
 			return;
 		}
+		if (optionId === ANTIGRAVITY_ORCHESTRATOR_PLANNER_OPTION || optionId === ANTIGRAVITY_ORCHESTRATOR_EXECUTOR_OPTION) {
+			const orchestrator = this.antigravityOrchestratorDescriptor();
+			const config = this.agentBinding.config ?? this.agents.get(this.agentBinding.agentId);
+			if (!orchestrator || !config) throw new Error('当前未使用 Antigravity Orchestrator 模式');
+			const valid = orchestrator.models.some((model) => model.variants.some((variant) => variant.value === value));
+			if (!valid) throw new Error('选项值不可用：' + value);
+			const role = optionId === ANTIGRAVITY_ORCHESTRATOR_PLANNER_OPTION ? 'planner' : 'executor';
+			const current = role === 'planner' ? orchestrator.planner.currentValue : orchestrator.executor.currentValue;
+			if (current !== value) {
+				writeAntigravityOrchestratorSettings(antigravitySettingsPath(config), { [role]: value });
+				if (role === 'planner') {
+					const nextPreset = orchestratorPresetForPlanner(value, this.acpModels.map((model) => model.id));
+					if (nextPreset && nextPreset !== this.acpModelId) {
+						this.acpModelId = nextPreset;
+						this.saveAgentSettings(session, { model: nextPreset });
+					}
+				}
+				this.scheduleOrchestratorRestart();
+				this.fire({ type: 'model', ...this.selection(session) });
+			}
+			return;
+		}
 		const option = this.acpOptions.find((item) => item.id === optionId);
 		if (!option) throw new Error('Agent 选项不存在：' + optionId);
 		if (!option.values.some((item) => item.value === value)) throw new Error('选项值不可用：' + value);
@@ -2193,6 +2271,14 @@ class SingleAgentService {
 			throw new Error((this.acp?.supportsSteering ?? this.agentBinding?.config?.steer)
 				? this.agentName() + ' 正在准备回复，请稍后再发送'
 				: this.agentName() + ' 正在回复，外部 Agent 不支持运行中追加消息；请等它结束或先停止');
+		}
+		if (!steering && this.acpOrchestratorRestartTimer) {
+			// Flush pending Orchestrator settings restart synchronously before starting the turn.
+			this.clearOrchestratorRestartTimer();
+			const stale = this.acp;
+			this.acp = null;
+			this.acpToolChanges.clear();
+			await stale?.dispose().catch(() => {});
 		}
 		const conversation = this.ensureAcp(session);
 		const promptText = withTextAttachments(text, attachments);
