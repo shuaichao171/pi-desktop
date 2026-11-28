@@ -23,6 +23,7 @@
 
 import { createRequire } from 'node:module';
 import type * as Koffi from 'koffi';
+import { cropBgra } from './imageEncode.ts';
 import type { RawCapture, Rect, UiaElementNode, UiaTreeCapture, VirtualScreen, WindowInfo } from './types.ts';
 import { CuaError } from './types.ts';
 
@@ -860,18 +861,36 @@ export function windowRect(hwnd: number): Rect {
 }
 
 /**
- * Capture one window instead of the whole screen: smaller images and no
- * unrelated desktop content. PrintWindow(PW_RENDERFULLCONTENT) renders even
- * occluded DirectComposition/Chromium windows. Never substitute a screen
+ * Capture one window (or a screen-space sub-region inside it) instead of the
+ * whole screen: smaller images and no unrelated desktop content.
+ * PrintWindow(PW_RENDERFULLCONTENT) renders even occluded
+ * DirectComposition/Chromium windows in GetWindowRect space, then crops to
+ * the DWM visible bounds (and optional sub-region). Never substitute a screen
  * crop here, since it could contain an unrelated app over the target.
+ *
+ * `region` must already be an integer screen-space rect (see core
+ * normalizeRegion); here it is only clamped to the window.
  */
-export function captureWindow(hwnd: number): RawCapture {
+export function captureWindow(hwnd: number, region?: Rect): RawCapture {
 	const b = api();
 	if (!b.IsWindow(hwnd)) throw new CuaError('TARGET_GONE', `窗口句柄无效或窗口已关闭：hwnd=${hwnd}`);
 	if (b.IsIconic(hwnd)) throw new CuaError('INVALID_ARGUMENTS', `窗口已最小化，无法截取（先用 cua_activate_window 还原）：hwnd=${hwnd}`);
 	const bounds = windowRect(hwnd);
 	const onScreen = clampRegion(bounds, getVirtualScreen());
 	if (onScreen.width <= 0 || onScreen.height <= 0) throw new CuaError('TARGET_GONE', `窗口不在任何显示器上：hwnd=${hwnd}`);
+	// PrintWindow renders from GetWindowRect (including invisible DWM resize
+	// borders on Windows 10/11); crop to DWM visible bounds / target sub-region.
+	const outer = { left: 0, top: 0, right: 0, bottom: 0 };
+	const surface: Rect = b.GetWindowRect(hwnd, outer) && outer.right > outer.left && outer.bottom > outer.top
+		? { x: outer.left, y: outer.top, width: outer.right - outer.left, height: outer.bottom - outer.top }
+		: bounds;
+	const crop = clampRegion(region ? clampRegion(region, bounds) : bounds, surface);
+	if (crop.width <= 0 || crop.height <= 0) {
+		throw new CuaError(
+			'INVALID_ARGUMENTS',
+			`截屏区域无效（与目标窗口没有交集，窗口范围 [${bounds.x},${bounds.y} ${bounds.width}x${bounds.height}]）`,
+		);
+	}
 	const screenDc = b.GetDC(0);
 	if (!screenDc) throw new Error('GetDC 失败');
 	let memDc = 0;
@@ -879,7 +898,7 @@ export function captureWindow(hwnd: number): RawCapture {
 	let previous = 0;
 	try {
 		memDc = b.CreateCompatibleDC(screenDc);
-		bitmap = b.CreateCompatibleBitmap(screenDc, bounds.width, bounds.height);
+		bitmap = b.CreateCompatibleBitmap(screenDc, surface.width, surface.height);
 		if (!memDc || !bitmap) throw new Error('创建兼容 DC/位图失败');
 		previous = b.SelectObject(memDc, bitmap);
 		if (!previous) throw new Error('SelectObject 失败');
@@ -894,7 +913,9 @@ export function captureWindow(hwnd: number): RawCapture {
 		}
 		b.SelectObject(memDc, previous);
 		previous = 0;
-		return { width: bounds.width, height: bounds.height, origin: { x: bounds.x, y: bounds.y }, bgra: readBitmap(b, memDc, bitmap, bounds.width, bounds.height) };
+		const fullBgra = readBitmap(b, memDc, bitmap, surface.width, surface.height);
+		const bgra = cropBgra(fullBgra, surface.width, surface.height, crop.x - surface.x, crop.y - surface.y, crop.width, crop.height);
+		return { width: crop.width, height: crop.height, origin: { x: crop.x, y: crop.y }, bgra };
 	} finally {
 		if (memDc && previous) b.SelectObject(memDc, previous);
 		if (bitmap) b.DeleteObject(bitmap);

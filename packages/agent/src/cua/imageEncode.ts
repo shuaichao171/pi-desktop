@@ -42,6 +42,33 @@ function getNativeImage(): NativeImageModule | null {
 	return nativeImage;
 }
 
+/** Crop a top-down 32bpp BGRA buffer to a sub-rectangle within source bounds. */
+export function cropBgra(
+	source: Buffer,
+	sourceWidth: number,
+	sourceHeight: number,
+	x: number,
+	y: number,
+	width: number,
+	height: number,
+): Buffer {
+	if (x === 0 && y === 0 && width === sourceWidth && height === sourceHeight) return source;
+	if (
+		!Number.isInteger(x) || !Number.isInteger(y) || !Number.isInteger(width) || !Number.isInteger(height) ||
+		x < 0 || y < 0 || width <= 0 || height <= 0 || x + width > sourceWidth || y + height > sourceHeight
+	) {
+		throw new Error(`cropBgra 区域越界：[${x},${y} ${width}x${height}] 超出 ${sourceWidth}×${sourceHeight}`);
+	}
+	const target = Buffer.alloc(width * height * 4);
+	const rowBytes = width * 4;
+	const srcStride = sourceWidth * 4;
+	for (let row = 0; row < height; row++) {
+		const srcStart = (y + row) * srcStride + x * 4;
+		source.copy(target, row * rowBytes, srcStart, srcStart + rowBytes);
+	}
+	return target;
+}
+
 /** Bilinear downscale of a BGRA buffer when maxWidth is exceeded; returns the (possibly same) buffer and final size. */
 export function downscaleBgra(source: Buffer, width: number, height: number, maxWidth: number): { bgra: Buffer; width: number; height: number } {
 	if (width <= maxWidth) return { bgra: source, width, height };

@@ -33,9 +33,11 @@ import type { ImageContent, TextContent } from '@earendil-works/pi-ai';
 import {
 	type CuaBackend,
 	CuaSessionState,
+	cropRawCapture,
 	cuaNotEnabledMessage,
 	encodeImage,
 	getBackend,
+	normalizeRegion,
 	parseKeys,
 	withCuaDesktop,
 	CuaError,
@@ -504,21 +506,21 @@ export function cuaExtension(options: CuaExtensionOptions = {}): ExtensionFactor
 		registerTool({
 			name: 'cua_screenshot',
 			label: '截屏',
-			description: `截取屏幕（默认整个虚拟桌面，可指定区域，或用 window 只截取单个窗口）。返回图片、分辨率与 frame 帧号；多显示器时坐标可能为负。${COORDINATE_CONVENTION}`,
+			description: `截取屏幕（默认整个虚拟桌面，可指定区域，或用 window 只截取单个窗口；也可同时传 window 与区域参数，只截取被遮挡窗口内的局部区域）。返回图片、分辨率与 frame 帧号；多显示器时坐标可能为负。${COORDINATE_CONVENTION}`,
 			promptSnippet: '截屏并查看屏幕内容',
 			promptGuidelines: [
 				'应用、整屏截图与剪贴板分别授权。可直接调用 cua_*，用户拒绝后停止尝试该权限。',
 				'执行点击/输入等操作后，先重新截屏确认结果再决定下一步；连续执行多个确定性动作后统一截屏一次即可，界面没有变化时不要立即重复截屏。',
-				'对指定应用优先用窗口截图或 UIA。按图片像素点击时传 coordinateSpace=image 和 frame；目标校验失败后先重新观察。',
+				'对指定应用优先用窗口截图或 UIA；需要放大查看被遮挡窗口的局部区域时，可将 window 与 x/y/width/height（屏幕物理像素）组合使用。按图片像素点击时传 coordinateSpace=image 和 frame；目标校验失败后先重新观察。',
 				'需要定位窗口内可交互元素时优先用 cua_get_state（无障碍树），只在需要视觉信息或元素不在树中时截图。'
 			],
 			parameters: Type.Object({
-				x: Type.Optional(Type.Number({ description: '区域左上角 X（物理像素，缺省=整桌面）' })),
-				y: Type.Optional(Type.Number({ description: '区域左上角 Y' })),
-				width: Type.Optional(Type.Number({ description: '区域宽度' })),
-				height: Type.Optional(Type.Number({ description: '区域高度' })),
+				x: Type.Optional(Type.Number({ description: '区域左上角 X（屏幕物理像素，缺省=整桌面或整窗口）' })),
+				y: Type.Optional(Type.Number({ description: '区域左上角 Y（屏幕物理像素）' })),
+				width: Type.Optional(Type.Number({ description: '区域宽度（物理像素）' })),
+				height: Type.Optional(Type.Number({ description: '区域高度（物理像素）' })),
 				maxWidth: Type.Optional(Type.Number({ description: '编码图片最大宽度（默认 1600，超出会双线性缩小，坐标仍按原始分辨率）' })),
-				window: Type.Optional(Type.Number({ description: '窗口句柄（cua_list_windows 的 hwnd）：只截取该窗口（被遮挡也能截到，不含桌面其他内容），与区域参数互斥' })),
+				window: Type.Optional(Type.Number({ description: '窗口句柄（cua_list_windows 的 hwnd）：只截取该窗口（被遮挡也能截到，不含桌面其他内容）；可与 x/y/width/height 组合截取窗口内的局部区域（屏幕物理像素，超出窗口的部分自动裁剪）' })),
 			}),
 			annotations: READ_ONLY_ANNOTATIONS,
 			executionMode: 'sequential',
@@ -527,20 +529,15 @@ export function cuaExtension(options: CuaExtensionOptions = {}): ExtensionFactor
 				if (backend.inputDesktopAccessible && !backend.inputDesktopAccessible()) {
 					throw new CuaError('SCREEN_LOCKED', '屏幕已锁定或安全桌面正在活动，截图结果不可用；请提醒用户解锁屏幕后重试');
 				}
-				const hasRegion = params.x !== undefined || params.y !== undefined || params.width !== undefined || params.height !== undefined;
-				if (hasRegion && (params.x === undefined || params.y === undefined || params.width === undefined || params.height === undefined)) {
-					invalid('指定截屏区域时 x/y/width/height 必须同时提供');
-				}
-				if (params.window !== undefined && hasRegion) invalid('window 与区域参数（x/y/width/height）互斥');
-				const region = hasRegion
-					? { x: Math.round(params.x!), y: Math.round(params.y!), width: Math.round(params.width!), height: Math.round(params.height!) }
-					: undefined;
+				const region = normalizeRegion(params);
 				let capture: RawCapture;
 				let windowScope: { hwnd: number; rect: Rect; owner?: WindowOwner } | undefined;
 				if (params.window !== undefined) {
 					if (!backend.captureWindow || !backend.windowRect) throw new CuaError('INTERNAL', '当前后端不支持窗口作用域截屏');
 					windowScope = { hwnd: params.window, rect: backend.windowRect(params.window), owner: observedOwner() };
-					capture = backend.captureWindow(params.window);
+					capture = backend.captureWindow(params.window, region);
+					assertWindowUnchanged(backend, windowScope.hwnd, windowScope.rect, '截图');
+					if (region) capture = cropRawCapture(capture, region, windowScope.rect);
 				} else {
 					capture = backend.capture(region);
 				}
@@ -551,13 +548,16 @@ export function cuaExtension(options: CuaExtensionOptions = {}): ExtensionFactor
 				const screen = backend.virtualScreen();
 				const origin = capture.origin ?? windowScope?.rect ?? region ?? screen;
 				const bounds = { x: origin.x, y: origin.y, width: capture.width, height: capture.height };
-				if (windowScope) assertWindowUnchanged(backend, windowScope.hwnd, bounds, '截图');
 				activeScope?.check();
-				const frame = state.recordFrame(screen, region ?? null, { bounds, width: image.width, height: image.height }, windowScope);
+				const frame = state.recordFrame(screen, { bounds, width: image.width, height: image.height }, windowScope);
 				const cursor = safeCursor(backend);
-				const scopeText = windowScope ? `窗口作用域 hwnd=${windowScope.hwnd}。` : '';
+				const scopeText = windowScope
+					? region
+						? `窗口作用域 hwnd=${windowScope.hwnd}（窗口局部区域，整窗 [${windowScope.rect.x},${windowScope.rect.y} ${windowScope.rect.width}x${windowScope.rect.height}]）。`
+						: `窗口作用域 hwnd=${windowScope.hwnd}。`
+					: '';
 				const text =
-					`截图成功（${windowScope ? '窗口' : '桌面'}）：frame=${frame}，原始分辨率 ${capture.width}×${capture.height}，编码 ${image.format.toUpperCase()} ${image.width}×${image.height}` +
+					`截图成功（${windowScope ? (region ? '窗口局部' : '窗口') : '桌面'}）：frame=${frame}，原始分辨率 ${capture.width}×${capture.height}，编码 ${image.format.toUpperCase()} ${image.width}×${image.height}` +
 					`(scale=${image.scale.toFixed(2)})；屏幕原点 (${bounds.x}, ${bounds.y})。光标 (${cursor?.x ?? '?'}, ${cursor?.y ?? '?'})。${scopeText}直接使用图片坐标时传 coordinateSpace=image 和 frame=${frame}。`;
 				return {
 					content: [

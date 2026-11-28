@@ -7,8 +7,8 @@ import { inflateSync } from 'node:zlib';
 import { mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve, sep } from 'node:path';
-import { CuaError, CuaSessionState, getBackend, isCuaSupported, parseKeys } from '../packages/agent/src/cua/core.ts';
-import { downscaleBgra, encodeImage } from '../packages/agent/src/cua/imageEncode.ts';
+import { CuaError, CuaSessionState, cropRawCapture, getBackend, isCuaSupported, normalizeRegion, parseKeys } from '../packages/agent/src/cua/core.ts';
+import { cropBgra, downscaleBgra, encodeImage } from '../packages/agent/src/cua/imageEncode.ts';
 import { clampRegion, clipboardPaste, toAbsolute } from '../packages/agent/src/cua/win32Native.ts';
 import { cuaExtension } from '../packages/agent/src/cua/extension.ts';
 import { CUA_PERMISSION_MESSAGE, CUA_PERMISSION_TITLE, CuaPermissionStore, CuaScopeStore } from '../packages/agent/src/cua/permissions.ts';
@@ -52,6 +52,57 @@ test('clampRegion intersects with the virtual desktop', () => {
 	assert.deepEqual(clampRegion({ x: 1900, y: 1000, width: 100, height: 100 }, screen), { x: 1900, y: 1000, width: 20, height: 80 });
 	const outside = clampRegion({ x: -500, y: -500, width: 100, height: 100 }, screen);
 	assert.ok(outside.width <= 0 || outside.height <= 0);
+});
+
+test('cropBgra and cropRawCapture extract exact sub-rectangles and clamp to capture bounds', () => {
+	// 4x3 BGRA grid where pixel (x, y) encodes [x, y, x + y, 0xff].
+	const source = Buffer.alloc(4 * 3 * 4);
+	for (let y = 0; y < 3; y++) {
+		for (let x = 0; x < 4; x++) {
+			const i = (y * 4 + x) * 4;
+			source[i] = x;
+			source[i + 1] = y;
+			source[i + 2] = x + y;
+			source[i + 3] = 0xff;
+		}
+	}
+	assert.equal(cropBgra(source, 4, 3, 0, 0, 4, 3), source);
+	const cropped = cropBgra(source, 4, 3, 1, 1, 2, 2);
+	assert.deepEqual([...cropped], [
+		1, 1, 2, 0xff, 2, 1, 3, 0xff,
+		1, 2, 3, 0xff, 2, 2, 4, 0xff,
+	]);
+	assert.throws(() => cropBgra(source, 4, 3, -1, 0, 2, 2), /越界/);
+	assert.throws(() => cropBgra(source, 4, 3, 3, 0, 2, 2), /越界/);
+	assert.throws(() => cropBgra(source, 4, 3, 0, 0, 0, 2), /越界/);
+
+	// Screen-space crop clamps to the captured window rectangle.
+	const raw = { width: 4, height: 3, origin: { x: 100, y: 200 }, bgra: source };
+	const sub = cropRawCapture(raw, { x: 99, y: 201, width: 3, height: 10 });
+	assert.deepEqual(sub.origin, { x: 100, y: 201 });
+	assert.equal(sub.width, 2);
+	assert.equal(sub.height, 2);
+	assert.deepEqual([...sub.bgra], [
+		0, 1, 1, 0xff, 1, 1, 2, 0xff,
+		0, 2, 2, 0xff, 1, 2, 3, 0xff,
+	]);
+	assert.throws(() => cropRawCapture(raw, { x: 200, y: 200, width: 10, height: 10 }), /CUA INVALID_ARGUMENTS.*没有交集/);
+});
+
+test('normalizeRegion validates screenshot region parameters once into an integer rect', () => {
+	assert.equal(normalizeRegion({}), undefined);
+	assert.equal(normalizeRegion({ maxWidth: 800 }), undefined);
+	assert.deepEqual(normalizeRegion({ x: -10.4, y: 20.6, width: 99.5, height: 50 }), { x: -10, y: 21, width: 100, height: 50 });
+	assert.throws(() => normalizeRegion({ x: 0, y: 0, width: 10 }), /CUA INVALID_ARGUMENTS.*同时提供/);
+	for (const bad of [
+		{ x: 0, y: 0, width: 0, height: 5 },
+		{ x: 0, y: 0, width: 5, height: -3 },
+		{ x: 0, y: 0, width: 0.4, height: 5 },
+		{ x: Number.NaN, y: 0, width: 5, height: 5 },
+		{ x: 0, y: 0, width: Number.POSITIVE_INFINITY, height: 5 },
+	]) {
+		assert.throws(() => normalizeRegion(bad), /CUA INVALID_ARGUMENTS.*大于 0/, JSON.stringify(bad));
+	}
 });
 
 test('downscaleBgra keeps aspect ratio and leaves small images untouched', () => {
@@ -305,6 +356,11 @@ test('win32 backend: read-only native smoke (virtual screen, cursor, capture, wi
 		assert.ok(rect.width >= 100 && rect.height >= 80, JSON.stringify(rect));
 		const windowCapture = backend.captureWindow(target.hwnd);
 		assert.equal(windowCapture.width * windowCapture.height * 4, windowCapture.bgra.length);
+		const subCapture = backend.captureWindow(target.hwnd, { x: rect.x + 10, y: rect.y + 10, width: 40, height: 30 });
+		assert.equal(subCapture.width, 40);
+		assert.equal(subCapture.height, 30);
+		assert.equal(subCapture.bgra.length, 40 * 30 * 4);
+		assert.deepEqual(subCapture.origin, { x: rect.x + 10, y: rect.y + 10 });
 		const tree = backend.uiaTree(target.hwnd, { maxNodes: 40 });
 		assert.ok(tree.count >= 1 && tree.count <= 41, `count=${tree.count}`);
 		assert.equal(tree.root.children.length > 0 || tree.count === 1, true);
@@ -347,7 +403,11 @@ function fullFakeBackend(overrides = {}) {
 		platform: 'win32',
 		virtualScreen: () => fake.screen,
 		capture: () => ({ width: 4, height: 4, bgra: Buffer.alloc(4 * 4 * 4, 0xff) }),
-		captureWindow: (hwnd) => { fake.windowUsed = hwnd; return { width: fake.window.rect.width, height: fake.window.rect.height, bgra: Buffer.alloc(fake.window.rect.width * fake.window.rect.height * 4, 0x80) }; },
+		captureWindow: (hwnd, region) => {
+			fake.windowUsed = hwnd;
+			fake.windowRegion = region;
+			return { width: fake.window.rect.width, height: fake.window.rect.height, bgra: Buffer.alloc(fake.window.rect.width * fake.window.rect.height * 4, 0x80) };
+		},
 		listWindows: () => ({ windows: fake.windows, truncated: false }),
 		activateWindow: async (hwnd, allowAltFallback) => {
 			fake.activations.push({ hwnd, allowAltFallback });
@@ -559,8 +619,95 @@ test('cua_screenshot window scope pins the window rect into the frame', async ()
 	// Window moved → the pinned frame is refused.
 	fake.window.rect = { x: 300, y: 20, width: 400, height: 300 };
 	await assert.rejects(f.pi.tools.get('cua_left_click').execute('id', { x: 40, y: 50, frame: 1 }), /CUA STALE_STATE.*窗口已移动/);
-	// Region and window are mutually exclusive.
-	await assert.rejects(f.pi.tools.get('cua_screenshot').execute('id', { window: 77, x: 0, y: 0, width: 5, height: 5 }), /CUA INVALID_ARGUMENTS.*互斥/);
+	// Invalid or disjoint sub-region fails closed.
+	fake.window.rect = { x: 10, y: 20, width: 400, height: 300 };
+	await assert.rejects(f.pi.tools.get('cua_screenshot').execute('id', { window: 77, x: 900, y: 900, width: 5, height: 5 }), /CUA INVALID_ARGUMENTS.*没有交集/);
+	await assert.rejects(f.pi.tools.get('cua_screenshot').execute('id', { window: 77, x: 10, y: 20, width: 0, height: 5 }), /CUA INVALID_ARGUMENTS.*大于 0/);
+	await assert.rejects(f.pi.tools.get('cua_screenshot').execute('id', { window: 77, x: 10, y: 20 }), /CUA INVALID_ARGUMENTS.*同时提供/);
+});
+
+test('cua_screenshot captures a cropped sub-region of a window with exact pixels, image-space clicks and app-only scope', async () => {
+	const { backend, fake } = fullFakeBackend();
+	fake.screen = { x: -800, y: -400, width: 2400, height: 1400 };
+	fake.window.rect = { x: 10, y: 20, width: 120, height: 80 };
+	// Encode each window pixel (wx, wy) into BGRA [wx, wy, (wx + wy) & 0xff, 0xff]
+	// so we can verify decoded PNG pixels against the exact cropped sub-region.
+	const fullBgra = Buffer.alloc(120 * 80 * 4);
+	for (let wy = 0; wy < 80; wy++) {
+		for (let wx = 0; wx < 120; wx++) {
+			const i = (wy * 120 + wx) * 4;
+			fullBgra[i] = wx;
+			fullBgra[i + 1] = wy;
+			fullBgra[i + 2] = (wx + wy) & 0xff;
+			fullBgra[i + 3] = 0xff;
+		}
+	}
+	backend.captureWindow = (hwnd, region) => {
+		fake.windowUsed = hwnd;
+		fake.windowRegion = region;
+		return { width: 120, height: 80, origin: { x: 10, y: 20 }, bgra: fullBgra };
+	};
+	const f = extensionFixture(backend);
+	// Request extends 10px left of the window → clamped to [10, 50 40x30].
+	const shot = await f.pi.tools.get('cua_screenshot').execute('id', { window: 77, x: 0, y: 50, width: 50, height: 30 });
+	assert.deepEqual(fake.windowRegion, { x: 0, y: 50, width: 50, height: 30 });
+	assert.equal(shot.details.window, 77);
+	assert.deepEqual(shot.details.bounds, { x: 10, y: 50, width: 40, height: 30 });
+	assert.equal(shot.details.width, 40);
+	assert.equal(shot.details.height, 30);
+	assert.match(shot.content.at(-1).text, /窗口局部.*屏幕原点 \(10, 50\).*窗口作用域 hwnd=77/);
+	// Verify decoded PNG dimensions and exact corner pixels (window local x=0..39, y=30..59).
+	const png = Buffer.from(shot.content[0].data, 'base64');
+	assert.equal(png.readUInt32BE(16), 40);
+	assert.equal(png.readUInt32BE(20), 30);
+	const idatLength = png.readUInt32BE(33);
+	const raw = inflateSync(png.subarray(41, 41 + idatLength));
+	const rgbaAt = (px, py) => {
+		const offset = py * (40 * 4 + 1) + 1 + px * 4;
+		return [raw[offset], raw[offset + 1], raw[offset + 2], raw[offset + 3]];
+	};
+	// PNG stores RGBA: [R=(wx+wy), G=wy, B=wx, A=0xff].
+	assert.deepEqual(rgbaAt(0, 0), [30, 30, 0, 0xff]);
+	assert.deepEqual(rgbaAt(39, 29), [(39 + 59) & 0xff, 59, 39, 0xff]);
+
+	// Downscaled window sub-region maps image-space clicks back to screen physical pixels
+	// and still pins the full window rect for movement staleness checks.
+	fake.window.rect = { x: -450, y: 160, width: 1024, height: 640 };
+	backend.captureWindow = (hwnd, region) => {
+		fake.windowUsed = hwnd;
+		fake.windowRegion = region;
+		// Simulate a native backend that pre-crops to the clamped sub-region.
+		return {
+			width: region.width,
+			height: region.height,
+			origin: { x: region.x, y: region.y },
+			bgra: Buffer.alloc(region.width * region.height * 4, 0x80),
+		};
+	};
+	const zoomed = await f.pi.tools.get('cua_screenshot').execute('id', {
+		window: 77, x: -250, y: 260, width: 512, height: 320, maxWidth: 256,
+	});
+	assert.deepEqual(zoomed.details.bounds, { x: -250, y: 260, width: 512, height: 320 });
+	assert.equal(zoomed.details.encoded.width, 256);
+	assert.equal(zoomed.details.encoded.height, 160);
+	const clickArgs = { frame: zoomed.details.frame, coordinateSpace: 'image', x: 50, y: 10 };
+	await f.pi.tools.get('cua_left_click').execute('id', clickArgs);
+	assert.deepEqual(fake.clicks.at(-1), ['left', -150, 280]);
+	// Window moves → full-window rect check rejects the sub-region frame.
+	fake.window.rect = { x: -400, y: 160, width: 1024, height: 640 };
+	await assert.rejects(f.pi.tools.get('cua_left_click').execute('id', clickArgs), /CUA STALE_STATE.*窗口已移动/);
+
+	// Scoped permissions: window sub-region capture stays under app scope even if desktop:screen is denied.
+	const pi = fakePi();
+	const scopes = { isAllowed: (key) => key === 'app:77', allow() {}, clear() {} };
+	const prompts = [];
+	const ctx = { hasUI: true, ui: { select: async (title) => { prompts.push(title); return '拒绝'; }, notify() {} } };
+	cuaExtension({ backend, scopes })(pi.api);
+	await assert.rejects(pi.tools.get('cua_screenshot').execute('id', { x: 0, y: 0, width: 10, height: 10 }, undefined, undefined, ctx), /PERMISSION_DENIED/);
+	const allowedSub = await pi.tools.get('cua_screenshot').execute('id', { window: 77, x: -250, y: 260, width: 100, height: 80 }, undefined, undefined, ctx);
+	assert.equal(allowedSub.details.window, 77);
+	assert.deepEqual(allowedSub.details.bounds, { x: -250, y: 260, width: 100, height: 80 });
+	assert.deepEqual(prompts, ['电脑控制权限 · 截取桌面整屏或指定区域']);
 });
 
 test('revoking the session clears the element observation', async () => {

@@ -9,12 +9,59 @@
 
 import type { ElementObservation, FrameRecord, RawCapture, Rect, UiaTreeCapture, UiaView, VirtualScreen, WindowInfo, WindowOwner } from './types.ts';
 import { CuaError } from './types.ts';
+import { cropBgra } from './imageEncode.ts';
 import * as win32 from './win32Native.ts';
 
-export { encodeImage } from './imageEncode.ts';
+export { cropBgra, encodeImage } from './imageEncode.ts';
 export type { EncodedImage } from './imageEncode.ts';
 export { CuaError } from './types.ts';
 export type { CuaErrorCode, ElementObservation, FrameRecord, ObservedElement, Rect, UiaElementNode, UiaTreeCapture } from './types.ts';
+
+/**
+ * Validate optional screenshot region parameters (screen physical px) into an
+ * integer Rect, or undefined when none were given. This is the single
+ * validation point: backends receive only regions normalized here.
+ */
+export function normalizeRegion(params: { x?: number; y?: number; width?: number; height?: number }): Rect | undefined {
+	const { x, y, width, height } = params;
+	if (x === undefined && y === undefined && width === undefined && height === undefined) return undefined;
+	if (x === undefined || y === undefined || width === undefined || height === undefined) {
+		throw new CuaError('INVALID_ARGUMENTS', '指定截屏区域时 x/y/width/height 必须同时提供');
+	}
+	const region: Rect = { x: Math.round(x), y: Math.round(y), width: Math.round(width), height: Math.round(height) };
+	if (![region.x, region.y, region.width, region.height].every(Number.isFinite) || region.width <= 0 || region.height <= 0) {
+		throw new CuaError('INVALID_ARGUMENTS', '截屏区域的 x/y/width/height 必须为有效数值，且 width/height 必须大于 0');
+	}
+	return region;
+}
+
+/**
+ * Intersect a captured RawCapture with a screen-space rectangle and crop its
+ * BGRA pixels. `CuaBackend.captureWindow` may ignore its optional region, so
+ * the window-scoped screenshot re-applies the sub-region here; when the
+ * backend already cropped (win32), this returns the capture pixels as-is.
+ */
+export function cropRawCapture(capture: RawCapture, region: Rect, fallbackOrigin?: { x: number; y: number }): RawCapture {
+	const origin = capture.origin ?? fallbackOrigin ?? { x: 0, y: 0 };
+	const captureRect: Rect = { x: origin.x, y: origin.y, width: capture.width, height: capture.height };
+	const target = win32.clampRegion(region, captureRect);
+	if (target.width <= 0 || target.height <= 0) {
+		throw new CuaError(
+			'INVALID_ARGUMENTS',
+			`截屏区域无效（与目标窗口没有交集，窗口范围 [${captureRect.x},${captureRect.y} ${captureRect.width}x${captureRect.height}]）`,
+		);
+	}
+	const bgra = cropBgra(
+		capture.bgra,
+		capture.width,
+		capture.height,
+		target.x - captureRect.x,
+		target.y - captureRect.y,
+		target.width,
+		target.height,
+	);
+	return { width: target.width, height: target.height, origin: { x: target.x, y: target.y }, bgra };
+}
 
 export type MouseButton = 'left' | 'right' | 'middle';
 
@@ -45,8 +92,8 @@ export interface CuaBackend {
 	releaseModifiers?(): void;
 	/** false when the interactive input desktop is inaccessible (locked screen / secure desktop). */
 	inputDesktopAccessible?(): boolean;
-	/** Window-scoped capture: only the target window's pixels (v2). */
-	captureWindow?(hwnd: number): RawCapture;
+	/** Window-scoped capture: only the target window's pixels, optionally cropped to a screen-space sub-region (v2). */
+	captureWindow?(hwnd: number, region?: Rect): RawCapture;
 	/** Current on-screen rectangle of a window (DWM bounds; v2). */
 	windowRect?(hwnd: number): Rect;
 	/** Control-view UIA accessibility tree of a window (v2, read-only). */
@@ -88,7 +135,7 @@ const win32Backend: CuaBackend = {
 	cursorPosition: () => win32.getCursorPosition(),
 	releaseModifiers: () => win32.releaseAllModifiers(),
 	inputDesktopAccessible: () => win32.isInputDesktopAccessible(),
-	captureWindow: (hwnd) => win32.captureWindow(hwnd),
+	captureWindow: (hwnd, region) => win32.captureWindow(hwnd, region),
 	windowRect: (hwnd) => win32.windowRect(hwnd),
 	uiaTree: (hwnd, options) => win32.captureUiaTree(hwnd, options),
 	uiaAction: win32.performUiaAction,
@@ -180,9 +227,9 @@ export class CuaSessionState {
 	 * actions may pass that number back to verify the screen layout (the only
 	 * cheap staleness signal: content changes are not detected, layout changes are).
 	 */
-	recordFrame(screen: VirtualScreen, region: FrameRecord['region'], image: FrameRecord['image'], window?: { hwnd: number; rect: Rect; owner?: WindowOwner }): number {
+	recordFrame(screen: VirtualScreen, image: FrameRecord['image'], window?: { hwnd: number; rect: Rect; owner?: WindowOwner }): number {
 		const seq = ++this.frameSeq;
-		this.frames.set(seq, { seq, screen, region, image, time: Date.now(), ...(window ? { windowHwnd: window.hwnd, windowRect: window.rect, windowOwner: window.owner } : {}) });
+		this.frames.set(seq, { seq, screen, image, time: Date.now(), ...(window ? { windowHwnd: window.hwnd, windowRect: window.rect, windowOwner: window.owner } : {}) });
 		while (this.frames.size > MAX_FRAME_RECORDS) {
 			const oldest = this.frames.keys().next().value;
 			if (oldest === undefined) break;

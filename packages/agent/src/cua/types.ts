@@ -108,8 +108,7 @@ export interface FrameRecord {
 	seq: number;
 	/** Full virtual-screen bounds at capture time (physical px). */
 	screen: VirtualScreen;
-	/** Captured region, or null when the whole desktop was captured. */
-	region: { x: number; y: number; width: number; height: number } | null;
+	/** Captured screen rectangle (physical px) and encoded image size, for image-space coordinates. */
 	image: { bounds: Rect; width: number; height: number };
 	time: number;
 	/** Set when the frame is a window-scoped capture: window identity + its

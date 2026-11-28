@@ -17,14 +17,14 @@
 - 锁屏门（v1.2）：注入与截屏前探测 `OpenInputDesktop`；屏幕锁定或安全桌面（UAC）活动时直接拒绝（SCREEN_LOCKED），不盲注
 - 释放兜底（v1.2）：`/cua off` 与会话结束时尽力发送一次"释放全部修饰键"原子批次（多余 KEYUP 被系统忽略），防止中止后用户键盘卡住；仅在本会话已启用时触发，不触碰未加载的原生层
 - 无障碍优先（v2.0，借鉴 zcode）：`cua_get_state` 读取目标窗口的 UIA 控制视图树为带索引的紧凑元素行；点击/滚轮工具接受 `element` 索引寻址，解析为元素中心坐标并校验窗口未移动（索引超出/窗口移动/元素离屏均 fail-closed），无需从截图推算坐标
-- 窗口作用域：`cua_screenshot({window})` 用 DWM 边界和 `PrintWindow` 获取窗口内容。窗口抓取失败返回 `CAPTURE_BLOCKED`。整屏和区域截图使用独立授权和抓取路径。
+- 窗口作用域：`cua_screenshot({window})` 用 `PrintWindow` 抓取目标窗口并按 DWM 边界裁剪；也支持组合 `window` 与 `x/y/width/height`（屏幕物理像素，自动裁剪到窗口边界内）单独截取被遮挡窗口的局部区域。窗口抓取失败返回 `CAPTURE_BLOCKED`。不传 `window` 的整屏和区域截图使用独立授权和 `BitBlt` 路径。
 - 窗口绑定输入：鼠标和键盘动作支持 `window` 参数。单窗口截图的 `frame` 或 UIA 的 `element` 也会绑定目标窗口。输入前会尝试激活目标并核对前台窗口，鼠标动作还会用 `WindowFromPoint` 核对落点。目标窗口被遮挡或焦点切换时返回 `TARGET_MISMATCH`，请重新观察。目标窗口自己弹出的同进程弹层（被它拥有的弹出窗口，以及同一 UI 线程的菜单 `#32768`、下拉列表 `ComboLBox`）视为目标的一部分：落点与前台检查都接受，且不会为了激活主窗口而把弹层关掉。键盘输入仍要求焦点在目标窗口本身；模态对话框会禁用主窗口，需改用对话框的 hwnd 重新观察。
 
 ## 工具面（17 个）
 
 | 工具 | 说明 | 注解 |
 | --- | --- | --- |
-| cua_screenshot | 截屏：整桌面 / 区域 / `window` 单窗口（DWM 边界 + PrintWindow，遮挡部分也截入，与区域参数互斥），返回图片（JPEG q75，默认 maxWidth 1600 双线性缩小）+ 分辨率/光标/**frame 帧号**（窗口作用域时帧内含窗口矩形） | 只读 |
+| cua_screenshot | 截屏：整桌面 / 区域 / `window` 单窗口（`PrintWindow` + DWM 边界裁剪，遮挡部分也截入；可与 `x/y/width/height` 组合截取被遮挡窗口的局部区域，坐标仍为屏幕物理像素并自动限制在窗口边界内），返回图片（JPEG q75，默认 maxWidth 1600 双线性缩小）+ 分辨率/光标/**frame 帧号**（窗口作用域时帧内含整窗矩形与裁剪区域边界） | 只读 |
 | cua_get_state | 读取窗口 UIA 无障碍树（v2.0）：紧凑元素行带索引（角色/名称/automationId/矩形/值/状态），存为会话最近观察；缺省前台窗口，可传 hwnd 或唯一标题 | 只读 |
 | cua_invoke | 用 `observationId` 和 `element` 触发支持 Invoke 的控件 | 应用控制 |
 | cua_set_value | 用同样的观察参数设置支持 SetValue 的控件文本 | 应用控制 |
@@ -79,7 +79,7 @@ Pi 扩展 desktop-cua（extension.ts：工具定义/开关/gate）
 
 - koffi 约定：结构体/联合体用普通 JS 对象传值，出参以 `_Out_`/`_Inout_` 声明并回填，Buffer 按指针原地写入（koffi 类型对象不可 `new`）
 - 剪贴板粘贴保留纯文本和空剪贴板状态。遇到富文本、文件或图片格式会拒绝暂存。粘贴和恢复前会检查 Windows 剪贴板序号，避免覆盖期间用户复制的新内容。
-- 整屏和区域截图使用 `BitBlt`。窗口截图路径使用 DWM 和 `PrintWindow`。Win32 线程设置 Per-Monitor-V2 DPI 感知，截图和 UIA 返回物理像素坐标。
+- 整屏和区域截图使用 `BitBlt`。窗口截图用 `PrintWindow` 按 `GetWindowRect` 尺寸渲染（含 Win10/11 左右下约 7px 的不可见缩放边框），再裁剪到 DWM 可见边界或请求的局部区域，使图片像素与 frame 记录的屏幕原点逐像素对齐（早期实现按 DWM 尺寸建位图，带不可见边框的窗口截图会整体横向错位）。截屏区域参数只在 `core.ts` 的 `normalizeRegion` 校验一次（四项齐全、取整、有限值、宽高大于 0），原生层只负责限制到屏幕或窗口范围内。Win32 线程设置 Per-Monitor-V2 DPI 感知，截图和 UIA 返回物理像素坐标。
 - 输入：SendInput 批量原子注入；键盘事件带扫描码与扩展键标志；绝对坐标按虚拟桌面归一化到 0..65535；等待类操作（拖拽、粘贴、激活窗口、剪贴板重试）均为异步，不阻塞 agent 事件循环
 - 打包：koffi 同时声明在 `@pidesktop/agent`（类型检查）与 `@pidesktop/desktop`（electron-vite 外部化 + electron-builder 随包分发）；原生预编译包 `@koromix/koffi-win32-x64` 必须显式写进 desktop 的 `optionalDependencies`（与 `@esbuild/*` 同理，electron-builder 不会收集传递的可选依赖），`.node` 由 asarUnpack 解包
 
@@ -105,6 +105,8 @@ Pi 扩展 desktop-cua（extension.ts：工具定义/开关/gate）
   dotnet build tests/fixtures/cua/capture/Capture.csproj -c Release --artifacts-path _ai_work/cua-capture-build
   node tests/fixtures/cua/run.mjs verify
   ```
+
+- 窗口局部截图（2026-11-28）：`tests/cua.test.mjs` 当前 46 项全部通过，新增覆盖区域参数规范化、BGRA 精确裁剪、窗口局部截图的 PNG 像素内容、缩小后的图片坐标点击换算、窗口移动后拒绝旧帧，以及只凭应用授权即可截取局部区域（整屏授权被拒时）。win32 冒烟实截真实窗口的局部区域并核对尺寸与原点。另用当时的前台窗口比对 `captureWindow` 与同一矩形的 `BitBlt` 截图：对齐时平均通道差 0.07，人为错开 1–8px 时为 4.7–8.3，确认裁剪后图片与屏幕坐标对齐。本轮未重跑上面的 WinForms 独立窗口验证。
 
 ### 窗口截图后端评估
 
