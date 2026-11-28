@@ -1,5 +1,9 @@
 import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { test } from 'node:test';
+import { subagentFleetHasActive } from '../packages/shared/src/subagentFeatures.ts';
 
 // Mirrors pi-subagents' asyncJobOrder: running > queued > settled, then the most
 // recent updatedAt first. That ordering is what made the fleet rows jump.
@@ -86,4 +90,116 @@ test('subagent fleet keeps rows in first-seen order across repeated updates', as
     ], 400), null);
     assert.deepEqual(ids(fleet.runs), ['early', 'late']);
   });
+});
+
+test('subagentFleetHasActive identifies whether any non-monitor subagent is still queued or running', () => {
+  assert.equal(subagentFleetHasActive(null), false);
+  assert.equal(subagentFleetHasActive(undefined), false);
+  assert.equal(subagentFleetHasActive(snapshot([], 100)), false);
+
+  for (const state of ['complete', 'failed', 'partial', 'paused', 'stopped', 'rejected']) {
+    assert.equal(
+      subagentFleetHasActive(snapshot([{ id: `run-${state}`, kind: 'subagent', label: 'rea-auditor', state, children: [{ id: 'step:0', kind: 'step', label: 'rea-auditor', state }] }], 100)),
+      false,
+      `terminal state ${state} is inactive`,
+    );
+  }
+
+  assert.equal(
+    subagentFleetHasActive(snapshot([{
+      id: 'wf-done', kind: 'workflow', label: 'audit', state: 'complete',
+      children: [
+        { id: 'step:0', kind: 'step', label: 'rea-auditor', state: 'complete' },
+        { id: 'host:0', kind: 'host-step', label: 'watchdog', state: 'queued' },
+      ],
+    }], 100)),
+    false,
+    'a finished workflow with only a host-step monitor left is inactive',
+  );
+
+  assert.equal(subagentFleetHasActive(snapshot([{ id: 'r', kind: 'subagent', label: 'scout', state: 'running' }], 100)), true);
+  assert.equal(subagentFleetHasActive(snapshot([{ id: 'q', kind: 'subagent', label: 'scout', state: 'queued' }], 100)), true);
+  assert.equal(
+    subagentFleetHasActive(snapshot([{
+      id: 'wf-between', kind: 'workflow', label: 'audit', state: 'running',
+      children: [{ id: 'step:0', kind: 'step', label: 'scout', state: 'complete' }],
+    }], 100)),
+    true,
+    'a running workflow between steps stays active',
+  );
+  assert.equal(
+    subagentFleetHasActive(snapshot([{
+      id: 'wf-partial', kind: 'workflow', label: 'audit', state: 'failed',
+      children: [{ id: 'step:0', kind: 'step', label: 'rea-auditor', state: 'running' }],
+    }], 100)),
+    true,
+    'a still-running child keeps the fleet active even if its parent settled',
+  );
+});
+
+test('subagent widget clears the fleet automatically once all runs settle', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'pi-fleet-autohide-'));
+  const saved = { dir: process.env.PI_CODING_AGENT_DIR, offline: process.env.PI_OFFLINE };
+  process.env.PI_CODING_AGENT_DIR = join(root, 'agent');
+  process.env.PI_OFFLINE = '1';
+  const { AgentService } = await import('../packages/agent/src/index.ts');
+  const service = new AgentService();
+  try {
+    const context = service.newContext('active');
+    const fleetEvents = [];
+    context.onEvent(({ event }) => {
+      if (event.type === 'subagent-fleet') fleetEvents.push(event);
+    });
+    const widget = (runs, generatedAt) => [`PI_SUBAGENT_ASYNC_JSON:${JSON.stringify({
+      kind: 'pi-subagents.async-status-snapshot', version: 1, generatedAt, omitted: { runs: 0, children: 0 }, runs,
+    })}`];
+
+    // An initial all-completed snapshot never surfaces or emits an event.
+    context.consumeSubagentWidget('subagent-async', widget([
+      { id: 'done-0', kind: 'subagent', label: 'rea-auditor', state: 'complete', children: [{ id: 'step:0', kind: 'step', label: 'rea-auditor', state: 'complete' }] },
+    ], 100));
+    assert.equal(context.getSnapshot().subagentFleet, null);
+    assert.equal(fleetEvents.length, 0);
+
+    // Active work surfaces normally and keeps completed siblings while another agent is still running.
+    context.consumeSubagentWidget('subagent-async', widget([
+      { id: 'run-a', kind: 'subagent', label: 'analyst', state: 'running', startedAt: 10 },
+      { id: 'run-b', kind: 'subagent', label: 'auditor', state: 'running', startedAt: 20 },
+    ], 200));
+    assert.deepEqual(ids(context.getSnapshot().subagentFleet.runs), ['run-a', 'run-b']);
+
+    context.consumeSubagentWidget('subagent-async', widget([
+      { id: 'run-a', kind: 'subagent', label: 'analyst', state: 'complete', startedAt: 10, endedAt: 250 },
+      { id: 'run-b', kind: 'subagent', label: 'auditor', state: 'running', startedAt: 20 },
+    ], 300));
+    assert.deepEqual(ids(context.getSnapshot().subagentFleet.runs), ['run-a', 'run-b']);
+
+    // Once the last running subagent finishes, the fleet clears immediately even if the plugin keeps polling it.
+    fleetEvents.length = 0;
+    const allDone = widget([
+      { id: 'run-a', kind: 'subagent', label: 'analyst', state: 'complete', startedAt: 10, endedAt: 250 },
+      { id: 'run-b', kind: 'subagent', label: 'auditor', state: 'complete', startedAt: 20, endedAt: 350, children: [{ id: 'step:0', kind: 'step', label: 'auditor', state: 'complete' }] },
+    ], 400);
+    context.consumeSubagentWidget('subagent-async', allDone);
+    assert.equal(context.getSnapshot().subagentFleet, null);
+    assert.equal(fleetEvents.length, 1);
+    assert.equal(fleetEvents[0].fleet, null);
+
+    // Subsequent stale all-completed ticks stay silent.
+    context.consumeSubagentWidget('subagent-async', allDone);
+    assert.equal(fleetEvents.length, 1);
+
+    // A brand-new active run surfaces again cleanly.
+    context.consumeSubagentWidget('subagent-async', widget([
+      { id: 'run-c', kind: 'subagent', label: 'reviewer', state: 'queued', startedAt: 500 },
+    ], 500));
+    assert.deepEqual(ids(context.getSnapshot().subagentFleet.runs), ['run-c']);
+  } finally {
+    await service.dispose();
+    for (const [name, value] of [['PI_CODING_AGENT_DIR', saved.dir], ['PI_OFFLINE', saved.offline]]) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+    rmSync(root, { recursive: true, force: true });
+  }
 });

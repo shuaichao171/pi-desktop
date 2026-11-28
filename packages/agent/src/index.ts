@@ -94,6 +94,7 @@ import type {
 	UiSessionPeek,
 } from '@pidesktop/shared';
 import { createAgentError, normalizeAgentError } from '../../shared/src/agentErrors.ts';
+import { subagentFleetHasActive } from '../../shared/src/subagentFeatures.ts';
 import { ACP_AGENT_CAPABILITIES, AGENT_APPROVAL_DEFAULT, AGENT_APPROVAL_OPTION, ANTIGRAVITY_ORCHESTRATOR_EXECUTOR_OPTION, ANTIGRAVITY_ORCHESTRATOR_PLANNER_OPTION, isValidAgentId, PI_AGENT_ID, piAgentDescriptor, type UiAgentApprovalMode, type UiAgentConfig, type UiAgentDescriptor, type UiAgentModel, type UiAgentOption, type UiAgentOrchestratorConfig, type UiAgentQuota, type UiAgentSaveRequest, type UiAgentStatus } from '../../shared/src/agentRuntimes.ts';
 import { antigravitySettingsPath, buildAntigravityOrchestratorConfig, isAntigravityOrchestratorModel, orchestratorPresetForPlanner, plannerForOrchestratorPreset, readAntigravityOrchestratorSettings, writeAntigravityOrchestratorSettings } from './acp/antigravityOrchestrator.ts';
 import { AgentRegistry } from './acp/agentRegistry.ts';
@@ -723,6 +724,16 @@ class SingleAgentService {
 			try {
 				const projected = projectSubagentFleetSnapshot(JSON.parse(line.slice(SUBAGENT_ASYNC_WIDGET_PREFIX.length)));
 				if (projected) {
+					if (!subagentFleetHasActive(projected)) {
+						// All subagents have finished (or only terminal snapshots remain): clear the
+						// fleet immediately so finished runs never linger if the plugin retains them.
+						if (this.subagentFleet) {
+							this.subagentFleet = null;
+							this.fireSubagentFleet(null);
+						}
+						this.rememberSubagentLiveness(false);
+						return;
+					}
 					// Keep rows where they first appeared; the plugin re-sorts by recency on every tick.
 					const fleet = stabilizeSubagentFleetOrder(projected, this.subagentFleet);
 					this.subagentFleet = fleet;

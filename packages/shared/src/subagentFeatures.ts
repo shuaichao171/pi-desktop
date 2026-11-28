@@ -86,3 +86,19 @@ export interface UiSubagentInspectReply {
 	truncated?: boolean;
 	error?: { code: string; message: string };
 }
+
+/** True while a single fleet node is still queued or running. */
+export function isSubagentFleetNodeActive(node: UiSubagentFleetNode): boolean {
+	return node.state === 'running' || node.state === 'queued';
+}
+
+/** True when a fleet node or any non-monitor descendant is still queued or running. */
+export function subagentFleetNodeHasActive(node: UiSubagentFleetNode): boolean {
+	if (node.kind === 'host-step') return false;
+	return isSubagentFleetNodeActive(node) || Boolean(node.children?.some(subagentFleetNodeHasActive));
+}
+
+/** True when the fleet snapshot still has active (queued or running) subagent work. */
+export function subagentFleetHasActive(fleet: UiSubagentFleetSnapshot | null | undefined): boolean {
+	return Boolean(fleet?.runs.some(subagentFleetNodeHasActive));
+}

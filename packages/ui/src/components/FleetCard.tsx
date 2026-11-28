@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
-import type { UiSubagentFleetNode, UiSubagentInspectReply } from '@pidesktop/shared';
+import { isSubagentFleetNodeActive, subagentFleetHasActive, subagentFleetNodeHasActive, type UiSubagentFleetNode, type UiSubagentInspectReply } from '@pidesktop/shared';
 import { useChatStore } from '../store';
 import { useT } from '../i18n';
 import { operationFeedback } from '../operationFeedback';
@@ -10,7 +10,7 @@ import './fleetCard.css';
 type Command = 'subagents-stop' | 'subagents-steer' | 'subagents-inspect-rpc';
 type Selection = { rootId: string; nodeId: string };
 const FleetContext = createContext<{ open: boolean; panelId: string; targets: Map<string, Selection>; toggle(): void; openRun(target: Selection): void } | null>(null);
-const isLive = (node: UiSubagentFleetNode) => node.state === 'running' || node.state === 'queued';
+const isLive = isSubagentFleetNodeActive;
 const glyphs: Record<UiSubagentFleetNode['state'], IconName> = {
 	queued: 'clock', running: 'loader', complete: 'check', failed: 'close', partial: 'alert', paused: 'square', stopped: 'square', rejected: 'minusCircle',
 };
@@ -32,10 +32,6 @@ function findNode(nodes: UiSubagentFleetNode[], id: string): UiSubagentFleetNode
 		const child = node.children && findNode(node.children, id);
 		if (child) return child;
 	}
-}
-
-function containsLive(node: UiSubagentFleetNode): boolean {
-	return isLive(node) || Boolean(node.children?.some(containsLive));
 }
 
 /**
@@ -86,8 +82,8 @@ export function FleetCard() {
 	const { t } = useT();
 	const fleet = useChatStore((s) => s.subagentFleet);
 	const context = useContext(FleetContext);
-	if (!context || !fleet?.runs.length) return null;
-	const shown = fleet.runs.flatMap(agentsOf);
+	if (!context || !subagentFleetHasActive(fleet)) return null;
+	const shown = fleet!.runs.flatMap(agentsOf);
 	const running = shown.filter(isLive).length;
 	return <div className="pd-fleet-card">
 		<button type="button" className="pd-fleet-strip" onClick={context.toggle} aria-expanded={context.open} aria-controls={context.panelId} aria-label={t(context.open ? 'fleet.collapse' : 'fleet.expand')}>
@@ -145,19 +141,19 @@ export function SubagentWorkspace({ children }: { children: ReactNode }) {
 		if (typeof bridge?.listSlashCommands === 'function') void bridge.listSlashCommands().then((items) => { if (active) setCommands(new Set(items.map((item) => item.name))); }).catch(() => {});
 		return () => { active = false; actionRef.current = null; };
 	}, [bridge, cwd, sessionId]);
-	const runs = fleet?.runs ?? [];
+	const runs = useMemo(() => (subagentFleetHasActive(fleet) ? fleet!.runs : []), [fleet]);
 	const hasRuns = runs.length > 0;
 	useEffect(() => {
-		if (!hasRuns) { setOpen(false); setSelection(null); setRequest(null); setAcceptedReply(null); setSteering(false); }
+		if (!hasRuns) { setOpen(false); setSelection(null); setRequest(null); setAcceptedReply(null); setSteering(false); setMessage(''); }
 	}, [hasRuns]);
 	const targets = useMemo(() => {
 		const result = new Map<string, Selection>();
 		const visit = (nodes: UiSubagentFleetNode[], rootId: string) => { for (const node of nodes) { if (node.kind !== 'host-step') result.set(node.id, { rootId, nodeId: node.id }); if (node.children) visit(node.children, rootId); } };
-		for (const root of fleet?.runs ?? []) visit([root], root.id);
+		for (const root of runs) visit([root], root.id);
 		return result;
-	}, [fleet]);
+	}, [runs]);
 	const activityByRun = useMemo(() => new Map(activities.flatMap((item) => item.subagent?.runId ? [[item.subagent.runId, item.subagent] as const] : [])), [activities]);
-	const ticking = open && runs.some(containsLive);
+	const ticking = open && runs.some(subagentFleetNodeHasActive);
 	useEffect(() => {
 		if (!ticking) return;
 		setNow(Date.now());

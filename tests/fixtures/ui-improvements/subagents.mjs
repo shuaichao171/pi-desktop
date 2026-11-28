@@ -138,4 +138,13 @@ export default async function subagentScenarios(review) {
   await review.evaluate('window.__modelReview.emitAgent({type:"subagent-fleet",fleet:structuredClone(window.__modelReview.snapshot.subagentFleet)})');
   await review.waitFor('Boolean(document.querySelector(".pd-fleet-strip"))');
   await review.assert('!document.querySelector(".pd-fleet-sidepanel")', 'Clearing a fleet resets its preview even when the parent session stays the same');
+
+  // When every subagent in the snapshot has settled, both the side panel and the entry strip auto-hide.
+  await review.click('.pd-fleet-strip');
+  await review.waitFor('Boolean(document.querySelector(".pd-fleet-sidepanel"))');
+  await review.evaluate(`(() => { const f=window.__modelReview; f.emitAgent({type:'subagent-fleet',fleet:{generatedAt:Date.now(),omittedRuns:0,omittedChildren:0,runs:[{id:'timeout-run',kind:'subagent',label:'等待回复的代理',state:'complete',startedAt:Date.now()-5000,endedAt:Date.now(),children:[{id:'step:0',kind:'step',label:'等待回复的代理',state:'complete'}]}]}}); })()`);
+  await review.waitFor('!document.querySelector(".pd-fleet-sidepanel") && !document.querySelector(".pd-fleet-strip")');
+  await review.evaluate('window.__modelReview.emitAgent({type:"subagent-fleet",fleet:structuredClone(window.__modelReview.snapshot.subagentFleet)})');
+  await review.waitFor('Boolean(document.querySelector(".pd-fleet-strip"))');
+  await review.assert('!document.querySelector(".pd-fleet-sidepanel")', 'Auto-hiding on all-completed resets the panel state before a later run starts');
 }
