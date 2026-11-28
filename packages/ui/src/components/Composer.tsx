@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, type ChangeEvent, type ClipboardEvent, type DragEvent, type KeyboardEvent, type ReactNode, type Ref } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type ChangeEvent, type ClipboardEvent, type DragEvent, type KeyboardEvent, type ReactNode } from 'react';
 import { ExitPresence } from './ExitPresence';
 import { agentCapabilities, type UiAttachment, type UiContextRequest, type UiSlashCommand } from '@pidesktop/shared';
 import { inspectAttachmentFile, MAX_ATTACHMENTS } from '../attachmentPolicy';
@@ -76,7 +76,7 @@ function attachmentLabel(attachment: UiAttachment, t: Translate): string {
 	return t(attachment.kind === 'image' ? 'composer.image' : 'composer.text');
 }
 
-export function Composer({ header, onOpenModelManagement, changesSlotRef }: { header?: ReactNode; onOpenModelManagement(target: ModelManagementTarget): void; changesSlotRef?: Ref<HTMLDivElement> }) {
+export function Composer({ header, onOpenModelManagement }: { header?: ReactNode; onOpenModelManagement(target: ModelManagementTarget): void }) {
 	const { t } = useT();
 	const c = useConversationCopy();
 	const [imagePreview, setImagePreview] = useState<{ index: number; trigger: HTMLElement } | null>(null);
@@ -718,7 +718,6 @@ export function Composer({ header, onOpenModelManagement, changesSlotRef }: { he
 				<ExtensionDialogSlot />
 				{submissionError && <div className="pd-composer-error" role="alert">{submissionError}</div>}
 				{missingAttachments.map((attachment) => <div className="pd-composer-error" role="alert" key={attachment.id}>{t('composer.draftAttachmentMissing')}{attachment.name}<button type="button" onClick={() => { const next = missingAttachments.filter((item) => item.id !== attachment.id); missingByKey.current.set(draftKey, next); setMissingAttachments(next); }}>{t('composer.removeMissingAttachment')}</button></div>)}
-				<div ref={changesSlotRef} className="pd-composer-changes-slot" />
 				<ComposerQueue key={`queue:${cwd}\0${sessionPath}\0${sessionId}`} scopeKey={`${cwd}\0${sessionPath}\0${sessionId}`} items={queuedMessages} editorTarget={queueEditorTarget} onEditingChange={onQueueEditingChange} defaultBehavior={defaultBusyBehavior} onToggleDefault={() => { const next = defaultBusyBehavior === 'followUp' ? 'steer' : 'followUp'; if (!setDefaultBusyBehavior(next)) setSubmissionError(t('composer.sendPreferenceSaveFailed')); }} />
 				<div ref={shellRef} className={`pd-composer-shell${queuedMessages.length ? ' has-queue' : ''}`} data-composer-layout="multiline" onDragOver={(event) => { if (event.dataTransfer.types.includes('Files') || hasWorkspaceEntryDrag(event.dataTransfer)) event.preventDefault(); }} onDrop={onDrop}>
 					<div ref={setQueueEditorTarget} className="pd-queue-editor-slot" />

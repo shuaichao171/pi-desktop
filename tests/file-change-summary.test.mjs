@@ -114,8 +114,9 @@ test('withUnavailableDiffs degrades fallback paths instead of claiming no differ
 	assert.equal(loaded.has('gen.ts'), false);
 });
 
-test('挂点约定：轮次变更卡、会话汇总与回退聚合的接线', () => {
+test('挂点约定：保留轮次变更卡与审查对话框，移除输入框上方浮条', () => {
 	const chat = uiSource('components/ChatView.tsx');
+	const composer = uiSource('components/Composer.tsx');
 	const turn = uiSource('components/ConversationTurn.tsx');
 	const composerChanges = uiSource('components/ComposerChanges.tsx');
 	// ChatView 用「记录优先 + 转录回退」的合并轮次派生 changesByRun / 会话并集。
@@ -125,19 +126,13 @@ test('挂点约定：轮次变更卡、会话汇总与回退聚合的接线', ()
 	// 每轮的结算卡来自 changesByRun，且只在 lastForRun 的轮尾挂一次。
 	assert.match(chat, /changes=\{entry\.runId && entry\.lastForRun \? changesByRun\.get\(entry\.runId\) : undefined\}/);
 	assert.match(turn, /entry\.runId && <div className="pd-turn-changes"><ChangesCard/);
-	// 运行中摘要进输入框 dock；空闲时会话汇总进同一 dock（互斥于 agentStatus）。
-	assert.match(chat, /agentStatus === 'busy' && liveChanges\.length > 0 && <LiveChangesSummary/);
-	assert.match(chat, /agentStatus !== 'busy' && hasTurnScopedChanges && sessionChanges\.length > 0 && <SessionChangesSummary/);
-	assert.match(composerChanges, /export function SessionChangesSummary/);
-	assert.match(composerChanges, /className="pd-composer-changes is-session"/);
+	// 输入框上方不再渲染运行中/空闲会话文件修改浮条或挂槽。
+	assert.doesNotMatch(chat, /LiveChangesSummary|SessionChangesSummary|changesSlotRef/);
+	assert.doesNotMatch(composer, /pd-composer-changes-slot|changesSlotRef/);
+	assert.doesNotMatch(composerChanges, /LiveChangesSummary|SessionChangesSummary/);
 	// 审查对话框按会话范围展示合并后的并集，并对无记录差异的路径降级。
 	assert.match(chat, /changesReview\.scope\.kind === 'conversation'\) return sessionChanges/);
 	assert.match(chat, /withUnavailableDiffs\(loaded, reviewItems\)/);
-});
-
-test('i18n：会话汇总文案中英齐备', () => {
-	const i18n = uiSource('i18n.ts');
-	assert.match(i18n, /'composerChanges\.sessionSummary':\s*\{\s*'zh-CN': '[^']*',\s*'en-US': '[^']*'\s*\}/);
 });
 
 test('mergeTurnFileChanges 合并回退路径后同轮清单保持路径排序', () => {

@@ -1,8 +1,7 @@
-/* Codex-style conversation change card and compact running summary. */
+/* Codex-style conversation change card. */
 .pd-transcript-end.pd-transcript-changes { width: min(780px, calc(100% - 44px)); padding: 10px 0 12px; }
 .pd-turn-changes { margin-top: 12px; }
-.pd-transcript-changes:empty, .pd-composer-changes-slot:empty { display: none; }
-.pd-composer-changes-slot { position: relative; display: flex; justify-content: center; min-width: 0; margin-bottom: 10px; z-index: var(--pd-z-composer-dock); }
+.pd-transcript-changes:empty { display: none; }
 .pd-composer-changes { min-width: 0; color: var(--pd-text); }
 .pd-conversation-changes { overflow: hidden; border: 1px solid var(--pd-border-soft); border-radius: var(--pd-radius-md); background: color-mix(in srgb, var(--pd-surface-muted) 65%, transparent); }
 .pd-changes-card-header { display: flex; align-items: center; gap: 12px; min-height: 72px; padding: 10px 14px 10px 12px; }
@@ -24,25 +23,6 @@
 .pd-composer-changes-file > svg:last-child { opacity: 0; }
 .pd-composer-changes-file:hover > svg:last-child, .pd-composer-changes-file:focus-visible > svg:last-child { opacity: 1; }
 .pd-changes-show-more { display: flex; align-items: center; gap: 7px; width: 100%; min-height: 36px; border: 0; padding: 7px 14px; background: transparent; color: var(--pd-text-subtle); text-align: left; font-size: var(--pd-font-sm); }
-.pd-composer-changes.is-running { position: relative; max-width: 100%; }
-.pd-composer-changes.is-session { max-width: 100%; }
-/* Dock capsule (running + idle session): one row — icon, label, affordance. */
-.pd-composer-changes-summary { display: flex; align-items: center; max-width: 100%; gap: 2px; padding: 3px; border: 1px solid var(--pd-border); border-radius: var(--pd-radius-pill); background: var(--pd-surface-raised); box-shadow: 0 4px 14px #0000001a; }
-.pd-composer-changes-summary .pd-changes-live-main { display: inline-flex; flex: 0 1 auto; align-items: center; gap: 8px; min-width: 0; min-height: 28px; padding: 3px 10px 3px 10px; border: 0; border-radius: var(--pd-radius-pill); background: transparent; color: var(--pd-text-subtle); font-size: var(--pd-font-sm); line-height: 1.4; white-space: nowrap; cursor: pointer; transition: background-color .12s ease, color .12s ease; }
-.pd-composer-changes-summary .pd-changes-live-main:hover { background: var(--pd-surface-hover); color: var(--pd-text); }
-.pd-changes-live-main > svg { flex: 0 0 auto; color: var(--pd-text-weak); }
-.pd-changes-live-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.pd-changes-session-scope { color: var(--pd-text-weak); }
-.pd-changes-session-sep { margin-inline: 6px; color: var(--pd-text-weak); opacity: .7; }
-.pd-changes-live-main > .pd-changes-live-chevron { margin-left: -2px; margin-right: -3px; opacity: .7; transition: transform .12s ease, opacity .12s ease; }
-.pd-changes-live-main:hover > .pd-changes-live-chevron { opacity: 1; transform: translateX(1px); }
-.pd-composer-changes-toggle { display: flex; flex: 0 0 26px; align-items: center; justify-content: center; width: 26px; height: 26px; padding: 0; border: 0; border-radius: 50%; background: transparent; color: var(--pd-text-subtle); }
-.pd-composer-changes-toggle:hover { background: var(--pd-surface-hover); }
-.pd-composer-changes-toggle[aria-expanded=true] > svg { transform: rotate(180deg); }
-.pd-changes-live-popover { position: absolute; left: 50%; bottom: calc(100% + 8px); transform: translateX(-50%); width: max-content; min-width: min(340px, calc(100vw - 40px)); max-width: min(520px, calc(100vw - 40px)); max-height: min(38dvh, 280px); padding: 5px; overflow: auto; overscroll-behavior: contain; border: 1px solid var(--pd-border); border-radius: var(--pd-radius-md); background: var(--pd-surface-raised); box-shadow: var(--pd-shadow-popover); scrollbar-width: thin; }
-.pd-changes-live-scope { padding: 5px 9px; color: var(--pd-text-weak); font-size: var(--pd-font-xs); }
-.pd-changes-live-popover .pd-composer-changes-file { padding-inline: 9px; border-radius: var(--pd-radius-xs); }
-.pd-changes-live-popover .pd-change-file-state { display: none; }
 @media (max-width: 700px) {
   .pd-changes-card-header { gap: 8px; padding: 10px; }
   .pd-changes-card-main { gap: 9px; }

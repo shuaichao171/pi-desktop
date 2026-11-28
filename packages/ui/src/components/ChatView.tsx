@@ -15,7 +15,7 @@ import { Composer } from './Composer';
 import { GoalBeacon } from './GoalBeacon';
 import { FleetCard, SubagentWorkspace } from './FleetCard';
 import { BackgroundTasksBar } from './BackgroundTasksBar';
-import { ChangesCard, LiveChangesSummary, SessionChangesSummary } from './ComposerChanges';
+import { ChangesCard } from './ComposerChanges';
 import { ChangesDialog } from './ChangesDialog';
 import { useFileChangeDiffs } from '../fileChangeDiffs';
 import { fallbackTurnChanges, mergeTurnFileChanges, sessionFileChanges, withUnavailableDiffs } from '../fileChangeSummary';
@@ -94,10 +94,8 @@ export function ChatView({ onOpenModelManagement, searchTarget, historyControls,
 	const runs = useChatStore((s) => s.runs);
 	const cwd = useChatStore((s) => s.cwd);
 	const fileChanges = useChatStore((s) => s.fileChanges);
-	const [changesDock, setChangesDock] = useState<HTMLDivElement | null>(null);
 	const changesRegionRef = useRef<HTMLDivElement>(null);
 	const fileChangeTurns = useChatStore((s) => s.fileChangeTurns);
-	const fileChangeActiveRunId = useChatStore((s) => s.fileChangeActiveRunId);
 	// Turn-level settlement: each completed run's changes render at that turn's tail.
 	// Sessions recorded before the tracker existed fall back to aggregating
 	// edit/write tool calls from the transcript (paths only, approximate stats);
@@ -110,10 +108,6 @@ export function ChatView({ onOpenModelManagement, searchTarget, historyControls,
 	// as the conversation-scope diff body; net-zero paths stay out), plus paths
 	// only the pre-tracker fallback knows, with the union approximation.
 	const sessionChanges = useMemo(() => sessionFileChanges(fileChangeTurns, fileChanges, mergedTurns), [fileChangeTurns, fileChanges, mergedTurns]);
-	const hasTurnScopedChanges = mergedTurns.some(turn => turn.runId !== null && turn.items.length > 0);
-	const liveChanges = fileChangeActiveRunId
-		? changesByRun.get(fileChangeActiveRunId) ?? []
-		: changesByRun.get(null) ?? sessionChanges;
 	const legacyChanges = changesByRun.get(null) ?? [];
 	const sessionPath = useChatStore((s) => s.sessionPath);
 	const sessionId = useChatStore((s) => s.sessionId);
@@ -841,11 +835,7 @@ export function ChatView({ onOpenModelManagement, searchTarget, historyControls,
 							</div>
 						)}
 							{/* Submitted-while-busy inputs show as pending bubbles until the SDK consumes them. */}
-							<div ref={changesRegionRef} className="pd-transcript-end pd-transcript-changes">{!sessionLoading && <>
-								{agentStatus === 'busy' && liveChanges.length > 0 && <LiveChangesSummary items={liveChanges} scope={fileChangeActiveRunId ? { kind: 'turn', runId: fileChangeActiveRunId } : { kind: 'conversation' }} target={changesDock} review={openChangesReview} />}
-								{agentStatus !== 'busy' && hasTurnScopedChanges && sessionChanges.length > 0 && <SessionChangesSummary items={sessionChanges} target={changesDock} review={openChangesReview} />}
-								{agentStatus !== 'busy' && legacyChanges.length > 0 && <ChangesCard key={`legacy:${disclosureScope}`} items={legacyChanges} scope={{ kind: 'conversation' }} variant="conversation" review={openChangesReview} />}
-							</>}</div>
+							<div ref={changesRegionRef} className="pd-transcript-end pd-transcript-changes">{!sessionLoading && agentStatus !== 'busy' && legacyChanges.length > 0 && <ChangesCard key={`legacy:${disclosureScope}`} items={legacyChanges} scope={{ kind: 'conversation' }} variant="conversation" review={openChangesReview} />}</div>
 						{awaitingResponse && <div className="pd-transcript-end"><div className="pd-message-column"><div className="pd-response-pending" role="status"><ActivityLabel active>{t('message.preparing')}</ActivityLabel></div></div></div>}
 						{error && <div className="pd-transcript-end">
 							{navigationError
@@ -865,14 +855,14 @@ export function ChatView({ onOpenModelManagement, searchTarget, historyControls,
 				<FleetCard />
 				<BackgroundTasksBar />
 				<ProjectOfferBar />
-				<Composer header={showProjectBar ? <ComposerContextBar /> : undefined} onOpenModelManagement={onOpenModelManagement} changesSlotRef={setChangesDock} />
+				<Composer header={showProjectBar ? <ComposerContextBar /> : undefined} onOpenModelManagement={onOpenModelManagement} />
 			</div>
 			</SubagentWorkspace>
 			{changesReview !== null && reviewItems.length > 0 && <ChangesDialog
 				key={`${changesReview.scope.kind}:${changesReview.scope.kind === 'turn' ? changesReview.scope.runId : ''}:${changesReview.path}`}
 				items={reviewItems} diffs={reviewDialogDiffs}
 				initialPath={changesReview.path} returnFocus={changesReview.trigger}
-				getReturnFocus={() => document.querySelector<HTMLElement>('.pd-conversation-changes .pd-changes-card-main, .pd-composer-changes.is-running .pd-changes-live-main, .pd-composer-changes.is-session .pd-changes-live-main') ?? document.querySelector<HTMLTextAreaElement>('.pd-composer-shell textarea')}
+				getReturnFocus={() => document.querySelector<HTMLElement>('.pd-conversation-changes .pd-changes-card-main') ?? document.querySelector<HTMLTextAreaElement>('.pd-composer-shell textarea')}
 				onClose={() => setChangesReview(null)} />}
 
 		</main>

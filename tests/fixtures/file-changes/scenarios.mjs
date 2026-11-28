@@ -72,43 +72,12 @@ export default async function fileChangesScenarios(review) {
     state.ready(state.path,state.items.slice(0,2),'busy');
   })()`);
 
-  // Running turn: compact summary above the input shows the active run's changes.
-  await review.waitFor('Boolean(document.querySelector(".pd-composer-changes.is-running"))');
-  await review.assert('!document.querySelector(".pd-transcript .pd-conversation-changes") && [...document.querySelectorAll(".pd-composer-changes.is-running .pd-composer-changes-file")].filter(window.__changesReview.visible).length === 0', 'A running turn settles nothing yet: the compact composer summary is the only entry');
-  await review.screenshot('changes-running-dark-1440');
-  await review.click('.pd-composer-changes-toggle');
-  await review.waitFor('window.__changesReview.visible(document.querySelector(".pd-changes-live-popover"))');
-  await review.assert('document.querySelector(".pd-composer-changes-toggle").getAttribute("aria-expanded") === "true" && [...document.querySelectorAll(".pd-changes-live-popover .pd-composer-changes-file")].filter(window.__changesReview.visible).length === 2 && document.querySelector(".pd-changes-live-scope")?.textContent.includes("本轮") && !document.querySelector(".pd-changes-dialog")', 'The running popover lists the active turn\'s files under a turn scope label');
-  await review.screenshot('changes-running-popover-dark-1440');
-  await review.key('Escape');
-  await review.waitFor('!document.querySelector(".pd-changes-live-popover")');
-  await review.assert('document.querySelector(".pd-composer-changes-toggle").getAttribute("aria-expanded") === "false" && document.activeElement === document.querySelector(".pd-composer-changes-toggle")', 'Escape closes the running file list and restores focus to its toggle');
-  await review.click('.pd-composer-changes-toggle');
-  await review.click('.pd-changes-live-popover .pd-composer-changes-file[title="assets/header.png"]');
-  await review.waitFor(selected('assets/header.png'));
-  await review.waitFor('document.querySelector(".pd-changes-diff")?.textContent.includes("二进制")');
-  await review.assert('document.querySelector(".pd-changes-dialog")?.open === true && !document.querySelector(".pd-changes-live-popover")', 'Choosing a running file lazily loads its diff and shows the binary limitation');
-  await review.key('Escape');
-  await review.waitFor('!document.querySelector(".pd-changes-dialog") && document.activeElement === document.querySelector(".pd-changes-live-main")');
-  await review.assert('window.__changesReview.visible(document.activeElement) && !document.activeElement.closest("[inert]")', 'Closing a review opened from a removed popover row restores usable focus to the running summary');
-  await review.click('.pd-composer-changes-toggle');
-  await review.evaluate('document.querySelector(".pd-changes-live-popover .pd-composer-changes-file").focus(); window.__changesReview.status("idle")');
-  // The live capsule hands focus to the session capsule in the same spot first, then the turn card, then the composer.
-  await review.waitFor('Boolean(document.querySelector(".pd-conversation-turn .pd-conversation-changes")) && !document.querySelector(".pd-composer-changes.is-running") && (document.activeElement?.matches(".pd-composer-changes.is-session .pd-changes-live-main,.pd-changes-card-main,.pd-composer-shell textarea") ?? false)');
-  await review.assert('window.__changesReview.visible(document.activeElement) && !document.activeElement.closest("[inert]") && !document.querySelector(".pd-changes-dialog")', 'Completing the run while a popover file has keyboard focus restores focus to the session capsule, settled turn card or composer');
-  await review.evaluate('window.__changesReview.ready(window.__changesReview.path,window.__changesReview.items.slice(0,2),"busy")');
-  await review.waitFor('Boolean(document.querySelector(".pd-composer-changes.is-running"))');
-  await review.click('.pd-composer-changes.is-running .pd-composer-changes-review');
-  await review.waitFor('document.querySelector(".pd-changes-dialog")?.open === true');
-  await review.evaluate('window.__changesReview.dialog = document.querySelector(".pd-changes-dialog"); window.__changesReview.runningTrigger=document.querySelector(".pd-composer-changes.is-running .pd-composer-changes-review"); window.__changesReview.publish(window.__changesReview.items)');
-  await review.waitFor('document.querySelectorAll(".pd-changes-file").length === window.__changesReview.items.length');
-  await review.assert('document.querySelector(".pd-changes-dialog") === window.__changesReview.dialog && document.querySelector(".pd-changes-file.is-selected").title === window.__changesReview.firstPath', 'Appending snapshots to the running turn updates the same open dialog without losing its selection');
-  await review.evaluate('window.__changesReview.status("idle")');
-  await review.waitFor('Boolean(document.querySelector(".pd-conversation-turn .pd-conversation-changes")) && !document.querySelector(".pd-composer-changes.is-running")');
-  await review.assert('document.querySelector(".pd-changes-dialog") === window.__changesReview.dialog && window.__changesReview.dialog.open', 'Busy-to-idle swaps the live strip for the turn card without unmounting the open review dialog');
-  await review.key('Escape');
-  await review.waitFor('!document.querySelector(".pd-changes-dialog")');
-  await review.assert('!window.__changesReview.runningTrigger.isConnected && document.activeElement?.isConnected && !document.activeElement.closest("[inert]") && (document.activeElement.matches(".pd-composer-shell textarea") || Boolean(document.activeElement.closest(".pd-conversation-changes")))', 'Escape returns to a usable fallback when the original running trigger was removed');
+  // Running turn: no floating summary above the input and no settled card yet.
+  await review.waitFor('document.querySelectorAll(".pd-conversation-turn").length === 1');
+  await review.assert('!document.querySelector(".pd-transcript .pd-conversation-changes") && !document.querySelector(".pd-composer-changes.is-running, .pd-composer-changes.is-session, .pd-composer-changes-slot")', 'A running turn renders neither a floating composer strip nor an unsettled turn card');
+  await review.evaluate('window.__changesReview.publish(window.__changesReview.items); window.__changesReview.status("idle")');
+  await review.waitFor('Boolean(document.querySelector(".pd-conversation-turn .pd-conversation-changes"))');
+  await review.assert('!document.querySelector(".pd-composer-changes.is-running, .pd-composer-changes.is-session, .pd-composer-changes-slot")', 'Settling a turn renders only the in-turn card, with no floating strip above the composer');
 
   // Settled turn card: sits inside the turn that produced the changes.
   await review.assert(`Boolean(document.querySelector(".pd-conversation-turn .pd-turn-changes")) && /本轮|this turn/i.test(document.querySelector('${card}').textContent)`, 'The settled card labels its turn scope');
