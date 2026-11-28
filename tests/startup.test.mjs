@@ -24,7 +24,9 @@ const stubs = {
   './windowState': `
     export const MAIN_WINDOW_MIN_WIDTH = 680;
     export const MAIN_WINDOW_MIN_HEIGHT = 520;
-    export const resolveStartupWindowState = (_path, _environment, preloaded) => { globalThis.__startupTest.calls.windowStatePreloaded = preloaded; return { bounds: { x: 40, y: 30, width: 1280, height: 820 }, maximized: false }; };
+    export const resolveStartupWindowState = (_path, _environment, preloaded) => { globalThis.__startupTest.calls.windowStatePreloaded = preloaded; return { bounds: { x: 40, y: 30, width: 1280, height: 820 }, maximized: Boolean(globalThis.__startupTest.savedMaximized) }; };
+    export const maximizedWorkAreaFor = () => ({ x: 0, y: 0, width: 1920, height: 1040 });
+    export const applyWindowBounds = (win, bounds) => { win.setBounds?.(bounds); };
     export const readWindowStateAsync = async () => globalThis.__startupTest.savedWindowState ?? null;
     export const windowStateFromWindow = () => ({ bounds: { x: 40, y: 30, width: 1280, height: 820 }, maximized: false });
     export const windowStatePath = (dir) => dir + '/window-state.json';
@@ -81,7 +83,7 @@ async function waitFor(condition, label) {
   }
 }
 
-async function createStartupHarness(t, { workspaceError, workspace, initialization = deferred(), shutdown = async () => {}, closeBehavior = 'quit', stopIdleAgentsOnTrayHide = true, confirmBusyClose = true, busy = false, closeChoice = 1, checkboxChecked = false, closePromptReply, useNativeCloseDialog = false, launchArgs, userData = 'test-user-data', startupLog, prefersDark = true, expectedSplashBackground } = {}) {
+async function createStartupHarness(t, { workspaceError, workspace, initialization = deferred(), shutdown = async () => {}, closeBehavior = 'quit', stopIdleAgentsOnTrayHide = true, confirmBusyClose = true, busy = false, closeChoice = 1, checkboxChecked = false, closePromptReply, useNativeCloseDialog = false, launchArgs, userData = 'test-user-data', startupLog, prefersDark = true, expectedSplashBackground, savedMaximized = false, maximizeShowsWindow = false } = {}) {
   t.mock.timers.enable({ apis: ['setTimeout'] });
   const windows = [];
   const calls = { init: [], startUpdates: 0, dispose: 0, quit: 0, errors: [], logs: [], consoleLogs: [], diagnostics: [], registered: 0, trays: 0, trayOptions: null, appCommands: [], singleInstanceLocks: 0, paths: {}, windowMode: null, messageBoxes: [], closePrompts: [], closeChoices: [], stopIdleAgents: [], paiWindows: [], pipeStarts: 0, workspaces: 0 };
@@ -100,8 +102,12 @@ async function createStartupHarness(t, { workspaceError, workspace, initializati
       this.options = options;
       this.visible = false;
       this.destroyed = false;
+      this.maximized = false;
+      this.maximizeCount = 0;
       this.showCount = 0;
       this.focusCount = 0;
+      this.setBoundsCalls = [];
+      this.setPositionCalls = [];
       this.minimized = false;
       this.load = deferred();
       this.webContents = Object.assign(new EventEmitter(), {
@@ -120,7 +126,7 @@ async function createStartupHarness(t, { workspaceError, workspace, initializati
     isDestroyed() { return this.destroyed; }
     isVisible() { return this.visible; }
     isMinimized() { return this.minimized; }
-    isMaximized() { return false; }
+    isMaximized() { return this.maximized; }
     show() { assert.equal(this.destroyed, false); this.visible = true; this.showCount += 1; this.emit('show'); }
     hide() { this.visible = false; }
     restore() { this.minimized = false; }
@@ -128,8 +134,9 @@ async function createStartupHarness(t, { workspaceError, workspace, initializati
     destroy() { if (this.destroyed) return; this.destroyed = true; this.visible = false; this.emit('closed'); }
     setSize() {}
     getBounds() { return { x: this.options.x ?? 0, y: this.options.y ?? 0, width: this.options.width, height: this.options.height }; }
-    setPosition(x, y) { this.options.x = x; this.options.y = y; }
-    maximize() { this.maximized = true; }
+    setBounds(bounds) { this.setBoundsCalls.push({ ...bounds }); this.options.x = bounds.x; this.options.y = bounds.y; this.options.width = bounds.width; this.options.height = bounds.height; }
+    setPosition(x, y) { this.setPositionCalls.push({ x, y }); this.options.x = x; this.options.y = y; }
+    maximize() { this.maximized = true; this.maximizeCount += 1; if (maximizeShowsWindow) this.show(); this.emit('maximize'); }
     center() {}
     focus() { this.focusCount += 1; }
     reload() {}
@@ -152,6 +159,7 @@ async function createStartupHarness(t, { workspaceError, workspace, initializati
     calls,
     app,
     prefersDark,
+    savedMaximized,
     BrowserWindow: TestWindow,
     ipcMain,
     dialog: {
@@ -222,7 +230,7 @@ async function createStartupHarness(t, { workspaceError, workspace, initializati
   await waitFor(() => windows.length > 0, 'the boot splash to be created');
   const splash = windows[0];
   assert.equal(splash.options.backgroundColor, expectedSplashBackground ?? (prefersDark === false ? '#f8f8f8' : '#161616'), 'the boot splash follows the resolved window theme');
-  assert.equal(splash.options.width, 1280, 'the boot splash matches the main window size');
+  assert.equal(splash.options.width, savedMaximized ? 1920 : 1280, 'the boot splash matches the startup window size');
   assert.equal(splash.options.transparent, undefined, 'the boot splash is opaque');
   return {
     app, windows, splash, calls, initialization, ipcMain,
@@ -380,7 +388,7 @@ test('multi boot opens a full-size isolated instance without the singleton, tray
   assert.equal(main.options.height, 820);
   assert.equal(main.options.title, 'Pi Desktop');
   assert.ok(harness.calls.paths.userData.startsWith(join(root, 'multi-profiles')));
-  assert.equal(main.query, undefined, 'the full renderer launches without a mode parameter');
+  assert.equal(main.query?.mode, undefined, 'the full renderer launches without a mode parameter');
   main.load.resolve(); main.emit('ready-to-show'); harness.initialization.resolve();
   await harness.rendererReady(main);
   let prevented = false;
@@ -723,4 +731,55 @@ test('a saved appearance surface drives the boot window background', async (t) =
   const main = await harness.start();
   assert.equal(harness.splash.options.backgroundColor, '#101c26', 'the boot window uses the saved dark surface');
   assert.equal(main.options.backgroundColor, '#101c26', 'the main window uses the same constant');
+  assert.deepEqual(main.query, { initialTheme: 'dark', initialBg: '#101c26' }, 'the renderer receives the resolved theme synchronously in the URL query');
+});
+
+test('maximized startup keeps both windows hidden until ready and never calls maximize() early', async (t) => {
+  // Windows BrowserWindow.maximize() shows a show:false window immediately.
+  const harness = await createStartupHarness(t, { savedMaximized: true, maximizeShowsWindow: true, prefersDark: false });
+  assert.equal(harness.splash.isVisible(), false, 'splash stays hidden until ready-to-show');
+  assert.equal(harness.splash.maximizeCount, 0, 'splash fills the display workArea directly instead of calling maximize()');
+  assert.deepEqual(harness.splash.getBounds(), { x: 0, y: 0, width: 1920, height: 1040 });
+
+  const main = await harness.start();
+  assert.equal(main.isVisible(), false, 'main stays hidden after creation even when saved maximized');
+  assert.equal(main.maximizeCount, 0, 'main does not call maximize() before reveal');
+  assert.deepEqual(main.getBounds(), { x: 40, y: 30, width: 1280, height: 820 }, 'restored bounds stay intact for unmaximize');
+  assert.deepEqual(main.query, { initialTheme: 'light', initialBg: '#f8f8f8' });
+
+  main.load.resolve();
+  main.emit('ready-to-show');
+  assert.equal(main.isVisible(), false, 'main still waits for renderer-ready');
+
+  harness.initialization.resolve();
+  await harness.rendererReady(main);
+  assert.equal(main.maximizeCount, 1, 'main maximizes at reveal time');
+  assert.equal(main.isVisible(), true);
+  assert.equal(main.showCount, 1, 'Windows maximize() already revealed the window without a redundant show()');
+  assert.equal(harness.splash.isDestroyed(), true, 'splash closes once main is visible');
+});
+
+test('non-maximized reveal skips repositioning when the boot window did not move', async (t) => {
+  const undragged = await createStartupHarness(t);
+  const mainA = await undragged.start();
+  const boundsCallsBeforeReveal = mainA.setBoundsCalls.length;
+  mainA.load.resolve();
+  mainA.emit('ready-to-show');
+  undragged.initialization.resolve();
+  await undragged.rendererReady(mainA);
+  assert.equal(mainA.setPositionCalls.length, 0);
+  assert.equal(mainA.setBoundsCalls.length, boundsCallsBeforeReveal, 'no redundant setBounds/setPosition right before show');
+});
+
+test('non-maximized reveal follows a dragged boot window without changing its size', async (t) => {
+  const dragged = await createStartupHarness(t);
+  const mainB = await dragged.start();
+  dragged.splash.options.x = 260;
+  dragged.splash.options.y = 140;
+  dragged.splash.emit('move');
+  mainB.load.resolve();
+  mainB.emit('ready-to-show');
+  dragged.initialization.resolve();
+  await dragged.rendererReady(mainB);
+  assert.deepEqual(mainB.getBounds(), { x: 260, y: 140, width: 1280, height: 820 }, 'dragged boot window position is mirrored without altering size');
 });

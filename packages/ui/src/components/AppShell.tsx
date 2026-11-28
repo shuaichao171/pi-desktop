@@ -102,6 +102,11 @@ export function AppShell() {
 	const [sidebarResizing, setSidebarResizing] = useState(false);
 	const [themePreference, setThemePreferenceLocal] = useState<ThemePreference>(readThemePreference);
 	const [colorPreferences, setColorPreferencesLocal] = useState(readColorPreferences);
+	const [initialThemeHint] = useState<'light' | 'dark' | null>(() => {
+		const value = new URLSearchParams(window.location.search).get('initialTheme');
+		return value === 'light' || value === 'dark' ? value : null;
+	});
+	const [sharedAppearanceSettled, setSharedAppearanceSettled] = useState(false);
 	const [colorSaveFailed, setColorSaveFailed] = useState(false);
 	const [settingsOpen, setSettingsOpen] = useState(false);
 	const [searchOpen, setSearchOpen] = useState(false);
@@ -300,17 +305,23 @@ export function AppShell() {
 	useEffect(() => {
 		const bridge = commandBridge;
 		try {
-			if (!bridge?.getAppearance) return;
+			if (!bridge?.getAppearance) {
+				setSharedAppearanceSettled(true);
+				return;
+			}
 			let cancelled = false;
 			void bridge.getAppearance().then((appearance) => {
 				if (cancelled) return;
 				if (appearance) applySharedAppearance(appearance);
 				// First launch seeds the shared store from this window's saved preference.
 				else shareAppearance({ theme: appearanceRef.current.themePreference, colors: appearanceRef.current.colorPreferences });
-			}, () => { /* Sharing is unavailable; local preferences keep working. */ });
+			}, () => { /* Sharing is unavailable; local preferences keep working. */ }).finally(() => {
+				if (!cancelled) setSharedAppearanceSettled(true);
+			});
 			return () => { cancelled = true; };
 		} catch {
 			// A bridge that cannot share appearance leaves this window local-only.
+			setSharedAppearanceSettled(true);
 			return;
 		}
 	}, [commandBridge]);
@@ -337,7 +348,11 @@ export function AppShell() {
 	useLayoutEffect(() => {
 		const media = window.matchMedia('(prefers-color-scheme: dark)');
 		const applyTheme = () => {
-			const resolved = themePreference === 'system' ? (media.matches ? 'dark' : 'light') : themePreference;
+			const stored = readStoredPreference('pi-desktop.theme');
+			const hasStoredExplicit = stored === 'light' || stored === 'dark';
+			const resolved = themePreference === 'system'
+				? (!sharedAppearanceSettled && !hasStoredExplicit && initialThemeHint ? initialThemeHint : (media.matches ? 'dark' : 'light'))
+				: themePreference;
 			document.documentElement.dataset.theme = resolved;
 			document.documentElement.style.colorScheme = resolved;
 			applyThemeColors(document.documentElement, colorPreferences[resolved], resolved);

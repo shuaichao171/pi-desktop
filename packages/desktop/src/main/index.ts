@@ -21,12 +21,13 @@ import { readBuiltinEngineInfo } from './piEngine.ts';
 import { swapSplashForMainWindow } from './startupSwap.ts';
 import { resolveWindowTheme } from './windowTheme.ts';
 import {
+	applyWindowBounds,
 	MAIN_WINDOW_MIN_HEIGHT,
 	MAIN_WINDOW_MIN_WIDTH,
+	maximizedWorkAreaFor,
 	readWindowStateAsync,
 	resolveStartupWindowState,
 	trackWindowState,
-	windowStateFromWindow,
 	windowStatePath,
 	type WindowState,
 } from './windowState';
@@ -234,6 +235,7 @@ interface CreateMainWindowOptions {
 
 function createWindow(options: CreateMainWindowOptions): BrowserWindow {
 	const { state, onReady, onLoadError } = options;
+	const windowTheme = currentWindowTheme();
 	const win = new BrowserWindow({
 		width: state.bounds.width,
 		height: state.bounds.height,
@@ -243,7 +245,7 @@ function createWindow(options: CreateMainWindowOptions): BrowserWindow {
 		minHeight: MAIN_WINDOW_MIN_HEIGHT,
 		// Same source as the boot window and the renderer's theme surface, so the
 		// splash→main swap never changes color (splash theming).
-		backgroundColor: currentWindowTheme().background,
+		backgroundColor: windowTheme.background,
 		title: 'Pi Desktop',
 		// Deterministic taskbar/alt-tab icon in dev (electron.exe would show the
 		// Electron default) and packaged alike; same ico the tray uses.
@@ -264,9 +266,10 @@ function createWindow(options: CreateMainWindowOptions): BrowserWindow {
 			nodeIntegration: false,
 		},
 	});
-	// A window closed maximized reopens maximized; maximize() before the first
-	// show() reveals it already covering the work area.
-	if (state.maximized) win.maximize();
+	// Land on the exact target bounds (compensating fractional-DPI rounding on
+	// Windows) without maximizing yet: calling maximize() on a show:false window
+	// reveals it immediately on Windows before the renderer is ready.
+	applyWindowBounds(win, state.bounds);
 	startupMetrics.mark('window-created');
 	// Remember where the user leaves the window so the next launch opens here.
 	trackWindowState(win, windowStatePath(app.getPath('userData')));
@@ -454,14 +457,29 @@ function createWindow(options: CreateMainWindowOptions): BrowserWindow {
 		if (!loaded || !firstPaintReady || !rendererReady || revealed || startupCancelled || win.isDestroyed()) return;
 		revealed = true;
 		pendingWindowReveals.delete(win);
-		// The boot window may have been dragged since the main window was
-		// created; take its current position so the swap happens in place.
-		const mirror = options.mirror;
-		if (mirror && !mirror.isDestroyed() && !mirror.isMaximized() && !win.isMaximized()) {
-			const bounds = mirror.getBounds();
-			win.setPosition(bounds.x, bounds.y);
+		if (state.maximized) {
+			// Maximize only at reveal time: on Windows, calling maximize() on a
+			// show:false window reveals it immediately before the renderer is ready.
+			// Maximizing here opens straight into the work area while preserving
+			// state.bounds as the restored placement.
+			win.maximize();
+			if (!win.isVisible()) win.show();
+			publishChromeState();
+		} else {
+			// Only reposition when the user actually dragged the boot window while
+			// loading: an unconditional setPosition() on Windows at fractional DPI
+			// triggers a synthetic resize right before show() and invalidates the
+			// pre-painted frame.
+			const mirror = options.mirror;
+			if (mirror && !mirror.isDestroyed() && !mirror.isMaximized() && !win.isMaximized()) {
+				const mirrorBounds = mirror.getBounds();
+				const currentBounds = win.getBounds();
+				if (mirrorBounds.x !== currentBounds.x || mirrorBounds.y !== currentBounds.y) {
+					applyWindowBounds(win, { x: mirrorBounds.x, y: mirrorBounds.y, width: state.bounds.width, height: state.bounds.height });
+				}
+			}
+			win.show();
 		}
-		win.show();
 		win.webContents.setBackgroundThrottling(true);
 		// The reveal is the first user-visible frame of the app itself.
 		startupMetrics.mark('first-frame');
@@ -486,10 +504,18 @@ function createWindow(options: CreateMainWindowOptions): BrowserWindow {
 		showEditContextMenu(win, params);
 	});
 
-	// electron-vite dev serves the renderer from the HMR server.
+	// electron-vite dev serves the renderer from the HMR server. Pass the resolved
+	// window theme in the URL query so the renderer sets data-theme before React's
+	// first render (preventing a dark-on-light first-frame flash).
+	const initialQuery = { initialTheme: windowTheme.mode, initialBg: windowTheme.background };
 	const load = !app.isPackaged && process.env.ELECTRON_RENDERER_URL
-		? win.loadURL(process.env.ELECTRON_RENDERER_URL)
-		: win.loadFile(join(here, '../renderer/index.html'));
+		? (() => {
+			const url = new URL(process.env.ELECTRON_RENDERER_URL);
+			url.searchParams.set('initialTheme', initialQuery.initialTheme);
+			url.searchParams.set('initialBg', initialQuery.initialBg);
+			return win.loadURL(url.toString());
+		})()
+		: win.loadFile(join(here, '../renderer/index.html'), { query: initialQuery });
 	void load.then(() => {
 		loaded = true;
 		startupMetrics.mark('renderer-loaded');
@@ -512,7 +538,7 @@ async function resolveStartupWorkspace(module: typeof import('./ipc')): Promise<
 	return workspace;
 }
 
-async function bootstrap(splash: BrowserWindow): Promise<void> {
+async function bootstrap(splash: BrowserWindow, startupState: WindowState, hasSplashMoved: () => boolean): Promise<void> {
 	try {
 		// Import the host bridge after the splash has painted.
 		const module = await import('./ipc');
@@ -529,13 +555,15 @@ async function bootstrap(splash: BrowserWindow): Promise<void> {
 			},
 		});
 		startupMetrics.mark('ipc-ready');
-		// Open the main window where the boot window is right now — the saved
-		// placement plus any drag made while the app was still loading — and
-		// keep following the boot window's position until the reveal. Its
-		// renderer load starts immediately and runs in parallel with the
-		// workspace branch below (the two share no state; audit P2).
+		// Keep the original saved bounds and maximized flag rather than reading
+		// back the boot window's size (which avoids compounding fractional-DPI
+		// rounding and keeps normal bounds intact when starting maximized). Only
+		// follow the boot window's x/y if the user dragged it while loading.
+		const mainState: WindowState = !startupState.maximized && hasSplashMoved() && !splash.isDestroyed()
+			? { bounds: { ...startupState.bounds, x: splash.getBounds().x, y: splash.getBounds().y }, maximized: false }
+			: startupState;
 		const mainWindow = createWindow({
-			state: windowStateFromWindow(splash),
+			state: mainState,
 			mirror: splash,
 			onReady: () => {
 				mainRevealed = true;
@@ -662,13 +690,18 @@ if (!hasSingleInstanceLock) {
 	const [savedWindowState, savedAppearance] = await startupStatePrefetch;
 	startupMetrics.mark('state-read');
 	const startupState = resolveStartupWindowState(windowStatePath(app.getPath('userData')), undefined, savedWindowState);
+	// When reopening maximized, size the boot window directly to the target
+	// display's work area instead of calling splash.maximize(): on Windows,
+	// maximize() immediately reveals a show:false window before ready-to-show,
+	// and a non-resizable boot window would stay shrunk in the top-left corner.
+	const splashBounds = startupState.maximized ? maximizedWorkAreaFor(startupState.bounds) : startupState.bounds;
 	// One theme for the boot window and its page (one read, not two).
 	const bootTheme = resolveWindowTheme(savedAppearance, nativeTheme.shouldUseDarkColors);
 	const splash = new BrowserWindow({
-		width: startupState.bounds.width,
-		height: startupState.bounds.height,
-		x: startupState.bounds.x,
-		y: startupState.bounds.y,
+		width: splashBounds.width,
+		height: splashBounds.height,
+		x: splashBounds.x,
+		y: splashBounds.y,
 		resizable: false,
 		maximizable: false,
 		minimizable: true,
@@ -687,8 +720,12 @@ if (!hasSingleInstanceLock) {
 			nodeIntegration: false,
 		},
 	});
+	applyWindowBounds(splash, splashBounds);
 	startupMetrics.mark('splash-created');
-	if (startupState.maximized) splash.maximize();
+	let splashMoved = false;
+	splash.on('move', () => {
+		if (splash.isVisible() && !startupState.maximized) splashMoved = true;
+	});
 	splash.on('closed', () => {
 		if (!mainRevealed) {
 			startupCancelled = true;
@@ -703,7 +740,7 @@ if (!hasSingleInstanceLock) {
 		startupMetrics.mark('splash-shown');
 		// Give the visible splash a few frames before evaluating the heavy Pi import.
 		setTimeout(() => {
-			if (!startupCancelled && !splash.isDestroyed()) void bootstrap(splash);
+			if (!startupCancelled && !splash.isDestroyed()) void bootstrap(splash, startupState, () => splashMoved);
 		}, 100);
 	};
 	splash.once('ready-to-show', showAndStart);

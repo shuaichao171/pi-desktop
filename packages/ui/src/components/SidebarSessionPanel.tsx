@@ -197,16 +197,19 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 		const paths = cwd && !workspaces.includes(cwd) ? [cwd, ...workspaces] : workspaces;
 		return defaultWorkspace && !paths.some(path => sidebarWorkspaceKey(path) === sidebarWorkspaceKey(defaultWorkspace)) ? [...paths, defaultWorkspace] : paths;
 	}, [cwd, workspaces, defaultWorkspace]);
+	const projectPaths = useMemo(() => sidebarProjectPaths(workspaces, null, conversationWorkspaces), [workspaces, conversationWorkspaces]);
 	// Project remarks live in each root's sole .code-workspace file (wpmanager.wpnickname);
 	// projects without one simply report no remark and never gain a generated file.
+	// Only explicit projects display nicknames/bars — skipping historical conversation
+	// directories avoids hundreds of redundant IPC/fs reads at cold start.
 	useEffect(() => {
-		if (!bridge || workspacePaths.length === 0) { setProjectNicknames({}); return; }
+		if (!bridge || projectPaths.length === 0) { setProjectNicknames({}); return; }
 		const request = ++nicknameRequest.current;
-		void Promise.all(workspacePaths.map(async (workspace) => {
+		void Promise.all(projectPaths.map(async (workspace) => {
 			try { return [workspace, await bridge.getProjectNickname(workspace)] as const; }
 			catch { return [workspace, { nickname: null, hasWorkspaceFile: false }] as const; }
 		})).then((entries) => { if (nicknameRequest.current === request) setProjectNicknames(Object.fromEntries(entries)); });
-	}, [bridge, workspacePaths]);
+	}, [bridge, projectPaths]);
 	const projectDisplayName = (workspace: string) => projectNicknames[workspace]?.nickname || workspaceName(workspace);
 	const [projectBars, setProjectBars] = useState<Record<string, string | null>>({});
 	const [barCssDraft, setBarCssDraft] = useState<string | null>(null);
@@ -218,9 +221,9 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 	// can never overwrite the fresher local value (the "flash then vanish" race).
 	const appearanceWrites = useRef(new Map<string, { seq: number; done: Promise<void> }>());
 	useEffect(() => {
-		if (!bridge || workspacePaths.length === 0) return;
+		if (!bridge || projectPaths.length === 0) return;
 		const request = ++barRequest.current;
-		void Promise.all(workspacePaths.map(async (workspace) => {
+		void Promise.all(projectPaths.map(async (workspace) => {
 			const pending = appearanceWrites.current.get(workspace);
 			if (pending) await pending.done.catch(() => {});
 			const seq = appearanceWrites.current.get(workspace)?.seq ?? 0;
@@ -240,7 +243,7 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 				return next;
 			});
 		});
-	}, [bridge, workspacePaths]);
+	}, [bridge, projectPaths]);
 	const [projectAnims, setProjectAnims] = useState<Record<string, string | null>>({});
 	const [userBarPresets, setUserBarPresets] = useState<UserBarPreset[]>(() => readUserBarPresets());
 	function addUserBarPreset(workspace: string, draft: string | null) {
@@ -332,7 +335,6 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 		const bar = projectBars[workspace];
 		return bar && !bar.startsWith('#') && !bar.startsWith('data:') && !bar.startsWith('user:') && !PROJECT_BAR_PRESETS.some((preset) => preset.id === bar) ? bar : '';
 	};
-	const projectPaths = useMemo(() => sidebarProjectPaths(workspaces, null, conversationWorkspaces), [workspaces, conversationWorkspaces]);
 	const pinnedWorkspaceSet = useMemo(() => new Set(splitSidebarProjects(projectPaths, new Set(pinnedProjects)).pinned), [projectPaths, pinnedProjects]);
 	const pinnedWorkspaceKeys = useMemo(() => new Set([...pinnedWorkspaceSet].map(sidebarWorkspaceKey)), [pinnedWorkspaceSet]);
 	const orderedWorkspaces = useMemo(() => orderSidebarProjects(projectPaths, preferences.projectOrder, pinnedWorkspaceSet), [projectPaths, preferences.projectOrder, pinnedWorkspaceSet]);
@@ -509,13 +511,36 @@ export function SidebarSessionPanel({ visible, projectRevealRequest = 0, alterna
 	useEffect(() => { saveSidebarProjectGroups(projectGroupItems); }, [projectGroupItems]);
 	useEffect(() => { saveSidebarSectionLayout(sectionLayout); }, [sectionLayout]);
 	useEffect(() => { saveUserBarPresets(userBarPresets); }, [userBarPresets]);
+	const workspaceRequestsRef = useRef(workspaceRequests);
+	workspaceRequestsRef.current = workspaceRequests;
+	const startupLoading = status === 'starting';
+	// Defer bulk workspace listings until cold-start session initialization settles,
+	// then drain with bounded concurrency (active workspace -> explicit projects ->
+	// unassigned conversation directories) so startup does not flood the agent host.
 	useEffect(() => {
-		if (!bridge) return;
-		for (const path of workspacePaths) {
-			if (workspaceRequests[path]) continue;
-			void refreshWorkspaceSessions(path);
-		}
-	}, [bridge, workspacePaths, workspaceRequests, refreshWorkspaceSessions]);
+		if (!bridge || startupLoading) return;
+		let cancelled = false;
+		const projectSet = new Set(projectPaths);
+		const pending = workspacePaths
+			.filter((path) => !workspaceRequestsRef.current[path])
+			.sort((left, right) => {
+				const rank = (path: string) => (path === cwd ? 0 : projectSet.has(path) ? 1 : 2);
+				return rank(left) - rank(right);
+			});
+		if (pending.length === 0) return;
+		let cursor = 0;
+		const workers = Math.min(6, pending.length);
+		const drain = async () => {
+			while (!cancelled) {
+				const path = pending[cursor++];
+				if (!path) break;
+				if (workspaceRequestsRef.current[path]) continue;
+				await refreshWorkspaceSessions(path);
+			}
+		};
+		for (let index = 0; index < workers; index += 1) void drain();
+		return () => { cancelled = true; };
+	}, [bridge, startupLoading, cwd, workspacePaths, projectPaths, refreshWorkspaceSessions]);
 	useEffect(() => { if (renaming) { renameRef.current?.focus(); renameRef.current?.select(); } }, [renaming]);
 	useEffect(() => () => {
 		pressRef.current = null;

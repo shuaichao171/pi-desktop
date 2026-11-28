@@ -153,8 +153,52 @@ export function resolveStartupWindowState(
 export interface TrackedWindow {
 	on(event: 'resize' | 'move' | 'close' | 'closed', listener: () => void): unknown;
 	isDestroyed(): boolean;
+	isVisible?(): boolean;
 	getNormalBounds(): WindowBounds;
 	isMaximized(): boolean;
+}
+
+/** Structural slice of BrowserWindow for exact-bounds placement with DPI compensation. */
+export interface BoundsTarget {
+	isDestroyed(): boolean;
+	getBounds(): WindowBounds;
+	setBounds(bounds: WindowBounds): void;
+}
+
+/**
+ * Work area of the display holding `bounds`. Used to size a maximized boot
+ * window without calling `maximize()` before `show()` (on Windows, `maximize()`
+ * reveals a `show: false` window immediately, and a non-resizable boot window
+ * cannot maximize to the full work area anyway).
+ */
+export function maximizedWorkAreaFor(
+	bounds: WindowBounds,
+	environment?: { displayWorkArea?: DisplayArea },
+): WindowBounds {
+	const area = environment?.displayWorkArea ?? screen.getDisplayMatching(bounds).workArea;
+	return clampWindowBounds({ x: area.x, y: area.y, width: area.width, height: area.height });
+}
+
+/**
+ * Apply exact DIP bounds and compensate for Windows fractional-DPI rounding.
+ * At 125%/150% scale, Electron's `new BrowserWindow({ width, height })` and
+ * `setBounds()` overshoot by a few DIPs on each call, which makes the
+ * splash→main swap visibly jump outward and grows the saved size on every
+ * restart. One compensation pass lands both windows on the exact target bounds
+ * with zero drift across launches.
+ */
+export function applyWindowBounds(win: BoundsTarget, bounds: WindowBounds): void {
+	if (win.isDestroyed()) return;
+	const target = clampWindowBounds(bounds);
+	win.setBounds(target);
+	const actual = win.getBounds();
+	const dw = actual.width - target.width;
+	const dh = actual.height - target.height;
+	if ((dw !== 0 || dh !== 0) && Math.abs(dw) <= 24 && Math.abs(dh) <= 24) {
+		const width = target.width - dw;
+		const height = target.height - dh;
+		if (width > 0 && height > 0) win.setBounds({ x: target.x, y: target.y, width, height });
+	}
 }
 
 /**
@@ -216,6 +260,9 @@ export function trackWindowState(win: TrackedWindow, path: string): void {
 	};
 	const schedule = (): void => {
 		if (win.isDestroyed()) return;
+		// Hidden startup creation emits synthetic move/resize events before the
+		// window is ever shown; never let those overwrite the saved placement.
+		if (win.isVisible && !win.isVisible()) return;
 		if (timer) clearTimeout(timer);
 		timer = setTimeout(() => {
 			timer = null;

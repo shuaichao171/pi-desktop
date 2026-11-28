@@ -18,10 +18,12 @@ registerHooks({
 });
 
 const {
+	applyWindowBounds,
 	clampWindowBounds,
 	defaultWindowState,
 	isValidWindowState,
 	isVisibleOnDisplays,
+	maximizedWorkAreaFor,
 	readWindowState,
 	readWindowStateAsync,
 	resolveStartupWindowState,
@@ -229,6 +231,56 @@ test('the cold-start prefetch reads placement async with the sync reader fallbac
 		writeWindowState(path, { bounds: { x: -5000, y: 0, width: 1000, height: 700 }, maximized: false });
 		assert.deepEqual(resolveStartupWindowState(path, { displays, primaryWorkArea }, saved), saved, 'preloaded placement wins over the file');
 		assert.deepEqual(resolveStartupWindowState(path, { displays, primaryWorkArea }, null), defaultWindowState(primaryWorkArea), 'preloaded null centers');
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+test('applyWindowBounds compensates Windows fractional-DPI overshoot to exact bounds', () => {
+	// Simulate 125% DPI where Electron setBounds overshoots by (+2, +1).
+	let current = { x: 0, y: 0, width: 800, height: 600 };
+	const calls = [];
+	const dpiWindow = {
+		isDestroyed: () => false,
+		getBounds: () => ({ ...current }),
+		setBounds(next) {
+			calls.push({ ...next });
+			current = { x: next.x, y: next.y, width: next.width + 2, height: next.height + 1 };
+		},
+	};
+	applyWindowBounds(dpiWindow, { x: 120, y: 80, width: 1280, height: 820 });
+	assert.equal(calls.length, 2, 'runs one compensation pass');
+	assert.deepEqual(current, { x: 120, y: 80, width: 1280, height: 820 }, 'lands on the exact requested DIP size');
+
+	// Non-overshooting platforms only call setBounds once.
+	const exactCalls = [];
+	const exactWindow = {
+		isDestroyed: () => false,
+		getBounds: () => ({ ...exactCalls.at(-1) }),
+		setBounds(next) { exactCalls.push({ ...next }); },
+	};
+	applyWindowBounds(exactWindow, { x: 120, y: 80, width: 1280, height: 820 });
+	assert.equal(exactCalls.length, 1);
+});
+
+test('maximizedWorkAreaFor returns the target display work area', () => {
+	assert.deepEqual(
+		maximizedWorkAreaFor({ x: 2100, y: 40, width: 1000, height: 700 }, { displayWorkArea: secondaryDisplay }),
+		{ x: 1920, y: 0, width: 1280, height: 720 },
+	);
+});
+
+test('the tracker ignores hidden startup move/resize events', async () => {
+	const root = tempRoot('track-hidden');
+	try {
+		const path = windowStatePath(root);
+		const win = { ...fakeWindow({ x: 120, y: 80, width: 1280, height: 820 }), visible: false, isVisible() { return this.visible; } };
+		trackWindowState(win, path);
+		win.bounds = { x: 120, y: 80, width: 1294, height: 829 };
+		win.emit('resize');
+		win.emit('move');
+		await delay(600);
+		assert.equal(readWindowState(path), null, 'hidden construction resizes never overwrite saved bounds');
 	} finally {
 		rmSync(root, { recursive: true, force: true });
 	}
