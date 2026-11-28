@@ -15,7 +15,8 @@ export default async function noticeTimeoutScenarios(review) {
   const openNotice = async () => {
     await failExport();
     await review.click('.pd-chat-header-more');
-    await review.clickText(menuItem, '导出 HTML…');
+    await review.clickText(menuItem, '复制与导出');
+    await review.clickText('.pd-sidebar-submenu [role="menuitem"]', '导出 HTML…');
     await review.waitFor(present);
     await review.settle();
     await review.assert('!document.querySelector(".pd-sidebar-popover[role=menu]")', 'Choosing an export action closes the header menu so it cannot cover the notice');

@@ -60,7 +60,8 @@ export default async function settingsReview(review) {
   await review.click('.pd-settings-header > button');
   await review.evaluate(`(() => { const fixture=window.__modelReview; fixture.editorAttempts=[]; window.piDesktop.openWorkspaceInVsCode=async(cwd)=>{fixture.editorAttempts.push(cwd);if(fixture.editorAttempts.length===1)throw new Error('Editor unavailable for this test');};})()`);
   await review.click('.pd-chat-header-more');
-  await review.clickText('.pd-sidebar-popover button','Open in VS Code');
+  await review.clickText('.pd-sidebar-popover button','Open in');
+  await review.clickText('.pd-sidebar-submenu button','Open in VS Code');
   await review.waitFor('Boolean(document.querySelector(".pd-operation-notice.is-error"))');
   await review.assert('!document.querySelector(".pd-sidebar-popover")', 'Operation failure remains after its menu closes');
   // A one-line failure reason shows directly under the title; no extra disclosure is needed.

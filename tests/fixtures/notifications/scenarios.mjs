@@ -68,7 +68,8 @@ export default async function notificationScenarios(review) {
   })()`;
   async function openEditorNotice() {
     await review.click('.pd-chat-header-more');
-    await review.clickText('.pd-sidebar-popover [role=menuitem]', '在 VS Code 中打开');
+    await review.clickText('.pd-sidebar-popover [role=menuitem]', '打开方式');
+    await review.clickText('.pd-sidebar-submenu [role=menuitem]', '在 VS Code 中打开');
     await review.waitFor('Boolean(document.querySelector(".pd-operation-notice.is-error"))');
   }
   await review.reloadWithFixture(`(${installNotificationFixture.toString()})()`);

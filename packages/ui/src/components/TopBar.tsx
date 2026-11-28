@@ -3,7 +3,6 @@ import { Icon } from './Icons';
 import { HoverTooltip } from './HoverTooltip';
 import { HistoryNavigation, type HistoryNavigationProps } from './HistoryNavigation';
 import { SearchButton } from './SearchButton';
-import { ChatHeaderMenu } from './ChatHeaderMenu';
 import { WindowControls } from './WindowControls';
 import type { RefObject } from 'react';
 
@@ -13,18 +12,14 @@ interface TopBarProps {
 	searchButtonRef: RefObject<HTMLButtonElement | null>;
 	onOpenSearch(): void;
 	mainView: 'chat' | 'automations' | 'plugins' | 'remote';
-	title: string;
-	sessionPath: string | null;
-	cwd: string;
-	onOpenCommit(): void;
 	isWindows: boolean;
 	workbenchOpen: boolean;
 	onToggleWorkbench(): void;
 	workbenchToggleRef: RefObject<HTMLButtonElement | null>;
 }
 
-/** Window-wide VS Code-style title bar. It owns app navigation and the current session title. */
-export function TopBar({ history, searchOpen, searchButtonRef, onOpenSearch, mainView, title, sessionPath, cwd, onOpenCommit, isWindows, workbenchOpen, onToggleWorkbench, workbenchToggleRef }: TopBarProps) {
+/** Window-wide VS Code-style title bar. It owns app navigation and global chrome controls. */
+export function TopBar({ history, searchOpen, searchButtonRef, onOpenSearch, mainView, isWindows, workbenchOpen, onToggleWorkbench, workbenchToggleRef }: TopBarProps) {
 	const { t } = useT();
 	return (
 		<header className="pd-top-bar" aria-label={t('sidebar.main')}>
@@ -36,14 +31,13 @@ export function TopBar({ history, searchOpen, searchButtonRef, onOpenSearch, mai
 				<SearchButton open={searchOpen} buttonRef={searchButtonRef} onClick={onOpenSearch} />
 			</div>
 			<div className="pd-top-bar-session">
-				{mainView === 'chat' && <>
+				{mainView === 'chat' && (
 					<div className="pd-top-bar-workspace-actions">
 						<HoverTooltip title={t(workbenchOpen ? 'app.closeWorkbench' : 'app.openWorkbench')}>
 							<button ref={workbenchToggleRef} type="button" className={`pd-top-bar-workspace-button${workbenchOpen ? ' is-active' : ''}`} aria-label={t(workbenchOpen ? 'app.closeWorkbench' : 'app.openWorkbench')} aria-pressed={workbenchOpen} onClick={onToggleWorkbench}><Icon name="panelRight" width="16" height="16" /></button>
 						</HoverTooltip>
 					</div>
-					<ChatHeaderMenu title={title} sessionPath={sessionPath} cwd={cwd} onOpenCommit={onOpenCommit} />
-				</>}
+				)}
 			</div>
 			{/* Extension slot: views contributed by plugins render here, left of the divider. */}
 			<div className="pd-top-bar-extensions" data-extension-slot="top-bar" />

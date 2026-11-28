@@ -361,7 +361,7 @@ export function AppShell() {
 		media.addEventListener('change', applyTheme);
 		writeStoredPreference('pi-desktop.theme', themePreference);
 		return () => media.removeEventListener('change', applyTheme);
-	}, [themePreference, colorPreferences]);
+	}, [themePreference, colorPreferences, sharedAppearanceSettled, initialThemeHint]);
 
 	useEffect(() => {
 		setColorSaveFailed(!writeColorPreferences(colorPreferences));
@@ -514,7 +514,7 @@ export function AppShell() {
 	if (paneMode) return (
 		<ExtensionDialogHost chatVisible notificationTarget={notificationTarget} globalNotices={PAI_GLOBAL_NOTICES}>
 			<div className="pd-app-shell is-pane">
-				<ConversationHeader cwd={conversationCwd} title={currentTitle} branches={branchCount} closeLabel={t('pane.hide')} onClose={() => {
+				<ConversationHeader cwd={conversationCwd} title={currentTitle} sessionPath={conversationPath} branches={branchCount} paneMode closeLabel={t('pane.hide')} onClose={() => {
 					// Closing a pane only hides it; it is closed for real from "Loaded sessions".
 					const bridge = useChatStore.getState().bridge;
 					if (bridge?.setSplitPaneHidden) void bridge.setSplitPaneHidden(true).catch(() => {});
@@ -548,7 +548,7 @@ export function AppShell() {
 	return (
 		<ExtensionDialogHost chatVisible={mainView === 'chat'} notificationTarget={notificationTarget} globalNotices={MAIN_GLOBAL_NOTICES}>
 		<div className={`pd-app-shell flex${isWindows ? ' is-frameless' : ''}${settingsOpen ? ' is-settings-open' : ''}${sidebarResizing ? ' is-sidebar-resizing' : ''}${workbenchResizing ? ' is-workbench-resizing' : ''}`} style={{ '--pd-sidebar-width': `${sidebarWidth}px`, '--pd-workbench-width': `${clampWorkbenchWidth(workbenchWidth, viewportWidth)}px` } as CSSProperties}>
-			<TopBar history={history} searchOpen={searchOpen} searchButtonRef={searchButtonRef} onOpenSearch={() => setSearchOpen(true)} mainView={mainView} title={currentTitle} sessionPath={conversationPath} cwd={conversationCwd} onOpenCommit={() => setCommitOpen(true)} isWindows={isWindows} workbenchOpen={workbenchOpen} onToggleWorkbench={() => setWorkbenchOpen((value) => !value)} workbenchToggleRef={workbenchToggleRef} />
+			<TopBar history={history} searchOpen={searchOpen} searchButtonRef={searchButtonRef} onOpenSearch={() => setSearchOpen(true)} mainView={mainView} isWindows={isWindows} workbenchOpen={workbenchOpen} onToggleWorkbench={() => setWorkbenchOpen((value) => !value)} workbenchToggleRef={workbenchToggleRef} />
 			<div className="pd-app-body">
 			<button type="button" className={`pd-sidebar-scrim${narrow && sidebarOpen ? ' is-open' : ''}`} aria-label={t('app.closeSidebar')} aria-hidden={!narrow || !sidebarOpen} inert={!narrow || !sidebarOpen} tabIndex={-1} onClick={() => setSidebarOpen(false)} />
 			<ActivityBar
@@ -577,7 +577,7 @@ export function AppShell() {
 				setSidebarWidth((value) => Math.max(MIN_SIDEBAR_WIDTH, Math.min(MAX_SIDEBAR_WIDTH, value + (event.key === 'ArrowRight' ? 16 : -16))));
 			}} />}
 			<div className="pd-main-view">
-			<div className="pd-chat-view-host" hidden={mainView !== 'chat'} inert={mainView !== 'chat'}><ConversationHeader cwd={conversationCwd} title={currentTitle} branches={branchCount} /><ScopedErrorBoundary scope="conversation" resetKeys={[conversationCwd, conversationId, conversationPath]}><ChatView onOpenModelManagement={openModelManagement} searchTarget={searchMessageTarget} navigationError={navigation.error} /></ScopedErrorBoundary><SplitDropZone /></div>
+			<div className="pd-chat-view-host" hidden={mainView !== 'chat'} inert={mainView !== 'chat'}><ConversationHeader cwd={conversationCwd} title={currentTitle} sessionPath={conversationPath} branches={branchCount} onOpenCommit={() => setCommitOpen(true)} /><ScopedErrorBoundary scope="conversation" resetKeys={[conversationCwd, conversationId, conversationPath]}><ChatView onOpenModelManagement={openModelManagement} searchTarget={searchMessageTarget} navigationError={navigation.error} /></ScopedErrorBoundary><SplitDropZone /></div>
 			<SessionDragGhost />
 			{/* Split pane placeholders: the chat and every pane share the row evenly;
 			   each native pane view is glued to its region by useSplitPaneRegions. */}

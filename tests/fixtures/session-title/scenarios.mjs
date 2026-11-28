@@ -26,15 +26,34 @@ export default async function sessionTitleScenarios(review) {
   })()`);
   await review.settle();
   await review.assert('document.querySelector(".pd-session-item.is-active strong")?.textContent === window.__titleReview.first', 'Old empty list responses cannot restore the unnamed title');
-  // The conversation header only displays the title; renaming lives in the sidebar session menu.
-  await review.evaluate('document.querySelector(".pd-session-item.is-active .pd-session-row").focus()');
-  await review.key('F10', { shift: true });
-  await review.clickText('.pd-sidebar-popover[role="menu"] .pd-menu-item', '重命名');
-  await review.fill('.pd-session-rename', '保留我的手动标题');
+  // Clicking the conversation header title edits it inline; Escape cancels, Enter or blur saves.
+  await review.click('.pd-conversation-header-title');
+  await review.waitFor('Boolean(document.querySelector(".pd-chat-title-input")) && document.activeElement === document.querySelector(".pd-chat-title-input")');
+  await review.assert('(() => { const i = document.querySelector(".pd-chat-title-input"); return i.selectionStart === 0 && i.selectionEnd === i.value.length; })()', 'Clicking the header title selects all text for immediate replacement');
+  await review.screenshot('title-header-inline-editing');
+  await review.fill('.pd-chat-title-input', '未保存草稿');
+  await review.key('Escape');
+  await review.waitFor('!document.querySelector(".pd-chat-title-input") && document.querySelector(".pd-conversation-header-title")?.textContent === window.__titleReview.first');
+
+  await review.click('.pd-conversation-header-title');
+  await review.waitFor('Boolean(document.querySelector(".pd-chat-title-input"))');
+  await review.fill('.pd-chat-title-input', '保留我的手动标题');
   await review.key('Enter');
-  await review.waitFor('document.querySelector(".pd-conversation-header-title")?.textContent === "保留我的手动标题"');
+  await review.waitFor('!document.querySelector(".pd-chat-title-input") && document.querySelector(".pd-conversation-header-title")?.textContent === "保留我的手动标题"');
   await review.evaluate('window.__modelReview.emitAgent({ type: "user-message", id: "title-followup", order: 2, text: "继续处理后续内容" })');
   await review.settle();
   await review.assert('document.querySelector(".pd-conversation-header-title")?.textContent === "保留我的手动标题" && document.querySelector(".pd-session-item.is-active strong")?.textContent === "保留我的手动标题"', 'Follow-up prompts preserve the explicitly renamed title while the conversation runs');
   await review.screenshot('title-live-manual-name-preserved');
+
+  // Chevron button beside the title opens the Claude-style conversation menu, including Rename and Delete.
+  await review.click('.pd-conversation-header-menu');
+  await review.waitFor('document.querySelector(".pd-conversation-header-menu")?.getAttribute("aria-expanded") === "true" && Boolean(document.querySelector(".pd-sidebar-popover[role=menu]"))');
+  await review.assert('(() => { const text = document.querySelector(".pd-sidebar-popover[role=menu]").textContent; return text.includes("打开方式") && text.includes("重命名") && text.includes("归档") && text.includes("删除会话"); })()', 'The title chevron menu exposes open-in, rename, archive and delete actions');
+  await review.screenshot('title-header-menu-open');
+  await review.clickText('.pd-sidebar-popover[role="menu"] .pd-menu-item', '重命名');
+  await review.waitFor('Boolean(document.querySelector(".pd-chat-title-input")) && document.activeElement === document.querySelector(".pd-chat-title-input") && !document.querySelector(".pd-sidebar-popover[role=menu]")');
+  await review.fill('.pd-chat-title-input', '菜单触发重命名');
+  await review.click('.pd-composer-shell > textarea');
+  await review.waitFor('!document.querySelector(".pd-chat-title-input") && document.querySelector(".pd-conversation-header-title")?.textContent === "菜单触发重命名"');
+  await review.assert('document.querySelector(".pd-session-item.is-active strong")?.textContent === "菜单触发重命名"', 'Clicking outside saves inline title changes triggered from the chevron menu');
 }
